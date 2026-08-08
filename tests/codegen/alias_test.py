@@ -63,8 +63,28 @@ def test_inference():
     assert code.clean_code.count('__restrict__') == 3
 
 
+@pytest.mark.parametrize('may_alias', (False, True))
+def test_out_connector_pointer_alias(may_alias):
+    """A pointer out-connector aliases the written array, so it must honor ``may_alias`` too."""
+    sdfg = dace.SDFG('out_conn_alias_%s' % may_alias)
+    sdfg.add_array('A', [20], dace.float64, may_alias=may_alias)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('w', {}, ['out'], 'out[0] = 1.0;', language=dace.Language.CPP)
+    tasklet.out_connectors['out'] = dace.pointer(dace.float64)
+    state.add_edge(tasklet, 'out', state.add_write('A'), None, dace.Memlet('A[0:20]'))
+
+    code = sdfg.generate_code()[0].clean_code
+
+    if may_alias:
+        assert code.count('__restrict__') == 0
+    else:
+        assert code.count('__restrict__') >= 1
+
+
 if __name__ == '__main__':
     test_simple_program(False)
     test_simple_program(True)
     test_multi_nested()
     test_inference()
+    test_out_connector_pointer_alias(False)
+    test_out_connector_pointer_alias(True)

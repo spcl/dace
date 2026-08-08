@@ -163,8 +163,9 @@ class DeadStateElimination(ppl.Pass):
         # Dead states are states that are not live (i.e., visited)
         return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
-    def _find_dead_branches(self, block: ConditionalBlock) -> List[Tuple[CodeBlock, ControlFlowRegion]]:
-        dead_branches = []
+    def _find_dead_branches(self, block: ConditionalBlock) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
+        # The ``else`` arm has no guard, and is an ordinary dead branch once an earlier arm is taken.
+        dead_branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]] = []
         unconditional = None
         for i, (cond, branch) in enumerate(block.branches):
             if cond is None:
@@ -174,6 +175,8 @@ class DeadStateElimination(ppl.Pass):
                         sdfg=block.sdfg,
                         state_id=block.block_id,
                         node_id=None,
+                        # ``block_id`` indexes the parent region, not the SDFG.
+                        cfg=block.parent_graph,
                     )
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.
@@ -184,13 +187,13 @@ class DeadStateElimination(ppl.Pass):
             # Remove other (now never taken) branches
             for cond, branch in block.branches:
                 if branch is not unconditional:
-                    dead_branches.append([cond, branch])
+                    dead_branches.append((cond, branch))
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
                 if cond is not None and self._is_definitely_false(symbolic.pystr_to_symbolic(cond.as_string),
                                                                   block.sdfg):
-                    dead_branches.append([cond, branch])
+                    dead_branches.append((cond, branch))
 
         return dead_branches
 

@@ -8,7 +8,6 @@ from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
-from copy import deepcopy as dc
 from sympy import floor
 from typing import Dict, List, Set, Tuple
 
@@ -211,6 +210,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     accesses = self._get_marked_inputs_and_outputs(state, node)
                     self.host_data.extend(accesses)
 
+        # Data read on interstate edges or control-flow meta-expressions is evaluated on the
+        # host; promoting it to GPU_Global would make the generated host code dereference a
+        # device pointer (caught by validation as "stored as GPU_Global but accessed on host").
+        # Keep such containers host-side unless they already live on the GPU (the copy-out
+        # machinery below handles that case).
+        interstate_read_memlets: List[memlet.Memlet] = []
+        for edge in sdfg.all_interstate_edges():
+            interstate_read_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
+        for blk in sdfg.all_control_flow_blocks():
+            if isinstance(blk, AbstractControlFlowRegion):
+                interstate_read_memlets.extend(blk.get_meta_read_memlets())
+        for mem in interstate_read_memlets:
+            if (mem.data not in self.host_data
+                    and sdfg.arrays[mem.data].storage not in [dtypes.StorageType.GPU_Global]):
+                self.host_data.append(mem.data)
+
         for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -232,7 +247,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None:
+                if e.data.wcr is not None and not e.data.is_empty():
                     if (e.data.data not in input_nodes and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append((e.data.data, sdfg.arrays[e.data.data]))
 
@@ -436,12 +451,17 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for node, state in nsdfgs:
             excl_copyin = set()
             for e in state.in_edges(node):
+                # Empty dependency edges carry no data and map to no inner connector
+                if e.dst_conn is None or e.data.is_empty():
+                    continue
                 src = state.memlet_path(e)[0].src
                 if isinstance(src, nodes.AccessNode) and sdfg.arrays[src.data].storage in gpu_storage:
                     excl_copyin.add(e.dst_conn)
                     node.sdfg.arrays[e.dst_conn].storage = sdfg.arrays[src.data].storage
             excl_copyout = set()
             for e in state.out_edges(node):
+                if e.src_conn is None or e.data.is_empty():
+                    continue
                 dst = state.memlet_path(e)[-1].dst
                 if isinstance(dst, nodes.AccessNode) and sdfg.arrays[dst.data].storage in gpu_storage:
                     excl_copyout.add(e.src_conn)
@@ -517,30 +537,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
                     continue
-                # Create map and connectors
-                me, mx = state.add_map(gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
-                                       schedule=dtypes.ScheduleType.GPU_Device)
-                # Store in/out edges in lists so that they don't get corrupted when they are removed from the graph.
-                in_edges = list(state.in_edges(gcode))
-                out_edges = list(state.out_edges(gcode))
-                me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges}
-                me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges}
-                mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges}
-                mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges}
-
-                # Create memlets through map
-                for e in in_edges:
-                    state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
-                    state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
-                for e in out_edges:
-                    state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
-                    state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
-
-                # Map without inputs
-                if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.Memlet())
+                # Wrap in a unit GPU map (robust to connector-less dependency edges)
+                xfh.wrap_code_node_in_unit_gpu_map(state, gcode)
 
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges
@@ -618,7 +616,69 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     block.replace_meta_accesses({devicename: hostname})
 
         # Step 9: Simplify
-        if not self.simplify:
+        if self.simplify:
+            sdfg.simplify()
+
+        # When the ExperimentalCUDACodeGen is selected, handle in-kernel transient
+        # GPU_Global arrays here for backwards compatibility. Imports are local: this
+        # block only runs under the experimental codegen, and importing the pass at
+        # module scope would create a transformation <-> pass import cycle.
+        from dace.config import Config
+        if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
             return
 
-        sdfg.simplify()
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+        import warnings
+
+        # Detect transient GPU_Global arrays inside GPU_Device-scheduled maps
+        transients_in_kernels: Set[Tuple[str, data.Array, nodes.MapEntry]] = set()
+        transient_outside_kernels: Set[Tuple[str, data.Array]] = set()
+
+        for node, parent in sdfg.all_nodes_recursive():
+            # Consider only transient GPU_Global arrays.
+            if not isinstance(node, nodes.AccessNode):
+                continue
+
+            desc = node.desc(parent)
+            if not isinstance(desc, data.Array):
+                continue
+            if not desc.transient:
+                continue
+            if desc.storage != dtypes.StorageType.GPU_Global:
+                continue
+
+            # Check whether the transient/access node occurs within a kernel.
+            in_kernel = False
+            parent_map_info = xfh.get_parent_map(state=parent, node=node)
+            while parent_map_info is not None:
+                map_entry, map_state = parent_map_info
+                if (isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule == dtypes.ScheduleType.GPU_Device):
+                    in_kernel = True
+                    break
+                parent_map_info = xfh.get_parent_map(map_state, map_entry)
+
+            if in_kernel:
+                transients_in_kernels.add((node.data, desc, map_entry))
+            else:
+                transient_outside_kernels.add((node.data, desc))
+
+        # Skip transients that are used outside of GPU kernels, unless a separate, strictly kernel-local
+        # transient with the same name exists inside a kernel. In such cases, 'MoveArrayOutOfKernel' is
+        # still applied to the local one, and naming conflicts are handled automatically.
+        transient_defined_inside_kernel: Set[Tuple[str, nodes.MapEntry]] = set()
+        for data_name, array_desc, kernel_entry in transients_in_kernels:
+            if (data_name, array_desc) in transient_outside_kernels:
+                continue
+            else:
+                transient_defined_inside_kernel.add((data_name, kernel_entry))
+
+        # Apply the pass and warn the user of its use
+        for data_name, kernel_entry in transient_defined_inside_kernel:
+            warnings.warn(
+                f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel {kernel_entry}. "
+                "GPU_Global memory cannot be allocated within GPU kernels, so this usage is semantically invalid. "
+                "As a best-effort fix, the array will be lifted outside the kernel as a non-transient GPU_Global array. "
+                "Any naming conflicts are resolved automatically. "
+                "Please avoid this pattern, as it is strongly discouraged and may lead to undefined behavior. "
+                "Note that this fix provides no guarantees, especially for unusual or complex use cases.")
+            MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, data_name)

@@ -4,7 +4,7 @@
 import ast
 from copy import deepcopy as dc
 import itertools
-import networkx as nx
+from dace import graphlib as nx
 from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
 from functools import reduce
 import operator
@@ -359,14 +359,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if isinstance(root.src, nodes.AccessNode) and root.src.data in inputs:
                         ndesc = nsdfg.arrays[root.src.data]
                         outer_desc = sdfg.arrays[inputs[root.src.data].data.data]
-                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                        if (not symbolic.same_value(ndesc.shape, outer_desc.shape)
+                                or not symbolic.same_value(ndesc.strides, outer_desc.strides)):
                             reshapes.add(root.src.data)
                 for oe in nstate.out_edges(node):
                     root = nstate.memlet_tree(oe).root().edge
                     if isinstance(root.dst, nodes.AccessNode) and root.dst.data in outputs:
                         ndesc = nsdfg.arrays[root.dst.data]
                         outer_desc = sdfg.arrays[outputs[root.dst.data].data.data]
-                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                        if (not symbolic.same_value(ndesc.shape, outer_desc.shape)
+                                or not symbolic.same_value(ndesc.strides, outer_desc.strides)):
                             reshapes.add(root.dst.data)
 
         # All transients become transients of the parent (if data already

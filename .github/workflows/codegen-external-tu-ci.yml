@@ -1,0 +1,61 @@
+name: CPU Codegen + External TU
+
+# ONE job: the experimental ("readable") CPU code generator's knob suite plus external translation
+# units (the per-nest .cpp split), on the only build path that still exists -- cmake + ninja with the
+# configure/PCH/command caches pinned on.
+#
+# The former {cmake, native} builder axis is gone. Native is no longer a CI build path, and it was
+# never this workflow's to guard anyway: the split test parametrizes both builders itself
+# (tests/codegen/split_nsdfg_translation_units_test.py::test_split_compiles_links_and_matches_baseline),
+# and tests/codegen/native_{build,corpus}_test.py run unmarked in General Tests.
+#
+# GPU variants of this same suite carry @pytest.mark.gpu and are collected by the GPU workflows'
+# whole-tree ``-m gpu`` run under the experimental CUDA backend; nothing GPU is selected here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  cpu-codegen:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        # 3.12 is this workflow's only axis: General Tests covers 3.10/3.14 and ML covers 3.13.
+        python-version: '3.14'
+        # cmake + ninja: the build cache replays a recorded ``ninja -t compdb``, and
+        # dace/codegen/compiler.py only selects the Ninja generator when ``ninja`` is on PATH.
+        # BLAS/LAPACK: the readable library-lowering test lowers BLAS library nodes and the corpus
+        # kernels link against cBLAS/LAPACKE.
+        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev
+    - name: Codegen knob suite + CPU external TU
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # Deterministic reduction order for the bit-exact legacy-vs-experimental corpus compare.
+        export OMP_NUM_THREADS=1
+        # Pinned, not left to the defaults: build caching is most of the wall time here.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        export DACE_compiler_configure_cache=1
+        # Both suites drive legacy AND experimental_readable internally; -m "not gpu" keeps this
+        # CPU-only. The GPU external-TU file's codegen-shape tests (per-kernel .cu split) are not
+        # gpu marked and run here too -- they only generate code, no device needed.
+        pytest -v --tb=short --timeout_method thread --timeout=600 -m "not gpu" \
+          tests/codegen/readable \
+          tests/codegen/split_nsdfg_translation_units_test.py

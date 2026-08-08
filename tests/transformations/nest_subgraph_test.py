@@ -4,8 +4,9 @@ import pytest
 import dace
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
+from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import StateSubgraphView
+from dace.sdfg.state import LoopRegion, StateSubgraphView
 import numpy as np
 
 
@@ -196,6 +197,78 @@ def test_nest_cf_simple_if_chain():
     assert sdfg(15)[0] == 4
 
 
+def test_region_local_transient_is_not_exported_as_a_connector():
+    """A transient only the outlined REGION touches moves INTO the nest, it does not cross it.
+
+    The locality test compares ``sdfg.states()`` -- which yields the states nested inside a
+    control-flow region -- against the subgraph at BLOCK level, where that whole region is one
+    node. For a region subgraph the two never matched, so every region-local transient came back
+    out as an in AND out connector: a value handed across a boundary it never crosses, and one that
+    any per-clone duplication of the nest would then have several writers for.
+    """
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('region_local_transient')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('x', [N], dace.float64)
+    sdfg.add_scalar('tmp', dace.float64, transient=True)
+    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    st = loop.add_state('body', is_start_block=True)
+    t0 = st.add_tasklet('t0', {'inp'}, {'out'}, 'out = inp * 2.0')
+    wtmp = st.add_access('tmp')
+    st.add_edge(st.add_read('x'), None, t0, 'inp', dace.Memlet('x[i]'))
+    st.add_edge(t0, 'out', wtmp, None, dace.Memlet('tmp'))
+    t1 = st.add_tasklet('t1', {'v'}, {'out'}, 'out = v + 1.0')
+    st.add_edge(wtmp, None, t1, 'v', dace.Memlet('tmp'))
+    st.add_edge(t1, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+
+    outer = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+    sdfg.reset_cfg_list()
+    node = next(n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert 'tmp' not in node.in_connectors
+    assert 'tmp' not in node.out_connectors
+    # Moved in, not merely disconnected: the nest owns it and the parent no longer declares it.
+    assert 'tmp' not in sdfg.arrays
+    assert node.sdfg.arrays['tmp'].transient
+    sdfg.validate()
+
+    n = 16
+    rng = np.random.default_rng(4)
+    x = rng.random(n)
+    a = np.zeros(n)
+    sdfg(a=a, x=x, N=n)
+    assert np.allclose(a, x * 2.0 + 1.0)
+
+
+def test_region_local_transient_read_by_an_outside_edge_stays_a_connector():
+    """A promoted scalar is read by NAME on an interstate edge, never through an access node.
+
+    The node walk alone calls it unused, so it would be moved into the nest and the outside read
+    left dangling.
+    """
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('region_local_promoted')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('x', [N], dace.float64)
+    sdfg.add_scalar('flag', dace.float64, transient=True)
+    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    st = loop.add_state('body', is_start_block=True)
+    t0 = st.add_tasklet('t0', {'inp'}, {'out'}, 'out = inp')
+    st.add_edge(st.add_read('x'), None, t0, 'inp', dace.Memlet('x[i]'))
+    st.add_edge(t0, 'out', st.add_write('flag'), None, dace.Memlet('flag'))
+    t1 = st.add_tasklet('t1', {'inp'}, {'out'}, 'out = inp')
+    st.add_edge(st.add_read('x'), None, t1, 'inp', dace.Memlet('x[i]'))
+    st.add_edge(t1, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    after = sdfg.add_state('after')
+    sdfg.add_edge(loop, after, dace.InterstateEdge(condition='flag > 0.0'))
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+    sdfg.reset_cfg_list()
+    assert 'flag' in sdfg.arrays
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -205,3 +278,5 @@ if __name__ == '__main__':
     test_nest_cf_simple_if()
     test_nest_cf_simple_if_elif()
     test_nest_cf_simple_if_chain()
+    test_region_local_transient_is_not_exported_as_a_connector()
+    test_region_local_transient_read_by_an_outside_edge_stays_a_connector()

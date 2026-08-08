@@ -6,10 +6,19 @@ import dace.properties
 import dace.sdfg.nodes
 import numpy as np
 from dace import Memlet
+from dace.libraries.standard.helper import host_accessible_info_storage
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
+
+
+def input_operand_storage(node, parent_state, parent_sdfg):
+    """Storage of the ``_ain`` operand, used to place the host-checkable ``devInfo`` scalar."""
+    for e in parent_state.in_edges(node):
+        if e.dst_conn == "_ain":
+            return parent_sdfg.arrays[e.data.data].storage
+    return dace.StorageType.Default
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -20,6 +29,9 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
+    # cuSOLVER writes ``devInfo`` through a raw pointer; the host-checkable status scalar must live in
+    # host-accessible (pinned) memory when the operand is GPU-resident.
+    info_storage = host_accessible_info_storage(input_operand_storage(node, parent_state, parent_sdfg))
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
@@ -28,7 +40,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         ain_arr = a_arr
         a_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=info_storage)
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
@@ -72,6 +84,9 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
+    # cuSOLVER writes ``devInfo`` through a raw pointer; the host-checkable status scalar must live in
+    # host-accessible (pinned) memory when the operand is GPU-resident.
+    info_storage = host_accessible_info_storage(input_operand_storage(node, parent_state, parent_sdfg))
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
@@ -83,7 +98,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     else:
         b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=info_storage)
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 

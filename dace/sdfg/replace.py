@@ -88,12 +88,20 @@ def replace_dict(subgraph: 'StateSubgraphView',
                 if state.in_degree(node) == 0 and not desc.transient and isinstance(desc, data.Scalar):
                     node_data_symbolic = dace.symbolic.pystr_to_symbolic(node.data)
                     if node_data_symbolic in symrepl:
+                        repl_val = symrepl[node_data_symbolic]
+                        # Skip when the replacement is a sympy symbol / expression (representing
+                        # another array name, not a literal constant) -- wrapping in a constant
+                        # tasklet is the wrong transformation, and ``dtypes.typeclass(type(...))``
+                        # would raise ``KeyError`` on the sympy class anyway. The branch is for
+                        # literal-constant scalar inputs only.
+                        if isinstance(repl_val, (sp.Basic, dace.symbolic.SymExpr)):
+                            continue
                         tasklet = state.add_tasklet(name="constant",
                                                     inputs={},
                                                     outputs={f'{node.data}_value'},
-                                                    code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
+                                                    code=f'{node.data}_value = {repl_val}')
                         access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])),
+                                                                 dtypes.typeclass(type(repl_val)),
                                                                  find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
@@ -122,7 +130,9 @@ def replace_dict(subgraph: 'StateSubgraphView',
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        # By name, like the subsets above: symbol identity includes the dtype, and the keys are minted
+        # from bare names, so an intersection of instances would miss the very symbols to replace.
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
@@ -150,8 +160,16 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
             for name, new_name in repl.items():
                 if name not in tokenized:
                     continue
+                new_code = cppunparse.pyexpr2cpp(new_name)
+                if new_code == name:
+                    # Textual no-op: the replacement prints to the same token as the
+                    # name (e.g. rebuilding a symbol with only a different SymPy
+                    # assumption such as ``nonnegative=True``). Emitting the shadow
+                    # ``auto k = k;`` would be a self-referential declaration that
+                    # does not compile ("use of 'k' before deduction of 'auto'").
+                    continue
                 # Use local variables and shadowing to replace
-                replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
+                replacement = f'auto {name} = {new_code};\n'
                 prefix = replacement + prefix
                 active_replacements.add(name)
 
@@ -207,7 +225,7 @@ def replace_properties_dict(node: Any,
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
                 try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
+                    propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(symrepl)
                 except AttributeError:  # If the symbolified value has no subs
                     pass
 

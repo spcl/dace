@@ -122,6 +122,38 @@ def test_dse_inside_loop_conditional():
     assert set(sdfg.states()) == {start, s, s2, e, end}
 
 
+def test_dse_dead_branches_match_declared_type():
+    """``_find_dead_branches`` returns what its annotation promises: ``(Optional[CodeBlock], region)``.
+
+    It used to append two-element *lists* while claiming ``List[Tuple[...]]``. Today's only consumers
+    unpack and ``len()`` the result, so nothing broke -- but the annotation was a lie, and the guard of
+    an ``else`` arm is ``None``, which the element type did not admit either.
+    """
+    sdfg = dace.SDFG('dse_dead_branch_types')
+    sdfg.add_symbol('a', dace.int32)
+    cond_block = ConditionalBlock('cond', sdfg)
+    sdfg.add_node(cond_block, is_start_block=True)
+    taken = ControlFlowRegion('taken', sdfg)
+    taken.add_state()
+    cond_block.add_branch(CodeBlock('a >= a'), taken)
+    shadowed = ControlFlowRegion('shadowed', sdfg)
+    shadowed.add_state()
+    cond_block.add_branch(CodeBlock('a > 0'), shadowed)
+    otherwise = ControlFlowRegion('otherwise', sdfg)
+    otherwise.add_state()
+    cond_block.add_branch(None, otherwise)
+
+    dead = DeadStateElimination()._find_dead_branches(cond_block)
+
+    # The first arm is always true, so both later arms -- including the guardless ``else`` -- are dead.
+    assert [branch for _, branch in dead] == [shadowed, otherwise]
+    for entry in dead:
+        assert isinstance(entry, tuple), type(entry)
+        cond, branch = entry
+        assert cond is None or isinstance(cond, CodeBlock), type(cond)
+        assert isinstance(branch, ControlFlowRegion), type(branch)
+
+
 def test_dse_malformed_conditional_block():
     sdfg = dace.SDFG("dse_malformed_conditional_block")
     sdfg.add_symbol("a", dace.int32)
@@ -144,6 +176,50 @@ def test_dse_malformed_conditional_block():
             match="Conditional block detected, where else branch is not the last branch.",
     ):
         DeadStateElimination().apply_pass(sdfg, {})
+
+
+def test_dse_malformed_conditional_block_in_region_names_its_own_region():
+    """The malformed-conditional error resolves its block id against the region the block lives in.
+
+    ``block_id`` indexes the *parent region*. Passing only the SDFG made the error resolve the id
+    against the SDFG's own block list, so a conditional at index 1 of a loop was reported as
+    whichever top-level block happened to sit at index 1 -- here, an unrelated state.
+    """
+    sdfg = dace.SDFG('dse_malformed_conditional_in_loop')
+    sdfg.add_symbol('a', dace.int32)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    decoy = sdfg.add_state('decoy_block_at_index_one')
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, decoy, dace.InterstateEdge())
+    sdfg.add_edge(decoy, loop, dace.InterstateEdge())
+
+    loop.add_state('preamble', is_start_block=True)
+    condition = ConditionalBlock('cond', sdfg, loop)
+    loop.add_node(condition)
+    loop.add_edge(loop.node(0), condition, dace.InterstateEdge())
+    branch_else = ControlFlowRegion('else', sdfg)
+    branch_else.add_state()
+    condition.add_branch(None, branch_else)
+    branch_if = ControlFlowRegion('if', sdfg)
+    branch_if.add_state()
+    condition.add_branch(CodeBlock('a > 0'), branch_if)
+    # ``add_node`` does not register the region, so the cfg ids are stale until this runs.
+    sdfg.reset_cfg_list()
+
+    # The conditional is block 1 of the loop, and an unrelated state is block 1 of the SDFG.
+    assert condition.block_id == 1
+    assert sdfg.node(1) is decoy
+
+    with pytest.raises(InvalidSDFGNodeError) as excinfo:
+        DeadStateElimination().apply_pass(sdfg, {})
+
+    err = excinfo.value
+    assert err.cfg is loop
+    assert err.resolve_block() is condition
+    assert err.to_json()['cfg_id'] == loop.cfg_id
+    # Formatting must not raise, and must not blame the unrelated top-level state.
+    assert 'decoy_block_at_index_one' not in str(err)
 
 
 def test_dde_simple():
@@ -525,7 +601,9 @@ if __name__ == '__main__':
     test_dse_edge_condition_with_integer_as_boolean_regression()
     test_dse_inside_loop()
     test_dse_inside_loop_conditional()
+    test_dse_dead_branches_match_declared_type()
     test_dse_malformed_conditional_block()
+    test_dse_malformed_conditional_block_in_region_names_its_own_region()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)

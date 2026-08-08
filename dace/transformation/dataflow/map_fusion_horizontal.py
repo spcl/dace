@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set, Union
+import warnings
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import properties, transformation
@@ -110,6 +111,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
+        # A configuration error belongs to the constructor; reporting it from `can_be_applied()`
+        #  would turn it into a matcher crash.
+        if self.only_inner_maps and self.only_toplevel_maps:
+            raise ValueError(
+                "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionHorizontal instance.")
+
     @classmethod
     def expressions(cls) -> Any:
         map_fusion_parallel_match = dace.sdfg.graph.OrderedMultiDiConnectorGraph()
@@ -123,17 +130,49 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         sdfg: dace.SDFG,
         permissive: bool = False,
     ) -> bool:
+        """Tests if the two matched Maps can be merged, see `can_be_applied_impl()`.
+
+        Matching must never crash, not even on a malformed or half-rewritten state, so this
+        wrapper is the outermost safety net for what the structural guards inside can still not
+        rule out cheaply -- `SDFGState.scope_dict()`, which is the very first thing this
+        transformation does, raises for a cycle anywhere in the state, even one completely
+        disjoint from the matched Maps. What it catches is reported so a swallowed defect stays
+        visible, and `apply()` is deliberately NOT wrapped.
+        """
+        try:
+            return self.can_be_applied_impl(graph, expr_index, sdfg, permissive)
+        except (ValueError, RuntimeError, KeyError, StopIteration, TypeError, AttributeError,
+                AssertionError) as exception:
+            warnings.warn(f"MapFusionHorizontal.can_be_applied() refused a malformed match:"
+                          f" {type(exception).__name__}: {exception}")
+            return False
+
+    def can_be_applied_impl(
+        self,
+        graph: Union[dace.SDFGState, SDFG],
+        expr_index: int,
+        sdfg: dace.SDFG,
+        permissive: bool = False,
+    ) -> bool:
         # NOTE: The after this point it is not legal to access the matched nodes
         first_map_entry: nodes.MapEntry = self.first_parallel_map_entry
         second_map_entry: nodes.MapEntry = self.second_parallel_map_entry
-        assert isinstance(first_map_entry, nodes.MapEntry)
-        assert isinstance(second_map_entry, nodes.MapEntry)
+        if not isinstance(first_map_entry, nodes.MapEntry) or not isinstance(second_map_entry, nodes.MapEntry):
+            return False
 
         # Since we matched any two Maps in the state, we have to ensure that they
         #  are in the same scope (e.g. same state, or same parent Map), otherwise it could be that one is inside one Map
         #  while the other is inside another one.
         scope = graph.scope_dict()
+        # A match another transformation of the same round invalidated names removed nodes.
+        if first_map_entry not in scope or second_map_entry not in scope:
+            return False
         if scope[first_map_entry] != scope[second_map_entry]:
+            return False
+
+        first_map_exit = mfhelper.safe_exit_node(graph, first_map_entry)
+        second_map_exit = mfhelper.safe_exit_node(graph, second_map_entry)
+        if first_map_exit is None or second_map_exit is None:
             return False
 
         # Test if they have they share a node as direct ancestor.
@@ -143,8 +182,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 return False
 
         # We will now check if the two maps are parallel.
-        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
-            return False
+        maps_are_parallel = mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry)
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
@@ -159,6 +197,30 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         )
         if param_repl is None:
             return False
+
+        # `relocate_nodes()` moves whole `IN_x`/`OUT_x` groups between the scope nodes, so a
+        #  connector without an edge (or a data edge without a connector) breaks it half way
+        #  through; and `apply()` is the one that calls `Memlet.try_initialize()`, which raises
+        #  for a Memlet naming an array whose descriptor is gone.
+        for map_entry, map_exit in [(first_map_entry, first_map_exit), (second_map_entry, second_map_exit)]:
+            if not mfhelper.scope_connectors_are_sound(graph, map_entry):
+                return False
+            if not mfhelper.scope_connectors_are_sound(graph, map_exit):
+                return False
+            if not mfhelper.map_scope_data_is_known(graph, sdfg, map_entry, map_exit):
+                return False
+
+        # Maps that are only ordered by happens-before edges, the shape `StateFusionExtended`
+        #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
+        #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
+        if not maps_are_parallel:
+            return mfhelper.analyze_happens_before_fusion(
+                state=graph,
+                sdfg=sdfg,
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                param_repl=param_repl,
+            ) is not None
 
         return True
 
@@ -188,6 +250,24 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 iedge.data.try_initialize(sdfg, graph, iedge)
             for oedge in graph.out_edges(map_exit):
                 oedge.data.try_initialize(sdfg, graph, oedge)
+
+        # If the two Maps are not parallel but merely ordered by happens-before edges, then
+        #  those edges have to go (they would become a self loop on the fused Map) and the
+        #  ordering they encoded has to be re-established inside the fused scope, where it
+        #  now only has to hold per iteration. `can_be_applied()` proved that this is enough.
+        inner_ordering_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
+        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
+            plan = mfhelper.analyze_happens_before_fusion(
+                state=graph,
+                sdfg=sdfg,
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                param_repl=mfhelper.find_parameter_remapping(first_map_entry.map, second_map_entry.map),
+            )
+            assert plan is not None, "The Maps are neither parallel nor safely ordered."
+            ordering_edges, inner_ordering_pairs = plan
+            for ordering_edge in ordering_edges:
+                graph.remove_edge(ordering_edge)
 
         # We have to get the scope_dict before we start mutating the graph.
         scope_dict: Dict = graph.scope_dict().copy()
@@ -224,6 +304,11 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
             )
             # The relocate function does not remove the node, so we must do it.
             graph.remove_node(from_node)
+
+        # Now that both bodies live in the same scope the per-iteration ordering can be
+        #  expressed. Adding the edges earlier would have made them cross a scope boundary.
+        for first_node, second_node in inner_ordering_pairs:
+            graph.add_nedge(first_node, second_node, dace.Memlet())
 
         # If we have "consolidated" edges, i.e. reused existing edges, then the set
         #  of that might have expanded, thus we have to propagate them. However,

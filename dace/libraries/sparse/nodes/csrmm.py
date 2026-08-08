@@ -549,7 +549,10 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {"pure": ExpandCSRMMPure, "MKL": ExpandCSRMMMKL, "cuSPARSE": ExpandCSRMMCuSPARSE}
-    default_implementation = None
+    # The ``sparse`` library has no config-schema entry, so an unset node resolved to nothing and
+    # raised "No implementation or default implementation specified" at codegen. ``pure`` is the
+    # dependency-free CPU lowering (row map over an nnz map).
+    default_implementation = "pure"
 
     # Object fields
     transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")

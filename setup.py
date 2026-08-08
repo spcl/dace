@@ -71,11 +71,15 @@ setup(
     },
     include_package_data=True,
     install_requires=[
-        'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3, != 0.2.3',
-        'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions', 'ml_dtypes'
+        'numpy >= 1.26', 'ml_dtypes', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
+        'fparser >= 0.1.3, != 0.2.3', 'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions',
+        'ordered-set >= 4.0.0', 'pygments'
     ] + cmake_requires + ninja_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
+        # Optional: exact-integer polyhedral engine for the WavefrontSkew canonicalization pass
+        # (schedule legality + skewed loop bounds). Absent => the pass degrades to a no-op.
+        'polyhedral': ['islpy'],
         'testing': [
             'coverage',
             'pytest-cov',
@@ -87,6 +91,9 @@ setup(
             'ipykernel',
             'nbconvert',
             'pytest-timeout',
+            # Plotting the corpus perf results (tests/perf/plot_corpus_perf.py); analysis only,
+            # never imported by dace itself.
+            'matplotlib',
         ],
         'ml-testing': [
             'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
@@ -94,6 +101,7 @@ setup(
         ],
         'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
         'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
+        'fastgraph': ['rustworkx'],
     },
     entry_points={
         'console_scripts': [

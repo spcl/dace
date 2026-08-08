@@ -1,0 +1,75 @@
+name: Loop-to-X and new library nodes
+
+# Dedicated runner for two families this branch introduces, marked as ``loop2x_libnodes`` by file
+# name in tests/conftest.py:
+#
+#   * the loop-lifting transformations (LoopToMap / LoopToScan / LoopToReduce and friends), and
+#   * the library nodes that are NOT on main -- the Fortran intrinsics (CShift, Norm2, ArgMin/Max,
+#     Merge, Count, AllAny, IntegerSort, FortranIO), the BLAS additions (Syrk, Symm), Copy/Memset,
+#     Scan / ScanStrided, and the tile-op nodes.
+#
+# They used to run in general CI, and again in whichever suite runner happened to collect them.
+# Upstream's own library tests are deliberately NOT marked: they stay in general CI, where main
+# already runs them.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  loop2x-libnodes:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        # libfftw3-dev: the FFT lowering tests in this suite include ``fftw3.h``. The
+        # ``fft_interpolate_*`` cases are not ``fftw``-marked, so this runner is their only home
+        # -- without the package they are permanently red rather than skipped.
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+        pip-packages: pytest-xdist
+        extras: testing
+
+    - name: Install Intel oneAPI MKL
+      # The Syrk / Symm nodes are parametrized over the ``MKL`` implementation, whose expansion
+      # includes ``mkl.h``; without the dev meta-package those cases fail to compile. Same install
+      # as general CI, which is where they used to run.
+      run: |
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
+
+    - name: Test with pytest
+      run: |
+        # ``MKLROOT`` for the expansion's include/link paths, ``LD_LIBRARY_PATH`` for loading
+        # libmkl_rt at run time. Must be sourced in the step that runs pytest -- env does not
+        # carry across steps.
+        source /opt/intel/oneapi/setvars.sh || true
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # Pinned, not left to the defaults: every case here compiles, so build caching is most of
+        # the wall time.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        pytest -n auto --tb=short --timeout_method thread --timeout=600 \
+          -m "loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi and not tblis"

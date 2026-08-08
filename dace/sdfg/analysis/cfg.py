@@ -2,7 +2,7 @@
 """ Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
-import networkx as nx
+from dace import graphlib as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
@@ -40,11 +40,34 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     return dom_frontiers
 
 
+def block_immediate_dominators(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    """ Returns the immediate dominator of every block, including those unreachable from the start block.
+
+    ``nx.immediate_dominators`` only covers what the start block reaches, which leaves a legitimately
+    unreachable block -- dead code the frontend emitted, a branch never taken -- absent from the map
+    rather than mapped. A block nothing can reach is dominated by nothing, so it is its own immediate
+    dominator: a root, exactly like the start block. That keeps every dominator-based analysis total
+    over the whole CFG instead of raising ``KeyError`` on part of it.
+
+    Note that this deliberately does not distinguish dead code from a region some transformation
+    severed by mistake -- the two are the same graph shape, and nothing local to the CFG can tell them
+    apart. Codegen is what catches the severed case, by refusing to emit a program that is missing a
+    block (see ``DaCeCodeGenerator.generate_code``).
+
+    :param cfg: The control flow graph to compute immediate dominators for.
+    :return: A dictionary mapping each block to its immediate dominator.
+    """
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    for block in cfg.nodes():
+        idom.setdefault(block, block)
+    return idom
+
+
 def all_dominators(
         cfg: ControlFlowRegion,
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or block_immediate_dominators(cfg)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
@@ -52,7 +75,9 @@ def all_dominators(
             continue
         g.add_edge(node, dom)
     tc = nx.transitive_closure_dag(g)
-    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {cfg.start_block: set()}
+    # Seeded with every block, not just the start one: a root is dominated by nothing, and an
+    # unreachable block is a root, so both need an entry the transitive closure will never supply.
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {block: set() for block in cfg.nodes()}
     for node in tc:
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
 
@@ -311,7 +336,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or block_immediate_dominators(cfg)
     merges = branch_merges(cfg, idom)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
@@ -544,7 +569,7 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     """
     # Get parent states
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = block_immediate_dominators(cfg)
     ptree = block_parent_tree(cfg, loopexits, idom=idom)
 
     # Annotate branches

@@ -4,7 +4,7 @@ import sys
 import types
 from typing import Set, List
 import contextlib
-import networkx as nx
+from dace import graphlib as nx
 import types
 
 import dace.properties

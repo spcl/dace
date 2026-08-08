@@ -14,6 +14,7 @@ from dace import dtypes, data, symbolic, nodes
 
 import ast
 import copy
+import re
 import functools
 import itertools
 from numbers import Integral, Number
@@ -1021,6 +1022,17 @@ def _create_output(sdfg: SDFG,
     return outputs
 
 
+def replace_connector(code: str, connector: str, replacement: str) -> str:
+    """Substitute a tasklet connector by NAME, never as a bare substring.
+
+    ``clip`` is the one entry whose connectors share a prefix (``__in_a``, ``__in_amin``,
+    ``__in_amax``), so a plain ``str.replace`` of ``__in_a`` also rewrote the middle of the other
+    two and produced ``dace.float64(__in_a)min`` -- two adjacent expressions, which is not parseable
+    Python. The tasklet then failed to build with a bare SyntaxError naming no kernel.
+    """
+    return re.sub(r'\b' + re.escape(connector) + r'\b', lambda _: replacement, code)
+
+
 def _set_tasklet_params(ufunc_impl: Dict[str, Any],
                         inputs: List[UfuncInput],
                         casting: List[dtypes.typeclass] = None) -> Dict[str, Any]:
@@ -1045,10 +1057,10 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
         inp_conn = inp_connectors[i]
         if casting and casting[i]:
             repl = "{c}({o})".format(c=str(casting[i]).replace('::', '.'), o=inp_conn)
-            code = code.replace(inp_conn, repl)
+            code = replace_connector(code, inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
-            code = code.replace(inp_conn, astutils.unparse(arg))
+            code = replace_connector(code, inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
 
     return dict(name=name, inputs=inp_connectors, outputs=out_connectors, code=code)
@@ -1261,7 +1273,7 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
 
         :return: List of output datanames
     """
-    from dace.frontend.python.replacements.operators import result_type
+    from dace.frontend.python.replacements.operators import fold_symbolic_operator, result_type
 
     # Flatten arguments
     args = _flatten_args(args)
@@ -1296,6 +1308,17 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
         dtype = kwargs['dtype']
         if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
+
+    # Fold to a symbolic expression when no operand is backed by data, so the NumPy spelling of an
+    # operator produces exactly what the operator spelling produces (``np.bitwise_and(N, 3)`` gives
+    # the same expression as ``N & 3``) and stays usable in a map range, a memlet subset or an
+    # interstate condition instead of materializing a transient. Placed after ``result_type`` so its
+    # integer-only check still rejects float operands first. Skipped when an output container is
+    # requested (``out=`` or positional) or a ``where`` mask applies: both demand materialized data.
+    if not has_where and all(out is None for out in outputs):
+        folded = fold_symbolic_operator(ufunc_impl['operator'], inputs)
+        if folded is not None:
+            return [folded]
 
     # Create output data (if needed)
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())

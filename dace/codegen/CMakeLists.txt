@@ -41,7 +41,10 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  if(${DACE_FILE_TARGET} STREQUAL "cuda")
+  # ``experimental_cuda`` is a CUDA target as much as ``cuda``: the CUDA code generator
+  # defaults to the experimental implementation, so omitting it leaves the generated file
+  # compiled as plain C++, where every CUDA symbol it emits is undeclared.
+  if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
@@ -284,6 +287,25 @@ if(DACE_ENABLE_HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
+# Auxiliary source files contributed by library environments (e.g. nvcc-compiled
+# ``.cu`` wrappers for libnodes whose host-side tasklet cannot directly emit a
+# CUDA kernel launch). Anything ending in ``.cu`` here also implies the SDFG
+# wants CUDA enabled.
+string(REPLACE ";" " " DACE_ENV_AUXILIARY_SOURCES_NORMALISED "${DACE_ENV_AUXILIARY_SOURCES}")
+separate_arguments(DACE_ENV_AUXILIARY_SOURCES_LIST UNIX_COMMAND "${DACE_ENV_AUXILIARY_SOURCES_NORMALISED}")
+foreach(AUX_FILE ${DACE_ENV_AUXILIARY_SOURCES_LIST})
+  if(AUX_FILE STREQUAL "")
+    continue()
+  endif()
+  if(AUX_FILE MATCHES "\\.cu$")
+    if(NOT DACE_ENABLE_CUDA)
+      set(DACE_ENABLE_CUDA ON)
+    endif()
+    set_source_files_properties("${AUX_FILE}" PROPERTIES LANGUAGE CUDA)
+  endif()
+  list(APPEND DACE_CPP_FILES "${AUX_FILE}")
+endforeach()
+
 # Additional target-specific CMake files
 foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
   include(${CMAKE_FILE})
@@ -299,6 +321,19 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 # Forbids silent decay below the required standard (e.g. falling back to an older compiler default).
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
+
+# Optional additive static archive (lib<name>.a) built from the same sources as the shared library.
+# Opt-in via compiler.static_archive; the .so is untouched.
+if (DACE_STATIC_ARCHIVE)
+    add_library(${DACE_PROGRAM_NAME}_static STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+    target_link_libraries(${DACE_PROGRAM_NAME}_static PUBLIC ${DACE_LIBS})
+    # The archive is meant to be linked INTO a shared library, so it must be position-independent.
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY POSITION_INDEPENDENT_CODE ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY OUTPUT_NAME ${DACE_PROGRAM_NAME})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD_REQUIRED ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_EXTENSIONS OFF)
+endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")

@@ -87,6 +87,28 @@ class TestTypeInference(unittest.TestCase):
         else:
             self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.float32))
 
+        # C / numpy dtype aliases used as cast constructors (``double``, ``single``,
+        # ``short``) name a concrete type but are not attributes of ``dtypes``; a bare
+        # cast ``double(N)`` must type as its target, not fall through to ``None`` and
+        # get mistyped by its argument (e.g. ``sqrt(double(N))`` truncating on an int N).
+        code_str = "value = double(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
+
+        code_str = "value = single(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.float32)
+
+        code_str = "value = short(N)"
+        inf_symbols = type_inference.infer_types(code_str, {"N": dtypes.int32})
+        self.assertEqual(inf_symbols["value"], dtypes.int16)
+
+        # A non-dtype call (a math function) must NOT be mistaken for a cast: it stays
+        # unresolved (``None``) so operand promotion, not a bogus dtype, types the result.
+        code_str = "value = sqrt(x)"
+        inf_symbols = type_inference.infer_types(code_str, {"x": dtypes.float64})
+        self.assertIsNone(inf_symbols["value"])
+
     def testInferExpr(self):
 
         code_str = "5 + 3.5"
@@ -303,6 +325,22 @@ value3=5000000000"""
         prev_symbols = {"float_var": dtypes.typeclass(float)}
         inf_symbols = type_inference.infer_types(stmt, prev_symbols)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
+
+    def testResultTypeOfBoolPromotion(self):
+        # ``bool`` is NumPy's lowest-rank numeric operand: an arithmetic op mixing bool
+        # with a numeric promotes to the numeric (``np.bool_(True) * np.int32(3) ==
+        # int32(3)``). Regression: ``result_type_of`` used to return ``bool`` for
+        # ``bool * int`` (bool is not ``issubdtype(_, integer)``, so it fell through the
+        # float-precedence branch), truncating the integer to 0/1 -- the nussinov
+        # fp_factor ``c*t + (1-c)*e`` miscompile. Cross-checked against numpy.result_type.
+        b = dtypes.typeclass(np.bool_)
+        for other in (np.int8, np.int32, np.int64, np.uint8, np.float32, np.float64):
+            o = dtypes.typeclass(other)
+            self.assertEqual(dtypes.result_type_of(b, o), o, f"bool * {other.__name__}")
+            self.assertEqual(dtypes.result_type_of(o, b), o, f"{other.__name__} * bool")
+            self.assertEqual(dtypes.result_type_of(b, o).type, np.result_type(np.bool_, other).type)
+        # bool * bool stays bool.
+        self.assertEqual(dtypes.result_type_of(b, b), b)
 
 
 if __name__ == "__main__":

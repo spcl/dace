@@ -6,6 +6,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.operators import result_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -23,9 +24,17 @@ def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
     """
     if a not in sdfg.arrays.keys():
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
-    # TODO: The whole AddTransientMethod class should be move in replacements.py
-    from dace.frontend.python.newast import _add_transient_data
-    name, desc = _add_transient_data(pv, sdfg, sdfg.arrays[a])
+    sample = sdfg.arrays[a]
+    if isinstance(sample, data.Array) and isinstance(sample, data.View):
+        # A slice (e.g. path[:, 1]) is an ArrayView, a concrete subclass that the
+        # generic transient dispatch below does not recognize (it keys on exact
+        # type). The view's own shape is already the sliced shape, so materialize
+        # the copy directly as a plain array of that shape and dtype.
+        name, desc = sdfg.add_transient(pv.get_target_name(), sample.shape, sample.dtype, find_new_name=True)
+    else:
+        # TODO: The whole AddTransientMethod class should be move in replacements.py
+        from dace.frontend.python.newast import _add_transient_data
+        name, desc = _add_transient_data(pv, sdfg, sample)
     rnode = state.add_read(a)
     wnode = state.add_write(name)
     state.add_nedge(rnode, wnode, Memlet.from_array(name, desc))
@@ -65,6 +74,10 @@ def _numpy_full(pv: ProgramVisitor,
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
+    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+        state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv, None, f'Data-dependent shape {shape} is currently not allowed. Only constants '
@@ -245,15 +258,24 @@ def _arange(pv: ProgramVisitor,
     else:
         start, stop, step = args
 
-    if isinstance(start, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar start value "{start}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
-    if isinstance(stop, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar stop value "{stop}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
-    if isinstance(step, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar step value "{step}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
+    # A string bound is a name, not a value. An SDFG symbol names a symbolic extent directly; a size-1
+    # container (``K = nclusters; np.arange(K)``) is read into a symbol on an interstate edge, the same
+    # mechanism ``numpy.full`` uses to size its output. Any other data would take the extent from array
+    # contents, which cannot size the output.
+    for kind, value in (('start', start), ('stop', stop), ('step', step)):
+        if not isinstance(value, str):
+            continue
+        if value not in sdfg.symbols and not (value in sdfg.arrays and sdfg.arrays[value].total_size == 1):
+            raise TypeError(f'Cannot compile numpy.arange with a scalar {kind} value "{value}" (only constants and '
+                            'symbolic expressions are supported). Please use numpy.linspace instead.')
+
+    (start, stop, step), promoted = promote_size_scalars_in_shape(pv, sdfg, (start, stop, step))
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the map has to follow it.
+        state = pv.last_block
+    start, stop, step = [symbolic.pystr_to_symbolic(v) if isinstance(v, str) else v for v in (start, stop, step)]
+    # Type inference below reads the call arguments, which have no case for a name.
+    args = (stop, ) if len(args) == 1 else (start, stop, step)[:len(args)]
 
     actual_step = step
     if isinstance(start, Number) and isinstance(stop, Number):
@@ -281,8 +303,8 @@ def _arange(pv: ProgramVisitor,
     outname = pv.get_target_name()
     outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
-    start = f'decltype(__out)({start})'
-    actual_step = f'decltype(__out)({actual_step})'
+    start = f'{dtype.ctype}({start})'
+    actual_step = f'{dtype.ctype}({actual_step})'
 
     state.add_mapped_tasklet(name="_numpy_arange_",
                              map_ranges={'__i': f"0:{shape[0]}"},
@@ -337,8 +359,17 @@ def _linspace(pv: ProgramVisitor,
 
     # Start and stop are broadcast together, then, a new dimension is added to axis (taken from ``ndim + 1``),
     # along which the numbers are filled.
-    start_shape = sdfg.arrays[start].shape if (isinstance(start, str) and start in sdfg.arrays) else []
-    stop_shape = sdfg.arrays[stop].shape if (isinstance(stop, str) and stop in sdfg.arrays) else []
+    def _endpoint_shape(x):
+        # numpy.linspace of 0-d (scalar) endpoints is 1-D of length ``num``. A DaCe Scalar reports shape
+        # (1,), which would otherwise add a spurious trailing axis -- making the result (num, 1), a column
+        # that then mis-broadcasts against other 1-D arrays. Treat a true scalar endpoint as contributing
+        # no dimensions; a genuine size-1 *array* endpoint keeps its (1,) shape (numpy also returns a column).
+        if isinstance(x, str) and x in sdfg.arrays and not isinstance(sdfg.arrays[x], data.Scalar):
+            return sdfg.arrays[x].shape
+        return []
+
+    start_shape = _endpoint_shape(start)
+    stop_shape = _endpoint_shape(stop)
 
     shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
     shape_with_axis = _add_axis_to_shape(shape, axis, num)
@@ -360,6 +391,9 @@ def _linspace(pv: ProgramVisitor,
         if dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16, dtypes.uint32,
                      dtypes.uint64):
             dtype = dtypes.dtype_to_typeclass(float)
+    elif not isinstance(dtype, dtypes.typeclass):
+        # An explicitly passed dtype arrives as a numpy type; the tasklet body below needs ``ctype``.
+        dtype = dtypes.dtype_to_typeclass(dtype)
 
     outname = pv.get_target_name()
     outname, _ = sdfg.add_transient(outname, shape_with_axis, dtype, find_new_name=True)
@@ -368,23 +402,32 @@ def _linspace(pv: ProgramVisitor,
         num -= 1
 
     # Fill in input memlets as necessary
+    def _endpoint_index(name, ind):
+        # A broadcast index if the endpoint carries one; else a scalar endpoint (no broadcast axis) must
+        # still read its single element explicitly ([0]) so memlet propagation sees a concrete subset
+        # rather than a bare, subset-less scalar memlet (which trips propagation with a None range).
+        if ind:
+            return f'[{ind}]'
+        return '[0]' if isinstance(sdfg.arrays[name], data.Scalar) else ''
+
     inputs = {}
     if isinstance(start, str) and start in sdfg.arrays:
-        index = f'[{ind1}]' if ind1 else ''
-        inputs['__start'] = Memlet(f'{start}{index}')
+        inputs['__start'] = Memlet(f'{start}{_endpoint_index(start, ind1)}')
         startcode = '__start'
     else:
         startcode = symbolic.symstr(start)
 
     if isinstance(stop, str) and stop in sdfg.arrays:
-        index = f'[{ind2}]' if ind2 else ''
-        inputs['__stop'] = Memlet(f'{stop}{index}')
+        inputs['__stop'] = Memlet(f'{stop}{_endpoint_index(stop, ind2)}')
         stopcode = '__stop'
     else:
         stopcode = symbolic.symstr(stop)
 
     # Create tasklet code based on inputs
-    code = f'__out = {startcode} + __sind * decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})'
+    # Compute the step first (``i * (delta/num)``), matching numpy.linspace's ``start + arange*step`` order.
+    # Multiplying before dividing (``i*delta/num``) is a different floating-point rounding and is not
+    # bit-exact with numpy.
+    code = f'__out = {startcode} + __sind * ({dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)}))'
 
     state.add_mapped_tasklet(name="linspace",
                              map_ranges=ranges_with_axis,
@@ -410,12 +453,11 @@ def _linspace(pv: ProgramVisitor,
         stepname, _ = sdfg.add_scalar(stepname, dtype, transient=True, find_new_name=True)
         out_index = '[0]'
 
-    state.add_mapped_tasklet(
-        'retstep',
-        ranges,
-        copy.deepcopy(inputs),
-        f'__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})',
-        {'__out': Memlet(f"{stepname}{out_index}")},
-        external_edges=True)
+    state.add_mapped_tasklet('retstep',
+                             ranges,
+                             copy.deepcopy(inputs),
+                             f'__out = {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})',
+                             {'__out': Memlet(f"{stepname}{out_index}")},
+                             external_edges=True)
 
     return outname, stepname

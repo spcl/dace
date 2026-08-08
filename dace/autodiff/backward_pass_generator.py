@@ -1535,9 +1535,12 @@ class BackwardPassGenerator:
 
                 # Input names on the forward node that gradients should be generated for
                 # note that the edge for the conditional is not included
+                # An empty memlet is an ordering edge: it carries no data, so it has no gradient and
+                # no ``data`` to look the descriptor up by. Tested first -- it is a field read, and
+                # it guards the dict lookup that would otherwise raise ``KeyError: None``.
                 required_gradients = [
                     edge.dst_conn for edge in subgraph.in_edges(node)
-                    if ad_utils.path_src_node_in_subgraph(edge, subgraph)
+                    if not edge.data.is_empty() and ad_utils.path_src_node_in_subgraph(edge, subgraph)
                     and self.sdfg.arrays[edge.data.data].dtype != dace.bool
                 ]
 
@@ -1602,6 +1605,10 @@ class BackwardPassGenerator:
 
                     # If there is an incoming edge, we need to zero-out the gradient
                     for edge in incoming_edges:
+                        # An ordering edge writes nothing, so it overwrites nothing and there is no
+                        # gradient to clear. It also has no subset to measure.
+                        if edge.data.is_empty():
+                            continue
 
                         # Check, if possible, if the written subset is not zero
                         write_size = edge.data.subset.num_elements()

@@ -55,7 +55,7 @@ def test_libnode_expansion():
 
 @pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG(f"redundant_array_1_into_2_dims_{copy_subset}_{nonstrict}")
     state = sdfg.add_state()
 
     sdfg.add_array("I", [9], dtype=dace.float32, transient=False)
@@ -87,7 +87,7 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
 
 @pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG(f"redundant_array_2_into_1_dim_{copy_subset}_{nonstrict}")
     state = sdfg.add_state()
 
     sdfg.add_array("I", [3, 3], dtype=dace.float32, transient=False)
@@ -118,7 +118,7 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
 
 
 def test_unsqueeze_view_removal():
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG("unsqueeze_view_removal")
     state = sdfg.add_state()
 
     sdfg.add_view("T", [9], dtype=dace.float32)
@@ -144,7 +144,7 @@ def test_unsqueeze_view_removal():
 
 
 def test_view_offset_removal():
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG("view_offset_removal")
     state = sdfg.add_state()
 
     i = dace.symbol('i')
@@ -197,7 +197,7 @@ def test_transient_removal_uneven_flow_through_map():
     The final output `Y` should contain zeros everywhere except for the last
     column, which should be the same as the last column of `X`.
     """
-    g = dace.SDFG("testing")
+    g = dace.SDFG("transient_removal_uneven_flow_through_map")
     st0 = g.add_state()
     st1 = g.add_state_after(st0)
 

@@ -16,7 +16,9 @@ jobs:
   test:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10','3.14']
         simplify: [0,1,autoopt]
@@ -25,22 +27,35 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+    - uses: ./.github/actions/setup-dace
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+        # cBLAS / LAPACK / FFTW3 / PAPI.
+        # g++-aarch64-linux-gnu: aarch64 cross C++ toolchain (driver + libstdc++/glibc
+        # sysroot) for the NEON/SVE -fsyntax-only intrinsic-header tests in
+        # tests/passes/vectorization/intrinsics/test_horizontal_reduce_header.py. Without
+        # it those tests skip (the host is x86_64; clang alone can't supply an aarch64
+        # standard-library sysroot).
+        # gpg-agent/wget + libfftw3-dev + Intel oneAPI MKL (below): headers/link libs for
+        # the FFTW3 FFT lowering and the cBLAS/MKL BLAS extension library nodes from FaCe.
+        apt-packages: >-
+          libyaml-dev cmake gpg-agent wget
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libpapi-dev papi-tools g++-aarch64-linux-gnu
+        pip-packages: flake8 pytest-xdist coverage
+        codecov: 'true'
+
+    - name: Install Intel oneAPI MKL
+      # Add the official Intel apt repo, then install the dev meta-package so
+      # headers (``mkl.h``) and link libs are both available to the codegen
+      # path.  Pinned-key + signed-by to keep the install reproducible.
       run: |
-        # Make dependency setup faster
-        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
-        sudo dpkg-reconfigure man-db
-        # Install dependencies
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
-        pip install flake8 pytest-xdist coverage
-        pip install -e ".[testing]"
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
 
     - name: Test dependencies
       run: |
@@ -59,7 +74,8 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not layout"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
@@ -76,6 +92,88 @@ jobs:
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ./codecov
+
+    - name: Test OpenBLAS BLAS extension nodes
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "openblas"
+        ./codecov
+
+    - name: Test cBLAS / MKL BLAS extension nodes
+      # Runs all ``mkl``-marked tests: the existing per-routine BLAS tests
+      # (Dot / Axpy / Gemm / etc.) that exercise the ``MKL`` backend
+      # explicitly, plus the new SCAL/NRM2/ASUM/IAMAX/COPY/SWAP +
+      # TRSV/TRMV/SYMV + TRSM/TRMM/SYMM/SYRK extension nodes that drive
+      # the ``OpenBLAS`` backend.  Both backends share the cBLAS C ABI;
+      # oneMKL provides ``libmkl_rt`` and ``mkl.h`` for the MKL path.
+      run: |
+        # Source Intel oneAPI environment so ``MKLROOT`` / link flags
+        # are populated for the MKL expansion's CMake env.
+        source /opt/intel/oneapi/setvars.sh || true
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        # ``not loop2x_libnodes``: the Syrk/Symm MKL parametrizations moved to the loop2x-libnodes
+        # runner, which now installs oneAPI MKL itself. Running them here too would double the
+        # 104 compile-heavy cases.
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl and not loop2x_libnodes"
+        ./codecov
+
+    - name: Test FFTW3 FFT lowering
+      # ``libfftw3-dev`` is already installed in the "Install dependencies"
+      # step; this step runs the ``fftw``-marked tests for the FFT library's
+      # CPU backend.
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
+        ./codecov
+
+    - name: Test TBLIS CPU tensor contraction
+      # TBLIS has no apt package, so build the shared library from source (the
+      # same CMake recipe as a local install) and point ``TBLIS_ROOT`` at it.
+      # Runs the ``tblis``-marked TensorDot tests (compile + run vs numpy).
+      run: |
+        sudo apt-get install -y libhwloc-dev
+        git clone --depth 1 --recursive https://github.com/MatthewsResearchGroup/tblis.git /tmp/tblis
+        cmake -S /tmp/tblis -B /tmp/tblis/build -DCMAKE_INSTALL_PREFIX=/usr/local
+        cmake --build /tmp/tblis/build -j"$(nproc)"
+        sudo cmake --install /tmp/tblis/build
+        sudo ldconfig
+        export TBLIS_ROOT=/usr/local
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "tblis"
         ./codecov
 
     - name: Run sequential tests

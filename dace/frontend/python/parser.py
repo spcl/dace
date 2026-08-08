@@ -107,7 +107,9 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
+            # Distributed descriptors (process grids, subarrays) have no strides
+            desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
+            symbolic_values = list(desc.shape) + list(desc_strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
@@ -127,6 +129,11 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                         symbols.add(newsym)
                         exclude.add(sym)
                     repldict[sym] = newsym
+
+                # ``ipow`` is a codegen-only spelling of ``Pow``; restore ``Pow`` so ``solve`` can
+                # invert the shape. A Function-head rewrite can't ride in ``repldict`` (symbol
+                # rename), so do it here.
+                sym_dim = symbolic.relax_ipow(sym_dim)
 
                 # Replace symbols with __SOLVE_ symbols so as to allow
                 # the same symbol in the called SDFG

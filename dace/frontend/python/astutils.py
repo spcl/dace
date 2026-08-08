@@ -16,7 +16,8 @@ from dace import symbolic
 # ``newast``. Declared as class-level defaults so readers use plain attribute access instead of
 # ``getattr(node, name, default)`` -- ``ast`` nodes cannot take an ``__init__`` default. The defaults
 # are immutable and only ever overridden per-instance (never mutated in place), so sharing them across
-# every node of the class is safe.
+# every node of the class is safe. ``toplevel`` lives on the ``ast.AST`` base because it is read while
+# walking nodes of every type; ``skip_args`` / ``skip_keywords`` are only set on and read from calls.
 ast.AST.toplevel = False
 ast.Call.skip_args = ()
 ast.Call.skip_keywords = ()
@@ -216,6 +217,16 @@ class ExtUnparser(astunparse.Unparser):
         else:
             super()._Constant(t)
 
+    def _Attribute(self, t):
+        self.dispatch(t.value)
+        # Special case: 3.__abs__() is a syntax error, so if t.value is an integer literal
+        # then we need to add an extra space to get 3 .__abs__(). astunparse checks this via
+        # ``ast.Num``, which was removed in Python 3.12; an int Constant is the same check.
+        if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
+            self.write(" ")
+        self.write(".")
+        self.write(t.attr)
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
@@ -239,9 +250,11 @@ def unparse(node):
         v = StringIO()
         ExtUnparser(node, file=v)
         return v.getvalue().strip()
-    # Support for SymPy expressions
+    # Support for SymPy expressions. ``allow_unknown_functions`` prints DaCe's own symbolic
+    # functions (``int_floor``, ``int_ceil``, ...) verbatim; without it sympy has no printer
+    # method for them and raises instead of unparsing.
     if isinstance(node, sympy.Basic):
-        return sympy.printing.pycode(node)
+        return sympy.printing.pycode(node, allow_unknown_functions=True)
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)

@@ -23,6 +23,11 @@ from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
 
 from dace.libraries.torch.dispatchers.common import DaceTorchFunction, compile_and_init_sdfgs, get_arglist
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -106,14 +111,22 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # Format the values as a C++ initializer list
         values_str = ', '.join(format_value(v, desc.dtype) for v in values)
 
+        # ``from_blob`` wraps the given HOST pointer without copying; passing
+        # ``.device(kCUDA)`` here does NOT move the data to the GPU, it just
+        # mislabels a host buffer as CUDA (torch then raises "pointer resides on
+        # host memory ..." on the first device op). Always build on kCPU from the
+        # host initializer list, then ``.to(kCUDA)`` to actually copy device-side
+        # (mirrors ``constant_initializer_code``). For a host descriptor, a plain
+        # ``.clone()`` takes ownership of the leaked buffer as before.
+        to_device = ('.to(torch::kCUDA)' if desc.storage in GPU_RESIDENT_STORAGES else '.clone()')
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
-                    .layout(torch::kStrided)).clone();
+                    .device(torch::kCPU)
+                    .layout(torch::kStrided)){to_device};
             """
     else:
         # Initialize with zeros or empty
@@ -122,7 +135,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in GPU_RESIDENT_STORAGES else 'kCPU'})
                     .layout(torch::kStrided));
             """
 
@@ -632,12 +645,40 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     unique_build_dir = os.path.join(build_root, unique_name)
     os.makedirs(unique_build_dir, exist_ok=True)
 
+    # GPU SDFGs: the DaCe-generated CPU sources reference CUDA declarations
+    # (gpuStream_t, dace::cuda::Context, kernel-launch wrappers) that the DaCe runtime
+    # headers gate behind WITH_CUDA, and the kernel definitions live in the
+    # separately-built SDFG libraries. Mirror the generated CMake (-DWITH_CUDA, CUDA
+    # include dirs via with_cuda=True) and link the SDFG libraries so those symbols
+    # resolve in the extension.
+    extra_cflags = ["-g"]
+    extra_ldflags = []
+
+    # ``has_gpu_code`` keys off dtypes.GPU_STORAGES (only GPU_Shared) + GPU schedules, so an SDFG
+    # that is GPU-resident but only moves data (GPU_Global arrays + stream copies, no kernels --
+    # e.g. a pure Reshape) reports False. The generated CPU source still references gpuStream_t /
+    # dace::cuda::Context, so detect GPU residency broadly.
+    def _is_gpu_sdfg(c):
+        if c.has_gpu_code:
+            return True
+        return any(desc.storage in GPU_RESIDENT_STORAGES for _, _, desc in c.sdfg.arrays_recursive())
+
+    with_cuda = any(_is_gpu_sdfg(c) for c in compiled_sdfgs)
+    if with_cuda:
+        extra_cflags.append("-DWITH_CUDA")
+        for c in compiled_sdfgs:
+            libpath = os.path.abspath(c.filename)
+            extra_ldflags.append(libpath)
+            extra_ldflags.append(f"-Wl,-rpath,{os.path.dirname(libpath)}")
+
     # We pass unique name + unique build directory to avoid FileBaton contention
     torch_load(
         name=unique_name,
         sources=sources,
         build_directory=unique_build_dir,
-        extra_cflags=["-g"],
+        extra_cflags=extra_cflags,
+        extra_ldflags=extra_ldflags,
+        with_cuda=with_cuda,
         extra_include_paths=[
             p for p in {
                 include_path,

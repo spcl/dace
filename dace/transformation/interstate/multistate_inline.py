@@ -105,7 +105,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
+                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -124,7 +125,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
+                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
@@ -186,9 +188,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        # Replace symbols using invocation symbol mapping.
+        #
+        # Split the mapping into IDENTITY (``inner_K = inner_K``) and
+        # NON-IDENTITY (``inner_K = outer_expr``). Only the non-identity
+        # entries change anything; substituting them inline would
+        # propagate ``outer_expr`` into every memlet/condition that
+        # referenced ``inner_K``. Instead we lower the non-identity
+        # entries to interstate-edge ASSIGNMENTS on the edge
+        # ``predecessor_state -> source`` (the edge that enters the
+        # inlined SDFG), so the inner code keeps using ``inner_K`` and
+        # the parent sees ``inner_K = outer_expr`` as a normal iedge
+        # assignment. Inner symbols absent from the outer scope get
+        # added to the outer SDFG's symbol table with their inner
+        # type, preserving the strict-typing contract.
+        identity_mapping: Dict[Any, Any] = {}
+        non_identity_mapping: Dict[str, str] = {}
+        for k, v in nsdfg_node.symbol_mapping.items():
+            if str(k) == str(v):
+                identity_mapping[k] = v
+            else:
+                non_identity_mapping[str(k)] = symbolic.symstr(v)
+        # Two-step replacement (N -> __dacesym_N --> map[N]) for any
+        # identity entries we want safe_replace's clash-handling for.
+        if identity_mapping:
+            symbolic.safe_replace(identity_mapping, nsdfg.replace_dict)
 
         #######################################################
         # Collect and modify interstate edges as necessary
@@ -208,15 +232,33 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(b, LoopRegion):
                 if b.loop_variable is not None:
                     inner_assignments.add(b.loop_variable)
+        # The non-identity symbol_mapping keys are lowered below to interstate-edge assignments
+        # (``inner_K = outer_expr``) planted on the edge entering the inlined SDFG, i.e. they become
+        # symbols *defined* inside the inlined region. Treat them like inner assignments so that, if such a
+        # key collides with a symbol used elsewhere in the outer SDFG (e.g. a callback of the same name used
+        # by a sibling branch), it is disambiguated to a fresh name instead of hijacking the outer symbol
+        # and dropping it from the compiled signature (which left an uninitialized callback pointer -> crash).
+        inner_assignments |= set(non_identity_mapping.keys())
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
+        # Inner symbols that received their value from an IDENTITY symbol-mapping entry
+        # (outer ``K`` -> inner ``K``, lowered above via ``safe_replace`` as a no-op rename).
+        # Renaming such a symbol on collision (below) severs that implicit outer->inner link.
+        identity_names = {str(k) for k in identity_mapping}
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
+            # ``assign`` was inner == outer (identity map) but is now renamed to ``newname``; the
+            # outer value no longer reaches the inlined region. Re-establish it as a non-identity
+            # assignment ``newname = assign`` (planted on the entry edge below) so the inlined
+            # region is initialized from the outer symbol -- otherwise ``newname`` is undefined
+            # (e.g. an external loop-init symbol whose inner name collides with the outer one).
+            if assign in identity_names:
+                non_identity_mapping[assign] = assign
         nsdfg.replace_dict(sym_replacements)
 
         #######################################################
@@ -297,9 +339,33 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         source = nsdfg.start_state
         sinks = nsdfg.sink_nodes()
 
-        # Reconnect state machine
+        # Apply disambiguation rename to non-identity symbol-mapping keys
+        # so the iedge assignments use the post-rename name.
+        non_identity_mapping = {sym_replacements.get(k, k): v for k, v in non_identity_mapping.items()}
+
+        # Reconnect state machine. For each edge ``predecessor -> nsdfg_state``
+        # we redirect it to ``predecessor -> source``; while doing so, plant the
+        # non-identity symbol_mapping entries as interstate-edge assignments
+        # on that edge. The inner code keeps its inner-symbol names and the
+        # parent's state machine binds them on entry.
         for e in outer_state.parent_graph.in_edges(nsdfg_state):
-            outer_state.parent_graph.add_edge(e.src, source, e.data)
+            new_data = e.data
+            if non_identity_mapping:
+                new_data = dc(new_data)
+                # Existing assignments win (caller may have already bound
+                # the same name); add only those that aren't already there.
+                for sym, expr in non_identity_mapping.items():
+                    if sym not in new_data.assignments:
+                        new_data.assignments[sym] = expr
+            outer_state.parent_graph.add_edge(e.src, source, new_data)
+            # Add new symbols to the outer SDFG so the iedge assignments
+            # validate against the outer scope.
+            if non_identity_mapping:
+                for sym in non_identity_mapping:
+                    if sym not in sdfg.symbols:
+                        inner_type = nsdfg.symbols.get(sym, None)
+                        if inner_type is not None:
+                            sdfg.add_symbol(sym, inner_type)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
                 outer_state.parent_graph.add_edge(sink, e.dst, dc(e.data))

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from common import compare_numpy_output
 import pytest
@@ -188,6 +187,24 @@ def test_linspace_6():
     return np.linspace(-5, 5.5, dtype=np.float32)
 
 
+@compare_numpy_output()
+def test_linspace_scalar_default_num():
+    # Scalar endpoints with the default num=50: the endpoints have empty shape and the
+    # step-first formula must reproduce numpy's samples.
+    return np.linspace(0.0, 1.0)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_endpoint_false():
+    return np.linspace(2.0, 7.0, num=13, endpoint=False)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_retstep():
+    space, step = np.linspace(-3.0, 4.0, num=9, retstep=True)
+    return space, step
+
+
 @dace.program
 def program_strides_0():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
@@ -258,15 +275,15 @@ def test_zeros_symbolic_size_scalar():
 
 
 def test_ones_scalar_size_scalar():
+    """A size held in a scalar is read into a symbol, so it can be used as an extent."""
 
     @dace.program
     def ones_scalar_size(k: dace.int32):
         a = np.ones(k, dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20
 
 
 def test_ones_scalar_size():
@@ -276,9 +293,8 @@ def test_ones_scalar_size():
         a = np.ones((k, k), dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20 * 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20 * 20
 
 
 if __name__ == "__main__":

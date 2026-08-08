@@ -35,11 +35,42 @@ from typing import BinaryIO
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
+#: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
+#: which is optional and initializes MPI. All are job-unique; node-local counters are not.
+LAUNCHER_RANK_VARS = (
+    'OMPI_COMM_WORLD_RANK',  # Open MPI and the vendor MPIs built on it
+    'MV2_COMM_WORLD_RANK',  # MVAPICH2
+    'PMIX_RANK',  # Open MPI 4+, Slurm pmix
+    'PMI_RANK',  # MPICH, Intel MPI, Cray MPICH
+    'PMI_ID',  # older MPICH
+    'FLUX_TASK_RANK',  # Flux
+    'PALS_RANKID',  # HPE/Cray PALS
+    'ALPS_APP_PE',  # Cray ALPS
+    'SLURM_PROCID',  # srun with no MPI
+)
+
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
+
+
+def build_folder_root() -> str:
+    """The build cache root, one per rank if ``cache_distaware`` is on and a launcher set a rank.
+
+    Ranks that each compile otherwise share a folder and can load each other's half-written library.
+    A process no launcher started has no rank variable and keeps the unsuffixed root, so ordinary
+    single-process runs name their cache exactly as they always did.
+    """
+    base = Config.get('default_build_folder')
+    if not Config.get_bool('cache_distaware'):
+        return base
+    for var in LAUNCHER_RANK_VARS:
+        rank = os.environ.get(var)
+        if rank:
+            return f'{base}_rank{rank}'
+    return base
 
 
 class NestedDict(dict):
@@ -49,6 +80,9 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
+        # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
+        if type(key) is str and '.' not in key:
+            return super(NestedDict, self).__getitem__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
@@ -63,6 +97,8 @@ class NestedDict(dict):
         super(NestedDict, self).__setitem__(key, val)
 
     def __contains__(self, key):
+        if type(key) is str and '.' not in key:  # fast path, as in __getitem__
+            return super(NestedDict, self).__contains__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)
@@ -346,7 +382,11 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
+                # expression, or a Symbol carrying assumptions that maps a name to itself)
+                # must not become an assignment key -- only rename when new_name is a valid name.
+                if validate_name(new_name):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
             vast = ast.parse(v)
@@ -476,6 +516,16 @@ class SDFG(ControlFlowRegion):
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
+    openmp_array_reductions = Property(
+        dtype=bool,
+        default=False,
+        desc='Whether codegen may emit OpenMP array-section reduction clauses '
+        '(``reduction(op:A[0:n])``, plus ``#pragma omp declare reduction`` for complex '
+        'element types) for whole-buffer WCR accumulators of a parallel map, instead of '
+        'per-element atomics. Off by default (atomic path); the canonicalize pipeline turns '
+        'it on for its output. Only provably-safe contiguous cases take the clause; anything '
+        'else falls back to the atomic path.')
+
     debuginfo = DebugInfoProperty(allow_none=True)
 
     callback_mapping = DictProperty(str,
@@ -550,13 +600,15 @@ class SDFG(ControlFlowRegion):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
-            if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist', 'guid'):
+            if k in ('_start_block', '_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg',
+                     '_parent_nsdfg_node', '_cfg_list', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
+        # Both name a block, so they are copied with the nodes to land on the copies rather than the originals.
+        result._start_block = copy.deepcopy(self._start_block, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         result._parent = memo.get(id(self._parent))
@@ -730,11 +782,19 @@ class SDFG(ControlFlowRegion):
             e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_block' in json_obj:
-            ret._start_block = json_obj['start_block']
+        if json_obj.get('start_block') is not None:
+            ret._start_block = nodelist[int(json_obj['start_block'])]
 
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
+
+        if ret.parent_sdfg is None:
+            # `to_json` rebuilds the CFG list before writing, but it is derived state that the JSON
+            # does not carry: on the way back in it is only whatever the nested `add_node` calls
+            # happened to accumulate. Left stale, `cfg_id` no longer round-trips, so every
+            # `PatternNode` lookup resolves against the wrong region and `can_be_applied` raises
+            # `NodeNotFoundError` -- which the matcher swallows, silently declining every match.
+            ret.reset_cfg_list()
 
         return ret
 
@@ -1212,12 +1272,20 @@ class SDFG(ControlFlowRegion):
         return s2t.as_schedule_tree(self, in_place=in_place)
 
     @property
+    def build_folder_is_default(self) -> bool:
+        """Whether the build folder follows the ``cache`` policy rather than being assigned.
+
+        An assigned folder belongs to whoever assigned it, so nothing may reclaim it.
+        """
+        return self._build_folder is None
+
+    @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
         if self._build_folder is not None:
             return self._build_folder
         cache_config = Config.get('cache')
-        base_folder = Config.get('default_build_folder')
+        base_folder = build_folder_root()
         if cache_config == 'single':
             # Always use the same directory, overwriting any other program,
             # preventing parallelism and caching of multiple programs, but
@@ -1377,11 +1445,6 @@ class SDFG(ControlFlowRegion):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def remove_node(self, node: SDFGState):
-        if node is self._cached_start_block:
-            self._cached_start_block = None
-        return super().remove_node(node)
-
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
@@ -1440,20 +1503,29 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand array-descriptor stride/shape/offset symbols into the free
-        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
-        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
-        # out of the computed free-symbol set, causing
-        # ``generate_nsdfg_header`` to emit a nested function signature
-        # missing those symbols, ceating an invalid SDFG.
+        # A used array needs its stride/shape/offset symbols in the free set, but a
+        # merely-declared one must not leak its shape symbol into the signature
+        # (issue #2382). ``read_and_write_sets`` already reports exactly the arrays
+        # that are used -- read or written, including those referenced only by a
+        # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            for desc in self.arrays.values():
-                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            read_set, write_set = self.read_and_write_sets()
+            extents = set()
+            for name in (read_set | write_set) & self.arrays.keys():
+                extents |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            extents -= res_free
+            if extents:
+                # A transient sized by its enclosing map parameter (``t[_loop_it_0]`` under ``map
+                # _loop_it_0``) is allocated where that parameter is defined, so its extent is no
+                # argument; the block analysis already dropped it and this must not put it back.
+                scope_syms = set()
+                for state in self.all_states():
+                    for node in state.nodes():
+                        if isinstance(node, nd.EntryNode):
+                            scope_syms |= node.new_symbol_names(state)
+                res_free |= extents - scope_syms
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
@@ -1823,6 +1895,13 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
+        # Also avoid clashing with existing tasklet connector names: a transform
+        # minting e.g. ``add_scalar('tmp', find_new_name=True)`` must not pick a
+        # name already used as a connector (validation rejects the collision).
+        for st in self.states():
+            for n in st.nodes():
+                if isinstance(n, nd.CodeNode):
+                    names |= n.in_connectors.keys() | n.out_connectors.keys()
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:
@@ -2149,17 +2228,33 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    # Names reserved by framework pipelines (currently just ``gpu_streams``
+    # for the gpu_specialization pipeline). User SDFG code can't add these;
+    # only the owning pipeline can, via ``_internal_use=True`` below.
+    RESERVED_NAMES = frozenset({"gpu_streams"})
+
+    def add_datadesc(self,
+                     name: str,
+                     datadesc: dt.Data,
+                     find_new_name: bool = False,
+                     _internal_use: bool = False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
             :param find_new_name: If True and data descriptor with this name
                                   exists, finds a new name to add.
+            :param _internal_use: Bypass for framework pipelines that own
+                                  reserved descriptor names (see
+                                  :attr:`RESERVED_NAMES`). Not for user code.
             :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if name in self.RESERVED_NAMES and not _internal_use:
+            raise NameError(f'Data descriptor name "{name}" is reserved for framework pipeline use. '
+                            f'Pick a different name.')
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
@@ -2555,6 +2650,7 @@ class SDFG(ControlFlowRegion):
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
+        compiler.register_disposable_folder(self)
 
         # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
         folder_mode = compiler.get_folder_mode(build_folder, probe=True)
@@ -3036,23 +3132,36 @@ class SDFG(ControlFlowRegion):
                                    permissive=permissive,
                                    states=states)
 
-    def expand_library_nodes(self, recursive=True):
+    def expand_library_nodes(self, recursive=True, predicate=None):
         """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
 
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
+        :param predicate: Optional ``node -> bool``. When given, only library nodes for
+                          which it returns True are expanded; the rest are left in place
+                          (e.g. an opaque node whose expansion is deferred to a later
+                          stage). Nested SDFGs are still descended into either way.
         """
 
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()
             expanded_something = False
-            for node in list(state.nodes()):  # Make sure we have a copy
+            # Expand ``expand_before_peers`` nodes first: their expansion inspects neighbouring
+            # library nodes and must see them un-expanded (``BackwardPass`` differentiates a
+            # ``Reduce`` via its registered backward rule, but only while it is still a library
+            # node -- once expanded it is an opaque C++ tasklet that autodiff cannot reverse).
+            # ``state.nodes()`` is otherwise in arbitrary graph order, so this was a coin flip.
+            for node in sorted(
+                    state.nodes(),  # sorted() also gives us the required copy
+                    key=lambda n: not (isinstance(n, nd.LibraryNode) and n.expand_before_peers)):
                 if isinstance(node, nd.NestedSDFG):
-                    node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
+                    node.sdfg.expand_library_nodes(recursive=recursive, predicate=predicate)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
+                    if predicate is not None and not predicate(node):
+                        continue
                     impl_name = node.expand(state)
                     if Config.get_bool('debugprint'):
                         print('Automatically expanded library node \"{}\" with '

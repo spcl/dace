@@ -1,0 +1,60 @@
+name: Integration Tests
+
+# End-to-end integration tests (CloudSC dwarf): the full transform/parallelize
+# chains on the real kernel, compared step-by-step to the un-transformed reference.
+# They build and compile the multi-thousand-line CloudSC SDFG many times, so they
+# are far too slow for the per-push ``General Tests`` matrix (which excludes the
+# ``integration`` marker). This workflow runs them on pull requests to the release
+# branches, nightly, and on demand.
+
+on:
+  pull_request:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  cloudsc-e2e:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: CloudSC end-to-end integration tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # The chains drive simplification explicitly (build with ``simplify=False``,
+        # then apply it as a step), so pin the automatic heuristic off.
+        export DACE_optimizer_automatic_simplification=0
+        # Each parametrized regime builds and compiles the whole SDFG repeatedly;
+        # a couple of workers parallelize the regimes without oversubscribing memory.
+        # ``--dist loadfile`` keeps every test of a file on one worker, so each file's
+        # module-scoped CloudSC build is paid once instead of once per worker.
+        # 2400s does not cover the canonicalize file: one ``canonicalize`` call on the
+        # 6342-block CloudSC SDFG is over an hour on a loaded 16-core box, and the fixture
+        # that pays it is billed to whichever test runs first.
+        # The two tests/canonicalize entries are integration-marked for the same reason and were
+        # previously collected by the canonicalization workflow, whose 600s per-test cap kills them.
+        pytest -n 2 --dist loadfile -m integration --tb=short --timeout_method thread --timeout=7200 \
+          tests/corpus/cloudsc/cloudsc_parallelize_chain_test.py \
+          tests/corpus/cloudsc/cloudsc_transform_chain_test.py \
+          tests/corpus/cloudsc/cloudsc_canonicalize_test.py \
+          tests/canonicalize/cloudsc_canonicalize_staged_test.py \
+          tests/canonicalize/canonicalize_determinism_test.py

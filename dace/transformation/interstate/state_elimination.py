@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ State elimination transformations """
 
-import networkx as nx
+from dace import graphlib as nx
 from typing import Dict, Set
 
 from dace import data as dt, sdfg, symbolic

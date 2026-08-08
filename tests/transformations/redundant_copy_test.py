@@ -7,8 +7,9 @@ from typing import Tuple
 import dace
 from dace import nodes, data as dace_data
 from dace.libraries.linalg import Transpose
-from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
-                                          RedundantArrayCopyingIn)
+from dace.transformation.dataflow import (MapFusionVertical, RedundantArray, RedundantSecondArray,
+                                          RedundantArrayCopying, RedundantArrayCopyingIn)
+from dace.transformation.interstate import LoopToMap
 
 from . import utility
 
@@ -125,6 +126,69 @@ def test_reshaping_with_redundant_arrays():
 
     sdfg(input=input_array, output=output_step2)
     assert np.all(ref == output_step2)
+
+
+def test_ordering_edge_is_not_a_redundant_copy():
+    """An empty memlet between two AccessNodes is happens-before ordering, not a copy.
+
+    ``_validate_subsets`` has no subsets to read on such an edge and raises; the transformations used to
+    reach it and swallow the raise behind a ``validate_subsets failed`` warning. CloudSC canon_cpu emitted
+    that warning on every ordering edge in the graph.
+    """
+    import warnings as _warnings
+
+    sdfg = dace.SDFG('ordering_edge_not_a_copy')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_transient('t', [4], dace.float64)
+    state = sdfg.add_state('s', is_start_block=True)
+    tasklet = state.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    t_access, a_access = state.add_access('t'), state.add_access('a')
+    state.add_edge(tasklet, 'o', t_access, None, dace.Memlet('t[0]'))
+    state.add_edge(t_access, None, a_access, None, dace.Memlet())  # ordering only, no data
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
+        noisy = [str(w.message) for w in caught if 'validate_subsets failed' in str(w.message)]
+
+    assert not noisy, f'ordering edge treated as a copy candidate: {noisy}'
+    assert state.edges_between(t_access, a_access), 'the ordering edge must survive'
+
+
+@pytest.mark.parametrize('shape', [[1], [1, 1]])
+def test_redundant_scalar_copy_is_removed(shape):
+    """An all-size-1 buffer copied into another must still be recognized as redundant.
+
+    Both transformations compare a ``squeeze``d subset against a hand-squeezed shape. ``Range.squeeze``
+    keeps one dimension rather than going to zero, so dropping every size-1 entry from the shape made
+    the two disagree and the copy that scalar fission emits was never removed.
+    """
+    for trafo, survivor in ((RedundantArray, 's'), (RedundantSecondArray, 'q')):
+        sdfg = dace.SDFG(f'redundant_scalar_{trafo.__name__}_{len(shape)}')
+        sdfg.add_array('a', [4], dace.float64)
+        sdfg.add_array('b', [4], dace.float64)
+        sdfg.add_transient('q', shape, dace.float64)
+        sdfg.add_transient('s', shape, dace.float64)
+        state = sdfg.add_state('s', is_start_block=True)
+
+        index = ', '.join('0' for _ in shape)
+        producer = state.add_tasklet('w', {'i'}, {'o'}, 'o = i * 2.0')
+        q_access, s_access = state.add_access('q'), state.add_access('s')
+        state.add_edge(state.add_access('a'), None, producer, 'i', dace.Memlet('a[0]'))
+        state.add_edge(producer, 'o', q_access, None, dace.Memlet(f'q[{index}]'))
+        state.add_edge(q_access, None, s_access, None, dace.Memlet(f'q[{index}] -> [{index}]'))
+        consumer = state.add_tasklet('r', {'i'}, {'o'}, 'o = i + 1.0')
+        state.add_edge(s_access, None, consumer, 'i', dace.Memlet(f's[{index}]'))
+        state.add_edge(consumer, 'o', state.add_access('b'), None, dace.Memlet('b[0]'))
+        sdfg.validate()
+
+        assert sdfg.apply_transformations_repeated(trafo, validate_all=True) == 1, trafo.__name__
+        assert sorted({n.data for n in state.data_nodes()}) == ['a', 'b', survivor]
+
+        a = np.arange(1, 5, dtype=np.float64)
+        b = np.zeros(4, dtype=np.float64)
+        sdfg(a=a, b=b)
+        assert b[0] == 3.0, f'{trafo.__name__} changed the result: {b[0]}'
 
 
 def test_out():
@@ -306,6 +370,58 @@ def test_in():
     D_arr = np.zeros_like(A_arr)
     sdfg(A=A_arr, D=D_arr)
     assert np.allclose(A_arr, D_arr.T)
+
+
+def test_in_failure_partial_copy():
+    """RedundantArrayCopyingIn must refuse a chain whose copies are not full
+    identity copies: ``A -> B -> C -> D`` where only ``B[0:2]`` flows through.
+    Collapsing the writers of ``B`` straight onto ``D`` would silently widen the
+    partial copy to a full one and corrupt the region the chain never wrote."""
+
+    def build():
+        sdfg = dace.SDFG('rcin_failure_partial_copy')
+        state = sdfg.add_state()
+        sdfg.add_array('A', [4], dace.float64)
+        sdfg.add_transient('B', [4], dace.float64)
+        sdfg.add_transient('C', [4], dace.float64)
+        sdfg.add_array('D', [4], dace.float64)
+        A, B, C, D = (state.add_access(x) for x in 'ABCD')
+        state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))  # B = A (full)
+        state.add_nedge(B, C, dace.Memlet('B[0:2] -> [0:2]'))  # C[0:2] = B[0:2] (partial)
+        state.add_nedge(C, D, dace.Memlet('C[0:2] -> [0:2]'))  # D[0:2] = C[0:2] (partial)
+        sdfg.validate()
+        return sdfg
+
+    sdfg = build()
+    applied = sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
+    assert applied == 0
+
+    A_arr = np.arange(1, 5, dtype=np.float64)
+    D_arr = np.zeros(4, dtype=np.float64)
+    sdfg(A=A_arr, D=D_arr)
+    assert np.allclose(D_arr, [1.0, 2.0, 0.0, 0.0])
+
+
+def test_in_failure_extra_consumer():
+    """RedundantArrayCopyingIn must refuse when the middle array feeds a second
+    consumer: ``apply`` removes the middle node, which would orphan that
+    consumer's source."""
+    sdfg = dace.SDFG('rcin_failure_extra_consumer')
+    state = sdfg.add_state()
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_transient('B', [4], dace.float64)
+    sdfg.add_transient('C', [4], dace.float64)
+    sdfg.add_array('D', [4], dace.float64)
+    sdfg.add_array('E', [4], dace.float64)
+    A, B, C, D, E = (state.add_access(x) for x in 'ABCDE')
+    state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))
+    state.add_nedge(B, C, dace.Memlet('B[0:4] -> [0:4]'))
+    state.add_nedge(C, D, dace.Memlet('C[0:4] -> [0:4]'))
+    state.add_nedge(C, E, dace.Memlet('C[0:4] -> [0:4]'))  # second consumer of C
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(RedundantArrayCopyingIn) == 0
+    assert C in state.nodes()
 
 
 def test_view_array_array():
@@ -529,6 +645,76 @@ def test_reshaping_not_zero_started_input(a_has_larger_rank_than_b: bool):
     assert all(np.allclose(ref[name], res[name]) for name in ref.keys())
 
 
+def test_redundant_second_array_across_map_exit():
+    """A map-body transient whose consumer is the enclosing map exit must still be removable.
+
+    ``MapExit -> B`` is written in ``B``'s terms and the map range supplies the dimensions the
+    ``(1, 1, 1)`` transient does not have, so that edge is not part of the redirection.
+    """
+    N, tsteps = dace.symbol('N'), dace.symbol('tsteps')
+
+    @dace.program
+    def heat3d(A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
+        for _ in range(1, tsteps):
+            B[1:-1, 1:-1,
+              1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                       (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                       (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
+            A[1:-1, 1:-1,
+              1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
+                       (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
+                       (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+
+    def is_unit_transient(sd, name):
+        desc = sd.arrays[name]
+        return desc.transient and all(str(size) == '1' for size in desc.shape)
+
+    def unit_transients(sdfg):
+        return [(sd.label, name) for sd in sdfg.all_sdfgs_recursive() for name in sd.arrays
+                if is_unit_transient(sd, name)]
+
+    def unit_transient_copies(sdfg):
+        return [(e.src.data, e.dst.data) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+                if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+                and is_unit_transient(sd, e.src.data) and is_unit_transient(sd, e.dst.data)]
+
+    sdfg = heat3d.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.apply_transformations_repeated(MapFusionVertical)
+
+    before = unit_transients(sdfg)
+    assert len(unit_transient_copies(sdfg)) == 1
+
+    sdfg.simplify()
+    sdfg.validate()
+
+    assert unit_transient_copies(sdfg) == []
+    assert len(unit_transients(sdfg)) == len(before) - 1
+
+    n, steps = 10, 20
+    idx = np.arange(n, dtype=np.float64)
+    ref_a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
+    ref_b = ref_a.copy()
+    for _ in range(1, steps):
+        ref_b[1:-1, 1:-1,
+              1:-1] = (0.125 * (ref_a[2:, 1:-1, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[:-2, 1:-1, 1:-1]) +
+                       0.125 * (ref_a[1:-1, 2:, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, :-2, 1:-1]) +
+                       0.125 * (ref_a[1:-1, 1:-1, 2:] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, 1:-1, :-2]) +
+                       ref_a[1:-1, 1:-1, 1:-1])
+        ref_a[1:-1, 1:-1,
+              1:-1] = (0.125 * (ref_b[2:, 1:-1, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[:-2, 1:-1, 1:-1]) +
+                       0.125 * (ref_b[1:-1, 2:, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, :-2, 1:-1]) +
+                       0.125 * (ref_b[1:-1, 1:-1, 2:] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, 1:-1, :-2]) +
+                       ref_b[1:-1, 1:-1, 1:-1])
+
+    a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
+    b = a.copy()
+    utility.compile_and_run_sdfg(sdfg, A=a, B=b, N=n, tsteps=steps)
+
+    assert np.array_equal(a, ref_a)
+    assert np.array_equal(b, ref_b)
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -546,3 +732,4 @@ if __name__ == '__main__':
     test_invalid_redundant_array_strided('F')
     test_reshaping_not_zero_started_input(True)
     test_reshaping_not_zero_started_input(False)
+    test_redundant_second_array_across_map_exit()

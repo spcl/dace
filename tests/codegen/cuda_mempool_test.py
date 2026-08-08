@@ -144,7 +144,8 @@ def test_memory_pool_multistate():
 
     code = sdfg.generate_code()[0].clean_code
     assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFreeAsync(pooled, __state->gpu_context->streams[0]') == 1
+    assert code.count('cudaFreeAsync(pooled, __state->gpu_context->streams[0]') == 1 or code.count(
+        'cudaFreeAsync(pooled, gpu_stream0') == 1
 
     # Test code
     import cupy as cp
@@ -198,7 +199,8 @@ def test_memory_pool_if_states(cnd):
     sdfg.validate()
     code = sdfg.generate_code()[0].clean_code
     assert code.count('cudaMallocAsync') == 1
-    assert code.count(f'cudaFreeAsync({tmp}, __state->gpu_context->streams[0]') == 1
+    assert code.count(f'cudaFreeAsync({tmp}, __state->gpu_context->streams[0]') == 1 or code.count(
+        f'cudaFreeAsync({tmp}, gpu_stream0') == 1
 
     # Test code
     import cupy as cp

@@ -1,0 +1,38 @@
+name: Set up DaCe (self-hosted venv)
+description: Clean ~/.venv and dependency install shared by the self-hosted runner jobs.
+
+# Callers must run ``actions/checkout@v7`` themselves, first (see .github/actions/setup-dace).
+# Every later step has to re-run ``source ~/.venv/bin/activate``: each step gets its own shell.
+
+inputs:
+  pip-packages:
+    description: Extra pip packages installed into the venv before DaCe itself.
+    default: pytest-xdist
+  extras:
+    description: DaCe extras for the editable install.
+    default: testing
+  codecov:
+    description: Also fetch the codecov uploader into the workspace.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        rm -f ~/.dace.conf
+        rm -rf .dacecache tests/.dacecache
+        python -m venv ~/.venv      # create venv so we can use pip
+        source ~/.venv/bin/activate # activate venv
+        python -m pip install --upgrade pip
+        pip install ${{ inputs.pip-packages }}
+        pip uninstall -y dace
+        pip install -e ".[${{ inputs.extras }}]"
+
+    - name: Install codecov uploader
+      if: inputs.codecov == 'true'
+      shell: bash
+      run: |
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov

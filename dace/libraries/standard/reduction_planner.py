@@ -198,6 +198,15 @@ def get_reduction_schedule(in_array: Array,
             if axes[j] > i:
                 axes[j] -= 1
 
+    # Nothing left to reduce: either the node reduces over no axes at all (a copy, which autodiff
+    # emits when reversing a reduction over a single-element input), or every dimension was
+    # degenerate and removed above. There is no device schedule to plan for that, and the code
+    # below assumes at least one axis, so report it and let the caller use the pure expansion.
+    if not axes or not shape:
+        schedule.error = ('Reduction has no non-degenerate axes to reduce. '
+                          'Falling back to pure expansion.')
+        return schedule
+
     # simplify the input
     shape, strides, axes, out_shape, out_strides = simplify_input(shape, strides, axes)
 
@@ -207,9 +216,21 @@ def get_reduction_schedule(in_array: Array,
     schedule.out_shape = out_shape
     schedule.out_strides = out_strides
 
+    # The contiguous dimension is the stride-1 dimension (NOT necessarily the
+    # innermost). If some dimension has stride 1, use it. If none does -- a strided
+    # input, e.g. a non-unit-stride View (``x[:, ::2]``) whose access ``view[i]``
+    # addresses ``i * stride`` -- take the smallest-stride dimension as the innermost
+    # and emit a STRIDED reduction (``strided_input`` below): CUB handles a static
+    # stride and memory accesses use the folded ``in_strides``, so it is correct;
+    # the contiguous-vectorized fast path (which assumes unit stride) is disabled.
+    contiguous_dimension = None
     for i, s in enumerate(strides):
         if s == 1:
             contiguous_dimension = i
+    strided_input = contiguous_dimension is None
+    if strided_input:
+        concrete = [i for i, s in enumerate(strides) if not symbolic.issymbolic(s)]
+        contiguous_dimension = min(concrete, key=lambda i: strides[i]) if concrete else len(strides) - 1
 
     if len(axes) > 1:
         # we need to compute a multi-axes reduction
@@ -225,18 +246,30 @@ def get_reduction_schedule(in_array: Array,
 
         axes = schedule.changed_axes
         shape = schedule.changed_in_shape
+        # Recompute the contiguous dimension over the inner reduction's strides (a
+        # different index space than the full input), with the same stride-1 /
+        # smallest-stride-strided fallback as above.
+        contiguous_dimension = None
         for i, s in enumerate(schedule.changed_in_strides):
             if s == 1:
                 contiguous_dimension = i
+        strided_input = contiguous_dimension is None
+        if strided_input:
+            concrete = [i for i, s in enumerate(schedule.changed_in_strides) if not symbolic.issymbolic(s)]
+            contiguous_dimension = (min(concrete, key=lambda i: schedule.changed_in_strides[i])
+                                    if concrete else len(schedule.changed_in_strides) - 1)
 
     # now compute the schedule depending on contiguous or strided reduction
     if contiguous_dimension in axes:
         # we are reducing the contiguous dimension
         schedule.contiguous_dim = True
 
-        # TODO: Fix vectorization for non-exact-fitting sizes
+        # TODO: Fix vectorization for non-exact-fitting sizes.
+        # Vectorized loads assume a unit-stride contiguous dimension; a strided
+        # input (no stride-1 dimension) must not vectorize -- it reduces with the
+        # folded ``in_strides`` instead.
         if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements
-                                                           == 0) == True and use_vectorization:
+                                                           == 0) == True and use_vectorization and not strided_input:
             schedule.vectorize = True
 
         # all non-reduced dimensions in grid

@@ -395,7 +395,16 @@ def test_inout_second_state_2():
 
     sdfg = func.to_sdfg(simplify=False)
     sdfg.simplify()
-    assert sdfg.number_of_nodes() == 2
+    # StateFusionExtended orders the copy before the in-place double with a happens-before
+    # edge, so the WAR survives a single state -- assert the values, not just the shape.
+    assert sdfg.number_of_nodes() == 1
+
+    A = np.random.rand(128, 128)
+    B = np.zeros((128, 128))
+    expected = A.copy()
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, expected)
+    assert np.allclose(A, 2 * expected)
 
 
 def test_check_paths():
@@ -492,6 +501,38 @@ def test_check_paths():
     assert not do_fuse
 
 
+def _fusible_single_cc(add_barrier: bool):
+    """Two states forming ONE connected component after fusion: ``s1`` writes ``A``,
+    ``s2`` reads ``A`` (true RAW dependence), so plain StateFusion fuses them into a
+    single state. When ``add_barrier`` is set the producer is marked side-effecting
+    (a fusion barrier / dace.callback / I/O tasklet) -- it stays part of that single
+    connected component, so a guard gated on the resulting-CC count would miss it."""
+    sdfg = dace.SDFG('state_fusion_side_effect_test')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+
+    produce = s1.add_tasklet('produce', {}, {'a'}, 'a = 1.0')
+    s1.add_edge(produce, 'a', s1.add_write('A'), None, dace.Memlet('A'))
+
+    consume = s2.add_tasklet('consume', {'a'}, {'b'}, 'b = a + 1.0')
+    s2.add_edge(s2.add_read('A'), None, consume, 'a', dace.Memlet('A'))
+    s2.add_edge(consume, 'b', s2.add_write('B'), None, dace.Memlet('B'))
+
+    if add_barrier:
+        produce.side_effects = True
+    return sdfg
+
+
+def test_side_effect_free_single_cc_fuses():
+    """Control: without a side-effect node the single-CC RAW dataflow fuses to one state."""
+    sdfg = _fusible_single_cc(add_barrier=False)
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.number_of_nodes() == 1
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -510,3 +551,4 @@ if __name__ == "__main__":
     test_inout_second_state()
     test_inout_second_state_2()
     test_check_paths()
+    test_side_effect_free_single_cc_fuses()

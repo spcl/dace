@@ -101,7 +101,12 @@ class DaceNodeBackwardImplementations:
             else:
                 inputs.add(name)
 
-        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
+        # Some required-gradient inputs are non-differentiable (e.g. the integer
+        # "split" lengths input of an ONNX Split, or other index/shape inputs) and
+        # therefore have no gradient produced by the child backward pass. Skip those
+        # rather than raising a KeyError.
+        outputs = set(backward_result.required_grad_names[name] for name in required_gradients
+                      if name in backward_result.required_grad_names)
 
         for inp in inputs:
             if inp in reverse_nsdfg.arrays:

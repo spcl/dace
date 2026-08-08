@@ -321,15 +321,18 @@ class StripMining(transformation.SingleStateTransformation):
         new_map = nodes.Map(map_entry.map.label, [new_dim], subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
-        td_from_new = (dimsym * size) // number_of_tiles
+        # int_floor, never `//`: `//` builds sympy `floor(...)`, which sympy distributes over the
+        # sum and sym2cpp then prints WITHOUT the floor, so each term truncates on its own
+        # (`((t+1)*size)//tiles` -> `t/2 + 1/2` -> `t/2 + 0`). int_floor survives to C intact.
+        td_from_new = symbolic.int_floor(dimsym * size, number_of_tiles)
         if divides_evenly:
-            td_to_new = ((dimsym + 1) * size) // number_of_tiles - 1
+            td_to_new = symbolic.int_floor((dimsym + 1) * size, number_of_tiles) - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to + 1) - 1,
-                ((dimsym + 1) * size) // number_of_tiles - 1)
+                sympy.Min(symbolic.int_floor((dimsym + 1) * size, number_of_tiles), td_to + 1) - 1,
+                symbolic.int_floor((dimsym + 1) * size, number_of_tiles) - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 

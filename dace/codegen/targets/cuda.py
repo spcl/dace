@@ -4,7 +4,7 @@ import functools
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
-import networkx as nx
+from dace import graphlib as nx
 import sympy
 from io import StringIO
 
@@ -20,6 +20,8 @@ from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
+from dace.codegen.targets.cpu import (collect_gpu_block_reductions, register_gpu_block_reduction,
+                                      drain_gpu_block_reduction)
 from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -92,6 +94,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
+        # Reductions folded by thread-block cub::BlockReduce for the current kernel
+        # (one per map-exit WCR accumulator). Filled at kernel-scope entry, drained at
+        # exit. See cpu.collect_gpu_block_reductions / generate_kernel_scope.
+        self._gpu_block_reductions: List[dict] = []
         self._scope_has_collaborative_copy = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
@@ -677,13 +683,13 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             if nodedesc.pool:
                 cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                 result_alloc.write(
-                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
-                )
+                    cpp.gpu_alloc_check(
+                        f'{self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream})', nodedesc))
                 self._emit_sync(result_alloc)
             else:
                 # Strides are left to the user's discretion
-                result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
-                                   (self.backend, dataname, arrsize_malloc))
+                result_alloc.write(
+                    cpp.gpu_alloc_check(f'{self.backend}Malloc((void**)&{dataname}, {arrsize_malloc})', nodedesc))
 
             if node.setzero:
                 result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
@@ -695,7 +701,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write(cpp.gpu_alloc_check(f'{self.backend}MallocHost(&{dataname}, {arrsize_malloc})',
+                                                   nodedesc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
@@ -997,7 +1004,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         'movement is forced onto the default stream. This is only correct if the callback uses '
                         'the default stream; for any other stream, add a "dace.current_stream" argument to the '
                         'callback and use it (e.g. cupy ExternalStream).', UserWarning)
-                    for n in nx.node_connected_component(state.nx.to_undirected(as_view=True), node):
+                    for n in nx.weakly_connected_component(state.nx, node):
                         n._cuda_stream = 'nullptr'
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,
@@ -1198,7 +1205,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
-                            callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
+                            callsite_stream.write('DACE_GPU_CHECK_RETURN({backend}Malloc(&{dst}[__idx].{fname}, '
                                                   '{sz}));'.format(dst=str(dst_node),
                                                                    fname=field_name,
                                                                    sz=size,
@@ -2324,6 +2331,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         scope_entry = dfg_scope.source_nodes()[0]
 
+        # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold scalar map-exit
+        # WCR accumulators via cub::BlockReduce + one atomic/block, not one atomic/thread.
+        # Default path only (no explicit tb map). Partial register identity-inited BEFORE the
+        # bounds guard (out-of-range threads still join the fold); per-thread atomic suppressed;
+        # block fold emitted once the guard closes below.
+        # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back to
+        # a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+        self._gpu_block_reductions = []
+        if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+                and Config.get_bool('compiler', 'emit_tree_reductions')):
+            self._gpu_block_reductions = collect_gpu_block_reductions(sdfg, cfg.node(state_id), node, block_dims,
+                                                                      self._frame)
+        covered = self._cpu_codegen._gpu_block_reduction_covered
+        for red in self._gpu_block_reductions:
+            kernel_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, node)
+
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
@@ -2362,6 +2385,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             for _ in kernel_map.params:
                 kernel_stream.write('}', cfg, state_id, node)
+
+        # Drain thread-block reductions: bounds guard closed → all threads live for the cub
+        # fold (out-of-range partials hold the identity set above). Here, not at MapExit,
+        # because this default path closes the guard inline.
+        for i, red in enumerate(self._gpu_block_reductions):
+            kernel_stream.write(drain_gpu_block_reduction(red, '%s_%d' % (kernel_name, i), covered), cfg, state_id,
+                                node)
+        self._gpu_block_reductions = []
 
         self._block_dims = None
         self._kernel_map = None
@@ -2743,6 +2774,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Emit internal array allocation here (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
+            # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold each scalar
+            # device-map-exit WCR accumulator via cub::BlockReduce + one atomic/block. Partial
+            # (allocated just above) identity-inited BEFORE the bounds guard (out-of-range
+            # threads still join the fold); per-thread atomic suppressed; fold emitted once the
+            # guard closes at the thread-block MapExit. Detected on the enclosing device map,
+            # whose exit carries the reduction WCR.
+            # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back
+            # to a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+            self._gpu_block_reductions = []
+            if Config.get_bool('compiler', 'emit_tree_reductions'):
+                self._gpu_block_reductions = collect_gpu_block_reductions(sdfg, dfg, scope_entry, self._block_dims,
+                                                                          self._frame)
+            covered = self._cpu_codegen._gpu_block_reduction_covered
+            for red in self._gpu_block_reductions:
+                callsite_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, scope_entry)
+
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
             minels = brange.min_element()
@@ -2923,6 +2970,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             for i in range(len(node.map.params)):
                 callsite_stream.write('}', cfg, state_id, node)
 
+            # Drain thread-block reductions primed at scope entry: bounds guard just closed →
+            # all threads live for the (barrier-using) cub fold. Out-of-range threads carry the
+            # identity; thread 0 commits the single atomic.
+            covered = self._cpu_codegen._gpu_block_reduction_covered
+            for i, red in enumerate(self._gpu_block_reductions):
+                callsite_stream.write(drain_gpu_block_reduction(red, '%s_%d' % (node.map.label, i), covered), cfg,
+                                      state_id, node)
+            self._gpu_block_reductions = []
+
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
             callsite_stream.write('});', cfg, state_id, node)
@@ -3063,13 +3119,14 @@ def _get_storagename(storage):
 
 
 def _get_const_params(dfg_scope):
+    # Single source of truth for read-only (const) kernel arguments:
+    # ``sdutil.get_constant_data`` (dace/sdfg/utils.py), which the experimental CUDA
+    # code generator also uses. It derives writes from ``read_and_write_sets`` /
+    # ``all_nodes_between`` so a container written anywhere inside the scope -- e.g.
+    # a scatter accumulator written through a nested SDFG (the write surfaces in the
+    # parent as an incoming memlet) -- is correctly NOT const, whereas the previous
+    # scope-exit-only heuristic missed it and emitted a ``const T*`` argument that
+    # clashed with the nested function's non-const (written) parameter.
     state = dfg_scope.graph
-    sdfg = dfg_scope.parent
     scope_entry = dfg_scope.source_nodes()[0]
-    scope_exit = dfg_scope.sink_nodes()[0]
-    input_params = set(e.data.data for e in state.in_edges(scope_entry))
-    output_params = set(e.data.data for e in state.out_edges(scope_exit))
-    toplevel_params = set(node.data for node in dfg_scope.nodes()
-                          if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
-    dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
-    return input_params - (output_params | toplevel_params | dynamic_inputs)
+    return sdutil.get_constant_data(scope_entry, state)

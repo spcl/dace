@@ -297,8 +297,8 @@ def test_multi_output_state():
 
 
 if __name__ == "__main__":
-    test_two_state_add_mul()
-    test_conditional_simple()
-    test_for_loop()
-    test_diamond_pattern_conditional()
-    test_multi_output_state()
+    test_two_state_add_mul(device="cpu")
+    test_conditional_simple(device="cpu")
+    test_for_loop(device="cpu")
+    test_diamond_pattern_conditional(device="cpu")
+    test_multi_output_state(device="cpu")
