@@ -295,8 +295,34 @@ def _chain_seed_expr(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain
     return f'{in_connector(chain)}[0]'
 
 
+#: Compound assignment per op, for the ``declare reduction`` combiner below.
+_OP_TO_COMPOUND = {ScanOp.SUM: '+=', ScanOp.PRODUCT: '*='}
+
+
+def _multi_chain_udr(op: ScanOp, dtype, ctype: str) -> str:
+    """``declare reduction`` for an element type OpenMP has no built-in one for, else ``''``.
+
+    An OpenMP UDR is found by ORDINARY UNQUALIFIED LOOKUP from the point of use, and this
+    expansion splices its pragmas into the generated program -- so ``dace/scan.hpp``'s copies,
+    which sit inside ``dace::scan::detail``, are unreachable from here and every complex-typed
+    chain past the first failed to compile ("user defined reduction not found"). OpenMP allows
+    the directive at block scope, so the tasklet declares its own next to the accumulators.
+
+    ``min`` / ``max`` need none: complex has no ordering, and the fold identity
+    (``detail::min_identity`` / ``max_identity``) already refuses it with a ``static_assert``.
+    """
+    if dtype not in (dace.complex64, dace.complex128):
+        return ''
+    compound = _OP_TO_COMPOUND.get(op)
+    if compound is None:
+        return ''
+    ident = _OP_TO_IDENTITY_CPP[op]
+    return (f'#pragma omp declare reduction({_OP_TO_OMP_REDUCTION[op]} : {ctype} : omp_out {compound} omp_in) '
+            f'initializer(omp_priv = {ctype}({ident}))')
+
+
 def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_list: str, seeds, first: str,
-                               second: str, scan_kind: str) -> str:
+                               second: str, scan_kind: str, udr: str) -> str:
     """Blocked three-phase body for ``chains > 1``, K chains wide.
 
     Same algorithm as ``dace::scan::detail::blocked_scan``; it cannot BE that
@@ -306,6 +332,10 @@ def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_
     reduce pass and the scan pass on the same L2-resident block, one padded block
     total per thread carrying all K chains. The lambda is what keeps the emitted
     code to a single ``omp scan`` directive despite the two call sites.
+
+    ``udr`` is the block-scope reduction declaration the element type needs, or ``''``
+    -- see :func:`_multi_chain_udr`. It heads the block so both the ``inscan`` pass and
+    the fold pass below it are inside its scope.
     """
     k = node.chains
     d = '::dace::scan::detail'
@@ -320,6 +350,7 @@ def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_
     call_seeds = ', '.join(seeds)
     return '\n'.join([
         '{',
+    ] + ([udr] if udr else []) + [
         f'const long __n = static_cast<long>({n_expr});',
         'if (__n > 0) {',
         'auto __scan_block = [&](long __lo, long __hi, ' + ', '.join(f'{ctype} {a}' for a in accs) + ') {',
@@ -395,7 +426,8 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     on the parallel shape, where the ``inscan`` lowering folds chunk-wise (see the
     header's note); the chains never mix.
     """
-    ctype = _validate_inputs_and_outputs(node, state, sdfg)[0].dtype.ctype
+    dtype = _validate_inputs_and_outputs(node, state, sdfg)[0].dtype
+    ctype = dtype.ctype
     if symbolic.pystr_to_symbolic(sym2cpp(node.stride)) != 1:
         raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
                                   "Scan libnode per strided chain.")
@@ -429,7 +461,8 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
                 f'    }}\n'
                 f'}}')
     else:
-        code = _multi_chain_parallel_code(node, ctype, n_expr, accs, acc_list, seeds, first, second, scan_kind)
+        code = _multi_chain_parallel_code(node, ctype, n_expr, accs, acc_list, seeds, first, second, scan_kind,
+                                          _multi_chain_udr(node.op, dtype, ctype))
     inputs = {in_connector(c) for c in range(node.chains)}
     inputs |= {init_connector(c) for c in range(node.chains) if init_connector(c) in node.in_connectors}
     return nodes.Tasklet(node.name,

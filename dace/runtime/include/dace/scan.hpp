@@ -67,7 +67,10 @@
 // OpenMP 5.0 restriction), so the K accumulator names have to be spelled out.
 // ``_multi_chain_tasklet`` in ``dace/libraries/standard/nodes/scan.py`` emits them
 // at expansion time, where K is known; it runs the same three-phase blocking and
-// borrows ``detail::TeamSlot`` / ``detail::block_span`` from here for it.
+// borrows ``detail::TeamSlot`` / ``detail::block_span`` from here for it. What it
+// cannot borrow is the complex ``declare reduction`` below: a UDR is found by ordinary
+// unqualified lookup from the point of use, and those pragmas land in the generated
+// program, not in this namespace -- so that expansion declares its own at block scope.
 
 #pragma once
 

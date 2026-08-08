@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 import dace
+from tests.corpus.polybench.polybench import atol_for
 
 
 def _package():
@@ -170,18 +171,20 @@ def outputs_match(ref: Dict[str, np.ndarray],
                   rtol: float = None,
                   atol: float = None) -> bool:
     """Compare reference vs candidate ``output_args`` with a DTYPE-AWARE tolerance
-    (:func:`_tol_for`): fp64 tight, fp32 fp32-appropriate, integers exact. Pass explicit
-    ``rtol`` / ``atol`` to override the per-array default."""
+    (:func:`_tol_for`): fp64 tight, fp32 fp32-appropriate, integers exact. The default
+    absolute term is raised to the array's reassociation floor -- see
+    ``polybench.REASSOC_SCALE``, whose copy of this comparison this one tracks. Pass
+    explicit ``rtol`` / ``atol`` to override the per-array default; an explicit ``atol``
+    is used as given."""
     for name, r in ref.items():
         g = got.get(name)
         if g is None:
             return False
         ra, ga = np.asarray(r), np.asarray(g)
         rt, at = _tol_for(ra.dtype)
+        at = atol if atol is not None else atol_for(ra, at)
         if rtol is not None:
             rt = rtol
-        if atol is not None:
-            at = atol
         if rt == 0.0 and at == 0.0:
             if not np.array_equal(ra, ga):
                 return False

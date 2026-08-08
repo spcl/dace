@@ -159,14 +159,20 @@ def test_scan_two_elements(implementation: str):
     assert np.allclose(arr_out, [7.0, 10.5])
 
 
-def _build_multi_chain_sdfg(n: int, chains: int, op: ScanOp, implementation: str, seeded: bool) -> dace.SDFG:
+def _build_multi_chain_sdfg(n: int,
+                            chains: int,
+                            op: ScanOp,
+                            implementation: str,
+                            seeded: bool,
+                            dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
     """One ``Scan`` carrying ``chains`` independent scans over row ``c`` of a 2-D
     in/out pair, optionally seeded from ``seed[c]`` through ``_scan_init_c``."""
-    sdfg = dace.SDFG(f'multi_{op.value}_{chains}_{implementation}_{int(seeded)}_{n}')
-    sdfg.add_array('arr_in', [chains, n], dace.float64)
-    sdfg.add_array('arr_out', [chains, n], dace.float64)
+    sdfg = dace.SDFG(f'multi_{op.value}_{chains}_{implementation}_{int(seeded)}_'
+                     f'{_safe_label(dtype.to_string())}_{n}')
+    sdfg.add_array('arr_in', [chains, n], dtype)
+    sdfg.add_array('arr_out', [chains, n], dtype)
     if seeded:
-        sdfg.add_array('seed', [chains], dace.float64)
+        sdfg.add_array('seed', [chains], dtype)
     state = sdfg.add_state('scan')
     node = Scan('Scan', op=op, chains=chains)
     node.implementation = implementation
@@ -335,6 +341,69 @@ def test_multi_chain_blocked_parallel_matches_numpy(op: ScanOp, seeded: bool):
         expected = _numpy_inclusive(row, op)[1:] if seeded else _numpy_inclusive(row, op)
         worst = np.max(np.abs(arr_out[c] - expected)) / np.max(np.abs(expected))
         assert worst <= 1e-12, f'{op.value} chain {c} drifted {worst:.3e} scale-relative (seeded={seeded}).'
+
+
+@pytest.mark.parametrize('n', [_PARALLEL_MIN_ELEMENTS, _MULTI_TILE_N])
+@pytest.mark.parametrize('chains', [2, 5])
+@pytest.mark.parametrize('seeded', [False, True])
+def test_multi_chain_blocked_parallel_is_exact_on_integers(chains: int, n: int, seeded: bool):
+    """The multi-chain blocked path, pinned EXACTLY rather than to a tolerance.
+
+    ``chains > 1`` publishes K block totals per thread and walks a K-wide offset prefix
+    over them, so a chain that seeds from a neighbour's total, a carry that only
+    propagates chain 0, or a block boundary off by one are all reachable bugs -- and on
+    float64 they hide under the reassociation the blocking is allowed to do. On int64
+    every phase is exact, so the sequential result is the ONLY correct answer.
+
+    Five chains is the widest the corpus asks for (TSVC-2.5 ``scan_multi_5carry``); the
+    tile cap is per chain, so K also decides how many tiles the ``__base`` loop takes and
+    thus whether the tile-to-tile carry runs at all.
+    """
+    rng = np.random.default_rng(0x51CA13 + chains)
+    arr_in = rng.integers(-1000, 1000, size=(chains, n), dtype=np.int64)
+    seed = rng.integers(-50, 50, size=chains, dtype=np.int64)
+    arr_out = np.zeros_like(arr_in)
+    sdfg = _build_multi_chain_sdfg(n, chains, ScanOp.SUM, 'CPU', seeded, dace.int64)
+    sdfg(arr_in=arr_in.copy(), arr_out=arr_out, **({'seed': seed.copy()} if seeded else {}))
+    expected = np.cumsum(arr_in, axis=1) + (seed[:, None] if seeded else 0)
+    for c in range(chains):
+        assert np.array_equal(
+            arr_out[c], expected[c]), (f'chain {c} of {chains} diverged at n={n} (seeded={seeded}); first wrong index '
+                                       f'{int(np.argmax(arr_out[c] != expected[c]))}.')
+
+
+@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128])
+@pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT])
+def test_multi_chain_complex_scan_matches_numpy(op: ScanOp, dtype):
+    """Complex element types on the multi-chain parallel path.
+
+    OpenMP has no built-in reduction for a class type, and a user-defined one is found by
+    unqualified lookup from the point of use -- so ``dace/scan.hpp``'s declarations, which
+    live in ``dace::scan::detail``, are invisible to the pragmas this expansion splices
+    into the generated program. Every complex chain past the first failed to compile with
+    "user defined reduction not found"; the tasklet now carries its own block-scope
+    declaration. Single-chain complex went through the header and always worked, so K=1 is
+    not a substitute for this.
+
+    The inputs are exactly representable (integer real/imaginary parts, unit-modulus
+    phases for the product), so blocking cannot move the answer and the gate is equality.
+    """
+    n, chains = _MULTI_TILE_N, 3
+    npdt = dtype.as_numpy_dtype()
+    rng = np.random.default_rng(0xC0DE + int(op is ScanOp.SUM))
+    if op is ScanOp.PRODUCT:
+        arr_in = np.array([1, 1j, -1, -1j], dtype=npdt)[rng.integers(0, 4, size=(chains, n))]
+        expected = np.multiply.accumulate(arr_in.astype(np.complex128), axis=1).astype(npdt)
+    else:
+        arr_in = (rng.integers(-100, 100, (chains, n)) + 1j * rng.integers(-100, 100, (chains, n))).astype(npdt)
+        expected = np.add.accumulate(arr_in.astype(np.complex128), axis=1).astype(npdt)
+    arr_out = np.zeros_like(arr_in)
+    sdfg = _build_multi_chain_sdfg(n, chains, op, 'CPU', False, dtype)
+    sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
+    for c in range(chains):
+        assert np.array_equal(arr_out[c],
+                              expected[c]), (f'{dtype.to_string()} {op.value} chain {c} diverged; '
+                                             f'first wrong index {int(np.argmax(arr_out[c] != expected[c]))}.')
 
 
 def test_seeded_scan_calls_the_parallel_runtime_entry_point():

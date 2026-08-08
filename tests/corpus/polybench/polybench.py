@@ -218,22 +218,48 @@ def _tol_for(dtype) -> Tuple[float, float]:
     return (1e-5, 1e-6) if single else (1e-9, 1e-11)
 
 
+#: Reassociation floor for the DEFAULT absolute tolerance, as a fraction of an array's own
+#: largest magnitude. ``_tol_for``'s absolute term is a constant, so it stops covering the
+#: REFERENCE's own rounding once the dataset grows: at the tsvc_2_5 paper preset a 589824-long
+#: fp64 prefix sum leaves the scalar oracle 2.7e-11 off a long-double reference against the
+#: canonicalize candidate's 2.8e-12, so the 1e-11 constant failed the more accurate of the two.
+#: The comparison stays elementwise -- the floor only frees an element that CANCELLED to near zero
+#: from a relative tolerance about its own tiny value. Same constant as ``tests/library/scan_test.py``.
+REASSOC_SCALE = 1e-12
+
+
+def atol_for(ra: np.ndarray, at: float) -> float:
+    """``at`` raised to this array's reassociation floor. See :data:`REASSOC_SCALE`.
+
+    Only ever applied to the dtype-derived DEFAULT: an explicitly-passed tolerance is the
+    caller's own bound and is taken as given, and an exact (``0.0``) gate stays exact. A
+    reference that is not all-finite sizes nothing either -- tsvc_2_5's ``wf_north_west`` /
+    ``wf_triangular`` overflow to ``inf`` at the paper preset, and a floor read off that
+    would be ~1e295 wide -- so it keeps the constant.
+    """
+    if at == 0.0:
+        return 0.0
+    if ra.size and not np.all(np.isfinite(ra)):
+        return at
+    return max(at, REASSOC_SCALE * float(np.max(np.abs(ra), initial=0.0)))
+
+
 def outputs_match(ref: Dict[str, np.ndarray],
                   got: Dict[str, np.ndarray],
                   *,
                   rtol: float = None,
                   atol: float = None) -> bool:
     """Compare two result dicts with a DTYPE-AWARE tolerance (:func:`_tol_for`): fp64
-    tight, fp32 fp32-appropriate, integers exact. Pass explicit ``rtol`` / ``atol`` to
-    override the per-array default."""
+    tight, fp32 fp32-appropriate, integers exact. The default absolute term is raised to
+    the array's reassociation floor (:data:`REASSOC_SCALE`). Pass explicit ``rtol`` /
+    ``atol`` to override the per-array default; an explicit ``atol`` is used as given."""
     for name, r in ref.items():
         g = got[name]
         ra, ga = np.asarray(r), np.asarray(g)
         rt, at = _tol_for(ra.dtype)
+        at = atol if atol is not None else atol_for(ra, at)
         if rtol is not None:
             rt = rtol
-        if atol is not None:
-            at = atol
         if rt == 0.0 and at == 0.0:
             if not np.array_equal(ra, ga):
                 return False
