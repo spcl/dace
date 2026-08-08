@@ -97,6 +97,13 @@ class EinsumParser(object):
         # extent, which Gemv.validate rejects.
         if len(self.a_only) != len(self.c_a_only) or len(self.b_only) != len(self.c_b_only):
             return False
+        # Batched dot (``ik,ik->i``, ``xyzk,xyzk->xyz``): batched indices, and NEITHER operand has a
+        # private index -- ``C[batch] = sum_k A[batch,k] * B[batch,k]``, which no BLAS-2/3 form
+        # expresses. The GEMM path below would mint a degenerate M=N=1 batched MatMul whose operand
+        # views collapse under simplify to two equal 2-D shapes MatMul's dispatch rejects. The
+        # unbatched dot ``i,i->`` has no batched index and keeps its (working) BLAS path.
+        if self.a_batch and not self.a_only and not self.b_only:
+            return False
         for key, val in self.fields().items():
             if not _is_sequential(val):
                 return False
@@ -279,11 +286,17 @@ def _create_einsum_internal(sdfg: SDFG,
         return arrays[0], result_node
         # END of einsum optimization
 
-    input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
+    # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
+    # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.
+    input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
 
     # Get output shape from chardict, or [1] for a scalar output
     output_shape = list(map(lambda k: chardict[k], einsum.output)) or [1]
-    output_index = ','.join(o for o in einsum.output) or '0'
+    # The index letters name the parameters of the maps below. A bare letter that matches an SDFG
+    # symbol (``k`` contracted over a ``[..., k]``-shaped array) shadows it inside the map, emitting
+    # the self-referential bound ``k = 0:k`` -- zero iterations, silently. Prefix them instead.
+    param = {c: '__einsum_%s' % c for c in chardict}
+    output_index = ','.join(param[o] for o in einsum.output) or '0'
 
     if output is None:
         dtype = dtype or sdfg.arrays[arrays[0]].dtype
@@ -325,7 +338,12 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Add state before this one to initialize the output value
         if to_init:
-            init_state = sdfg.add_state_before(state)
+            # The einsum state may live in a control-flow region (a loop body), not directly in the
+            # SDFG: prepend within its OWN parent graph, else looking up its predecessors fails.
+            # Prepending before the region's entry must also move the entry, otherwise the init is
+            # unreachable and the WCR accumulation reads stale values from the previous iteration.
+            region = state.parent_graph
+            init_state = region.add_state_before(state, is_start_block=state is region.start_block)
             if symbolic.equal_valued(0, beta):
                 inputs = {}
                 inputs_scalar = set()
@@ -336,7 +354,7 @@ def _create_einsum_internal(sdfg: SDFG,
                 code = f'out_{output} = {beta} * inp_{output}'
 
             if len(einsum.output) > 0:
-                init_state.add_mapped_tasklet('einsum_reset', {k: '0:%s' % chardict[k]
+                init_state.add_mapped_tasklet('einsum_reset', {param[k]: '0:%s' % chardict[k]
                                                                for k in einsum.output},
                                               inputs,
                                               code, {'out_%s' % output: Memlet.simple(output, output_index)},
@@ -354,10 +372,10 @@ def _create_einsum_internal(sdfg: SDFG,
         alphacode = '' if symbolic.equal_valued(1, alpha) else f'{alpha} * '
         # Pure einsum map
         state.add_mapped_tasklet('einsum', {
-            k: '0:%s' % v
+            param[k]: '0:%s' % v
             for k, v in chardict.items()
         }, {
-            'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
+            'inp_%s' % arr: Memlet.simple(arr, ','.join(param[c] for c in inp))
             for inp, arr in zip(einsum.inputs, arrays)
         },
                                  'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),

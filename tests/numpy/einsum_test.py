@@ -303,6 +303,53 @@ def test_lift_einsum_alpha_beta(symbolic_alpha):
         assert np.allclose(sdfg(A, B), C)
 
 
+def test_rowwise_dot():
+    """``ik,ik->i`` is a batched dot: the batch index survives into the output and neither operand
+    has a private index, so there is no GEMM/GEMV form -- it must lower to the pure einsum map."""
+
+    @dace.program
+    def einsumtest(A: dace.float64[M, N]):
+        return np.einsum('ik,ik->i', A, A)
+
+    A = np.random.rand(10, 20)
+    assert np.allclose(einsumtest(A), np.einsum('ik,ik->i', A, A), rtol=1e-12)
+
+
+def test_batched_dot_4d():
+    """Same batched-dot class over a 3-D batch. Simplify collapses the box into a flat view, which
+    the degenerate M=N=1 MatMul the contraction path used to mint could no longer dispatch. The
+    contracted extent is the symbol ``k``, the contraction index letter as well: the map parameter
+    must not shadow it."""
+    L = dace.symbol('L')
+    k = dace.symbol('k')
+
+    @dace.program
+    def einsumtest(A: dace.float64[L, L, L, k]):
+        return np.einsum('xyzk,xyzk->xyz', A, A)
+
+    A = np.random.rand(4, 4, 4, 7)
+    assert np.allclose(einsumtest(A), np.einsum('xyzk,xyzk->xyz', A, A), rtol=1e-12)
+
+
+def test_batched_dot_in_loop():
+    """The pure einsum path prepends a state that initializes the accumulator. Inside a loop body
+    that state belongs to the loop's region, not to the SDFG, and it must run on every iteration."""
+    F = dace.symbol('F')
+    L = dace.symbol('L')
+    k = dace.symbol('k')
+
+    @dace.program
+    def einsumtest(psi: dace.float64[F, L, L, L, k], out: dace.float64[F, L, L, L]):
+        for f in range(F):
+            dens = np.einsum('xyzk,xyzk->xyz', psi[f], psi[f])
+            out[f] = dens
+
+    psi = np.random.rand(3, 2, 2, 2, 5)
+    out = np.zeros((3, 2, 2, 2))
+    einsumtest(psi, out)
+    assert np.allclose(out, np.einsum('fxyzk,fxyzk->fxyz', psi, psi), rtol=1e-12)
+
+
 def test_c_transposed():
     N, F_in, F_out = 2, 3, 3
 
@@ -371,4 +418,7 @@ if __name__ == '__main__':
     test_lift_einsum_beta()
     test_lift_einsum_alpha_beta(False)
     test_lift_einsum_alpha_beta(True)
+    test_rowwise_dot()
+    test_batched_dot_4d()
+    test_batched_dot_in_loop()
     test_c_transposed()
