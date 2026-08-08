@@ -534,8 +534,20 @@ def blas_note(arm: Arm) -> str:
     from the ``threads=openmp`` one while computing the same answer."""
     if arm.blas == 'pure':
         return 'pure (naive maps, no vendor kernel)'
-    lib, _ = _standalone_libopenblas()
-    code, config, _ = _openblas_threading_flavor()
+    # Under the same per-compiler OPENBLAS_DIR the arm's own builds see (``toolchain_env``), or the
+    # evidence line records a different library than the one that produced the numbers.
+    saved = os.environ.get('OPENBLAS_DIR')
+    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == _CLANG else 'CANON_PERF_OPENBLAS_GCC')
+    if per_cc:
+        os.environ['OPENBLAS_DIR'] = per_cc
+    try:
+        lib, _ = _standalone_libopenblas()
+        code, config, _ = _openblas_threading_flavor()
+    finally:
+        if per_cc:
+            os.environ.pop('OPENBLAS_DIR', None)
+            if saved is not None:
+                os.environ['OPENBLAS_DIR'] = saved
     return f'{arm.blas} -> {lib or "?"} [parallel={OPENBLAS_PARALLEL_NAMES.get(code, code)}] {config or ""}'.strip()
 
 
@@ -601,11 +613,22 @@ def toolchain_env(arm: Arm) -> Iterator[None]:
     """
     keys = ('DACE_compiler_cpu_executable', 'DACE_compiler_cpu_args', 'DACE_compiler_cpu_implementation',
             'DACE_library_blas_default_implementation', 'DACE_library_lapack_default_implementation',
-            'DACE_library_linalg_default_implementation')
+            'DACE_library_linalg_default_implementation', 'OPENBLAS_DIR', 'DACE_compiler_emit_tree_reductions')
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['DACE_compiler_cpu_executable'] = arm.executable
     os.environ['DACE_compiler_cpu_args'] = f'{_BASE_ARGS} {arm.flags}'.strip()
     os.environ['DACE_compiler_cpu_implementation'] = arm.codegen
+    # Rides the codegen axis by request: auto_optimize is measured as it ships (legacy codegen, no
+    # tree reductions), canonicalize with tree reductions on the experimental generator.
+    os.environ['DACE_compiler_emit_tree_reductions'] = '0' if arm.codegen == 'legacy' else '1'
+    # Per-COMPILER OpenBLAS, when the job provides both: a clang arm gets an OpenBLAS linked against
+    # libomp and a gcc arm one against libgomp, so an arm's own BLAS never drags the OTHER OpenMP
+    # runtime into the process. The build links the full .so path, so cmake bakes the dir into the
+    # kernel's RUNPATH -- which only decides if no libopenblas is on LD_LIBRARY_PATH (it overrides
+    # RUNPATH); the submit script therefore keeps both dirs OFF it.
+    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == _CLANG else 'CANON_PERF_OPENBLAS_GCC')
+    if per_cc:
+        os.environ['OPENBLAS_DIR'] = per_cc
     # Spans the TRANSFORM, not just the build: ``CS.build`` runs the arm's pipeline inside this
     # context, and ``serialize`` calls ``expand_library_nodes()`` there -- so a library node is
     # lowered under whichever implementation is live at that moment, and setting this any later

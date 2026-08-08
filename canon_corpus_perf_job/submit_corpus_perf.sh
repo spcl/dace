@@ -54,8 +54,10 @@ if [ -f "$SPACK_ROOT/share/spack/setup-env.sh" ]; then
     . "$SPACK_ROOT/share/spack/setup-env.sh"
 fi
 if command -v spack >/dev/null 2>&1; then
-    spack load gcc@16.1.0
-    spack load llvm@22.1.7
+    # Variant pins because both packages are installed twice: the other gcc@16.1.0 is ~graphite
+    # (kills the autopar arms) and the other llvm@22.1.5 is ~mlir.
+    spack load gcc@16.1.0 +graphite
+    spack load llvm@22.1.5 +mlir
 fi
 
 # The repo root is walked up to rather than counted: the drivers run as ``python -m tests....`` from
@@ -120,14 +122,37 @@ export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-2400}"
 # is the odd one out and has to be asked for. The serialize arms stay `pure` on purpose -- see the
 # Arm.blas docstring. Ask spack for the prefix rather than hardcoding a hash, and fall back to
 # whatever is already on the path so a non-spack box still runs.
-if [ -z "${OPENBLAS_DIR:-}" ] && command -v spack >/dev/null 2>&1; then
-    # ``threads=openmp`` is part of the spec: a pthreads build collapses threads and measured 24x.
-    OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || true)"
+# Per-COMPILER OpenBLAS: the clang arms get the %clang build (links libomp), the gcc arms the %gcc
+# build (links libgomp), so no arm's BLAS drags the other OpenMP runtime into its process. The
+# harness switches OPENBLAS_DIR per arm from these two. ``threads=openmp`` stays in both specs: a
+# pthreads build collapses threads and measured 24x.
+# The compiler is PINNED to the exact version each arm compiles with. A bare ``%gcc`` went
+# ambiguous the moment openblas was built for both gcc@14.2.0 and gcc@16.1.0, and because the
+# lookup was ``2>/dev/null || true`` it failed SILENTLY -- the gcc arms would have run with no
+# OPENBLAS_DIR at all, which is a wrong measurement that still produces numbers. Ambiguity is now
+# fatal here rather than empty.
+if command -v spack >/dev/null 2>&1; then
+    openblas_prefix() {
+        local out
+        if ! out=$(spack location -i openblas threads=openmp %"$1" 2>&1); then
+            echo "FATAL: cannot resolve openblas threads=openmp %$1" >&2
+            echo "$out" >&2
+            exit 1
+        fi
+        echo "$out"
+    }
+    CANON_PERF_OPENBLAS_GCC="${CANON_PERF_OPENBLAS_GCC:-$(openblas_prefix "${CANON_PERF_GCC_SPEC:-gcc@16.1.0}")}"
+    CANON_PERF_OPENBLAS_LLVM="${CANON_PERF_OPENBLAS_LLVM:-$(openblas_prefix "${CANON_PERF_LLVM_SPEC:-llvm@22.1.5}")}"
+    [ -d "$CANON_PERF_OPENBLAS_GCC" ] && export CANON_PERF_OPENBLAS_GCC || unset CANON_PERF_OPENBLAS_GCC
+    [ -d "$CANON_PERF_OPENBLAS_LLVM" ] && export CANON_PERF_OPENBLAS_LLVM || unset CANON_PERF_OPENBLAS_LLVM
+fi
+if [ -z "${OPENBLAS_DIR:-}" ]; then
+    OPENBLAS_DIR="${CANON_PERF_OPENBLAS_GCC:-${CANON_PERF_OPENBLAS_LLVM:-}}"
     [ -d "$OPENBLAS_DIR" ] && export OPENBLAS_DIR
 fi
-for d in "${OPENBLAS_DIR:-}/lib" "${OPENBLAS_DIR:-}/lib64"; do
-    [ -d "$d" ] && export LD_LIBRARY_PATH="$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-done
+# DELIBERATELY no openblas dir on LD_LIBRARY_PATH: the build links the full .so path, so cmake
+# bakes each arm's dir into the kernel RUNPATH -- and LD_LIBRARY_PATH would override RUNPATH,
+# forcing ONE variant onto every arm.
 export MPI4PY_RC_INITIALIZE=0
 export OMPI_MCA_pml=ob1
 export OMPI_MCA_btl=self,vader
