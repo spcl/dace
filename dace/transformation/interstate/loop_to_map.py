@@ -276,6 +276,10 @@ def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]
         inside a nested ``LoopRegion`` counts: treating a nested loop as possibly-empty would report
         every scratch array CloudSC fills in one inner ``jl`` loop and reads back in the next, and
         refuse the outer loops this pass exists to parallelize.
+
+        A carry nothing outside ``candidates`` depends on is dropped again by
+        :func:`observable_locals`: dead scratch left behind by an earlier rewrite would otherwise
+        cost the loop its lift.
     """
     carried: Set[str] = set()
 
@@ -299,7 +303,46 @@ def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]
                 scan(block, written)
 
     scan(loop, set())
-    return carried
+    if not carried:
+        return carried
+    return carried & observable_locals(loop, candidates)
+
+
+def observable_locals(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
+    """ Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones whose value
+        can be observed outside the set: it flows into a container that is not a candidate, or a
+        header/interstate edge of ``loop`` reads it.
+
+        Everything else is dead within the loop, so no privatization of it can change an output.
+        The pipeline reaches ``LoopToMap`` with such scratch in hand: lifting a recurrence to a
+        ``Scan`` leaves the original loop behind writing a renamed private copy nothing reads, and
+        refusing that loop on its own dead carry keeps it as a residual ``LoopRegion`` that
+        fragments the maps around it.
+    """
+    downstream: Dict[str, Set[str]] = defaultdict(set)
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for dn in block.data_nodes():
+            if dn.data not in candidates:
+                continue
+            for reached in block.bfs_nodes(dn):
+                if isinstance(reached, nodes.AccessNode) and reached is not dn:
+                    downstream[dn.data].add(reached.data)
+
+    read_by_control_flow = {s for e in loop.all_interstate_edges() for s in e.data.free_symbols}
+    headers = [loop] + [b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock))]
+    read_by_control_flow |= {s for h in headers for c in h.get_meta_codeblocks() for s in c.get_free_symbols()}
+
+    observable = {n for n in candidates if n in read_by_control_flow or (downstream[n] - candidates)}
+    changed = True
+    while changed:
+        changed = False
+        for name in candidates - observable:
+            if downstream[name] & observable:
+                observable.add(name)
+                changed = True
+    return observable
 
 
 def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
@@ -672,15 +715,16 @@ class LoopToMap(xf.MultiStateTransformation):
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
         # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
         # gives every iteration a private copy -- sound only while each iteration writes it before
-        # reading it (see :func:`carried_local_transients`). Screening to the ones actually read
-        # from elsewhere keeps the block-order walk off most loops.
+        # reading it (see :func:`carried_local_transients`). The whole loop-local set is the
+        # analysis universe; a pure-read access node among them is the cheap trigger that keeps the
+        # block-order walk off most loops.
         local_transients = {
             n.data
             for state in loop_states
-            for n in state.data_nodes()
-            if sdfg.arrays[n.data].transient and state.in_degree(n) == 0 and state.out_degree(n) > 0
+            for n in state.data_nodes() if sdfg.arrays[n.data].transient
         } - other_access_nodes
-        if local_transients:
+        if any(n.data in local_transients and state.in_degree(n) == 0 and state.out_degree(n) > 0
+               for state in loop_states for n in state.data_nodes()):
             other_access_nodes |= carried_local_transients(self.loop, local_transients)
 
         # read_and_write_sets() walks every state/edge of the loop and is only needed from here
