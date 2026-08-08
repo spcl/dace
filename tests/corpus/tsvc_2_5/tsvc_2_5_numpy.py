@@ -203,6 +203,29 @@ def ref_jacobi2d_double_tiled_sym(b: np.ndarray, a: np.ndarray, t1: int, t2: int
     _jacobi2d_double_tiled(b, a, t1, t2)
 
 
+def _jacobi2d_triple_tiled(b: np.ndarray, a: np.ndarray, t1: int, t2: int, t3: int) -> None:
+    n = a.shape[0]
+    for ii in range(1, n - 1 - t1, t1):
+        for jj in range(1, n - 1 - t1, t1):
+            for iii in range(ii, ii + t1, t2):
+                for jjj in range(jj, jj + t1, t2):
+                    for iiii in range(iii, iii + t2, t3):
+                        for jjjj in range(jjj, jjj + t2, t3):
+                            for i in range(iiii, iiii + t3):
+                                for j in range(jjjj, jjjj + t3):
+                                    b[i, j] = 0.2 * (a[i, j] + a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
+
+
+def ref_jacobi2d_triple_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
+    """2D Jacobi 5-point stencil pre-tiled three levels deep, constant tiles 16 / 8 / 4."""
+    _jacobi2d_triple_tiled(b, a, 16, 8, 4)
+
+
+def ref_jacobi2d_triple_tiled_sym(b: np.ndarray, a: np.ndarray, t1: int, t2: int, t3: int) -> None:
+    """Three-level Jacobi tiling with symbolic tiles ``t1`` / ``t2`` / ``t3``."""
+    _jacobi2d_triple_tiled(b, a, t1, t2, t3)
+
+
 def _heat3d_tiled(b: np.ndarray, a: np.ndarray, t: int) -> None:
     n = a.shape[0]
     for kk in range(1, n - 1 - t, t):
@@ -224,6 +247,33 @@ def ref_heat3d_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
 def ref_heat3d_tiled_sym(b: np.ndarray, a: np.ndarray, t: int) -> None:
     """3D 7-point heat stencil pre-tiled with symbolic tile size ``t``."""
     _heat3d_tiled(b, a, t)
+
+
+def _heat3d_double_tiled(b: np.ndarray, a: np.ndarray, t1: int, t2: int) -> None:
+    n = a.shape[0]
+    for kk in range(1, n - 1 - t1, t1):
+        for jj in range(1, n - 1 - t1, t1):
+            for ii in range(1, n - 1 - t1, t1):
+                for kkk in range(kk, kk + t1, t2):
+                    for jjj in range(jj, jj + t1, t2):
+                        for iii in range(ii, ii + t1, t2):
+                            for k in range(kkk, kkk + t2):
+                                for j in range(jjj, jjj + t2):
+                                    for i in range(iii, iii + t2):
+                                        b[k, j,
+                                          i] = (0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + 0.125 *
+                                                (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + 0.125 *
+                                                (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i])
+
+
+def ref_heat3d_double_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
+    """3D 7-point heat stencil pre-tiled two levels deep, constant tiles 8 / 4."""
+    _heat3d_double_tiled(b, a, 8, 4)
+
+
+def ref_heat3d_double_tiled_sym(b: np.ndarray, a: np.ndarray, t1: int, t2: int) -> None:
+    """Two-level 3D heat tiling with symbolic outer ``t1`` and inner ``t2``."""
+    _heat3d_double_tiled(b, a, t1, t2)
 
 
 # ECRAD-style clamped reduction

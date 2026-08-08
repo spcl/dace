@@ -235,6 +235,109 @@ def test_parallelize_peel_limit_zero_disables():
     assert _num_loops(sdfg) == before  # untouched
 
 
+# -----------------------------------------------------------------------------
+# Unrolling a 3-level (double-tiled) nest: the shape ``UntileLoops`` hands over
+# when it cannot collapse a tile, and the shape that decides whether the tile
+# gets re-baked into the body as straight-line code.
+# -----------------------------------------------------------------------------
+
+
+def _num_tasklets(sdfg: dace.SDFG) -> int:
+    return len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet)])
+
+
+def test_short_loop_unroll_fully_unrolls_a_three_level_tile_nest():
+    """Three constant-trip levels (2 x 2 x 2) unroll to eight straight-line body copies.
+
+    Asserting the copy count is what separates a full unroll from a partial one: a residual loop
+    with a smaller trip count also leaves zero *matching* structure behind if only values are
+    checked."""
+
+    @dace.program
+    def tiled(a: dace.float64[64], b: dace.float64[64]):
+        for i in range(0, 8, 4):
+            for ii in range(i, i + 4, 2):
+                for iii in range(ii, ii + 2):
+                    a[iii] = b[iii] * 2.0
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 3
+    per_body = _num_tasklets(sdfg)
+
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 3, 'all three levels must unroll'
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0, 'full unroll must leave no residual loop'
+    assert _num_tasklets(sdfg) == 8 * per_body, f'expected 8 body copies, got {_num_tasklets(sdfg) / per_body}'
+
+    rng = np.random.default_rng(9)
+    b = rng.standard_normal(64)
+    a = np.zeros(64)
+    sdfg(a=a, b=b)
+    assert np.allclose(a[:8], b[:8] * 2.0)
+
+
+def test_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_tile():
+    """A symbolic outer tile keeps its loop; the two constant inner levels unroll to 4 x 4 copies.
+
+    This is the tile re-baking ``UntileLoops`` runs ahead of: with the tile still in place the
+    unroll writes 16 copies of the body into the outer loop, and the canonical unit-stride nest is
+    no longer recoverable from it."""
+
+    @dace.program
+    def tiled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(0, N, 16):
+            for ii in range(i, i + 16, 4):
+                for iii in range(ii, ii + 4):
+                    a[iii] = b[iii] * 2.0
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    per_body = _num_tasklets(sdfg)
+
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 2, 'both constant levels must unroll'
+    sdfg.validate()
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1 and loops[0].loop_variable == 'i', 'only the symbolic outer tile may survive'
+    assert _num_tasklets(sdfg) == 16 * per_body, f'expected 16 body copies, got {_num_tasklets(sdfg) / per_body}'
+
+    rng = np.random.default_rng(10)
+    b = rng.standard_normal(64)
+    a = np.zeros(64)
+    sdfg(a=a, b=b, N=64)
+    assert np.allclose(a, b * 2.0)
+
+
+def test_untile_before_unroll_leaves_the_unroll_nothing_to_re_bake():
+    """The pipeline order contract: ``UntileLoops`` first, so the tile never reaches the unroll.
+
+    Same kernel as above. Once untiled, the nest is a single symbolic-trip unit-stride loop --
+    ``ShortLoopUnroll`` finds no constant-trip loop, reports "untouched", and the canonical form
+    survives to the parallelization stage instead of being 16x straight-lined."""
+    from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
+
+    @dace.program
+    def tiled(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(0, N, 16):
+            for ii in range(i, i + 16, 4):
+                for iii in range(ii, ii + 4):
+                    a[iii] = b[iii] * 2.0
+
+    sdfg = tiled.to_sdfg(simplify=True)
+    per_body = _num_tasklets(sdfg)
+    assert UntileLoops().apply_pass(sdfg, {}) == 2, 'the 3-level cascade must collapse twice'
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1 and loops[0].loop_variable.startswith('_untile_k_')
+
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) is None, 'nothing left to unroll'
+    assert _num_tasklets(sdfg) == per_body, 'the body must not be duplicated'
+    assert _num_loops(sdfg) == 1
+
+    rng = np.random.default_rng(11)
+    b = rng.standard_normal(64)
+    a = np.zeros(64)
+    sdfg(a=a, b=b, N=64)
+    assert np.allclose(a, b * 2.0)
+
+
 if __name__ == '__main__':
     test_parallelize_independent_loop_maps_value_preserving()
     test_parallelize_rowsum_reduction_value_preserving()
@@ -244,3 +347,6 @@ if __name__ == '__main__':
     test_parallelize_peel_mechanism_value_preserving()
     test_parallelize_peeling_reverts_on_recurrence()
     test_parallelize_peel_limit_zero_disables()
+    test_short_loop_unroll_fully_unrolls_a_three_level_tile_nest()
+    test_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_tile()
+    test_untile_before_unroll_leaves_the_unroll_nothing_to_re_bake()

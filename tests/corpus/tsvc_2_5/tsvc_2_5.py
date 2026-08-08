@@ -34,8 +34,9 @@ KMASK = dace.symbol("KMASK")  # predicated-store threshold: bound so ~half the l
 KFIND = dace.symbol("KFIND")  # early-exit search threshold: bound so a hit exists, past index 0
 M = dace.symbol("M")  # quasi-affine `N // M` denominator
 T = dace.symbol("T")  # symbolic tile size (single-level tiling)
-T1 = dace.symbol("T1")  # symbolic outer tile size (two-level tiling)
-T2 = dace.symbol("T2")  # symbolic inner tile size (two-level tiling)
+T1 = dace.symbol("T1")  # symbolic outer tile size (two- and three-level tiling)
+T2 = dace.symbol("T2")  # symbolic middle tile size (two- and three-level tiling)
+T3 = dace.symbol("T3")  # symbolic inner tile size (three-level tiling)
 LEN_R7 = dace.symbol("LEN_R7")  # reroll length; bound to a multiple of the 7x reroll factor
 
 # ==========================================================================
@@ -352,6 +353,42 @@ def jacobi2d_double_tiled_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[L
 
 
 @dace.program
+def jacobi2d_triple_tiled_const(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
+    """2D Jacobi 5-point stencil with three levels of constant tiling
+    (16 / 8 / 4). Anchors the three-level untile cascade: each axis needs
+    three fixpoint collapses before the canonical unit-stride nest is back.
+
+    Tiles sized to fit ``LEN_2D`` for the same reason as
+    :func:`jacobi2d_tiled_const`: an outer tile above ``LEN_2D - 2``
+    leaves an empty outer range and a vacuous kernel."""
+    for ii in range(1, LEN_2D - 1 - 16, 16):
+        for jj in range(1, LEN_2D - 1 - 16, 16):
+            for iii in range(ii, ii + 16, 8):
+                for jjj in range(jj, jj + 16, 8):
+                    for iiii in range(iii, iii + 8, 4):
+                        for jjjj in range(jjj, jjj + 8, 4):
+                            for i in range(iiii, iiii + 4):
+                                for j in range(jjjj, jjjj + 4):
+                                    b[i, j] = 0.2 * (a[i, j] + a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
+
+
+@dace.program
+def jacobi2d_triple_tiled_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
+    """Three-level tiling with symbolic tiles ``T1`` / ``T2`` / ``T3``. Every
+    rung's divisibility (``T1 % T2``, ``T2 % T3``) is unprovable, so the untile
+    records it as a tracked assumption instead of refusing."""
+    for ii in range(1, LEN_2D - 1 - T1, T1):
+        for jj in range(1, LEN_2D - 1 - T1, T1):
+            for iii in range(ii, ii + T1, T2):
+                for jjj in range(jj, jj + T1, T2):
+                    for iiii in range(iii, iii + T2, T3):
+                        for jjjj in range(jjj, jjj + T2, T3):
+                            for i in range(iiii, iiii + T3):
+                                for j in range(jjjj, jjjj + T3):
+                                    b[i, j] = 0.2 * (a[i, j] + a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
+
+
+@dace.program
 def heat3d_tiled_const(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[LEN_3D, LEN_3D, LEN_3D]):
     """3D 7-point heat stencil pre-tiled with constant tile size 8 on
     all three axes."""
@@ -379,6 +416,44 @@ def heat3d_tiled_sym(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[LE
                             b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
                                          0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
                                          0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i]
+
+
+@dace.program
+def heat3d_double_tiled_const(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[LEN_3D, LEN_3D, LEN_3D]):
+    """3D 7-point heat stencil with two levels of constant tiling (8 / 4) on
+    all three axes -- the 3D sibling of :func:`jacobi2d_double_tiled_const`,
+    nine loops deep. Outer tile sized to fit ``LEN_3D``."""
+    for kk in range(1, LEN_3D - 1 - 8, 8):
+        for jj in range(1, LEN_3D - 1 - 8, 8):
+            for ii in range(1, LEN_3D - 1 - 8, 8):
+                for kkk in range(kk, kk + 8, 4):
+                    for jjj in range(jj, jj + 8, 4):
+                        for iii in range(ii, ii + 8, 4):
+                            for k in range(kkk, kkk + 4):
+                                for j in range(jjj, jjj + 4):
+                                    for i in range(iii, iii + 4):
+                                        b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
+                                                     0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
+                                                     0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + \
+                                                     a[k, j, i]
+
+
+@dace.program
+def heat3d_double_tiled_sym(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[LEN_3D, LEN_3D, LEN_3D]):
+    """Two-level 3D heat tiling with symbolic outer ``T1`` and inner ``T2``."""
+    for kk in range(1, LEN_3D - 1 - T1, T1):
+        for jj in range(1, LEN_3D - 1 - T1, T1):
+            for ii in range(1, LEN_3D - 1 - T1, T1):
+                for kkk in range(kk, kk + T1, T2):
+                    for jjj in range(jj, jj + T1, T2):
+                        for iii in range(ii, ii + T1, T2):
+                            for k in range(kkk, kkk + T2):
+                                for j in range(jjj, jjj + T2):
+                                    for i in range(iii, iii + T2):
+                                        b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
+                                                     0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
+                                                     0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + \
+                                                     a[k, j, i]
 
 
 # ==========================================================================
@@ -1129,8 +1204,12 @@ __all__ = [
     "jacobi2d_tiled_sym",
     "jacobi2d_double_tiled_const",
     "jacobi2d_double_tiled_sym",
+    "jacobi2d_triple_tiled_const",
+    "jacobi2d_triple_tiled_sym",
     "heat3d_tiled_const",
     "heat3d_tiled_sym",
+    "heat3d_double_tiled_const",
+    "heat3d_double_tiled_sym",
     "ecrad_clamped_reduction",
     "masked_store_const",
     "masked_store_sym",
@@ -1205,8 +1284,12 @@ SIZES = {
     "KFIND": 2,
     "M": 4,
     "T": 4,
+    # Tile cascade: each rung must divide the one above it, or the source nest's own inner tile
+    # overshoots (and so does its numpy oracle). T1 also has to stay below LEN_3D - 2 so the
+    # 3D outer tile range is not empty.
     "T1": 8,
     "T2": 4,
+    "T3": 2,
     # The reroll kernels are valid as written, but a non-multiple-of-7 tail triggers a
     # *separate, unfixed* canonicalize reroll-remainder bug (TODO). Bind their dedicated
     # length to a multiple of 7 so the suite isn't blocked on that fix; revisit once it lands.

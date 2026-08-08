@@ -1,12 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.canonicalize.untile_loops.UntileLoops`."""
 import copy
+import inspect
+
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace import symbolic
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
+from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 N = dace.symbol('N')
 
@@ -795,6 +801,176 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
             exp[ii] = b[ii]
     sdfg(a=a, b=b, N=n, BS=bs)
     assert np.allclose(a, exp), f'symbolic strided untile diverged: {a} vs {exp}'
+
+
+# ============================================================================
+# The tiled-stencil corpus family, exactly as the perf corpus measures it
+# (:mod:`tests.corpus.tsvc_2_5`): 1-, 2- and 3-level tiles, each in a constant
+# and a symbolic-tile variant, on jacobi2d (2 axes) and heat3d (3 axes).
+#
+# Every case asserts STRUCTURE as well as values. A value-only check passes on
+# a kernel whose hand-written tiling survived untouched -- which is the failure
+# these tests exist to catch: the tiled form computes the same numbers, it just
+# keeps the tile loops that block re-parallelization and re-tiling.
+# ============================================================================
+
+#: kernel -> (axes, length symbol, OUTERMOST tile at ``tsvc_2_5.SIZES``). The canonical extent
+#: depends on the outermost tile alone: the inner rungs subdivide that same window.
+_TILED_FAMILY = {
+    'jacobi2d_tiled_const': (2, 'LEN_2D', 8),
+    'jacobi2d_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T']),
+    'jacobi2d_double_tiled_const': (2, 'LEN_2D', 16),
+    'jacobi2d_double_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T1']),
+    'jacobi2d_triple_tiled_const': (2, 'LEN_2D', 16),
+    'jacobi2d_triple_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T1']),
+    'heat3d_tiled_const': (3, 'LEN_3D', 8),
+    'heat3d_tiled_sym': (3, 'LEN_3D', tsvc_2_5.SIZES['T']),
+    'heat3d_double_tiled_const': (3, 'LEN_3D', 8),
+    'heat3d_double_tiled_sym': (3, 'LEN_3D', tsvc_2_5.SIZES['T1']),
+}
+
+
+def _nest_depth(loop) -> int:
+    depth = 0
+    graph = loop.parent_graph
+    while graph is not None:
+        if isinstance(graph, LoopRegion):
+            depth += 1
+        graph = graph.parent_graph
+    return depth
+
+
+def _tile_union_extent(length: int, tile: int):
+    """``[start, end)`` the source tile walk covers: ``range(1, L-1-t, t)`` origins each covering
+    ``t`` elements, i.e. the interior rounded UP to the next tile boundary above 1."""
+    span = length - 2 - tile
+    return (1, 1 + tile * ((span + tile - 1) // tile))
+
+
+def _assert_canonical_nest(sdfg, axes, extent, sizes):
+    """The recovered nest is ``axes`` unit-stride loops over the full canonical extent, one per
+    level, with no tile-index loop and no remainder guard left anywhere."""
+    loops = _loops(sdfg)
+    assert len(loops) == axes, f'expected {axes} recovered loops, got {[l.loop_variable for l in loops]}'
+    assert sorted(_nest_depth(l) for l in loops) == list(range(axes)), \
+        f'recovered loops are not one perfect chain: depths {[_nest_depth(l) for l in loops]}'
+    for loop in loops:
+        assert loop.loop_variable.startswith('_untile_k_'), f'leftover tile-index loop {loop.loop_variable}'
+        stride = int(symbolic.evaluate(loop_analysis.get_loop_stride(loop), sizes))
+        assert stride == 1, f'{loop.loop_variable} kept tile stride {stride}'
+        start = int(symbolic.evaluate(loop_analysis.get_init_assignment(loop), sizes))
+        end = int(symbolic.evaluate(loop_analysis.get_loop_end(loop) + 1, sizes))
+        assert (start, end) == extent, f'{loop.loop_variable} runs [{start}, {end}), expected {extent}'
+    guards = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
+    assert not guards, f'remainder guard left behind: {[b.label for b in guards]}'
+
+
+def _assert_emitted_nest(sdfg, axes):
+    """The generated C++ carries exactly ``axes`` loops, every one of them unit stride. This is
+    the only place a surviving tile stride is visible once the SDFG claims to be untiled."""
+    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
+    emitted = [line.strip() for line in code.splitlines() if line.strip().startswith('for (')]
+    assert len(emitted) == axes, f'expected {axes} emitted loops, got {len(emitted)}:\n' + '\n'.join(emitted)
+    for line in emitted:
+        var = line.split('(', 1)[1].split('=', 1)[0].strip().removeprefix('auto ').strip()
+        assert f'{var} += 1)' in line or f'{var} = ({var} + 1))' in line, f'emitted loop kept a tile stride: {line}'
+
+
+@pytest.mark.parametrize('name', sorted(_TILED_FAMILY))
+def test_tiled_stencil_corpus_untiles_to_the_canonical_nest(name):
+    """Every member of the tiled-stencil family collapses to its canonical nest, values intact."""
+    axes, length_symbol, tile = _TILED_FAMILY[name]
+    sizes = tsvc_2_5.SIZES
+    program = getattr(tsvc_2_5, name)
+    arrays, scalars = tsvc_2_5.make_inputs(program)
+    oracle = getattr(tsvc_2_5_numpy, 'ref_' + name)
+    pool = {**{n: a.copy() for n, a in arrays.items()}, **scalars, **{s.lower(): v for s, v in sizes.items()}}
+    oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
+
+    sdfg = program.to_sdfg(simplify=True)
+    before = _loops(sdfg)
+    assert len(before) > axes, f'precondition: {name} must arrive hand-tiled, got {len(before)} loops'
+    # One collapse removes exactly one loop, so the count is the whole cascade, not a partial one.
+    assert UntileLoops().apply_pass(sdfg, {}) == len(before) - axes, \
+        f'{name}: untile stopped short, {len(_loops(sdfg))} loops left'
+    sdfg.validate()
+    _assert_canonical_nest(sdfg, axes, _tile_union_extent(sizes[length_symbol], tile), sizes)
+    _assert_emitted_nest(sdfg, axes)
+
+    got = {n: a.copy() for n, a in arrays.items()}
+    symbols = {s: v for s, v in sizes.items() if s in {str(x) for x in sdfg.free_symbols}}
+    sdfg.compile()(**got, **scalars, **symbols)
+    for arr in arrays:
+        assert np.allclose(got[arr], pool[arr]), f'{name}/{arr} diverges from the numpy oracle'
+
+
+def _map_dims(sdfg):
+    """``(begin, end, step)`` of every Map dimension in the SDFG."""
+    return [rng for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) for rng in n.map.range]
+
+
+def test_map_tiled_3level_untiles_on_the_pass_defaults():
+    """A ``dace.map``-tiled 3-level nest is recovered WITHOUT the caller forcing the round trip.
+
+    The matcher only reads LoopRegions, so before the auto-trigger this kernel came out of the
+    pass byte-identical -- the hand-written tiling reached codegen and the canonical form was
+    never seen. Structure is what proves the recovery: one 2-D iteration space over the full
+    extent, unit stride, no tile-strided Map left."""
+    M = dace.symbol('M')
+
+    @dace.program
+    def map_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
+        for i0, j0 in dace.map[0:N - 2:16, 0:M - 2:16]:
+            for i1, j1 in dace.map[i0:i0 + 16:8, j0:j0 + 16:8]:
+                for i2, j2 in dace.map[i1:i1 + 8, j1:j1 + 8]:
+                    b[i2 + 1, j2 + 1] = 0.2 * (a[i2 + 1, j2 + 1] + a[i2 + 1, j2] + a[i2 + 1, j2 + 2] + a[i2, j2 + 1] +
+                                               a[i2 + 2, j2 + 1])
+
+    n, m = 18, 18
+    sdfg = map_tiled.to_sdfg(simplify=True)
+    assert _count_maps(sdfg) == 3 and _count_loops(sdfg) == 0, 'precondition: three tiled Maps'
+
+    assert UntileLoops().apply_pass(sdfg, {}) == 4, 'both axes must collapse twice'
+    sdfg.validate()
+    assert _count_loops(sdfg) == 0, 'a Map must not come back as a loop'
+    dims = _map_dims(sdfg)
+    assert len(dims) == 2, f'expected one 2-D iteration space, got {len(dims)} Map dimensions'
+    sizes = {'N': n, 'M': m}
+    for begin, end, step in dims:
+        assert int(symbolic.evaluate(step, sizes)) == 1, 'recovered Map kept a tile stride'
+        assert (int(symbolic.evaluate(begin, sizes)), int(symbolic.evaluate(end + 1, sizes))) == (0, 16), \
+            'recovered Map does not cover the canonical extent'
+
+    rng = np.random.default_rng(11)
+    a = rng.standard_normal((n, m))
+    b = np.zeros((n, m))
+    ref = np.zeros((n, m))
+    for i in range(1, 17):
+        for j in range(1, 17):
+            ref[i, j] = 0.2 * (a[i, j] + a[i, j - 1] + a[i, j + 1] + a[i - 1, j] + a[i + 1, j])
+    sdfg(a=a, b=b, N=n, M=m)
+    assert np.allclose(b, ref)
+
+
+def test_map_roundtrip_declined_when_a_map_would_not_come_back():
+    """The auto round trip lowers EVERY Map, so it is taken only when every one of them re-lifts.
+
+    Here a scatter Map sits beside the tiled nest: ``LoopToMap`` cannot re-derive it (the index
+    array is not provably a permutation), so taking the trip would trade the tiling for lost
+    parallelism. The pass must leave the SDFG alone instead."""
+
+    @dace.program
+    def tiled_plus_scatter(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], idx: dace.int64[N]):
+        for i0 in dace.map[0:N:8]:
+            for i1 in dace.map[i0:i0 + 8]:
+                b[i1] = a[i1] * 2.0
+        for i in dace.map[0:N]:
+            c[idx[i]] = a[i] * 3.0
+
+    sdfg = tiled_plus_scatter.to_sdfg(simplify=True)
+    maps_before = _count_maps(sdfg)
+    assert UntileLoops().apply_pass(sdfg, {}) is None, 'the declined round trip must not touch the SDFG'
+    assert _count_maps(sdfg) == maps_before and _count_loops(sdfg) == 0, 'no Map may be left as a loop'
 
 
 if __name__ == '__main__':
