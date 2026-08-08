@@ -10,10 +10,11 @@ never cloned), the name-binding table, and the demand-driven inference service.
 import ast
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from dace import data, dtypes, symbolic
 from dace.sdfg.sdfg import NestedDict
+from dace.frontend.python.nextgen import provenance
 from dace.frontend.python.nextgen.common import FrontendError
 from dace.frontend.python.nextgen.lowering.parse_cache import CalleeParseCache
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -85,8 +86,11 @@ class ProgramContext:
         #: program and unusable at its boundary, where the caller has to
         #: allocate before the call; :mod:`~...lowering.rules.returns` checks
         #: this to refuse such a return with the real reason instead of letting
-        #: it fail as an unevaluatable shape at call time.
-        self.deferred_symbols: Set[str] = set()
+        #: it fail as an unevaluatable shape at call time. Each symbol maps to
+        #: a short description of the quantity it holds ("the number of
+        #: elements ``A > 15`` selects"), which is what a diagnostic shows: the
+        #: symbol's own generated name says nothing to the reader.
+        self.deferred_symbols: Dict[str, str] = {}
         #: Source name -> repository symbol name, for the rare symbol whose
         #: repository name differs (see :meth:`bind_symbol`). The repository
         #: itself is keyed by the symbol's own name, since it IS the tree's
@@ -134,6 +138,16 @@ class ProgramContext:
         #: compile-time objects such as enum classes that cannot materialize
         #: as containers).
         self.constant_values: Dict[str, Any] = {}
+
+        #: The expression each generated temporary replaced, by temporary name.
+        #: Filled from the records canonicalization left on the AST as each
+        #: statement is lowered (see
+        #: :mod:`dace.frontend.python.nextgen.provenance`), so it always holds
+        #: the temporaries of the body being lowered. Read through
+        #: :meth:`describe_expression`, never directly: a diagnostic that names
+        #: a container would otherwise name the temporary an expression was
+        #: hoisted into rather than what the user wrote.
+        self.expression_sources: Dict[str, ast.AST] = {}
 
         #: Names of generated return containers, in return-value order.
         self.return_names: List[str] = []
@@ -200,6 +214,22 @@ class ProgramContext:
             self._name_counter += 1
             if candidate not in self.containers and candidate not in self.symbols:
                 return candidate
+
+    def describe_expression(self, value: Union[ast.AST, str]) -> str:
+        """
+        Render an expression node (or a container name) as the source text the
+        user wrote, resolving the temporaries canonicalization hoisted it into.
+
+        Every diagnostic that names an expression should go through this rather
+        than unparsing the canonical node directly: after A-normal form that
+        node is often a generated name (``__anf1``), which no reader can trace
+        back to ``A[A > 15]``. Falls back to the plain unparse when nothing was
+        recorded, so it is always safe to call in an error path.
+
+        :param value: An expression node, or the name of a container.
+        :return: Single-line source text describing the expression.
+        """
+        return provenance.describe_expression(value, self.expression_sources)
 
     def add_container(self, name: str, descriptor: data.Data, transient: bool = True) -> str:
         """
@@ -384,8 +414,13 @@ class ProgramContext:
                 statements are lowered (read it before the scope exits).
         """
         saved = (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-                 self.return_names)
+                 self.return_names, self.expression_sources)
         self.inline_stack.append(function)
+        # A callee was canonicalized by its own pipeline run, whose temporary
+        # names restart from zero: the caller's map would answer a callee's
+        # ``__anf0`` with the caller's unrelated expression. The callee refills
+        # it from its own body as that body is lowered.
+        self.expression_sources = {}
         self.bindings = {
             name: Binding(kind='container', container=container)
             for name, container in parameter_bindings.items()
@@ -400,7 +435,7 @@ class ProgramContext:
         finally:
             self.inline_stack.pop()
             (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-             self.return_names) = saved
+             self.return_names, self.expression_sources) = saved
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""

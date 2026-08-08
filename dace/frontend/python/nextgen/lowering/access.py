@@ -315,13 +315,13 @@ def promote_index_reads(node: ast.Subscript,
     paths lower by reading the index as data (with the conflict resolution an
     indirect write needs).
 
-    Symbols are cached for the duration of one statement
-    (``LoweringState.index_symbols``), keyed by the read they are defined from,
-    so a target and the operands of one statement share a single definition --
-    ``O[0:n] = A[0:n] + 1.0`` needs its two subsets to agree on one symbol, not
-    on two symbols that merely hold equal values. The cache is dropped between
-    statements, so a scalar reassigned in between cannot leave a stale
-    definition behind.
+    Symbols are cached (``LoweringState.index_symbols``), keyed by the read they
+    are defined from, so a target and the operands of one statement share a
+    single definition -- ``O[0:n] = A[0:n] + 1.0`` needs its two subsets to
+    agree on one symbol, not on two symbols that merely hold equal values. Reuse
+    is offered past the defining statement only while the value provably cannot
+    have changed (``LoweringState.reusable_index_symbol``), which is what makes
+    the ANF temporaries of one source expression agree as well.
 
     :param force_elements: Promote element positions unconditionally. Set when
         the subscript is itself becoming an interstate assignment's right-hand
@@ -371,7 +371,7 @@ def _index_symbol(read: ast.expr, node: ast.AST, state: LoweringState) -> str:
             state.context.filename,
             node,
             category='data-dependent-subscript')
-    existing = state.index_symbols.get(expression)
+    existing = state.reusable_index_symbol(expression)
     if existing is not None:
         return existing
     dtype = access.descriptor.dtype
@@ -388,7 +388,7 @@ def _index_symbol(read: ast.expr, node: ast.AST, state: LoweringState) -> str:
         tn.AssignNode(name=symbol_name,
                       value=CodeBlock(expression),
                       edge=InterstateEdge(assignments={symbol_name: expression})))
-    state.index_symbols[expression] = symbol_name
+    state.record_index_symbol(expression, symbol_name, (access.container, ))
     return symbol_name
 
 

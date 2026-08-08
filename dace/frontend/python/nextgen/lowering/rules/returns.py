@@ -66,6 +66,12 @@ def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: 
     the runtime argument marshalling long after any connection to the source
     was lost. Supporting the form needs a count-then-fill two-kernel dispatch,
     which is future work.
+
+    Both halves of the message are stated in the user's terms: the returned
+    expression through :meth:`ProgramContext.describe_expression` (after
+    A-normal form the node here is usually a generated ``__anf`` temporary),
+    and the size through the description recorded with the deferred symbol
+    (its generated name says nothing to a reader).
     """
     deferred = sorted({
         symbol.name
@@ -74,11 +80,12 @@ def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: 
     })
     if not deferred:
         return
+    sizes = list(dict.fromkeys(state.context.deferred_symbols[name] or name for name in deferred))
     raise FrontendError(
-        f'Cannot return "{astutils.unparse(value)}": data-dependent-shaped return values are not supported. Its '
-        f'size ({", ".join(deferred)}) is only known while the program runs, and a compiled program\'s caller must '
-        'allocate the return value before the call. Reduce it inside the program (``return np.sum(A[mask])``), or '
-        'write into a caller-allocated output.', state.context.filename, statement)
+        f'Cannot return "{state.context.describe_expression(value)}": data-dependent-shaped return values are not '
+        f'supported. Its size ({", ".join(sizes)}) is only known while the program runs, and a compiled program\'s '
+        'caller must allocate the return value before the call. Reduce it inside the program '
+        '(``return np.sum(A[mask])``), or write into a caller-allocated output.', state.context.filename, statement)
 
 
 def _reject_disagreeing_shape(return_name: str, shape, value: ast.expr, statement: ast.Return, state: LoweringState):
@@ -99,9 +106,9 @@ def _reject_disagreeing_shape(return_name: str, shape, value: ast.expr, statemen
     if existing is None or list(existing.shape) == list(shape):
         return
     raise DaceSyntaxError(
-        None, statement, f'Return value "{astutils.unparse(value)}" has shape {tuple(shape)}, but an earlier return '
-        f'in the same program has shape {tuple(existing.shape)}. A compiled program returns one container, whose '
-        'memory its caller allocates before the call, so every return must agree on the shape.')
+        None, statement, f'Return value "{state.context.describe_expression(value)}" has shape {tuple(shape)}, but an '
+        f'earlier return in the same program has shape {tuple(existing.shape)}. A compiled program returns one '
+        'container, whose memory its caller allocates before the call, so every return must agree on the shape.')
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
@@ -178,7 +185,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
 
     dtype = state.inference.dtype_of(inferred)
     if dtype is None:
-        raise UnsupportedFeatureError(f'Cannot determine return value type: {astutils.unparse(value)}',
+        raise UnsupportedFeatureError(f'Cannot determine return value type: {state.context.describe_expression(value)}',
                                       state.context.filename,
                                       statement,
                                       category='type-inference')

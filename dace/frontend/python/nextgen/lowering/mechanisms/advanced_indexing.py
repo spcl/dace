@@ -492,11 +492,15 @@ def emit_boolean_gather(target_name: str,
 
     nnz_container = state.context.add_container(f'__nnz_{line}', data.Array(dtypes.uint32, [1]), transient=True)
     _emit_zero_init(nnz_container, state)
+    # What the count IS, for diagnostics about containers this symbol sizes:
+    # the mask is itself usually a canonicalization temporary, so resolve it
+    # back to the expression the user wrote.
+    count_description = f'the number of elements "{state.context.describe_expression(mask_container)}" selects'
 
     if strategy == 'exact':
         _emit_boolean_count(base_container, mask_container, nnz_container, base_region, mask_region, source_size, line,
                             state)
-        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
+        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', count_description, state)
         result_container = state.context.add_container(target_name, data.Array(dtype, [count_symbol]))
         _emit_boolean_compact(base_container, mask_container, result_container, base_region, mask_region, source_size,
                               count_symbol, line, state)
@@ -504,7 +508,7 @@ def emit_boolean_gather(target_name: str,
         buf_container = state.context.add_container(f'__buf_{line}', data.Array(dtype, [source_size]), transient=True)
         _emit_boolean_count_and_fill(base_container, mask_container, buf_container, nnz_container, base_region,
                                      mask_region, source_size, line, state)
-        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
+        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', count_description, state)
         result_container = state.context.add_container(target_name,
                                                        data.ArrayView(dtype, [count_symbol]),
                                                        transient=True)
@@ -537,7 +541,8 @@ def _emit_zero_init(container: str, state: LoweringState) -> None:
                        out_memlets={'z': Memlet(data=container, subset=subsets.Range([(0, 0, 1)]), volume=1)}))
 
 
-def _resolve_symbol_from_scalar(scalar_container: str, hint: str, state: LoweringState) -> symbolic.symbol:
+def _resolve_symbol_from_scalar(scalar_container: str, hint: str, description: str,
+                                state: LoweringState) -> symbolic.symbol:
     """
     Mint a fresh SDFG symbol and resolve its value from a scalar container
     computed earlier in this same lowering, via a plain interstate-edge
@@ -545,13 +550,21 @@ def _resolve_symbol_from_scalar(scalar_container: str, hint: str, state: Lowerin
     same shape ``lowering.rules.control_flow._dynamic_bound`` uses for
     dynamic map bounds (``__dynN``) -- this is an ordinary, non-map-range
     symbol instead, usable in any later container's shape.
+
+    :param scalar_container: Container holding the runtime value.
+    :param hint: Name hint for the generated symbol.
+    :param description: Human-readable description of the quantity the symbol
+                        holds, shown by diagnostics about containers sized by
+                        it (the generated name means nothing to a reader).
+    :param state: The active lowering state.
+    :return: The freshly minted symbol.
     """
     name = state.context.fresh_name(f'__{hint}')
     symbol = symbolic.symbol(name, dtypes.int64)
     state.context.symbols[name] = symbol
     # Its value exists only once the program is running, which is what makes a
     # container sized by it unusable across the program boundary.
-    state.context.deferred_symbols.add(name)
+    state.context.deferred_symbols[name] = description
     assignment = f'{scalar_container}[0]'
     state.emitter.emit(
         tn.AssignNode(name=name, value=CodeBlock(assignment), edge=InterstateEdge(assignments={name: assignment})))

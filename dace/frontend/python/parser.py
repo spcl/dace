@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 import ast
+import builtins
 import inspect
 import copy
 import os
@@ -40,6 +41,56 @@ def _get_argnames(f) -> List[str]:
 def _is_empty(val: Any) -> bool:
     """ Helper function to deal with inspect._empty. """
     return val is inspect._empty
+
+
+def _rebuild_synthesized_callbacks(sdfg: SDFG, closure: Dict[str, Any]) -> None:
+    """
+    Rebuild the callables of callbacks a frontend synthesized, for an SDFG that
+    no longer has them.
+
+    ``SDFG.callback_objects`` holds live Python functions, which no file can
+    carry, so an SDFG loaded from a build folder arrives with none -- and a
+    synthesized callback has no counterpart in the calling program for the
+    caller to pass instead. Its SOURCE does survive, in
+    ``SDFG.callback_sources``, and this rebuilds from that.
+
+    The rebuild never runs the source: ``build_synthesized_callback`` checks it
+    to be a lone function definition and binds that function's own code object,
+    so nothing but the callback body ever executes, and only once the program
+    calls it. A source that is not such a definition is skipped, like one that
+    cannot be bound.
+
+    The namespace is the call's own closure, not the SDFG's constant
+    repository: an outlined callback body typically CALLS a user function
+    (that is what made it a callback), and such an object is no more
+    serializable than the callable being rebuilt. Binding the function to the
+    closure ties it to the same live function the caller is about to run with
+    -- so a counter it increments is the caller's counter.
+
+    A callback whose source needs a name the closure cannot supply is left
+    alone rather than built into something that would raise inside the callback
+    ABI, where the exception could not propagate; the missing argument is then
+    reported by ``CompiledSDFG`` in the ordinary way.
+    """
+    from dace.sdfg.analysis.schedule_tree.treenodes import build_synthesized_callback  # Avoid import loop
+    sources = getattr(sdfg, 'callback_sources', None)
+    if not sources:
+        return
+    for name, source in sources.items():
+        if name in closure or name in sdfg.callback_objects:
+            continue
+        environment = dict(sdfg.constants)
+        environment.update(closure)
+        try:
+            rebuilt = build_synthesized_callback(source, name, environment)
+        except Exception:
+            continue
+        if rebuilt is None:
+            continue
+        required = {free for free in rebuilt.__code__.co_names if not hasattr(builtins, free)}
+        if required - environment.keys():
+            continue  # Would raise inside the callback, where nothing could see it
+        closure[name] = rebuilt
 
 
 def _is_compiletime_callable(val: Any) -> bool:
@@ -523,6 +574,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         # than detected in the program's globals; it carries its own callable in
         # ``sdfg.callback_objects``, which the compiled SDFG fills in.
         result.update({k: result[v] for k, v in sdfg.callback_mapping.items() if v in result})
+        _rebuild_synthesized_callbacks(sdfg, result)
 
         def _try_create_datadescriptor(key: str, val: Any) -> data.Data:
             """

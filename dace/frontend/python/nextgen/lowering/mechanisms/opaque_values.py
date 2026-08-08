@@ -27,7 +27,6 @@ import ast
 from typing import List
 
 from dace import dtypes
-from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 
@@ -83,10 +82,11 @@ def reject_opaque_condition(test: ast.expr, statement: ast.stmt, state: Lowering
     names = opaque_names(test, state)
     if not names:
         return
+    offending = _listed([state.context.describe_expression(name) for name in names])
     raise DaceSyntaxError(
         None, statement, f'Trying to operate on a callback with an unknown return type: the condition '
-        f'"{astutils.unparse(test)}" reads {_listed(names)}, whose type could not be inferred. A condition is '
-        f'evaluated by the compiled program, so it needs a concrete type. {_REMEDY}')
+        f'"{state.context.describe_expression(test)}" reads {offending}, whose type could not be inferred. '
+        f'A condition is evaluated by the compiled program, so it needs a concrete type. {_REMEDY}')
 
 
 def reject_opaque_slice(expression: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
@@ -101,9 +101,11 @@ def reject_opaque_slice(expression: ast.expr, statement: ast.stmt, state: Loweri
     names = sliced_opaque_names(expression, state)
     if not names:
         return
+    offending = _listed([state.context.describe_expression(name) for name in names])
     raise DaceSyntaxError(
-        None, statement, f'A callback result with an unknown return type cannot be sliced: {_listed(names)} in '
-        f'"{astutils.unparse(expression)}". Slicing needs a shape, and none could be inferred. {_REMEDY}')
+        None, statement, f'A callback result with an unknown return type cannot be sliced: {offending} in '
+        f'"{state.context.describe_expression(expression)}". Slicing needs a shape, and none could be inferred. '
+        f'{_REMEDY}')
 
 
 _REMEDY = ('Annotate the binding (for example "a: dace.float64[20] = callee(b)") or give the callee a return type '

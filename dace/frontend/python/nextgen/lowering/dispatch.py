@@ -501,7 +501,7 @@ def _array_index_container(element: ast.expr, node: ast.Subscript, state: Loweri
     if not isinstance(dtype, dtypes.typeclass) or (dtype not in dtypes.INTEGER_TYPES
                                                    and dtype not in (dtypes.bool, dtypes.bool_)):
         raise UnsupportedFeatureError(
-            f'Index expression "{astutils.unparse(element)}" is an array of {dtype}, '
+            f'Index expression "{state.context.describe_expression(element)}" is an array of {dtype}, '
             'which cannot index (only integer and boolean arrays can)',
             state.context.filename,
             node,
@@ -1434,9 +1434,9 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
 
     The binding lasts for this statement only (``LoweringState.
     promoted_scalars``), which is exactly what the definition claims: the
-    symbol holds the value the scalar had HERE. The per-statement cache the
-    range bounds use (``access._index_symbol``) is shared, so a scalar named by
-    both an argument and a subset in one statement defines one symbol.
+    symbol holds the value the scalar had HERE. The symbol cache the range
+    bounds use (``access._index_symbol``) is shared, so a scalar named by both
+    an argument and a subset in one statement defines one symbol.
 
     Attempted only after the un-promoted call fails to type, and rolled back
     (bindings, symbols, and emitted nodes) when promotion does not make it
@@ -1462,19 +1462,20 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
         read = scalar_read_expression(access)
         if read is None:
             continue
-        symbol_name = state.index_symbols.get(read)
+        symbol_name = state.reusable_index_symbol(read)
         if symbol_name is None:
             symbol_name = state.context.fresh_name(f'__sym_{name.lstrip("_")}_')
             state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
             # Its value is read out of a container while the program runs, so a
             # container sized by it cannot cross the program boundary -- see
-            # ``rules.returns._reject_deferred_size``.
-            state.context.deferred_symbols.add(symbol_name)
+            # ``rules.returns._reject_deferred_size``, which reports the
+            # description rather than the generated symbol name.
+            state.context.deferred_symbols[symbol_name] = f'the value of "{state.context.describe_expression(read)}"'
             state.emitter.emit(
                 tn.AssignNode(name=symbol_name,
                               value=CodeBlock(read),
                               edge=InterstateEdge(assignments={symbol_name: read})))
-            state.index_symbols[read] = symbol_name
+            state.record_index_symbol(read, symbol_name, (access.container, ))
             defined.append((read, symbol_name))
         state.promoted_scalars.append((name, state.context.bindings.get(name)))
         state.context.bind_symbol(name, access.descriptor.dtype, symbol_name=symbol_name)
@@ -1487,10 +1488,10 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
     state.context.restore(before)
     del state.promoted_scalars[restore_from:]
     for read, symbol_name in defined:
-        state.index_symbols.pop(read, None)
+        state.forget_index_symbol(read)
         state.context.symbols.pop(symbol_name, None)
         state.context.symbol_aliases.pop(symbol_name, None)
-        state.context.deferred_symbols.discard(symbol_name)
+        state.context.deferred_symbols.pop(symbol_name, None)
     return None
 
 

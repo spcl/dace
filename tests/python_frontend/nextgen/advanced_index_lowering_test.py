@@ -387,6 +387,61 @@ def test_masked_read_lowers_but_cannot_be_returned():
         nextgen.parse_program(program)
 
 
+def test_refusal_names_the_source_expression_not_the_temporary():
+    """
+    The refusal above is only useful if the reader can tell *which* expression
+    it is about. Canonicalization hoists ``A[A > 15]`` into ``__anf0 = A > 15;
+    __anf1 = A[__anf0]``, and the message used to name ``__anf1`` (sized by
+    ``__nnz170``) -- two generated names with no way back to the program text.
+    Provenance recorded at the hoist resolves them, transitively, so nested
+    temporaries render as what the user wrote rather than as each other.
+    """
+
+    @dace.program
+    def program(A: dace.float64[20, 30]):
+        return A[A > 15]
+
+    with pytest.raises(FrontendError) as raised:
+        nextgen.parse_program(program)
+    message = str(raised.value)
+    assert 'Cannot return "A[A > 15]"' in message
+    assert 'the number of elements "A > 15" selects' in message
+    assert '__anf' not in message and '__nnz' not in message
+
+    @dace.program
+    def nested(A: dace.float64[20, 30]):
+        return np.sum(A[A > 15]) + A[A > 15]
+
+    with pytest.raises(FrontendError) as raised:
+        nextgen.parse_program(nested)
+    # Two levels of hoisting deep: the outer temporary's recorded expression
+    # mentions the inner ones, which resolve in turn.
+    assert 'Cannot return "numpy.sum(A[A > 15]) + A[A > 15]"' in str(raised.value)
+
+
+def test_refusal_inside_an_inlined_callee_names_the_callee_source():
+    """
+    A callee is canonicalized by its own pipeline run, whose temporary names
+    restart from zero, so the caller's name-keyed provenance must not answer
+    for them -- and the callee's own records must still be reachable, which
+    they are because they travel on the body the call site copies.
+    """
+
+    @dace.program
+    def selector(A: dace.float64[20, 30]):
+        return A[A > 15]
+
+    @dace.program
+    def program(A: dace.float64[20, 30]):
+        return selector(A)
+
+    with pytest.raises(FrontendError) as raised:
+        nextgen.parse_program(program)
+    message = str(raised.value)
+    assert 'Cannot return "selector(A)"' in message
+    assert 'the number of elements "A > 15" selects' in message
+
+
 # --- The boundary with scalar indirection
 
 
@@ -438,5 +493,7 @@ if __name__ == '__main__':
     test_masked_write()
     test_masked_accumulation()
     test_masked_read_lowers_but_cannot_be_returned()
+    test_refusal_names_the_source_expression_not_the_temporary()
+    test_refusal_inside_an_inlined_callee_names_the_callee_source()
     test_scalar_indirection_still_lowers()
     test_mixed_indexing_does_not_raise_syntaxerror()

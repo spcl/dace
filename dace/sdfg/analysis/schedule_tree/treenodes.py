@@ -1,8 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import ast
+import builtins
 import copy
 import sympy
+import types
 from dace import nodes, data, subsets, dtypes, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
@@ -11,7 +14,8 @@ from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
+from typing import (TYPE_CHECKING, Any, Callable, Dict, Iterable, Iterator, List, Literal, Optional, Sequence, Set,
+                    Tuple, Union)
 
 if TYPE_CHECKING:
     from dace import SDFG
@@ -292,6 +296,75 @@ class ScheduleTreeScope(ScheduleTreeNode):
                                              **kwargs)
 
 
+def synthesized_callback_definition(source: str, name: str) -> Optional[ast.Module]:
+    """
+    Parse the source of a synthesized callback, and accept it only if it is
+    shaped the way a frontend emits one: a module whose entire body is a single
+    plain function definition of the expected name.
+
+    Anything else -- an import, a second statement, a class or an ``async
+    def``, a decorator or a default argument -- is not something a frontend
+    synthesized, so it is rejected before any code object is produced. The
+    decorator and default cases are refused for a second reason: the callable
+    is built from the function's own code object (see
+    :func:`build_synthesized_callback`), which would apply neither, quietly
+    yielding a different function.
+
+    :param source: The recorded source of the callback.
+    :param name: The callback name the source is expected to define.
+    :return: The parsed module, or ``None`` if the source is not a synthesized
+             callback definition.
+    """
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return None
+    if len(module.body) != 1:
+        return None
+    definition = module.body[0]
+    if not isinstance(definition, ast.FunctionDef) or definition.name != name:
+        return None
+    if definition.decorator_list or definition.args.defaults or any(definition.args.kw_defaults):
+        return None
+    return module
+
+
+def build_synthesized_callback(source: str, name: str, namespace: Dict[str, Any]) -> Optional[Callable[..., Any]]:
+    """
+    Build the callable of a synthesized callback from its recorded source,
+    without ever running that source.
+
+    The module is first checked to be a lone function definition (see
+    :func:`synthesized_callback_definition`), so no top-level statement of any
+    other kind can even reach ``compile``. The compiled module's single nested
+    code object -- the function's own body -- is then bound to ``namespace``
+    with :class:`types.FunctionType`. Calling the result runs the callback
+    body, and nothing else, at the point the program actually calls it.
+
+    :param source: The recorded source of the callback.
+    :param name: The callback name the source is expected to define.
+    :param namespace: The globals mapping to bind the rebuilt function to. It
+                      is given a ``__builtins__`` entry if it has none.
+    :return: The callable, or ``None`` if the source is not a synthesized
+             callback definition. Callers decide what an unbuildable callback
+             means for them.
+    """
+    module = synthesized_callback_definition(source, name)
+    if module is None:
+        return None
+    module_code = compile(module, f'<dace callback: {name}>', 'exec')
+    # A valid single-definition module has exactly one nested code object: the
+    # function's own. Anything it defines in turn lives inside that one.
+    function_code = [const for const in module_code.co_consts if isinstance(const, types.CodeType)]
+    if len(function_code) != 1:
+        return None
+    # ``exec`` fills this in for the namespace it is handed; binding a function
+    # directly does not, and a body that names any builtin would then fail to
+    # resolve it -- inside the callback ABI, where nothing could report why.
+    namespace.setdefault('__builtins__', builtins)
+    return types.FunctionType(function_code[0], namespace, name)
+
+
 @dataclass
 class ScheduleTreeRoot(ScheduleTreeScope):
     """
@@ -405,8 +478,12 @@ class ScheduleTreeRoot(ScheduleTreeScope):
             # independent, and they chain through their I/O containers, not
             # through a shared namespace.
             environment = dict(namespace)
-            exec(node.outlined_function_code.as_string, environment)
-            self.callback_objects[name] = environment[name]
+            callback = build_synthesized_callback(node.outlined_function_code.as_string, name, environment)
+            if callback is None:
+                raise ValueError(f'Callback "{name}" cannot be materialized: its recorded code is not a definition '
+                                 f'of "{name}", which is the only shape a synthesized callback takes. Its code is:\n'
+                                 f'{node.outlined_function_code.as_string}')
+            self.callback_objects[name] = callback
         return self.callback_objects
 
     def get_root(self) -> 'ScheduleTreeRoot':

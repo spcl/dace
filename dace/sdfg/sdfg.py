@@ -483,6 +483,13 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    callback_sources = DictProperty(str,
+                                    str,
+                                    desc='Python source of each callback a frontend SYNTHESIZED (rather than '
+                                    'detected in the calling program), keyed by callback symbol name. Unlike the '
+                                    'live objects in "callback_objects" this is serializable, so an SDFG read back '
+                                    'from a file can rebuild the callables it needs')
+
     using_explicit_control_flow = Property(dtype=bool,
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
@@ -531,6 +538,7 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
+        self.callback_sources = {}
         self._callback_objects: Dict[str, Any] = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -603,8 +611,12 @@ class SDFG(ControlFlowRegion):
         still takes precedence.
 
         :note: These are runtime objects and deliberately not a serialized
-               property: an SDFG read back from a file has none, and its
-               callback arguments must be passed by the caller.
+               property. An SDFG read back from a file has none; its
+               synthesized callbacks are rebuilt from :attr:`callback_sources`
+               at call time (see
+               :meth:`~dace.frontend.python.parser.DaceProgram._create_sdfg_args`),
+               where the calling program's closure is available to supply the
+               live objects those sources reference.
         """
         if not hasattr(self, '_callback_objects'):  # An SDFG restored without running __init__
             self._callback_objects: Dict[str, Any] = {}

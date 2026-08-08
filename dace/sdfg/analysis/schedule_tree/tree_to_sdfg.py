@@ -1571,6 +1571,14 @@ def from_schedule_tree(
     # the converted SDFG is callable without the caller re-deriving them. Live
     # objects, hence shared rather than copied.
     result.callback_objects = dict(stree.materialize_callbacks())
+    # ...and their SOURCE travels with the SDFG, so one written to a file and
+    # read back can rebuild them. A synthesized callback has no counterpart in
+    # the calling program for the caller to supply.
+    result.callback_sources = {
+        node.outlined_function_name: node.outlined_function_code.as_string
+        for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)
+        and node.outlined_function_name is not None and node.outlined_function_code is not None
+    }
     # Frontend-produced trees store symbol *objects*; the SDFG symbol
     # repository stores their dtypes.
     result.symbols = {
@@ -1828,6 +1836,10 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
     Helper function that inserts boundaries after unmet memory dependencies.
     """
     reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    #: The subset of ``reads`` performed by real dataflow, i.e. excluding the
+    #: aliasing bindings a :class:`~...treenodes.ViewNode` records. See the
+    #: write-after-write test below for why the distinction matters.
+    dataflow_reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
     writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
     parents: dict[int, set[int]] = defaultdict(set)
     boundaries_to_insert: list[int] = []
@@ -1835,6 +1847,7 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
     for i, n in enumerate(scope.children):
         if isinstance(n, (tn.StateBoundaryNode, tn.ControlFlowScope)):  # Clear state
             reads.clear()
+            dataflow_reads.clear()
             writes.clear()
             parents.clear()
             if isinstance(n, tn.ControlFlowScope):  # Insert memory boundaries recursively
@@ -1847,6 +1860,11 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 
         inputs = n.input_memlets()
         outputs = n.output_memlets()
+        # A view is an aliasing BINDING, not dataflow: its viewing edge is
+        # attached in a post-pass (:func:`_connect_view_edges`), long after the
+        # state's access nodes are laid out, so it cannot serve as the link
+        # that chains one write to the next within a single state.
+        is_binding = isinstance(n, tn.ViewNode)
 
         def _restart_state(index: int) -> None:
             # The node at ``index`` becomes the first node of a new state: its
@@ -1854,10 +1872,13 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
             # it (e.g. a write-after-read within the new state) stay visible.
             boundaries_to_insert.append(index)
             reads.clear()
+            dataflow_reads.clear()
             writes.clear()
             parents.clear()
             for inp in inputs:
                 reads[inp] = [n]
+                if not is_binding:
+                    dataflow_reads[inp] = [n]
             for out in outputs:
                 writes[out] = [n]
 
@@ -1867,6 +1888,11 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
                 reads[inp] = [n]
             else:
                 reads[inp].append(n)
+            if not is_binding:
+                if inp not in dataflow_reads:
+                    dataflow_reads[inp] = [n]
+                else:
+                    dataflow_reads[inp].append(n)
 
             # Transitively add parents
             if inp in writes:
@@ -1879,8 +1905,17 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
             _restart_state(i)
             continue
 
-        # Write after write or potential write/write data race, insert state boundary
-        if any(o in writes and (o not in reads or any(id(r) not in parents for r in reads[o])) for o in outputs):
+        # Write after write or potential write/write data race, insert state boundary.
+        # Two writes to the same container may share a state only when the second
+        # one is chained to the first by a real read of it: state construction
+        # then routes that read through the access node the first write produced
+        # (``visit_TaskletNode``'s access cache) and gives the second write a
+        # fresh one. Reads recorded by a view binding do NOT provide that link --
+        # they are wired only after the state is complete, by which time the two
+        # writes have already been merged onto one access node -- so a
+        # write-after-write chained through nothing but views has to be split.
+        if any(o in writes and (o not in dataflow_reads or any(id(r) not in parents for r in dataflow_reads[o]))
+               for o in outputs):
             _restart_state(i)
             continue
 

@@ -32,6 +32,7 @@ import operator
 from typing import Dict, List, Optional, Tuple, Union
 
 from dace.frontend.python import astutils, iterators
+from dace.frontend.python.nextgen import provenance
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.canonical.cpa import (CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet,
                                                         NamedRegionStmt, OpaqueStmt)
@@ -1078,10 +1079,20 @@ class ANFTransform(_BodyTransformer):
         return hoisted + [statement] if hoisted else statement
 
     def _hoist(self, expr: ast.expr, hoisted: List[ast.stmt]) -> ast.Name:
-        """Assign an expression to a fresh temporary and return its name node."""
+        """
+        Assign an expression to a fresh temporary and return its name node.
+
+        The expression the temporary stands for is recorded on both the
+        assignment's target and the name substituted for it, so a diagnostic
+        raised about the temporary can name what the user wrote instead — see
+        :mod:`dace.frontend.python.nextgen.provenance`.
+        """
         temp = self.context.fresh_name('__anf')
-        hoisted.append(_assign(temp, expr, expr))
-        return _name_load(temp, expr)
+        assignment = _assign(temp, expr, expr)
+        hoisted.append(assignment)
+        name_node = _name_load(temp, expr)
+        provenance.record_expression_source(expr, name_node, assignment.targets[0])
+        return name_node
 
     def _flatten(self, expr: ast.expr, hoisted: List[ast.stmt], level: str) -> ast.expr:
         """
