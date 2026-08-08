@@ -35,6 +35,7 @@ from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 
 import dace
 from dace import data, dtypes, subsets, symbolic
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
@@ -65,6 +66,7 @@ def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
                                  where they are accessed.
     """
     block_symbols = frozenset(block_map_symbols)
+    pin_default_gpu_stream()
     # A length-1 input (e.g. ptsphy) read on BOTH host (per-block scalar inits) and device must become
     # a Scalar -> Register: passed into kernels by value and readable on the host, so it never needs a
     # host/device split. ``preserve_abi`` is required to reach the non-transient inputs at all -- left
@@ -72,12 +74,123 @@ def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
     # rewrites them, so the SDFG signature is byte-identical afterwards: the caller still passes a
     # 1-element buffer for every program output (ngpblks), which gets its copy-out state.
     ConvertLengthOneArraysToScalars(preserve_abi=True, recursive=True).apply_pass(sdfg, {})
+    symbolize_readonly_range_scalars(sdfg)
     assign_schedules(sdfg, block_symbols)
     mirror_nontransients_to_gpu(sdfg, frozenset(exclude_from_offload))
     mirror_host_needed_transients(sdfg)
     promote_transients_to_gpu(sdfg)
     propagate_gpu_storage_into_nested_sdfgs(sdfg)
     sdfg.validate()
+
+
+# -- Phase 0: default stream and dynamic map ranges -----------------------------------------------
+
+
+def pin_default_gpu_stream() -> None:
+    """Force every launch and async transfer onto the default (null) stream.
+
+    ``compiler.cuda.max_concurrent_streams = -1`` makes the CUDA target fill the ``gpu_streams``
+    array with ``nullptr`` instead of creating streams
+    (``dace/codegen/targets/experimental_cuda.py``, the ``== -1`` branch of the stream-allocation
+    choice), so ``gpu_streams[0]`` IS the default stream and every ``cudaLaunchKernel`` /
+    ``cudaMemcpyAsync`` the graph emits runs on it. Set here rather than left to the caller's
+    environment so the offloaded graph has one stream regime wherever it is built.
+    """
+    Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
+
+
+def readonly_range_scalars(graph: dace.SDFG) -> Set[str]:
+    """Integer Scalars that a map range reads ONLY through a dynamic-range connector, never written.
+
+    CloudSC's horizontal bounds ``kidia``/``kfdia`` arrive from the Fortran frontend as scalar
+    program arguments, and every klon map reads them as a dynamic map range. That shape is what
+    :func:`symbolize_readonly_range_scalars` rewrites; see there for why it has to go.
+
+    Admitted only when the value is provably loop-invariant: no non-empty write edge anywhere (the
+    empty in-edges the canon pipeline leaves behind are ordering, not data -- they carry no subset),
+    and every non-empty read edge lands on a MapEntry's same-named dynamic-range connector. A single
+    ordinary reader disqualifies the name, because turning it into a symbol would leave that reader
+    without a container.
+    """
+    candidates = {
+        name
+        for name, desc in graph.arrays.items()
+        if isinstance(desc, data.Scalar) and desc.dtype in (dace.int32, dace.int64)
+    }
+    if not candidates:
+        return set()
+    in_range: Set[str] = set()
+    for state in graph.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                in_range |= {str(s) for s in node.map.range.free_symbols}
+    candidates &= in_range
+
+    for state in graph.states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data in candidates):
+                continue
+            if any(not edge.data.is_empty() for edge in state.in_edges(node)):
+                candidates.discard(node.data)
+                continue
+            for edge in state.out_edges(node):
+                if edge.data.is_empty():
+                    continue
+                if not (isinstance(edge.dst, nodes.MapEntry) and edge.dst_conn == node.data):
+                    candidates.discard(node.data)
+                    break
+    return candidates
+
+
+def symbolize_readonly_range_scalars(sdfg: dace.SDFG) -> int:
+    """Turn read-only dynamic map ranges into SDFG symbols. Returns how many were converted.
+
+    WHY: a ``GPU_Device`` map whose range is a dynamic connector does not code-generate. The CUDA
+    target emits one local per dynamic input at the launch site
+    (``dace/codegen/targets/experimental_cuda.py``, the ``dyn_inputs`` loop that writes
+    ``memlet_definition`` into ``callsite_stream``), and CloudSC's connectors are named after the
+    very containers they read, so the declaration shadows its own initializer -- ``int kidia =
+    kidia[0];``. Worse, a range symbol that reaches only the GRID expression and no kernel argument
+    is dropped from the wrapper signature altogether, so the emitted ``.cu`` references an undefined
+    ``kidia``. Measured on the canonicalized CloudSC graph: 100 ``identifier "kidia" is undefined``
+    errors plus the whole host-side shadowing set, all of which disappear once the range is a symbol.
+
+    Both are code-generator defects, not graph defects -- the graph is valid and the CPU target
+    builds it. They live in ``dace/codegen``, outside what this pass may change, so the workaround
+    is to deny the codegen the shape it mishandles: a symbolic range is passed into the kernel by
+    the ordinary symbol path (exactly how ``klev``/``klon`` already arrive) and emits no launch-site
+    locals at all.
+
+    The rewrite is only sound for a name :func:`readonly_range_scalars` admits. Its access nodes are
+    then left with nothing but empty (ordering) in-edges and no readers; a sink that orders nothing
+    downstream is dropped with them. The descriptor becomes a symbol of the same name and dtype, so
+    the caller still passes ``kidia=`` -- a symbol keyword rather than a scalar buffer.
+    """
+    converted = 0
+    for graph in sdfg.all_sdfgs_recursive():
+        names = readonly_range_scalars(graph)
+        if not names:
+            continue
+        for state in graph.states():
+            for node in list(state.nodes()):
+                if not (isinstance(node, nodes.AccessNode) and node.data in names):
+                    continue
+                for edge in list(state.out_edges(node)):
+                    if edge.data.is_empty():
+                        continue
+                    edge.dst.remove_in_connector(edge.dst_conn)
+                    state.remove_edge(edge)
+                if state.out_degree(node) > 0:
+                    continue
+                for edge in list(state.in_edges(node)):
+                    state.remove_edge(edge)
+                state.remove_node(node)
+        for name in sorted(names):
+            dtype = graph.arrays[name].dtype
+            graph.remove_data(name, validate=False)
+            graph.add_symbol(name, dtype)
+            converted += 1
+    return converted
 
 
 # -- Phase 1: schedules -------------------------------------------------------------------------
@@ -669,9 +782,21 @@ def retarget_kernel_side_reads(graph: dace.SDFG, name: str, gpu_name: str, skip:
 
 
 def promote_transients_to_gpu(sdfg: dace.SDFG) -> None:
-    """Transient Arrays -> ``GPU_Global``; Scalars -> ``Register``. Non-transient scalars are included
-    because an NSDFG's inner descriptor shadows its outer binding, and a CPU_Heap inner scalar fed to a
-    kernel trips DaCe's ``IllegalCopy`` dispatch."""
+    """Transient Arrays -> ``GPU_Global``; Scalars -> ``Register`` at ``State`` lifetime.
+
+    Non-transient scalars are included because an NSDFG's inner descriptor shadows its outer binding,
+    and a CPU_Heap inner scalar fed to a kernel trips DaCe's ``IllegalCopy`` dispatch. Leaving them
+    host instead is measurably worse, not merely different: on the canonicalized CloudSC graph it
+    turns 2 host compile errors into 742 (``invalid types 'int[int]'``, ``int`` vs ``const int*``),
+    because the callee side expects the by-value form the Register storage produces.
+
+    ``State`` rather than the default ``Scope`` lifetime: a Register scalar is a C++ local, and at
+    Scope lifetime the declaration lands inside the braces of the dataflow component that writes it.
+    CloudSC's LICM preheaders put the write (``neg_ydcst_rlvtt = -ydcst_rlvtt``) and the kernel
+    launch that consumes it in two components of the SAME state, so the launch referenced a name
+    whose block had already closed -- ``'neg_ydcst_rlvtt' was not declared in this scope``. State
+    lifetime hoists the declaration to the state's own block, which spans both components.
+    """
     per_graph = device_touched_per_sdfg(sdfg)
     inside = sdfgs_inside_kernels(sdfg)
     for graph in sdfg.all_sdfgs_recursive():
@@ -688,6 +813,7 @@ def promote_transients_to_gpu(sdfg: dace.SDFG) -> None:
                 desc.storage = dtypes.StorageType.GPU_Global
             elif isinstance(desc, data.Scalar):
                 desc.storage = dtypes.StorageType.Register
+                desc.lifetime = dtypes.AllocationLifetime.State
 
 
 def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG) -> None:

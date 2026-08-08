@@ -104,7 +104,12 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             if not isinstance(node, nodes.AccessNode):
                 continue
             desc = node.desc(parent)
-            if not isinstance(desc, data.Array) or not desc.transient:
+            # ``data.View`` subclasses ``data.Array``, but a view is a pointer into another
+            # container -- codegen dispatches it to ``allocate_view`` and never allocates it, so
+            # there is nothing to hoist. Passing one to ``MoveArrayOutOfKernel`` reshapes the view
+            # descriptor and hangs a second access node off the kernel exit, which destroys the
+            # unique view edge ``sdutil.get_view_edge`` needs.
+            if not isinstance(desc, data.Array) or isinstance(desc, data.View) or not desc.transient:
                 continue
             if desc.storage != dtypes.StorageType.GPU_Global:
                 continue
@@ -158,6 +163,10 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                         continue
                     src_desc = nsdfg.arrays[edge.src.data]
                     dst_desc = nsdfg.arrays[edge.dst.data]
+                    # A view edge aliases, it does not copy: no allocation and no transfer, so it
+                    # is not an offender and the hoist this guard demands would break it.
+                    if isinstance(src_desc, data.View) or isinstance(dst_desc, data.View):
+                        continue
                     if not (src_desc.storage == dtypes.StorageType.GPU_Global
                             and dst_desc.storage == dtypes.StorageType.GPU_Global):
                         continue

@@ -12,11 +12,14 @@ hide a bug.
 import pytest
 
 import dace
-from dace import dtypes
+from dace import data, dtypes
+from dace.codegen.codegen import generate_code
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 
-from tests.corpus.cloudsc.offload_cloudsc_to_gpu import constant_offload_data, offload_cloudsc_to_gpu
+from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (constant_offload_data, offload_cloudsc_to_gpu,
+                                                         readonly_range_scalars, symbolize_readonly_range_scalars)
 
 nblocks = dace.symbol('nblocks')
 klev = dace.symbol('klev')
@@ -387,6 +390,182 @@ def test_elementwise_cover_refuses_symbolic_shape():
     exit_.add_in_connector('IN_out')
     exit_.add_out_connector('OUT_out')
     assert constant_offload_data(sdfg, {'tab'}) == {}
+
+
+def dynamic_range_sdfg(write_the_bound: bool = False) -> dace.SDFG:
+    """CloudSC's horizontal shape in miniature: a map whose range is read from a scalar argument.
+
+    The Fortran frontend gives ``kidia``/``kfdia`` as scalar arguments and every klon map reads them
+    through a same-named dynamic map-range connector. ``write_the_bound`` additionally stores into
+    the scalar, which is what must stop the rewrite.
+    """
+    sdfg = dace.SDFG('dynamic_range')
+    sdfg.add_array('pin', [16], dace.float64)
+    sdfg.add_array('pout', [16], dace.float64)
+    sdfg.add_scalar('kfdia', dace.int32)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('work', {'jl': '0:kfdia'})
+    entry.add_in_connector('kfdia')
+    state.add_edge(state.add_read('kfdia'), None, entry, 'kfdia', Memlet(data='kfdia', subset='0'))
+    tasklet = state.add_tasklet('double', {'a'}, {'o'}, 'o = 2.0 * a')
+    state.add_edge(state.add_read('pin'), None, entry, 'IN_pin', Memlet.from_array('pin', sdfg.arrays['pin']))
+    state.add_edge(entry, 'OUT_pin', tasklet, 'a', Memlet(data='pin', subset='jl'))
+    state.add_edge(tasklet, 'o', exit_, 'IN_pout', Memlet(data='pout', subset='jl'))
+    state.add_edge(exit_, 'OUT_pout', state.add_write('pout'), None, Memlet.from_array('pout', sdfg.arrays['pout']))
+    entry.add_in_connector('IN_pin')
+    entry.add_out_connector('OUT_pin')
+    exit_.add_in_connector('IN_pout')
+    exit_.add_out_connector('OUT_pout')
+    if write_the_bound:
+        setter = sdfg.add_state_before(state, 'set_bound')
+        producer = setter.add_tasklet('set', {}, {'o'}, 'o = 8')
+        setter.add_edge(producer, 'o', setter.add_write('kfdia'), None, Memlet(data='kfdia', subset='0'))
+    return sdfg
+
+
+def map_range_connectors(sdfg: dace.SDFG):
+    """Dynamic map-range connector names (the non-``IN_`` in-connectors of every MapEntry)."""
+    out = set()
+    for graph in sdfg.all_sdfgs_recursive():
+        for state in graph.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    out |= {c for c in node.in_connectors if not c.startswith('IN_')}
+    return out
+
+
+def test_readonly_dynamic_map_range_becomes_a_symbol():
+    """A never-written bound read only as a map range is turned into a symbol, connector and all.
+
+    The CUDA target cannot emit a ``GPU_Device`` map with a dynamic range: it declares one local per
+    dynamic input at the launch site, named after the container it reads (``int kfdia = kfdia[0];``,
+    which shadows its own initializer), and a range symbol that reaches only the grid expression is
+    left out of the kernel wrapper's parameter list entirely. Denying it that shape is what makes
+    CloudSC code-generate.
+    """
+    sdfg = dynamic_range_sdfg()
+    assert map_range_connectors(sdfg) == {'kfdia'}
+    assert readonly_range_scalars(sdfg) == {'kfdia'}
+
+    assert symbolize_readonly_range_scalars(sdfg) == 1
+    assert 'kfdia' not in sdfg.arrays, 'the scalar descriptor must be gone'
+    assert 'kfdia' in sdfg.symbols, 'and replaced by a symbol of the same name'
+    assert map_range_connectors(sdfg) == set(), 'the dynamic-range connector must be gone with it'
+    sdfg.validate()
+
+
+def test_written_dynamic_range_scalar_is_left_alone():
+    """The rewrite is only sound for a loop-invariant bound: a stored-to scalar keeps its container.
+
+    Turning a written scalar into a symbol would silently drop the store, so the guard has to refuse
+    it rather than merely produce a worse graph.
+    """
+    sdfg = dynamic_range_sdfg(write_the_bound=True)
+    assert readonly_range_scalars(sdfg) == set()
+    assert symbolize_readonly_range_scalars(sdfg) == 0
+    assert isinstance(sdfg.arrays['kfdia'], data.Scalar)
+    assert map_range_connectors(sdfg) == {'kfdia'}
+
+
+def test_offload_pins_the_default_stream():
+    """Every launch and async copy must run on the default (null) stream.
+
+    ``max_concurrent_streams = -1`` is what makes the CUDA target fill ``gpu_streams`` with
+    ``nullptr`` instead of creating streams, so ``gpu_streams[0]`` IS the default stream. Pinned by
+    the pass rather than by the caller's environment, so the offloaded graph has one stream regime
+    wherever it is built.
+    """
+    Config.set('compiler', 'cuda', 'max_concurrent_streams', value=0)
+    offload_cloudsc_to_gpu(blocked_sdfg())
+    assert int(Config.get('compiler', 'cuda', 'max_concurrent_streams')) == -1
+
+
+def test_offloaded_graph_generates_default_stream_cuda():
+    """The pinned setting reaches the emitted code: streams are nulled, never created."""
+    sdfg = blocked_sdfg()
+    offload_cloudsc_to_gpu(sdfg)
+    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.language == 'cu')
+    assert cuda, 'the offloaded graph must emit a .cu object'
+    assert 'internal_streams[i] = nullptr' in cuda
+    assert 'StreamCreateWithFlags' not in cuda, 'no concurrent stream may be created'
+
+
+def test_register_scalars_are_state_lifetime():
+    """A Register scalar is a C++ local; at the default ``Scope`` lifetime it is declared inside the
+    braces of the component that writes it, so a kernel launched from a LATER component of the same
+    state cannot see it (CloudSC's LICM preheaders hit exactly that). ``State`` lifetime hoists the
+    declaration to the state's own block."""
+    sdfg = blocked_sdfg()
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    offload_cloudsc_to_gpu(sdfg)
+    assert sdfg.arrays['acc'].storage == dtypes.StorageType.Register
+    assert sdfg.arrays['acc'].lifetime == dtypes.AllocationLifetime.State
+
+
+def test_view_in_a_kernel_still_code_generates():
+    """A transient View inside a kernel must survive GPU code generation.
+
+    ``data.View`` subclasses ``data.Array``, so the offload promotes a view to ``GPU_Global`` exactly
+    as DaCe's own ``GPUTransformSDFG`` does. The hoist in
+    ``InsertExplicitGPUGlobalMemoryCopies`` then used to treat it as an allocatable kernel-local
+    array and hand it to ``MoveArrayOutOfKernel``, which reshapes the view descriptor and hangs a
+    second access node off the kernel exit -- destroying the unique view edge and failing validation
+    with "Ambiguous or invalid edge to/from a View access node". CloudSC hits this through its six
+    ``zpfplsx_*`` views.
+    """
+    sdfg = dace.SDFG('view_in_kernel')
+    sdfg.add_symbol('n', dace.int32)
+    sdfg.add_array('pin', [klev, klev], dace.float64)
+    sdfg.add_array('pout', [klev, klev], dace.float64)
+    # Symbolic extents on purpose: a literal-shape kernel-local transient is demoted to Register
+    # instead, which is the branch that does NOT reach the hoist under test.
+    sdfg.add_transient('scratch', [klev, klev], dace.float64)
+    sdfg.add_view('scratch_row', [klev], dace.float64)
+    state = sdfg.add_state()
+
+    outer_entry, outer_exit = state.add_map('kernel', {'i': '0:klev'})
+    outer_entry.add_in_connector('IN_pin')
+    outer_entry.add_out_connector('OUT_pin')
+    outer_exit.add_in_connector('IN_pout')
+    outer_exit.add_out_connector('OUT_pout')
+    state.add_edge(state.add_read('pin'), None, outer_entry, 'IN_pin', Memlet.from_array('pin', sdfg.arrays['pin']))
+
+    # Both the transient and its view live INSIDE the kernel scope, which is the shape the hoist
+    # picks up (CloudSC's zpfplsx_* views sit inside their klon kernels the same way).
+    fill_entry, fill_exit = state.add_map('fill', {'j': '0:klev'})
+    fill_entry.add_in_connector('IN_pin')
+    fill_entry.add_out_connector('OUT_pin')
+    fill_exit.add_in_connector('IN_scratch')
+    fill_exit.add_out_connector('OUT_scratch')
+    fill = state.add_tasklet('copy', {'a'}, {'o'}, 'o = a')
+    state.add_edge(outer_entry, 'OUT_pin', fill_entry, 'IN_pin', Memlet(data='pin', subset='i, 0:klev'))
+    state.add_edge(fill_entry, 'OUT_pin', fill, 'a', Memlet(data='pin', subset='i, j'))
+    state.add_edge(fill, 'o', fill_exit, 'IN_scratch', Memlet(data='scratch', subset='i, j'))
+    scratch = state.add_access('scratch')
+    state.add_edge(fill_exit, 'OUT_scratch', scratch, None, Memlet(data='scratch', subset='i, 0:klev'))
+
+    view = state.add_access('scratch_row')
+    view.add_in_connector('views')
+    state.add_edge(scratch, None, view, 'views', Memlet(data='scratch', subset='i, 0:klev'))
+
+    use_entry, use_exit = state.add_map('use', {'k': '0:klev'})
+    use_entry.add_in_connector('IN_row')
+    use_entry.add_out_connector('OUT_row')
+    use_exit.add_in_connector('IN_pout')
+    use_exit.add_out_connector('OUT_pout')
+    use = state.add_tasklet('scale', {'a'}, {'o'}, 'o = 3.0 * a')
+    state.add_edge(view, None, use_entry, 'IN_row', Memlet(data='scratch_row', subset='0:klev'))
+    state.add_edge(use_entry, 'OUT_row', use, 'a', Memlet(data='scratch_row', subset='k'))
+    state.add_edge(use, 'o', use_exit, 'IN_pout', Memlet(data='pout', subset='i, k'))
+    state.add_edge(use_exit, 'OUT_pout', outer_exit, 'IN_pout', Memlet(data='pout', subset='i, 0:klev'))
+    state.add_edge(outer_exit, 'OUT_pout', state.add_write('pout'), None,
+                   Memlet.from_array('pout', sdfg.arrays['pout']))
+
+    offload_cloudsc_to_gpu(sdfg)
+    assert isinstance(sdfg.arrays['scratch_row'], data.View)
+    assert sdfg.arrays['scratch'].storage == dtypes.StorageType.GPU_Global
+    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.language == 'cu')
+    assert '__global__ void' in cuda
 
 
 if __name__ == '__main__':
