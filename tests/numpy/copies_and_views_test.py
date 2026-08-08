@@ -267,6 +267,66 @@ def test_strided_copy_map_symbolic_1():
     _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
 
 
+def _negative_start(src: dace.int64[8]):
+    return src[-1:1:-3]
+
+
+def _negative_start_open_stop(src: dace.int64[8]):
+    return src[-2::-2]
+
+
+def _negative_stop(src: dace.int64[8]):
+    return src[5:-8:-2]
+
+
+def _reversed_whole(src: dace.int64[8]):
+    return src[::-1]
+
+
+def _reversed_range(src: dace.int64[8]):
+    return src[6:2:-1]
+
+
+@pytest.mark.parametrize('function', [
+    _negative_start,
+    _negative_start_open_stop,
+    _negative_stop,
+    _reversed_whole,
+    _reversed_range,
+])
+def test_negative_step_slice_bounds(function):
+    """
+    Negative-step slices whose bounds are themselves negative.
+
+    Python counts a negative bound from the end of the axis, so ``a[-1:1:-3]``
+    starts at the last element. Reading such a bound literally rejected these
+    outright; the related defect is that an explicit ``-1`` stop was treated
+    like an OMITTED one -- see :func:`test_negative_step_empty_slice`.
+    """
+    src = np.arange(8, dtype=np.int64)
+    assert np.array_equal(np.asarray(dace.program(function)(src.copy())), function(src.copy()))
+
+
+def test_negative_step_empty_slice():
+    """
+    An explicit ``-1`` stop names the LAST element, unlike an omitted stop
+    which stands for "past the front of the axis". With a negative step that
+    makes ``a[7:-1:-2]`` empty, where ``a[7::-2]`` has four elements.
+
+    An empty result has no representation here, so this is refused rather than
+    returned -- but it must not silently come back as the four elements the
+    omitted-stop reading would give.
+    """
+
+    @dace.program
+    def empty_slice(src: dace.int64[8]):
+        return src[7:-1:-2]
+
+    assert len(empty_slice.f(np.arange(8, dtype=np.int64))) == 0
+    with pytest.raises(Exception):
+        empty_slice(np.arange(8, dtype=np.int64))
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()
@@ -277,6 +337,10 @@ if __name__ == '__main__':
     test_is_a_copy()
     test_needs_view()
     test_needs_copy()
+
+    for _function in (_negative_start, _negative_start_open_stop, _negative_stop, _reversed_whole, _reversed_range):
+        test_negative_step_slice_bounds(_function)
+    test_negative_step_empty_slice()
 
     test_strided_copy()
     test_strided_copy_symbolic_0()

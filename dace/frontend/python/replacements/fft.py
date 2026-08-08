@@ -89,3 +89,37 @@ def _ifft(pv: 'ProgramVisitor',
           axis=-1,
           norm: StringLiteral = StringLiteral('backward')):
     return _fft_core(pv, sdfg, state, a, n, axis, norm, True)
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for FFT (schedule-tree frontend)               #
+# -------------------------------------------------------------------- #
+
+from dace import data
+from dace.frontend.common.op_repository import infers_descriptor
+from dace.frontend.python.replacements.type_inference import _get_desc
+
+
+def _infer_fft_descriptor(input_descs, a, n=None, axis=-1, is_inverse=False, **_kw):
+    desc = _get_desc(input_descs, a)
+    if desc is None or not isinstance(desc, data.Data):
+        return None
+    if axis not in (0, -1) or n is not None:
+        return None
+    if is_inverse and desc.dtype not in (dtypes.complex64, dtypes.complex128):
+        return None
+
+    out_dtype = _real_to_complex(desc.dtype)
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(out_dtype, transient=True)
+    return data.Array(out_dtype, list(desc.shape), transient=True)
+
+
+@infers_descriptor('numpy.fft.fft')
+def _infer_fft(input_descs, a, n=None, axis=-1, norm=StringLiteral('backward'), **_kw):
+    return _infer_fft_descriptor(input_descs, a, n=n, axis=axis, is_inverse=False)
+
+
+@infers_descriptor('numpy.fft.ifft')
+def _infer_ifft(input_descs, a, n=None, axis=-1, norm=StringLiteral('backward'), **_kw):
+    return _infer_fft_descriptor(input_descs, a, n=n, axis=axis, is_inverse=True)

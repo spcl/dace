@@ -18,7 +18,28 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, symbolic
-from dace.data.core import Array, Data, Scalar
+from dace.data.core import Array, Data, Scalar, Structure
+
+
+def _array_like_descriptor(obj) -> Optional[Data]:
+    """
+    Attempts to describe an ``__array__``-implementing object through
+    ``numpy.asarray``. Returns None (rather than raising) when conversion
+    fails or is a no-op, so callers can fall through to other descriptor
+    creation rules.
+    """
+    try:
+        arr = np.asarray(obj)
+    except Exception:
+        return None
+    if arr is obj or arr.ndim == 0:
+        # No-op conversion (would recurse forever) or a scalar-valued object
+        # better served by the scalar rules
+        return None
+    try:
+        return create_datadescriptor(arr, no_custom_desc=True)
+    except (TypeError, RecursionError):
+        return None
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -98,6 +119,13 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      shape=interface['shape'],
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
+    elif (not isinstance(obj, (type, np.generic)) and hasattr(obj, '__array__')
+          and (desc := _array_like_descriptor(obj)) is not None):
+        return desc
+    elif isinstance(obj, dict):
+        from dace.data.pydata import infer_python_dict_descriptor_from_value
+        return infer_python_dict_descriptor_from_value(
+            obj, lambda value: create_datadescriptor(value, no_custom_desc=no_custom_desc), transient=False)
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
         obj = np.array(obj)
@@ -128,6 +156,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
     elif isinstance(obj, str) or obj is str:
         return Scalar(dtypes.string)
+    elif isinstance(obj, type):
+        try:
+            return Structure.from_class(obj)
+        except TypeError:
+            pass
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))

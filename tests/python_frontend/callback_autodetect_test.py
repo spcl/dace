@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
+import asyncio
 from typing import Dict, Union
 import dace
 import numpy as np
@@ -141,6 +142,59 @@ def test_automatic_callback_method():
     assert np.allclose(out, nd.q * A)
 
 
+def test_async_dace_program_is_rejected():
+
+    @dace.program
+    async def async_prog(A: dace.float64[N]):
+        return A
+
+    with pytest.raises(SyntaxError, match='Async @dace.program functions are unsupported'):
+        async_prog.to_sdfg()
+
+
+def test_async_callback_without_running_loop():
+
+    async def async_scale(a):
+        await asyncio.sleep(0)
+        return 2.0 * a
+
+    @dace.program
+    def autocallback_async(A: dace.float64[N], B: dace.float64[N]):
+        tmp: dace.float64[N] = async_scale(A)
+        B[:] = tmp
+
+    A = np.random.rand(24)
+    B = np.zeros_like(A)
+
+    with pytest.warns(match="Automatically creating callback"):
+        autocallback_async(A, B)
+
+    assert np.allclose(B, 2.0 * A)
+
+
+def test_async_callback_with_running_loop():
+
+    async def async_scale(a):
+        await asyncio.sleep(0)
+        return 2.0 * a
+
+    @dace.program
+    def autocallback_async(A: dace.float64[N], B: dace.float64[N]):
+        tmp: dace.float64[N] = async_scale(A)
+        B[:] = tmp
+
+    A = np.random.rand(24)
+    B = np.zeros_like(A)
+
+    async def invoke():
+        with pytest.warns(match="Automatically creating callback"):
+            autocallback_async(A, B)
+
+    asyncio.run(invoke())
+
+    assert np.allclose(B, 2.0 * A)
+
+
 @dace.program
 def modcallback(A: dace.float64[N, N], B: dace.float64[N]):
     tmp: dace.float64[N] = np.median(A, axis=1)
@@ -170,7 +224,6 @@ def tasklet_callback(A: dace.float64[N, N], B: dace.float64[N, N]):
             b = sq(a)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_callback_tasklet():
     A = np.random.rand(24, 24)
     B = np.random.rand(24, 24)
@@ -966,10 +1019,11 @@ def test_custom_generator_with_break():
     expected[:20] = np.arange(20, 0, -1)
 
     with pytest.warns(UserWarning,
-                      match='Automatically creating callback to Python interpreter from method "reverse_range"'):
+                      match='Automatically creating callback to the Python interpreter from function "reverse_range"'):
         with pytest.warns(UserWarning, match='Cannot infer return type of function call "reverse_range"'):
-            with pytest.warns(UserWarning,
-                              match='Automatically creating callback to Python interpreter from method "my_next"'):
+            with pytest.warns(
+                    UserWarning,
+                    match='Automatically creating callback to the Python interpreter from function "my_next"'):
                 tester(aa)
     assert np.allclose(aa, expected)
 
@@ -1007,6 +1061,61 @@ def test_disallowed_callback_slice():
         with pytest.warns(match="Automatically creating callback"):
             with pytest.warns(match="Cannot infer return type"):
                 callback_in_condition.to_sdfg()
+
+
+def test_annotated_callback_result_in_condition():
+    """An annotation on the binding gives the callback result a type, so the
+    condition that reads it is expressible in the compiled program."""
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42.0
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        c: dace.float64 = callbackfunc(arr)
+        if arr[0] < c:
+            return arr + 1
+        else:
+            return arr
+
+    arr = np.full(20, 3.0)
+    assert np.allclose(callback_in_condition(arr.copy()), arr + 1)
+
+
+def test_annotated_callback_result_slice():
+    """The same annotation gives the result a shape, so it can be sliced."""
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return arr * 2
+
+    @dace.program
+    def callback_slice(arr: dace.float64[20]):
+        a: dace.float64[20] = callbackfunc(arr)
+        return arr + a[:20]
+
+    arr = np.ones(20)
+    assert np.allclose(callback_slice(arr.copy()), arr * 3)
+
+
+def test_callback_return_hint_in_condition():
+    """A return type hint on the callee elucidates the result just as well as
+    an annotation on the binding, and needs no change at the call site."""
+
+    @dace_inhibitor
+    def callbackfunc(arr) -> dace.float64:
+        return 42.0
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        if arr[0] < callbackfunc(arr):
+            return arr + 1
+        else:
+            return arr
+
+    arr = np.full(20, 3.0)
+    assert np.allclose(callback_in_condition(arr.copy()), arr + 1)
 
 
 @pytest.mark.skip('Test requires GUI')
@@ -1147,7 +1256,7 @@ if __name__ == '__main__':
     test_automatic_callback_method()
     test_callback_from_module()
     test_view_callback()
-    # test_callback_tasklet()
+    test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()
@@ -1182,6 +1291,9 @@ if __name__ == '__main__':
     test_custom_generator_with_break()
     test_disallowed_callback_in_condition()
     test_disallowed_callback_slice()
+    test_annotated_callback_result_in_condition()
+    test_annotated_callback_result_slice()
+    test_callback_return_hint_in_condition()
     # test_matplotlib_with_compute()
     test_callback_with_arraylike_closure_object()
     test_callback_with_arraylike_object()

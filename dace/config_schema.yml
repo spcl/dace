@@ -639,6 +639,33 @@ required:
                     Raise all errors out of nested function parsing contexts
                     instead of trying to create a callback implicitly.
 
+            raise_statements:
+                type: str
+                title: Schedule-tree raise handling
+                default: support
+                description: >
+                    Controls how ``raise`` statements are handled by the direct
+                    schedule-tree frontend. ``support`` lowers directly supported
+                    exception classes to ``RaiseNode`` and falls back to Python
+                    callbacks for unsupported dynamic cases. ``ignore_dynamic``
+                    keeps directly supported ``RaiseNode`` cases but skips
+                    dynamic raises that would otherwise require a callback.
+                    ``ignore_all`` skips all ``raise`` statements.
+
+            runtime_negative_indices:
+                type: bool
+                title: Runtime negative-index wrapping
+                default: false
+                description: >
+                    If enabled, array indices whose sign cannot be proven
+                    nonnegative are normalized with symbolic runtime accessors
+                    during frontend lowering. Uncertain scalar element indices
+                    use ``pyindex(ind, size)``, while uncertain slice bounds use
+                    conditional negative-offset normalization so positive bounds
+                    such as ``stop == size`` keep Python semantics. This is
+                    disabled by default; definitely negative cases are still
+                    normalized statically during preprocessing.
+
             verbose_errors:
                 type: bool
                 title: Show preprocessed AST on parsing errors
@@ -655,6 +682,37 @@ required:
                     Number of times to run the Python preprocessing passes (e.g., constant
                     folding) on the input code. Set to zero to disable preprocessing
                     optimizations, set to -1 to run until the code has not changed.
+
+            use_nextgen:
+                type: bool
+                title: Use the next-generation Python frontend
+                default: true
+                description: >
+                    If True, ``@dace.program`` functions are lowered by the
+                    next-generation frontend, which builds a verified schedule
+                    tree and converts it into an SDFG. If False, the classic
+                    AST-to-SDFG frontend is used instead.
+
+            boolean_index_strategy:
+                type: str
+                title: NumPy boolean-mask read (nextgen frontend) allocation strategy
+                default: view
+                description: >
+                    Controls how the nextgen frontend lowers ``B = A[mask]``
+                    for a full-shape boolean array ``mask``, whose result
+                    size (the count of ``True`` elements) is only known at
+                    runtime. ``view`` (default) does a single pass over the
+                    source, compacting into an upper-bound (source-sized)
+                    backing buffer and exposing the result as a view over its
+                    first ``M`` elements -- cheaper in compute, wastes
+                    ``N - M`` elements of backing memory. ``exact`` does two
+                    passes -- a pure count-only reduction resolves ``M``
+                    first, then a second pass compacts directly into an
+                    exactly ``M``-sized array -- costing a second read of
+                    ``mask`` but never over-allocating. See
+                    ``tests/sdfg/deferred_symbol_boolean_filter_test.py`` for
+                    the underlying mechanism, verified independently of the
+                    frontend.
 
             dont_fuse_callbacks:
                 type: bool

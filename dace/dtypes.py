@@ -310,6 +310,8 @@ class typeclass(object):
             try:
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
+                elif wrapped_type == "object":
+                    wrapped_type = numpy.object_
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
@@ -589,6 +591,13 @@ class pointer(typeclass):
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
+        # Not set by typeclass.__init__ (this class doesn't call it), but
+        # to_string() unconditionally reads it -- without this, any code
+        # path that stringifies a pointer typeclass (e.g. dead-code
+        # elimination's connector-removal hint injection) hits a raw
+        # AttributeError instead of falling through to to_string()'s
+        # documented `self.typename or self.type.__name__` fallback.
+        self.typename = None
 
     def to_json(self):
         return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
@@ -607,6 +616,10 @@ class pointer(typeclass):
         """ Returns the ctypes version of the typeclass. """
         if isinstance(self._typeclass, struct):
             return ctypes.POINTER(self._typeclass.as_ctypes())
+        if isinstance(self._typeclass, pyobject):
+            # A PyObject* out-parameter slot (no FFI equivalent for the
+            # object itself)
+            return ctypes.POINTER(ctypes.py_object)
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
     def as_numpy_dtype(self):
@@ -862,6 +875,21 @@ def ptrtocupy(ptr, inner_ctype, shape):
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
 
 
+class _PyObjectOutParameter:
+    """
+    A length-1 assignable view over a ``PyObject*`` callback out-parameter
+    slot. The trampoline's write-back (``v[:] = r``) stores the returned
+    object's pointer into the slot; the caller's ``refs`` keepalive list owns
+    the object's lifetime.
+    """
+
+    def __init__(self, slot):
+        self._slot = ctypes.cast(slot, ctypes.POINTER(ctypes.py_object))
+
+    def __setitem__(self, _, value):
+        self._slot[0] = value
+
+
 class callback(typeclass):
     """
     Looks like ``dace.callback([None, <some_native_type>], *types)``
@@ -1029,7 +1057,13 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
-                ret_converters.append(lambda a, *args: a)
+                if self.is_scalar_function():
+                    # Returned by value as py_object; identity conversion
+                    ret_converters.append(lambda a, *args: a)
+                else:
+                    # Multi-output form: the object is written back through a
+                    # PyObject* out-parameter slot
+                    ret_converters.append(lambda a, *args: _PyObjectOutParameter(a))
             else:
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
@@ -1521,6 +1555,22 @@ def validate_name(name):
         if namere.match(token) is None:
             return False
     return True
+
+
+def sanitize_name(name: str, fallback: str = 'unnamed') -> str:
+    """
+    Coerce a string into a name :func:`validate_name` accepts, for the places
+    where a freely chosen label becomes part of a generated name -- a
+    :class:`~dace.sdfg.state.NamedRegion`'s label is user text
+    (``with dace.named("phase 1"):``), and inlining the region prefixes it onto
+    every block name inside.
+
+    :param fallback: Returned when the string has nothing usable left in it.
+    """
+    candidate = re.sub(r'[^a-zA-Z0-9_.]', '_', name or '')
+    if candidate and candidate[0].isdigit():
+        candidate = '_' + candidate
+    return candidate if validate_name(candidate) else fallback
 
 
 def can_access(schedule: ScheduleType, storage: StorageType):

@@ -20,10 +20,13 @@ def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64, softening:
     softening is the softening length
     a is N x 3 matrix of accelerations
     """
-    # positions r = [x,y,z] for all particles
-    x = pos[:, 0:1]
-    y = pos[:, 1:2]
-    z = pos[:, 2:3]
+    # positions r = [x,y,z] for all particles. Indexed, not sliced: these feed
+    # ``numpy.add.outer`` below, which pairs them along NEW axes -- so a
+    # (N, 1) column would make the separations (N, 1, N, 1) rather than the
+    # (N, N) the rest of the kernel is written against.
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
 
     # matrix that stores all pairwise particle separations: r_j - r_i
     dx = np.add.outer(-x, x)
@@ -67,10 +70,13 @@ def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3], mass: dc.float64[N],
 
     # Potential Energy:
 
-    # positions r = [x,y,z] for all particles
-    x = pos[:, 0:1]
-    y = pos[:, 1:2]
-    z = pos[:, 2:3]
+    # positions r = [x,y,z] for all particles. Indexed, not sliced, for the
+    # same reason as in ``getAcc``: ``numpy.add.outer`` pairs its operands
+    # along new axes, so a (N, 1) column would make the separations
+    # (N, 1, N, 1) rather than the (N, N) the rest of the kernel expects.
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
 
     # matrix that stores all pairwise particle separations: r_j - r_i
     dx = np.add.outer(-x, x)

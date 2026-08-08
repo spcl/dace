@@ -2,7 +2,6 @@
 """ Tests assignments in conditions. """
 import numpy as np
 import dace
-import pytest
 
 
 def test_none_or_field_call():
@@ -26,7 +25,6 @@ def test_none_or_field_call():
     assert np.allclose(A, 7.0)
 
 
-@pytest.mark.skip('Needs Reference support')
 def test_none_or_field_assignment_globalarr():
     globalarr = np.random.randn(10)
 
@@ -46,7 +44,6 @@ def test_none_or_field_assignment_globalarr():
     assert np.allclose(A, globalarr)
 
 
-@pytest.mark.skip('Needs Reference support')
 def test_none_or_field_assignment_arr():
 
     @dace.program
@@ -80,7 +77,6 @@ def test_none_arg():
     assert np.allclose(field, 1.0)
 
 
-@pytest.mark.skip('Reference scalars unsupported in Python frontend (fails without simplification)')
 def test_maybe_none_scalar_arg():
 
     @dace.program
@@ -139,10 +135,10 @@ def test_conditional_print():
 
 if __name__ == '__main__':
     test_none_or_field_call()
-    # test_none_or_field_assignment_globalarr()
-    # test_none_or_field_assignment_arr()
+    test_none_or_field_assignment_globalarr()
+    test_none_or_field_assignment_arr()
     test_none_arg()
-    # test_maybe_none_scalar_arg()
+    test_maybe_none_scalar_arg()
     test_default_arg()
     test_kwarg_none()
     test_conditional_print()

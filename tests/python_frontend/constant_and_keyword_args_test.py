@@ -5,7 +5,7 @@ import dace
 import numpy as np
 import pytest
 
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
+from dace.frontend.python.common import SDFGConvertible
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
 
@@ -304,6 +304,91 @@ def test_optional_argument():
 
     # Try with bias
     assert np.allclose(linear.f(x, w, b), linear(x, w, b))
+
+
+def test_optional_argument_runtime_null_check():
+    """
+    An array declared ``optional`` is a nullable pointer, so ``bias is None``
+    is a genuine run-time question and has to reach generated code as a null
+    test -- not fold to False the way an identity check against a container the
+    frontend can see does.
+    """
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        if bias is None:
+            A[:] = 1.0
+        else:
+            A[:] = bias
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert sdfg.arrays['bias'].optional is True
+    assert 'bias == nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 7.0))
+    assert np.allclose(with_bias, 7.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 1.0)
+
+
+def test_optional_argument_null_check_bound_to_name():
+    """
+    The same null test, bound to a name first. ``is`` asks about the pointer,
+    not about the array's contents, so this has to reach generated code as a
+    null test too -- not as an elementwise comparison over ``bias``, which
+    would dereference the pointer being tested.
+    """
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        missing = bias is None
+        if missing:
+            A[:] = 1.0
+        else:
+            A[:] = bias
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert 'bias == nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 7.0))
+    assert np.allclose(with_bias, 7.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 1.0)
+
+
+def test_optional_argument_negated_null_check_bound_to_name():
+    """``is not None`` bound to a name, which must invert the same test."""
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        present = bias is not None
+        if present:
+            A[:] = bias
+        else:
+            A[:] = 2.0
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert 'bias != nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 3.0))
+    assert np.allclose(with_bias, 3.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 2.0)
 
 
 def test_constant_argument_simple():
@@ -675,7 +760,14 @@ def test_constant_proper_use_2():
     assert np.allclose(arr, 2)
 
 
-def test_constant_misuse():
+def test_constant_runtime_value():
+    """A run-time value passed where a ``dace.compiletime`` parameter is declared.
+
+    The annotation asks for a value known at parse time and the caller has none
+    to give, but nothing in the callee actually needs one: ``a_bool`` only
+    decides a branch, which is expressible at run time. So the call lowers to an
+    ordinary conditional and computes what Python would.
+    """
 
     @dace.program
     def bad_function(scal: dace.compiletime, arr):
@@ -691,11 +783,20 @@ def test_constant_misuse():
     arr = np.ones((12), np.float64)
     scal = 2
 
-    with pytest.raises(DaceSyntaxError):
-        program(arr, scal)
+    regression = np.ones((12), np.float64)
+    program.f(regression, scal)
+
+    program(arr, scal)
+    assert np.allclose(arr, regression)
 
 
 def test_constant_field():
+    """A field read off a ``dace.compiletime`` object, both as a value the
+    callee branches on and as an argument computed at the call site.
+
+    ``ctx.scal`` is known at parse time, so both ``ctx.scal == 1`` uses fold and
+    the guarded write is simply not emitted -- no callback needed.
+    """
 
     def function(ctx: dace.compiletime, arr, somebool):
         a_bool = ctx.scal == 1
@@ -709,8 +810,11 @@ def test_constant_field():
     ns = SimpleNamespace(scal=2)
     arr = np.ones((12), np.float64)
 
-    with pytest.warns(match="Automatically creating callback"):
-        program(arr, ns)
+    regression = np.ones((12), np.float64)
+    program.f(regression, ns)
+
+    program(arr, ns)
+    assert np.allclose(arr, regression)
 
 
 if __name__ == '__main__':
@@ -731,6 +835,9 @@ if __name__ == '__main__':
     test_optional_argument_jit()
     test_optional_argument_jit_kwarg()
     test_optional_argument()
+    test_optional_argument_runtime_null_check()
+    test_optional_argument_null_check_bound_to_name()
+    test_optional_argument_negated_null_check_bound_to_name()
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()
@@ -748,5 +855,5 @@ if __name__ == '__main__':
     test_constant_propagation_2()
     test_constant_proper_use()
     test_constant_proper_use_2()
-    test_constant_misuse()
+    test_constant_runtime_value()
     test_constant_field()

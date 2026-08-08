@@ -464,3 +464,9 @@ def gemv_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, al
         state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.gemv')
+@oprepo.infers_descriptor('dace.libraries.blas.Gemv')
+def _infer_gemv_libnode(input_descs, A, x, y, alpha, beta, trans=None, **_kw):
+    return ()

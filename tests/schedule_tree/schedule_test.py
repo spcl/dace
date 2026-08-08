@@ -111,7 +111,9 @@ def test_nesting_view():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(node, tn.ViewNode) for node in stree.children)
+    # Anywhere in the tree: the view binding is loop-invariant, but a frontend
+    # is free to emit it inside the loop rather than hoisting it out.
+    assert any(isinstance(node, tn.ViewNode) for node in stree.preorder_traversal())
 
 
 def test_nesting_nview():
@@ -131,7 +133,13 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(v, tn.NView) for v in stree.children)
+    # Both reinterpretations round-trip as view bindings: ``a`` as (4, 5, 10)
+    # and the per-iteration slice as (40,). The outer one is an NView only if
+    # the callee survives as a nested SDFG -- when nothing else holds that
+    # boundary open it is inlined, and the binding becomes an ordinary view of
+    # ``a``. NView subclasses ViewNode, so this covers both.
+    shapes = {tuple(v.view_desc.shape) for v in stree.preorder_traversal() if isinstance(v, tn.ViewNode)}
+    assert shapes == {(4, 5, 10), (40, )}
 
 
 def test_irreducible_sub_sdfg():

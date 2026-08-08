@@ -5,11 +5,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
 from dace import data, dtypes, subsets
+from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
+from dace.symbolic import IfExpr, SymbolicType, pyindex, pystr_to_symbolic
 from dace.frontend.python.common import DaceSyntaxError
+from sympy.core.relational import Relational
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 
@@ -79,10 +81,59 @@ def _parse_dim_atom(das, atom):
     return result
 
 
-def _fill_missing_slices(das, ast_ndslice, array, indices):
+def _wrap_scalar_index(index_expr, extent):
+    # Scalar element access uses Python wraparound semantics, which codegen
+    # implements via pyindex(...)->py_mod(...).
+    try:
+        if (index_expr < 0) == True:
+            return index_expr + extent
+    except (TypeError, ValueError):
+        pass
+
+    if not Config.get_bool('frontend', 'runtime_negative_indices'):
+        return index_expr
+
+    if getattr(index_expr, 'is_Boolean', False):
+        return index_expr
+
+    is_integer = getattr(index_expr, 'is_integer', None)
+    if is_integer is False:
+        return index_expr
+
+    is_nonnegative = getattr(index_expr, 'is_nonnegative', None)
+    if is_nonnegative is True:
+        return index_expr
+    return pyindex(index_expr, extent)
+
+
+def _wrap_slice_bound(index_expr, extent, *, inclusive_stop: bool):
+    # Slice bounds are different: positive stop=size must remain size rather
+    # than wrapping to zero, so we normalize only negative values.
+    try:
+        if (index_expr < 0) == True:
+            wrapped = index_expr + extent
+        else:
+            wrapped = index_expr
+    except (TypeError, ValueError):
+        wrapped = index_expr
+
+    if wrapped is index_expr and Config.get_bool('frontend', 'runtime_negative_indices'):
+        if not getattr(index_expr, 'is_Boolean', False):
+            is_integer = getattr(index_expr, 'is_integer', None)
+            if is_integer is not False:
+                is_nonnegative = getattr(index_expr, 'is_nonnegative', None)
+                if is_nonnegative is not True:
+                    wrapped = IfExpr(index_expr < 0, index_expr + extent, index_expr)
+
+    if inclusive_stop:
+        return wrapped - 1
+    return wrapped
+
+
+def _fill_missing_slices(das, ast_ndslice, shape, partial_boolean_index: bool = False):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
-    ndslice = [None] * len(array.shape)
+    ndslice = [None] * len(shape)
     offsets = []
     new_axes = []
     arrdims: Dict[int, str] = {}
@@ -97,22 +148,31 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
             dim = ast.Name(id=dim)
+        elif isinstance(dim, ast.Tuple):
+            # A literal tuple written directly in a dimension slot (e.g. the
+            # second dimension of "A[:, (1, 2, 3)]") is unambiguously an index
+            # array, never a (start, stop, step) slice range: Python's own
+            # grammar makes "A[(1, 2, 3)]" and "A[1, 2, 3]" identical ASTs, so
+            # a bare tuple that is the *entire* subscript is already unpacked
+            # into separate per-dimension entries before this loop ever runs
+            # (see astutils.subscript_to_ast_slice). The only way an
+            # ast.Tuple node survives as a single `dim` here is if the source
+            # had an explicit nested tuple among multiple indices/slices
+            # ("A[:, (1, 2, 3)]") or a trailing comma ("A[(1, 2, 3),]"), and
+            # both spellings mean advanced indexing in NumPy. The
+            # (start, stop, step) sugar is represented elsewhere in this
+            # module as a plain Python tuple of AST nodes (see the
+            # `isinstance(dim, tuple)` branch below), never as an ast.Tuple,
+            # so there is no ambiguity left to resolve. Re-encode it the way
+            # the array-index path below expects (an ast.Name whose `id` is
+            # the literal Python sequence).
+            dim = ast.Name(id=[_parse_dim_atom(das, elt) for elt in dim.elts])
 
         if isinstance(dim, tuple):
-            rb = _parse_dim_atom(das, dim[0] or 0)
-            re = _parse_dim_atom(das, dim[1] or array.shape[indices[idx]]) - 1
+            dim_extent = shape[idx]
+            rb = _wrap_slice_bound(_parse_dim_atom(das, dim[0] or 0), dim_extent, inclusive_stop=False)
+            re = _wrap_slice_bound(_parse_dim_atom(das, dim[1] or dim_extent), dim_extent, inclusive_stop=True)
             rs = _parse_dim_atom(das, dim[2] or 1)
-            # NOTE: try/except for cases where rb/re are not symbols/numbers
-            try:
-                if (rb < 0) == True:
-                    rb += array.shape[indices[idx]]
-            except (TypeError, ValueError):
-                pass
-            try:
-                if (re < 0) == True:
-                    re += array.shape[indices[idx]]
-            except (TypeError, ValueError):
-                pass
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1
@@ -124,42 +184,71 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             has_ellipsis = True
             remaining_dims = len(ast_ndslice) - num_new_axes - idx - 1
             for j in range(idx, len(ndslice) - remaining_dims):
-                ndslice[j] = (0, array.shape[j] - 1, 1)
+                ndslice[j] = (0, shape[j] - 1, 1)
                 idx += 1
                 new_idx += 1
-        elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
+        elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None) or inner_eval_ast(das, dim) is None):
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here
         elif isinstance(dim, ast.Name) and isinstance(dim.id, (list, tuple)):
             # List/tuple literal
-            ndslice[idx] = (0, array.shape[idx] - 1, 1)
-            arrdims[indices[idx]] = dim.id
+            ndslice[idx] = (0, shape[idx] - 1, 1)
+            arrdims[idx] = dim.id
             idx += 1
             new_idx += 1
-        elif isinstance(dim, ast.Name) and isinstance(dim.id, slice):
+        elif isinstance(inner_eval_ast(das, dim), slice):
             # slice literal
-            rb, re, rs = dim.id.start, dim.id.stop, dim.id.step
+            resolved = inner_eval_ast(das, dim)
+            rb, re, rs = resolved.start, resolved.stop, resolved.step
             if rb is None:
                 rb = 0
             if re is None:
-                re = array.shape[indices[idx]]
+                re = shape[idx]
             if rs is None:
                 rs = 1
 
-            ndslice[idx] = (rb, re - 1, rs)
+            dim_extent = shape[idx]
+            ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
+                            _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
+            idx += 1
+            new_idx += 1
+        elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], slice):
+            # compile-time slice object
+            rb, re, rs = das[dim.id].start, das[dim.id].stop, das[dim.id].step
+            if rb is None:
+                rb = 0
+            if re is None:
+                re = shape[idx]
+            if rs is None:
+                rs = 1
+
+            dim_extent = shape[idx]
+            ndslice[idx] = (_wrap_slice_bound(rb, dim_extent, inclusive_stop=False),
+                            _wrap_slice_bound(re, dim_extent, inclusive_stop=True), rs)
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array)):
             # Accessing an array with another
             desc = das[dim.id]
             if desc.dtype == dtypes.bool:
-                # Boolean array indexing
-                if len(ast_ndslice) > 1:
+                # Boolean array indexing. Two accepted forms: a mask covering
+                # the WHOLE array, which must then be the only index; and --
+                # only for callers that opt in via ``partial_boolean_index``,
+                # since they must also be able to LOWER it -- a 1-D mask over a
+                # SINGLE dimension (``A[0, mask]``), which may be combined with
+                # other indices the way an integer index array can. Both are
+                # NumPy spellings; only the first used to parse, and the second
+                # failed as a dimensionality error rather than as the feature
+                # gap it was.
+                whole_array = tuple(desc.shape) == tuple(shape)
+                one_dimension = (partial_boolean_index and len(desc.shape) == 1 and idx < len(shape)
+                                 and desc.shape[0] == shape[idx])
+                if whole_array and len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(array.shape):
-                    raise IndexError(f'Invalid indexing into array "{dim.id}". '
-                                     'Shape of boolean index must match original array.')
+                if not whole_array and not one_dimension:
+                    raise IndexError(f'Invalid indexing into array "{dim.id}". Shape of boolean index must match '
+                                     'the original array, or a single dimension of it.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
                                 dtypes.uint32, dtypes.uint64):
                 # Integer array indexing
@@ -170,30 +259,33 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
             if data._prod(desc.shape) == 1:
                 # Special case: one-element array treated as scalar
-                ndslice[idx] = (dim.id, dim.id, 1)
+                scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), shape[idx])
+                ndslice[idx] = (scalar_expr, scalar_expr, 1)
             else:
-                ndslice[idx] = (0, array.shape[idx] - 1, 1)
-                arrdims[indices[idx]] = dim.id
+                ndslice[idx] = (0, shape[idx] - 1, 1)
+                arrdims[idx] = dim.id
 
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Scalar)):
-            ndslice[idx] = (dim.id, dim.id, 1)
+            scalar_expr = _wrap_scalar_index(pystr_to_symbolic(dim.id), shape[idx])
+            ndslice[idx] = (scalar_expr, scalar_expr, 1)
             idx += 1
             new_idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
-            if (r < 0) == True:
-                r += array.shape[indices[idx]]
+            if getattr(r, 'is_Boolean', False) or getattr(r, 'is_Relational', False) or isinstance(r, Relational):
+                raise IndexError('Boolean expressions are not supported as scalar memlet indices')
+            r = _wrap_scalar_index(r, shape[idx])
             ndslice[idx] = r
             idx += 1
             new_idx += 1
 
     # Extend slices to unspecified dimensions
-    for i in range(idx, len(array.shape)):
-        # ndslice[i] = (0, array.shape[idx] - 1, 1)
+    for i in range(idx, len(shape)):
+        # ndslice[i] = (0, shape[idx] - 1, 1)
         # idx += 1
-        ndslice[i] = (0, array.shape[i] - 1, 1)
+        ndslice[i] = (0, shape[i] - 1, 1)
         offsets.append(i)
 
     return ndslice, offsets, new_axes, arrdims
@@ -202,7 +294,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 def parse_memlet_subset(array: data.Data,
                         node: Union[ast.Name, ast.Subscript],
                         das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
+                        parsed_slice: Any = None,
+                        partial_boolean_index: bool = False) -> Tuple[subsets.Range, List[int], List[int]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -211,6 +304,12 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
+    :param partial_boolean_index: Accept a boolean mask that covers a single
+                                  DIMENSION (``A[0, mask]``) rather than the
+                                  whole array. Opt-in, because a caller that
+                                  parses this form must also be able to lower
+                                  it; the classic frontend cannot, and keeps
+                                  rejecting it at parse time.
     :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
     """
     # Get memlet range
@@ -226,22 +325,27 @@ def parse_memlet_subset(array: data.Data,
             cnode = node
         ast_ndslices = astutils.subscript_to_ast_slice_recursive(cnode)
         offsets = list(range(len(array.shape)))
+        current_shape = list(array.shape)
 
         # Loop over nd-slices (A[i][j][k]...)
         subset_array = []
         for idx, ast_ndslice in enumerate(ast_ndslices):
-            # Cut out dimensions that were indexed in the previous slice
-            narray = copy.deepcopy(array)
-            narray.shape = [s for i, s in enumerate(array.shape) if i in offsets]
+            # Each nested slice indices into the surviving dimensions of the
+            # previous slice, not the original array extents.
+            current_offsets = offsets
 
             # Loop over the N dimensions
-            ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, narray, offsets)
+            ndslice, local_offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, current_shape,
+                                                                                   partial_boolean_index)
+            local_subset = _ndslice_to_subset(ndslice)
+            offsets = [current_offsets[i] for i in local_offsets]
+            current_shape = [local_subset.size()[i] for i in local_offsets]
             if new_extra_dims and idx != (len(ast_ndslices) - 1):
                 raise NotImplementedError('New axes only implemented for last slice')
             if arrdims and len(ast_ndslices) != 1:
                 raise NotImplementedError('Array dimensions not implemented for consecutive subscripts')
             extra_dims = new_extra_dims
-            subset_array.append(_ndslice_to_subset(ndslice))
+            subset_array.append(local_subset)
 
         subset = subset_array[0]
 
@@ -260,7 +364,8 @@ def ParseMemlet(visitor,
                 defined_arrays_and_symbols: Dict[str, Any],
                 node: MemletType,
                 parsed_slice: Any = None,
-                arrname: Optional[str] = None) -> MemletExpr:
+                arrname: Optional[str] = None,
+                partial_boolean_index: bool = False) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
@@ -289,7 +394,7 @@ def ParseMemlet(visitor,
             write_conflict_resolution = node.value.args[1]
 
     try:
-        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice, partial_boolean_index)
     except IndexError:
         raise DaceSyntaxError(
             visitor, node, 'Failed to parse memlet expression due to dimensionality. '

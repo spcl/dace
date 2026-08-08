@@ -431,8 +431,12 @@ def copy_tree(node: ast.AST) -> ast.AST:
     class Copier(ast.NodeTransformer):
 
         def visit_Constant(self, node):
-            # Ignore value
-            return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
+            # A shallow copy shares ``value`` (the point of this function: it
+            # may be an arbitrary, possibly uncopyable Python object embedded
+            # by preprocessing) while keeping the attributes the frontends
+            # attach to the node itself -- ``qualname`` on a resolved global
+            # among them, which callee resolution reads back.
+            return copy.copy(node)
 
         def visit(self, node):
             if node.__class__.__name__ in {'Num', 'Constant'}:
@@ -463,7 +467,30 @@ def copy_tree(node: ast.AST) -> ast.AST:
                         delattr(node, field)
                     else:
                         setattr(node, field, new_node)
+            self._visit_extra_attributes(node)
             return node
+
+        def _visit_extra_attributes(self, node):
+            """Copy AST held in attributes outside ``_fields``: the frontends
+            attach some themselves (``oldnode``), and node types that
+            deliberately hide their contents from ``ast.walk`` (``_fields =
+            ()``, as the canonical markers of the next-generation frontend do)
+            keep their entire payload there. Sharing those would make the
+            "copy" an alias, and rewriting it would corrupt the original."""
+            for name, value in list(vars(node).items()):
+                if name in node._fields or name in node._attributes:
+                    continue
+                if isinstance(value, ast.AST):
+                    setattr(node, name, self.visit(value))
+                elif isinstance(value, list) and any(isinstance(item, ast.AST) for item in value):
+                    setattr(node, name, [self.visit(item) if isinstance(item, ast.AST) else item for item in value])
+
+    if isinstance(node, list):
+        return [copy_tree(n) for n in node]
+    if not isinstance(node, ast.AST):
+        import warnings
+        warnings.warn(f'copy_tree expected an AST node or list of AST nodes, got {type(node).__name__}', stacklevel=2)
+        return copy.deepcopy(node)
 
     return Copier().visit(node)
 
