@@ -37,10 +37,13 @@ test_cscs_gh200:
   image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
   variables:
     TEST_VARIANTS: 'gpu and not mpi'  # no MPI launcher here; the GPU workflow covers those
+    # This job runs strictly serially - one test at a time, no concurrency of any kind
+    # (see the exports and the pytest invocation below). The time limit is raised well
+    # above the old parallel figure: dropping the 32 xdist workers and serializing
+    # compilation makes the job many times longer in wall-clock terms.
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
-    SLURM_TIMELIMIT: 30
-    PYTEST_XDIST_AUTO_NUM_WORKERS: 32
+    SLURM_TIMELIMIT: 360
   needs:
     - build_cscs_gh200
   interruptible: true
@@ -62,7 +65,15 @@ test_cscs_gh200:
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
+    # Serial execution, top to bottom. ``-p no:xdist`` disables the distribution plugin
+    # outright rather than merely setting ``-n 0``, so re-introducing ``-n`` fails loudly
+    # instead of silently restoring concurrency. Compilation and host-side threading are
+    # serialized too, since those are concurrency as much as the test loop is.
+    - export DACE_compiler_build_jobs=1
+    - export OMP_NUM_THREADS=1
+    # Raised from 300s: with a single compile job, per-test build time grows, and the old
+    # limit would turn slow builds into spurious timeouts.
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=900 -p no:xdist -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
     - ./tests/cuda_test.sh
