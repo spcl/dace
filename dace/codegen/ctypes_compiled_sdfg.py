@@ -189,6 +189,28 @@ class ReloadableDLL(object):
         raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
 
 
+def _resolve_build_folder_mode(library_filename: str) -> Optional[str]:
+    """The save mode of the build folder ``library_filename`` lives in, or ``None`` if it cannot be determined.
+
+    The library sits directly in the build folder in ``production`` mode but in ``<folder>/build`` in
+    ``development`` mode, so both depths are probed; the folder's ``FOLDER_MODE`` marker is what decides.
+    """
+    from dace.codegen.compiler import get_folder_mode  # Avoid import cycle
+
+    lib_dir = os.path.dirname(library_filename)
+    for candidate in (lib_dir, os.path.dirname(lib_dir)):
+        try:
+            mode = get_folder_mode(candidate, probe=True)
+        except OSError:
+            # ``get_folder_mode``'s fallback heuristic for pre-``FOLDER_MODE`` folders raises on a partial
+            # subfolder set even when probing. A folder we cannot classify is simply unknown here, and this
+            # runs on EVERY construction - it must never be able to break one.
+            continue
+        if mode is not None:
+            return mode
+    return None
+
+
 class CtypesCompiledSDFG(object):
     """
     A compiled SDFG object that can be called through Python.
@@ -230,6 +252,9 @@ class CtypesCompiledSDFG(object):
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)
         self.do_not_execute = False
+
+        # Resolved once: the folder a loaded library came from does not change underneath it.
+        self._build_folder_mode: Optional[str] = _resolve_build_folder_mode(lib._library_filename)
 
         # Contains the pointer arguments that were used to call the SDFG with ``__call__()``.
         # It is also used by ``get_workspace_size()``.
@@ -321,11 +346,31 @@ class CtypesCompiledSDFG(object):
             structure.
 
             :return: the ctypes.Structure representation of the state struct.
+            :raises NotImplementedError: if the build folder was written in ``production`` mode, which does not keep
+                                         the generated sources this method parses.
         """
         if not self._libhandle:
             raise ValueError('Library was not initialized')
 
+        # The layout is recovered by parsing the generated sources, and production mode does not keep them (it also
+        # places the library directly in the build folder rather than in ``build/``). Refuse explicitly instead of
+        # letting the parse fail on a missing file.
+        if self.build_folder_mode == 'production':
+            raise NotImplementedError(
+                f"SDFG '{self._sdfg.name}': get_state_struct() is not supported in 'production' build folder mode. "
+                "The state struct layout is recovered by parsing the generated sources, which this mode trims away; "
+                "rebuild with compiler.build_folder_mode set to 'development'.")
+
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
+
+    @property
+    def build_folder_mode(self) -> Optional[str]:
+        """The save mode of the build folder the loaded library came from, or ``None`` if it could not be determined.
+
+        A ``development`` folder keeps the generated sources, a ``production`` folder only the compiled library
+        (see the ``compiler.build_folder_mode`` configuration entry). Resolved once at construction.
+        """
+        return self._build_folder_mode
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle

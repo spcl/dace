@@ -99,5 +99,47 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     assert np.allclose(result, A @ B)
 
 
+def test_get_state_struct_refused_in_production_folder_mode(monkeypatch):
+    """The ctypes ``get_state_struct`` recovers the layout by parsing the generated
+    ``src/cpu/<name>.cpp``, which ``production`` folder mode trims away (it also places
+    the library directly in the build folder instead of in ``build/``, so the source path
+    would not even resolve). It must refuse explicitly instead of failing on a missing file.
+    """
+    from dace.config import set_temporary
+
+    # The env vars override set_temporary, so both pins must be dropped first.
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+
+    @dace.program
+    def prod_state_struct_probe(A: dace.float64[8]):
+        A += 1.0
+
+    # A DISTINCT program for the positive control: the build folder is derived from the
+    # program name, and an existing folder's FOLDER_MODE marker overrides the config - so
+    # reusing the name would run the development half inside the production folder.
+    @dace.program
+    def dev_state_struct_probe(A: dace.float64[8]):
+        A += 1.0
+
+    with set_temporary('compiler', 'interface', value='ctypes'), \
+            set_temporary('compiler', 'build_folder_mode', value='production'):
+        csdfg = prod_state_struct_probe.to_sdfg().compile()
+        # Resolved at construction from the folder's FOLDER_MODE marker, not from the config.
+        assert csdfg.build_folder_mode == 'production'
+        csdfg.initialize(A=np.zeros(8))
+        with pytest.raises(NotImplementedError, match='production'):
+            csdfg.get_state_struct()
+
+    # Development mode keeps the sources, so the same query works there.
+    with set_temporary('compiler', 'interface', value='ctypes'), \
+            set_temporary('compiler', 'build_folder_mode', value='development'):
+        csdfg = dev_state_struct_probe.to_sdfg().compile()
+        assert csdfg.build_folder_mode == 'development'
+        csdfg.initialize(A=np.zeros(8))
+        assert isinstance(csdfg.get_state_struct(), ctypes.Structure)
+
+
 if __name__ == '__main__':
     test_preallocate_transients_in_state_struct(_cuda_helper())
+    test_get_state_struct_refused_in_production_folder_mode(pytest.MonkeyPatch())
