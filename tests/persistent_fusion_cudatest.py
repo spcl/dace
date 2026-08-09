@@ -330,7 +330,52 @@ def test_persistent_fusion():
 
     sdfg(row_index=G_row, col_index=G_col, result=depth, root=srcnode, N=V, nnz=E)
 
-    assert np.allclose(depth, reference), "Result doesn't match!"
+    assert np.allclose(depth, reference), _mismatch_report(depth, reference)
+
+
+def _mismatch_report(depth: np.ndarray, reference: np.ndarray) -> str:
+    """Classifies a BFS result mismatch so a failure is actionable from the CI log alone.
+
+    The kernel is a persistent *fused* BFS whose update tasklet is a non-atomic
+    test-and-set (``if res[neighbor] == -1: ...``), so a mismatch is far more likely to be
+    a race than a logic error - and races here are timing-dependent, which means the run
+    that failed may not reproduce. Whatever the log captures is all the evidence there is,
+    so classify the disagreement rather than just reporting that one exists.
+
+    The four categories partition the mismatching vertices, and each points somewhere
+    different:
+
+    - ``too deep``: the vertex was discovered in a later round than it should have been.
+      The signature of insufficient grid-wide synchronization between BFS rounds - a block
+      entering round d+1 while another is still in round d. Expect this one if the
+      persistent kernel launches more blocks than can be co-resident.
+    - ``never discovered``: the vertex kept the ``-1`` initializer although it is
+      reachable, i.e. a frontier push was lost. Points at the frontier stream
+      (``buffer_size=N``) overflowing, which the non-atomic test-and-set makes possible:
+      two threads can both see ``-1`` for the same neighbour and both push it.
+    - ``spurious``: a depth was assigned to a vertex networkx considers unreachable.
+      Not explainable by either race; suspect index corruption instead.
+    - ``too shallow``: a depth shorter than the true shortest path. Should be impossible
+      for BFS; treat as a real correctness bug, not flakiness.
+    """
+    mismatch = np.flatnonzero(depth != reference)
+    if mismatch.size == 0:  # pragma: no cover - only reached if allclose and != disagree
+        return "Result doesn't match!"
+
+    # int64 throughout: `depth` is int32 and `reference` is the default int, and the
+    # comparisons below must not depend on which side gets promoted.
+    got = depth[mismatch].astype(np.int64)
+    want = reference[mismatch].astype(np.int64)
+    both_found = (got >= 0) & (want >= 0)
+
+    return ("Result doesn't match! "
+            f'{mismatch.size}/{depth.size} vertices differ - '
+            f'too deep (round-sync race): {int(np.count_nonzero(both_found & (got > want)))}, '
+            f'never discovered (lost frontier push): {int(np.count_nonzero((got == -1) & (want >= 0)))}, '
+            f'spurious (unreachable but assigned): {int(np.count_nonzero((want == -1) & (got >= 0)))}, '
+            f'too shallow (real bug): {int(np.count_nonzero(both_found & (got < want)))}. '
+            f'First {min(10, mismatch.size)}: indices {mismatch[:10].tolist()}, '
+            f'got {got[:10].tolist()}, expected {want[:10].tolist()}')
 
 
 @pytest.mark.gpu
