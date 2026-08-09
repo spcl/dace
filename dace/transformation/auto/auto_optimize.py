@@ -595,6 +595,8 @@ def auto_optimize(sdfg: SDFG,
     """
     debugprint = config.Config.get_bool('debugprint')
 
+    
+
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
@@ -605,6 +607,8 @@ def auto_optimize(sdfg: SDFG,
                                                    validate=False,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
+
+    
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
@@ -643,16 +647,22 @@ def auto_optimize(sdfg: SDFG,
             # FORNOW: Leave out
             # node.map.collapse = len(node.map.range)
             pass
+    
+    #sdfg.view(filename=f"autoopt_1")
 
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
+
+    #sdfg.view(filename=f"autoopt_2")
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     #sdfg.expand_library_nodes()
-
+    #sdfg.view()
     # TODO(later): Safe vectorization
+
+    #sdfg.view(filename=f"autoopt_3")
 
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():

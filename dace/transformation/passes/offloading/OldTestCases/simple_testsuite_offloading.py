@@ -686,7 +686,6 @@ def tasklet_map_wrapper_larger_sdfg():
     return sdfg
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_tasklet_map_wrapper_larger():
     sdfg = tasklet_map_wrapper_larger_sdfg()
 
@@ -701,6 +700,139 @@ def test_tasklet_map_wrapper_larger():
         orig_out,
         new_out,
     )
+
+
+def scalar_init_sdfg():
+    @dace.program
+    def scalar_init_program(alpha: dace.float64, A: dace.float64[16], out: dace.float64[16]):
+        A[0] = alpha# - 1.0
+        A[2] = alpha# + 1.0
+
+        for i in dace.map[0:16]:
+            out[i] = A[i] * 2.0 + 1.0
+
+    sdfg = scalar_init_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+def len1_array_init_sdfg():
+    @dace.program
+    def len1_array_init(alpha: dace.float64[1], A: dace.float64[16], out: dace.float64[16]):
+        alpha[0] = 3.0
+
+        for i in dace.map[0:16]:
+            out[i] = A[i] * 2.0 + alpha[0]
+
+    sdfg = len1_array_init.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+
+def reduce_to_scalar_sdfg(n: int = 16):
+    sdfg = dace.SDFG("reduction_library_node")
+    state = sdfg.add_state("state", is_start_block=True)
+
+    sdfg.add_array("inp", [n], dace.float64)
+    sdfg.add_scalar("red_scalar", dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+
+    inp = state.add_access("inp")
+    red_scalar = state.add_access("red_scalar")
+    out = state.add_access("out")
+    red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
+
+    state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
+    state.add_nedge(red, red_scalar, dace.Memlet("red_scalar[0]"))
+    state.add_nedge(red_scalar, out, dace.Memlet("red_scalar[0]"))
+
+    #sdfg.validate()
+    return sdfg
+
+def reduce_to_array_sdfg(n: int = 16):
+    sdfg = dace.SDFG("reduction_library_node")
+    state = sdfg.add_state("state", is_start_block=True)
+
+    sdfg.add_array("inp", [n], dace.float64)
+    sdfg.add_transient("red_array", [1], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+
+    inp = state.add_access("inp")
+    red_array = state.add_access("red_array")
+    out = state.add_access("out")
+    red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
+
+    state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
+    state.add_nedge(red, red_array, dace.Memlet("red_array[0]"))
+    state.add_nedge(red_array, out, dace.Memlet("red_array[0]"))
+
+    sdfg.validate()
+    return sdfg
+
+@pytest.mark.gpu_offload
+def test_scalar_init():
+    sdfg = scalar_init_sdfg()
+
+    alpha = np.float64(3.5)
+    A = np.zeros(16, dtype=np.float64)
+    orig_out = np.zeros(16, dtype=np.float64)
+    new_out = np.zeros(16, dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"alpha": alpha, "A": A},
+        orig_out,
+        new_out,
+    )
+
+@pytest.mark.gpu_offload
+def test_len1_array_init():
+    sdfg = len1_array_init_sdfg()
+
+    alpha = np.ones(1, dtype=np.float64)
+    A = np.zeros(16, dtype=np.float64)
+    orig_out = np.zeros(16, dtype=np.float64)
+    new_out = np.zeros(16, dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"alpha": alpha, "A": A},
+        orig_out,
+        new_out,
+    )
+
+
+@pytest.mark.current
+@pytest.mark.gpu_offload
+def test_reduce_to_array():
+    sdfg = reduce_to_array_sdfg()
+    sdfg.view()
+    inp = np.arange(16, dtype=np.float64) + 1.0
+    orig_out = np.zeros(1, dtype=np.float64)
+    new_out = np.zeros(1, dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"inp": inp},
+        orig_out,
+        new_out,
+    )
+
+@pytest.mark.current
+@pytest.mark.gpu_offload
+def test_reduce_to_scalar():
+    sdfg = reduce_to_scalar_sdfg()
+    sdfg.view()
+    inp = np.arange(16, dtype=np.float64) + 1.0
+    orig_out = np.zeros(1, dtype=np.float64)
+    new_out = np.zeros(1, dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"inp": inp},
+        orig_out,
+        new_out,
+    )
+    
 # ============================================================================
 # Fixtures and Helpers
 # ============================================================================
@@ -733,7 +865,7 @@ if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
-
+    
     import importlib
     import sys
     from pathlib import Path
@@ -743,10 +875,9 @@ if __name__ == "__main__":
     if str(npbench_repo_root) not in sys.path:
         sys.path.insert(0, str(npbench_repo_root))
 
-    durbin_module = importlib.import_module("npbench.benchmarks.polybench.durbin.durbin_dace")
-    #durbin_module = importlib.import_module("npbench.benchmarks.polybench.trmm.trmm_dace")
-    durbin_sdfg = durbin_module.kernel.to_sdfg()
-    OtA().apply_pass(durbin_sdfg, {})
-    durbin_sdfg.validate()
+    module = importlib.import_module("npbench.benchmarks.spmv.spmv_dace")
+    sdfg = module.spmv.to_sdfg()
+    OtA().apply_pass(sdfg, {})
+    sdfg.validate()
     
     
