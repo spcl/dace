@@ -1565,14 +1565,14 @@ class OffloadToAccelerator(ppl.Pass):
         to_scalars = {name for name in to_scalars if not name.startswith("__return")} # is usually very inefficient because __return if mostly used at the end of the graph
 
         if DEBUG_FPI: print(f"to_len1_arrays: {to_len1_arrays}\nto_scalars: {to_scalars}")
-        sdfg.view()
+       
         if to_len1_arrays:
             ConvertScalarsToLengthOneArrays(
                 recursive=True,
                 preserve_abi=True,
                 filter=to_len1_arrays,
             ).apply_pass(sdfg, {})
-        sdfg.view()
+        
         if to_scalars:
             ConvertLengthOneArraysToScalars(
                 recursive=True,
