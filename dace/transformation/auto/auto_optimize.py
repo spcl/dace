@@ -475,9 +475,13 @@ def make_transients_persistent(sdfg: SDFG,
     :param sdfg: SDFG
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
-    :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
+    :return: A dictionary mapping every SDFG ID in the tree to the set of transient arrays that were
+             made persistent in it, empty for the ones where nothing qualified.
     """
-    result = MakeTransientsPersistent(toplevel_only=toplevel_only).apply_pass(sdfg, {})
+    # The pass returns None when nothing qualified, per the Pass convention, and omits nothing
+    # otherwise -- but this helper's callers may index any cfg_id, so keep the total mapping.
+    result: Dict[int, Set[str]] = {nsdfg.cfg_id: set() for nsdfg in sdfg.all_sdfgs_recursive()}
+    result.update(MakeTransientsPersistent(toplevel_only=toplevel_only).apply_pass(sdfg, {}) or {})
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
@@ -485,7 +489,7 @@ def make_transients_persistent(sdfg: SDFG,
             for edge in state.edges():
                 edge.data.wcr_nonatomic = False
 
-    return result or {}
+    return result
 
 
 def apply_gpu_storage(sdfg: SDFG) -> None:

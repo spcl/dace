@@ -69,6 +69,21 @@ def test_the_auto_optimize_helper_delegates():
     assert sdfg.arrays['buf'].lifetime == dace.AllocationLifetime.Persistent
 
 
+def test_the_helper_reports_every_cfg_id():
+    """Callers index the returned mapping by cfg_id, so it must cover the whole tree even where
+    nothing qualified -- the Pass itself omits those, and returns None when none did."""
+    from dace.transformation.auto.auto_optimize import make_transients_persistent
+
+    sdfg = loop_with_transient('persist_coverage', ['M'], symbols=('M', ))
+    loop = next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
+    loop.add_edge(loop.nodes()[0], loop.add_state('bump'), dace.InterstateEdge(assignments={'M': 'M + 1'}))
+
+    assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None
+    result = make_transients_persistent(sdfg, dace.DeviceType.CPU)
+    assert set(result) == {nsdfg.cfg_id for nsdfg in sdfg.all_sdfgs_recursive()}
+    assert result[sdfg.cfg_id] == set()
+
+
 def test_constant_sized_transient_is_promoted():
     """A compile-time constant size qualifies trivially -- it reads no symbol at all."""
     sdfg = loop_with_transient('persist_constant', [4])
@@ -127,6 +142,7 @@ def test_stronger_lifetimes_are_not_demoted():
 if __name__ == '__main__':
     test_free_symbol_sized_transient_is_promoted()
     test_the_auto_optimize_helper_delegates()
+    test_the_helper_reports_every_cfg_id()
     test_constant_sized_transient_is_promoted()
     test_reassigned_size_symbol_is_not_promoted()
     test_loop_variable_sized_nested_transient_is_not_promoted()
