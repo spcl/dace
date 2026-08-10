@@ -70,7 +70,7 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     ``'CPU'``.
 
     ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, or a
-    statically-large contiguous CPU zero. ``'CUDA'``: host-issued GPU-destination contiguous
+    large-or-symbolic-size contiguous CPU zero. ``'CUDA'``: host-issued GPU-destination contiguous
     memset. Else ``'CPU'`` (single ``std::memset``).
 
     :param node: The memset library node being expanded.
@@ -94,8 +94,9 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     if out.storage == dace.dtypes.StorageType.GPU_Global:
         return 'CUDA'
 
-    # CPU main-memory zero: constant size >= parallel_transfer_min_elements takes the element map;
-    # else a single memset. Register / non-main-memory storages stay serial.
+    # CPU main-memory zero: size >= parallel_transfer_min_elements (or symbolic) takes the element
+    # map; a known-small constant stays a single memset. Register / non-main-memory storages
+    # stay serial.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
     if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements()):
         return 'pure'

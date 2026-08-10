@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`MemsetLibraryNode` and its pure / CPU / CUDA expansions."""
+import contextlib
 from typing import Optional, Sequence
 
 import dace
@@ -308,6 +309,68 @@ def test_memset_pure_strided_map_matches_array():
     expected = np.ones((9, ), dtype=np.float64)
     expected[0:9:3] = 0  # indices 0, 3, 6
     np.testing.assert_array_equal(B, expected)
+
+
+@contextlib.contextmanager
+def _pinned_transfer_threshold(value):
+    """Pin ``compiler.cpu.parallel_transfer_min_elements`` so Auto selection is deterministic."""
+    orig = dace.config.Config.get("compiler", "cpu", "parallel_transfer_min_elements")
+    dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=value)
+    try:
+        yield
+    finally:
+        dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=orig)
+
+
+def _cpu_memset_sdfg(extent, name):
+    """Single-state CPU_Heap ``MemsetLibraryNode`` zeroing ``0:extent``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("dst", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
+    state = sdfg.add_state("s")
+    libnode = MemsetLibraryNode(name="ms")
+    state.add_edge(libnode, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
+                   dace.Memlet(f"dst[0:{extent}]"))
+    sdfg.validate()
+    return sdfg, libnode
+
+
+def _generated_code(sdfg):
+    return "\n".join(obj.code for obj in sdfg.generate_code())
+
+
+def test_memset_below_threshold_emits_memset():
+    """A constant-size CPU memset below the threshold lowers to a single ``memset``, not an OpenMP loop."""
+    with _pinned_transfer_threshold(1024):
+        sdfg, libnode = _cpu_memset_sdfg(100, "memset_below_threshold")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'CPU'
+        code = _generated_code(sdfg)
+        assert 'memset(' in code
+        assert '#pragma omp parallel for' not in code
+
+
+def test_memset_at_threshold_emits_omp_parallel_for():
+    """A constant-size CPU memset at/above the threshold lowers to an OpenMP element map, not ``memset``."""
+    with _pinned_transfer_threshold(1024):
+        sdfg, libnode = _cpu_memset_sdfg(4096, "memset_at_threshold")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'pure'
+        code = _generated_code(sdfg)
+        assert '#pragma omp parallel for' in code
+        assert 'memset(' not in code
+
+
+def test_memset_symbolic_size_emits_omp_parallel_for():
+    """A symbolic (compile-time-unknown) CPU memset size is assumed large, so it takes the same
+    OpenMP-parallel path as a large constant, never the single-call ``memset``."""
+    with _pinned_transfer_threshold(1024):
+        n = dace.symbol('N_memset_symbolic')
+        sdfg, libnode = _cpu_memset_sdfg(n, "memset_symbolic_size")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'pure'
+        code = _generated_code(sdfg)
+        assert '#pragma omp parallel for' in code
+        assert 'memset(' not in code
 
 
 if __name__ == "__main__":
