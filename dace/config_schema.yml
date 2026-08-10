@@ -823,6 +823,18 @@ required:
                 description: >
                     Check for potential race conditions during validation.
 
+            check_symbol_assumption_collisions:
+                type: bool
+                default: false
+                title: Check symbol assumption collisions
+                description: >
+                    Raise during validation, and when a symbol is added to an SDFG, if one symbol
+                    name is spelled with two different SymPy assumption sets. Such symbols are
+                    DISTINCT objects, so index arithmetic over them does not cancel and dependence
+                    predicates silently answer wrong. Off by default: a code-string reparse cannot
+                    recover an assumption a pass stamped onto the stored symbols, so the check
+                    reports real but currently pervasive divergence.
+
     #############################################
     # Features for unit testing
 
