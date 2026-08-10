@@ -452,10 +452,10 @@ def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
 
 def test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline():
     """Regression guard for the snapshot-absorb path. Through the FULL pipeline
-    (not the isolated pass) ``SplitStatements`` breaks the inner anti-dependence
+    (not the isolated pass) ``BreakAntiDependence`` breaks the inner anti-dependence
     ``aa[i, j+1]`` with a per-iteration snapshot ``aa_split_snap = aa`` in the
     outer body -- an imperfect nest that ``extract_two_level_nest`` used to reject,
-    silently serialising the kernel. :func:`absorb_split_snapshots` now folds the
+    silently serialising the kernel. :func:`commit_split_snapshots` now folds the
     snapshot back into the live array so the diagonal skew still fires: no
     non-pinned residual loop survives and a parallel ``p``-Map is present."""
     from dace.sdfg import nodes
@@ -505,6 +505,11 @@ def _p(s):
     return dace.symbolic.pystr_to_symbolic(s)
 
 
+def _win(spec: str):
+    """A snapshot copy window, the last field of a ``SnapRead``."""
+    return dace.subsets.Range.from_string(spec)
+
+
 def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset():
     """The snapshot forward-safety gate must reason in ITERATION space (invert the
     write map), NOT by a raw array-index offset. For a reflected write map
@@ -518,33 +523,76 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     # Array cell [N-i, j] is written by iteration (i-1, j) -> BACKWARD (flow). Its raw
     # array offset vs the write [N-1-i, j] is [+1, 0] (would look "forward"); iteration
     # space says backward -> MUST refuse.
-    backward = [(None, None, None, [_p('N - i'), _p('j')], 'a')]
+    backward = [(None, None, None, [_p('N - i'), _p('j')], 'a', _win('0:N, 0:N'))]
     assert snapshot_reads_forward(backward, reflected, 'i', 'j') is False
     # Array cell [N-2-i, j] is written by iteration (i+1, j) -> FORWARD (anti). Raw
     # array offset is [-1, 0] (would look "backward"); iteration space says forward -> accept.
-    forward = [(None, None, None, [_p('N - 2 - i'), _p('j')], 'a')]
+    forward = [(None, None, None, [_p('N - 2 - i'), _p('j')], 'a', _win('0:N, 0:N'))]
     assert snapshot_reads_forward(forward, reflected, 'i', 'j') is True
 
     # Identity map sanity: a[i, j+1] forward (anti), a[i, j-1] backward (flow).
     identity = ('a', WriteMap('i', 'j', m=(1, 0, 0, 1), c=(_p('0'), _p('0'))), [])
-    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j + 1')], 'a')], identity, 'i', 'j') is True
-    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j - 1')], 'a')], identity, 'i', 'j') is False
+    anti = [(None, None, None, [_p('i'), _p('j + 1')], 'a', _win('0:N, 0:N'))]
+    assert snapshot_reads_forward(anti, identity, 'i', 'j') is True
+    flow = [(None, None, None, [_p('i'), _p('j - 1')], 'a', _win('0:N, 0:N'))]
+    assert snapshot_reads_forward(flow, identity, 'i', 'j') is False
     # A snapshot on a non-carrier array can never be reasoned about -> refuse.
-    assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j + 1')], 'b')], identity, 'i', 'j') is False
+    other = [(None, None, None, [_p('i'), _p('j + 1')], 'b', _win('0:N, 0:N'))]
+    assert snapshot_reads_forward(other, identity, 'i', 'j') is False
 
 
-def test_is_split_snapshot_state_requires_full_array_copy():
-    """``is_split_snapshot_state`` must accept only a WHOLE-array copy; a partial
-    slice would let the absorb redirect a read onto data the snapshot never held."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import is_split_snapshot_state
+def _snap_copy_state(memlet: str):
+    """A one-edge ``a -> a_split_snap`` copy state carrying ``memlet``."""
+    sdfg = dace.SDFG('snap_copy')
+    sdfg.add_array('a', [N, N], dace.float64)
+    sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
+    st = sdfg.add_state('copy', is_start_block=True)
+    st.add_edge(st.add_access('a'), None, st.add_access('a_split_snap'), None, dace.Memlet(memlet))
+    return st
 
-    for subset, expected in (('a[0:N, 0:N]', True), ('a[0:2, 0:N]', False)):
-        sdfg = dace.SDFG(f'snap_copy_{expected}')
-        sdfg.add_array('a', [N, N], dace.float64)
-        sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
-        st = sdfg.add_state('copy', is_start_block=True)
-        st.add_edge(st.add_access('a'), None, st.add_access('a_split_snap'), None, dace.Memlet(subset))
-        assert is_split_snapshot_state(st) is expected, f"{subset} -> expected {expected}"
+
+def test_split_snapshot_window_accepts_a_narrowed_copy_but_demands_identity_indexing():
+    """**Contract changed.** ``BreakAntiDependence`` narrows the snapshot to the window its
+    redirected edges read (a single row on the 5-point Gauss-Seidel), so the recognizer hands
+    the WINDOW back instead of insisting on a whole-array copy -- containment of the reads is
+    discharged against that window by ``snapshot_reads_in_window``. What must still be refused
+    is a copy that is not an identity index map: a shifted destination or a strided copy makes
+    ``snap[idx]`` and ``a[idx]`` different cells, so redirecting a read would MOVE it."""
+    from dace.transformation.passes.canonicalize.wavefront_skew import split_snapshot_window
+
+    whole = split_snapshot_window(_snap_copy_state('a[0:N, 0:N]'))
+    assert whole == _win('0:N, 0:N')
+    # The shape BreakAntiDependence emits: one row, the read window of the redirected edges.
+    row = split_snapshot_window(_snap_copy_state('a[i, 2:N]'))
+    assert row == _win('i, 2:N')
+    # Shifted destination -- snap[1] holds a[0], so a redirected read would move a row.
+    assert split_snapshot_window(_snap_copy_state('a[0:2, 0:N] -> [1:3, 0:N]')) is None
+    # Strided copy -- the odd rows were never captured, and bounds alone would not see it.
+    assert split_snapshot_window(_snap_copy_state('a[0:N:2, 0:N]')) is None
+
+
+def test_snapshot_reads_outside_the_copied_window_refuse_the_absorb():
+    """The protection the window relaxation moved: a read that can leave the copied window
+    reads a cell the snapshot never held, so the absorb must refuse. Proved over the iteration
+    domain, not by shape -- an in-window read at a symbolic index is still accepted."""
+    from dace.transformation.passes.canonicalize.wavefront_skew import (domain_constraints, snapshot_reads_in_window)
+
+    # i, j both in [1, N-2] -- the 5-point Gauss-Seidel domain.
+    domain = domain_constraints('i', 'j', (_p('1'), _p('N - 2')), (_p('1'), _p('N - 2')))
+
+    def reads(index, window):
+        return [(None, None, None, index, 'a', _win(window))]
+
+    # a_split_snap[i, j+1] against the row window a[i, 2:N]: j+1 in [2, N-1] -- contained.
+    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], 'i, 2:N'), 'i', 'j', domain) is True
+    # The same window with a BACKWARD read a[i, j-1]: j-1 reaches 0, below the window.
+    assert snapshot_reads_in_window(reads([_p('i'), _p('j - 1')], 'i, 2:N'), 'i', 'j', domain) is False
+    # A single-column window cannot cover the whole forward read range.
+    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], 'i, 5:6'), 'i', 'j', domain) is False
+    # Wrong row: the snapshot captured row i, the read wants row i+1.
+    assert snapshot_reads_in_window(reads([_p('i + 1'), _p('j + 1')], 'i, 2:N'), 'i', 'j', domain) is False
+    # A whole-array window covers everything the domain can index.
+    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], '0:N, 0:N'), 'i', 'j', domain) is True
 
 
 def _snapshot_nest(external_reader: bool):

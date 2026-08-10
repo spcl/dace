@@ -308,15 +308,24 @@ def colliding_scatter(A: dace.float64[N], B: dace.float64[N]):
         A[min(i, N - 1 - i)] = B[i]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='BUG: canonicalize raises ValueError "invalid literal for int() with base 10: '
-                   '\'A_slice_0\'" on the min() subscript, so the refusal cannot even be observed')
 def test_colliding_scatter_stays_sequential():
+    """The refusal itself, now that the ``min()``-subscript crash is gone: the write to A stays in
+    a sequential LoopRegion and no Map anywhere in the tree carries it."""
     sdfg = cpu_canon(colliding_scatter.to_sdfg(simplify=True))
     assert residual_loops(sdfg) >= 1, 'a colliding scatter must never be parallelized'
+    writers = [(sd, st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.data_nodes()
+               if n.data == 'A' and st.in_degree(n) > 0]
+    assert writers, 'the scatter must still write A somewhere'
+    for sd, st, node in writers:
+        scopes = st.scope_dict()
+        assert scopes[node] is None, f'the colliding write to A landed inside a Map scope in {sd.label}.{st.label}'
+        loops = [
+            cfr for cfr in sd.all_control_flow_regions()
+            if isinstance(cfr, LoopRegion) and cfr.loop_variable and st in cfr.all_control_flow_blocks()
+        ]
+        assert loops, f'the colliding write in {sd.label}.{st.label} must stay under a sequential loop'
 
 
-@pytest.mark.xfail(strict=True, reason='same min()-subscript crash in canonicalize')
 def test_colliding_scatter_is_value_preserving():
     n = 9
     rng = np.random.default_rng(6)
@@ -328,7 +337,9 @@ def test_colliding_scatter_is_value_preserving():
     sdfg = cpu_canon(colliding_scatter.to_sdfg(simplify=True))
     got = np.zeros(n)
     sdfg(A=got, B=b.copy(), N=n)
-    assert np.allclose(got, expected), 'last write must win, in iteration order'
+    # Pure copies: the sequential form reproduces the reference bit for bit, and any racing
+    # reorder of the colliding slots would show up here as a wrong-but-close value.
+    assert np.array_equal(got, expected), 'last write must win, in iteration order'
 
 
 if __name__ == '__main__':

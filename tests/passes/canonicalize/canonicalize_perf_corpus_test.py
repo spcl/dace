@@ -129,6 +129,8 @@ from dace.libraries.blas.environments.openblas import (OPENBLAS_PARALLEL_NAMES, 
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from tests.corpus import corpus_suite as CS
 from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench as PB
@@ -338,11 +340,25 @@ def serialize(sdfg: dace.SDFG) -> dace.SDFG:
     compiler. Library nodes are expanded FIRST because they are expanded again at codegen time and
     bring their own multicore maps with them: expanding late leaves pragmas behind (gemm: 5 -> 2),
     expanding first leaves none.
+
+    Bulk transfers are the same story one level later. The canonical lowering of a copy / zero is
+    the parallel element map, and codegen LIFTS the implicit access-node-to-access-node edges into
+    copy library nodes of its own (``InsertExplicitCopies``), so an SDFG this function already
+    walked grows a fresh ``#pragma omp parallel for`` after it returns (gemm's ``C_slice -> C``).
+    They are lifted HERE instead, pinned ``Sequential`` with every other scope, and handed to the
+    CPU specialization band -- ``SpecializeCpuTransfers`` gives a sequential contiguous transfer
+    its single ``std::memcpy`` back, which is what this arm used to measure. Codegen's own lift
+    then finds nothing left to lift.
     """
     sdfg.expand_library_nodes()
+    InsertExplicitCopies().apply_pass(sdfg, {})
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
             node.map.schedule = dace.ScheduleType.Sequential
+        elif isinstance(node, nodes.LibraryNode):
+            node.schedule = dace.ScheduleType.Sequential
+    SpecializeCpuTransfers().apply_pass(sdfg, {})
+    sdfg.expand_library_nodes()
     return sdfg
 
 

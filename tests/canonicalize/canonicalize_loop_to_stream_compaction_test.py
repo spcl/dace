@@ -233,13 +233,22 @@ def test_s343_static_extents_lift_the_whole_nest():
 
     ``total`` is a ``Reduce`` over the shaped mask, so the cursor the nest leaves behind counts
     every taken iteration of BOTH levels.
+
+    A literal extent is also a size the CPU cost model can read: 24x24 is 576 elements per phase,
+    PROVABLY under the 1024-element fork/join break-even, so the terminal ``cpu_specialize`` band
+    pins both phases sequential. That is a target decision, not a property of the lift, so the
+    default build is pinned to the verdict it must produce (no OMP region at all for this size)
+    and the lift's own parallelism is read with the cost model switched off -- threshold 0, its
+    documented A/B lever, which leaves the maps exactly as canonicalization built them.
     """
     sdfg = build(s343_static_kernel)
     assert lifted(sdfg)
     assert nest_claimed(sdfg, 2)
     assert not phases_under_a_loop(sdfg)
     assert num_maps(sdfg) >= 2
-    assert omp_parallel_for(sdfg) >= 2
+    assert omp_parallel_for(sdfg) == 0  # 576 elements per phase: the fork costs more than the work
+    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=0):
+        assert omp_parallel_for(build(s343_static_kernel)) >= 2
 
     rng = np.random.default_rng(3431)
     for scale in (1.0, -1.0, 0.25):

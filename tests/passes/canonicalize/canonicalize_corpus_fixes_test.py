@@ -105,16 +105,27 @@ def test_finalize_selects_openmp_for_reduce():
     """``finalize_for_target`` must select the ``OpenMP`` implementation for a lifted ``Reduce``
     library node on CPU -- never the default ``pure`` (which builds a single-scalar WCR map that
     lowers to a serialized ``omp critical`` for min/max or a contended ``omp atomic`` for sum,
-    100-3000x slower). The generated code must carry a real ``reduction(op:var)`` clause and no
-    ``omp atomic`` / ``omp critical`` on the accumulator, and stay bit-exact vs numpy."""
+    100-3000x slower).
+
+    ``ExpandReduceOpenMP`` lowers onto the ``dace::reduce`` runtime facility, so a full reduction
+    is ONE ``::dace::reduce::<op>(base, count, stride, seed)`` call and the ``reduction`` clause
+    lives in ``dace/reduction.h``. Both halves are pinned here -- the PARALLEL entry point in the
+    generated file (the ``seq::`` one is for a call re-entered by an enclosing parallel scope, and
+    would serialize this reduction) and the clause at its home -- plus no ``omp atomic`` /
+    ``omp critical`` / per-element ``reduce_atomic`` on the accumulator, and bit-exactness vs
+    numpy."""
     import numpy as np
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
+    header = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), "runtime", "include", "dace", "reduction.h")
+    with open(header, "r") as f:
+        header_src = f.read()
+
     Nsym = dace.symbol("N", dtype=dace.int64)
 
-    for op, npfn, clause in (("sum", np.sum, "reduction(+:"), ("max", np.max, "reduction(max:")):
+    for op, npfn, clause_op in (("sum", np.sum, "+"), ("max", np.max, "max")):
 
         @dace.program
         def reducer(a: dace.float64[Nsym]):
@@ -136,7 +147,13 @@ def test_finalize_selects_openmp_for_reduce():
             f"{op}: Reduce must be OpenMP, got {[n.implementation for n in reduces]}"
 
         code = sdfg.generate_code()[0].clean_code
-        assert clause.replace(" ", "") in code.replace(" ", ""), f"{op}: missing {clause}...) clause"
+        assert f"::dace::reduce::{op}(" in code, \
+            f"{op}: no ::dace::reduce::{op}() call -- the reduce did not lower through the runtime facility"
+        assert f"::dace::reduce::seq::{op}(" not in code, \
+            f"{op}: sequential entry point emitted for a reduction that is the outermost parallel work"
+        assert f"reduction({clause_op} : acc)" in header_src, \
+            f"{op}: reduction({clause_op}:...) clause dropped from dace/reduction.h"
+        assert "reduce_atomic" not in code, f"{op}: reduction must not fall back to a per-element atomic"
         assert "#pragma omp atomic" not in code, f"{op}: reduction must not fall back to omp atomic"
         assert "#pragma omp critical" not in code, f"{op}: reduction must not fall back to omp critical"
 

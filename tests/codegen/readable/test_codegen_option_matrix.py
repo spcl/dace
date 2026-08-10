@@ -46,16 +46,17 @@ its OWN regression test rather than silently "fixed":
 Each requested value is still exercised in the main compile+run matrix below (nothing is dropped), and
 each degenerate one additionally gets a dedicated codegen-only test documenting what it actually does.
 
-KNOWN FAILING ARM (a real bug, not a test bug -- see the comment on its ``ARMS`` entry):
-``inline_full_array_nsdfg = True`` currently fails to COMPILE on this kernel. Inlining rewrites the
-nest's ``io[io_idx(k)]`` to ``B[B_idx(k)]``, assuming a ``B_idx`` helper exists for the outer array,
-but ``B`` here is only ever pointer-passed / ``memcpy``'d at the frame's top level (never itself
-subscripted there), so no such helper was ever emitted -- a plausible real-world shape (an output
-array filled by copy, then handed to a nested routine), not a contrived corner case. Left as a plain,
-unmarked failing assertion rather than xfail'd or loosened: the point of this suite is to surface
-exactly this class of bug, not paper over it.
+FORMERLY FAILING ARM. ``inline_full_array_nsdfg = True`` used to fail to COMPILE on this kernel:
+inlining rewrites the nest's ``io[io_idx(k)]`` to ``B[B_idx(k)]``, assuming a ``B_idx`` helper
+exists for the outer array, and back when the ``heap -> B`` copy lowered to a single ``std::memcpy``
+``B`` was never subscripted at the frame's top level, so no such helper was ever emitted. That copy
+is now the canonical parallel element map, which subscripts ``B`` in the frame and therefore emits
+``B_idx``; the arm compiles and matches. The underlying codegen gap (an array reached only by
+pointer still needs its index helper when a nest is inlined onto it) is no longer REACHABLE from
+this kernel -- the arm stays in the matrix as the regression guard for the shape it does cover.
 """
 import contextlib
+import re
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -127,7 +128,7 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
         compute.add_memlet_path(rb, entry, t, dst_conn='b', memlet=dace.Memlet('buf[0]'))
         compute.add_memlet_path(t, exit_node, wh, src_conn='o', memlet=dace.Memlet('heap[i]'))
 
-    # Direct array-to-array copy, no map (explicit_copy: lifts this to memcpy / a CopyLibraryNode).
+    # Direct array-to-array copy, no map (explicit_copy: lifts this to a CopyLibraryNode).
     copy_state = sdfg.add_state_after(compute, 'copy')
     copy_state.add_edge(copy_state.add_read('heap'), None, copy_state.add_write('B'), None, dace.Memlet('heap[0:N]'))
 
@@ -214,10 +215,9 @@ ARMS: Tuple[Tuple[str, Optional[Tuple[str, ...]], object], ...] = (
     ('const_scalar_abi_by_value', ('compiler', 'cpu', 'codegen_params', 'const_scalar_abi'), 'by_value'),
     ('split_nsdfg_translation_units', ('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units'), True),
     ('external_translation_units', ('compiler', 'cpu', 'codegen_params', 'external_translation_units'), True),
-    # KNOWN BROKEN (real bug, reported -- not a test bug, do not weaken/skip): inlining rewrites the
-    # nest's `io[io_idx(k)]` to `B[B_idx(k)]`, but `B` (the outer array) is only ever pointer-passed /
-    # memcpy'd at the frame's top level, so no `B_idx` helper was ever emitted for it -- the inlined
-    # body references an undeclared function and the arm fails to COMPILE (not just a wrong number).
+    # Formerly broken (see the module docstring): inlining rewrites the nest's `io[io_idx(k)]` to
+    # `B[B_idx(k)]`, which used to reference an undeclared helper because a `memcpy`'d `B` was never
+    # subscripted in the frame. The parallel element copy subscripts it, so `B_idx` is emitted.
     ('inline_full_array_nsdfg', ('compiler', 'cpu', 'codegen_params', 'inline_full_array_nsdfg'), True),
 )
 
@@ -273,11 +273,32 @@ def test_heap_ptr_restrict_none_drops_restrict() -> None:
 
 
 def test_explicit_copy_off_keeps_copynd() -> None:
+    """``explicit_copy`` decides WHO moves ``heap[0:N] -> B``.
+
+    ON (default) lifts the edge to a copy library node with its own emitted routine, lowered to the
+    canonical PARALLEL element map: the maximally parallel form is the default on every device, and
+    a symbolic count is assumed big. A single ``std::memcpy`` is the CPU SPECIALIZATION of a
+    ``Sequential`` contiguous transfer (``SpecializeCpuTransfers``) -- this copy is top level and
+    never re-entered, so nothing sequentializes it and no ``memcpy`` is emitted here. The
+    ``memcpy``/``memset`` selection itself is pinned in
+    ``tests/passes/copy_memset_parallel_selection_test.py`` and
+    ``tests/passes/cpu_specialization_fork_join_test.py``, not here.
+
+    OFF lifts nothing: the edge stays implicit and the legacy runtime template ``dace::CopyND``
+    moves the bytes."""
     default = cpp_text('nv_explicit_copy')
     arm = cpp_text('nv_explicit_copy', ('compiler', 'cpu', 'codegen_params', 'explicit_copy'), 'off')
     assert default != arm
-    assert 'memcpy' in default
+    # ON: a lifted copy routine, parallel element map inside it, and no runtime template anywhere.
+    routine = re.search(r'inline void copy_heap_to_B_\w+\(.*?\n\}', default, re.DOTALL)
+    assert routine is not None, 'explicit_copy=on must emit the lifted heap->B copy routine'
+    body = routine.group(0)
+    assert '#pragma omp parallel for' in body
+    assert re.search(r'_cpy_out\[[^\]]+\] = _cpy_in\[[^\]]+\];', body) is not None
+    assert 'dace::CopyND' not in default
+    # OFF: no lifting at all, the runtime template does the move.
     assert 'dace::CopyND' in arm
+    assert 'copy_heap_to_B' not in arm
 
 
 def test_const_scalar_abi_by_value_drops_the_reference() -> None:
