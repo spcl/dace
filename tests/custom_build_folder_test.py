@@ -87,6 +87,7 @@ def test_ranks_share_a_build_folder_when_distaware_is_off(unlaunched):
 def test_ranks_do_not_share_a_build_folder_by_default(unlaunched, tmp_path):
     """distaware defaults on: ranks that each compile must not land in one folder."""
     unlaunched.setenv('DACE_default_build_folder', str(tmp_path))
+    unlaunched.setenv('DACE_cache', 'name')  # pin the leaf naming policy so the exact path holds
     sdfg = dace.SDFG('rankprobe')
 
     unlaunched.setenv('OMPI_COMM_WORLD_RANK', '0')
