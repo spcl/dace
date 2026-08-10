@@ -123,6 +123,7 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
+    Can also parse a None check of the form `array is [not] None`.
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
@@ -133,10 +134,19 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 
     for subnode in ast.walk(node):
         if isinstance(subnode, ast.Subscript):
-            data = astutils.rname(subnode.value)
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif (
+            isinstance(subnode, ast.Compare)
+            and len(subnode.ops) == 1 and isinstance(subnode.ops[0], ast.Is | ast.IsNot)
+            and len(subnode.comparators) == 1 and isinstance(subnode.comparators[0], ast.Constant)
+            and subnode.comparators[0].value is None
+        ):
+            # Parsing `array is [not] None`
+            data = astutils.rname(subnode.left)
+            if data in arrays:
+                result.append(mm.Memlet.from_array(data, arrays[data]))
         elif include_scalars and isinstance(subnode, ast.Name):
             data = astutils.rname(subnode)
             if data in arrays and isinstance(arrays[data], dace.data.Scalar):
