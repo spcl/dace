@@ -73,14 +73,15 @@ class ExpandGemvPure(ExpandTransformation):
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}
 
-        # Initialization map
+        # Initialization map. Reserved (__-prefixed) connector name: after this expansion's
+        # nested SDFG is inlined, a bare 'out' would collide with an outer array named 'out'.
         init_state.add_mapped_tasklet(
             "gemv_init", {
                 "_o%d" % i: "0:%s" % symbolic.symstr(d)
                 for i, d in enumerate(shape_y)
             }, {},
-            "out = 0",
-            {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
+            "__out = 0",
+            {"__out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
             external_edges=True)
 
         # Multiplication map
