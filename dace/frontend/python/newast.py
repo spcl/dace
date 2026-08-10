@@ -412,9 +412,11 @@ def add_indirection_subgraph(sdfg: SDFG,
                         toreplace = 'index_' + fname + '_' + str(len(accesses[fname]) - 1)
 
                     if direct_assignment:
-                        # newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
-                        newsubset[dimidx] = r.subs(expr, toreplace)
-                        r = newsubset[dimidx]
+                        # A point range keeps its (begin, end, step) shape. Writing the substituted
+                        # bound back on its own left a bare expression where the subset holds
+                        # tuples -- the malformed state the tuple check above exists to survive.
+                        r = r.subs(expr, toreplace)
+                        newsubset[dimidx] = (r, r, newsubset[dimidx][2])
                     else:
                         rng = list(newsubset[dimidx])
                         rng[i] = rng[i].subs(expr, toreplace)
@@ -1375,11 +1377,11 @@ class ProgramVisitor(ExtNodeVisitor):
             v: self.sdfg.process_grids[v]
             for k, v in self.variables.items() if v in self.sdfg.process_grids
         })
-        try:
+        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
+        # ImportError, so the availability question belongs in one place (see the helper's docstring).
+        if preprocessing.mpi4py_is_usable():
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
-            pass
 
         return result
 
