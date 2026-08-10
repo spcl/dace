@@ -110,25 +110,26 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
 
         return access_node, an2, tasklet
 
-    def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, this_state: dace.SDFGState) -> bool:
-        """Return whether ``scalar_name`` appears in the read/write set of
-        any state other than ``this_state``, or in any interstate edge.
+    def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, an_slice: dace.nodes.AccessNode) -> bool:
+        """Return whether ``scalar_name`` is used anywhere besides the matched
+        ``an_slice`` node -- another data node in the same state, a data node in
+        another state, or an interstate edge.
 
-        The structural match already guarantees the scalar's only uses in
-        ``this_state`` are the copy write + the single tasklet read, so a
-        reuse can only be in another state's data nodes or an interstate
-        edge's assignments / condition.
+        The structural match constrains only ``an_slice`` itself (one writer, one
+        reader). The SAME state may hold a SECOND AccessNode for the scalar that
+        reads the value this copy defines (TSVC s255's rotated ``x``: the peeled
+        prologue writes ``x = b[LEN_1D - 1]`` on one node and a later node reads
+        ``x`` into ``y_1``). Dropping the scalar there deletes its only definition
+        and the second node reads an uninitialised transient.
 
         :param sdfg: SDFG to scan.
         :param scalar_name: The scalar transient's data name.
-        :param this_state: The state the pattern was matched in (excluded).
+        :param an_slice: The matched scalar AccessNode (the only use that folds away).
         :returns: ``True`` if the scalar is read or written elsewhere.
         """
         for state in sdfg.all_states():
-            if state is this_state:
-                continue
             for dn in state.data_nodes():
-                if dn.data == scalar_name:
+                if dn.data == scalar_name and dn is not an_slice:
                     return True
         for ise in sdfg.all_interstate_edges():
             if any(str(s) == scalar_name for s in ise.data.free_symbols):
@@ -213,7 +214,7 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                     if src_array_written_here:
                         continue
 
-                    reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, state)
+                    reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, an2)
 
                     if reused:
                         # Keep the scalar; replace the copy with an assignment

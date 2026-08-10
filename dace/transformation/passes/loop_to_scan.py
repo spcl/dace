@@ -936,6 +936,9 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
         if len(out_edges_t) != 1:
             continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
+        if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
+                                        write_coef):
+            continue
         candidates.append(
             _Scan(
                 op=op,
@@ -1025,6 +1028,9 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
         if len(out_edges_t) != 1:
             continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
+        if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
+                                        write_coef):
+            continue
         candidates.append(
             _Scan(
                 op=op,
@@ -2772,6 +2778,50 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
         else:
             others.append((axis_idx, lo_sym))
     return scan_axis, offset, others, coef
+
+
+def carrier_reads_admissible(state: SDFGState, out_name: str, loop_var: str, scan_axis: int, write_others, k_w, k_r,
+                             write_coef) -> bool:
+    """``True`` iff every read of the carrier ``out_name`` in ``state`` sits at a
+    position the scan rewrite accounts for.
+
+    A scan means ``out[i] = out[i - S] OP delta_i`` where ``delta_i`` depends on
+    everything BUT other iterations' ``out``. Two read positions are compatible with
+    that: the carry itself (offset ``k_r``) and a self-read at the write position
+    (``k_w`` -- the pre-loop value of the very cell this iteration overwrites, a
+    legitimate delta input). A read at any OTHER offset on the scan axis, same slot,
+    is a value some other iteration writes -- a second carried dependence the scan
+    cannot express. TSVC ``s322`` (``a[i] = a[i] + a[i-1]*b[i] + a[i-2]*c[i]``) is
+    exactly that: the ``a[i-2]`` read reaches the update tasklet through the delta
+    chain, so :func:`_find_scan_update_tasklet`'s per-tasklet guard never sees it,
+    and lifting the ``a[i-1]`` chain alone silently reads stale ``a[i-2]``.
+
+    Reads on other slots (different ``other_indices``) or reverse-direction reads are
+    left to the per-tasklet guard: the loop's write set does not cover them.
+
+    :param state: The loop body state.
+    :param out_name: The carrier array.
+    :param loop_var: The loop iteration variable.
+    :param scan_axis: The carrier's scan axis.
+    :param write_others: The write's non-scan indices.
+    :param k_w: The write offset on the scan axis.
+    :param k_r: The matched carry-read offset on the scan axis.
+    :param write_coef: The write's ``loop_var`` coefficient on the scan axis.
+    :returns: ``True`` when no unaccounted carried read exists.
+    """
+    for node in state.data_nodes():
+        if node.data != out_name:
+            continue
+        for edge in state.out_edges(node):
+            if edge.data is None or edge.data.is_empty():
+                continue
+            subset = edge.data.subset if edge.data.data == out_name else edge.data.other_subset
+            r_axis, k, r_others, r_coef = _classify_subset(subset, loop_var)
+            if r_axis != scan_axis or r_coef != write_coef or not _same_other_indices(r_others, write_others):
+                continue
+            if symbolic.simplify(k - k_w) != 0 and symbolic.simplify(k - k_r) != 0:
+                return False
+    return True
 
 
 def _same_other_indices(a, b) -> bool:
