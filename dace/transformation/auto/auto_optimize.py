@@ -12,12 +12,12 @@ from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List, Dict, Callable
 
 # Transformations
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.passes import FullMapFusion, MakeTransientsPersistent
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
-from dace.transformation import helpers as xfh, pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -466,68 +466,18 @@ def make_transients_persistent(sdfg: SDFG,
         * Makes non-view array lifetimes persistent, with some restrictions depending on the device
         * Reset nonatomic WCR edges on GPU
 
-    The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
-    allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
-    allocated in a persistent manner).
+    The only arrays that are made persistent are ones that do not exist inside a scope (and thus may be allocated
+    multiple times), and whose allocation size resolves to symbols that are given as parameters to the top-level SDFG
+    and are never reassigned. The promotion itself lives in
+    :class:`~dace.transformation.passes.persistent_transients.MakeTransientsPersistent`, so the pipeline and this
+    helper cannot drift apart.
 
     :param sdfg: SDFG
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     """
-    result: Dict[int, Set[str]] = {}
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        fsyms: Set[str] = nsdfg.free_symbols
-        persistent: Set[str] = set()
-        not_persistent: Set[str] = set()
-
-        for state in nsdfg.states():
-            for dnode in state.data_nodes():
-                if dnode.data in not_persistent:
-                    continue
-                # Only convert arrays and scalars that are not compile-time constants
-                if dnode.data in nsdfg.constants_prop:
-                    not_persistent.add(dnode.data)
-                    continue
-                desc = dnode.desc(nsdfg)
-                # Only convert what is not a member of a non-persistent struct.
-                if (dnode.root_data != dnode.data
-                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
-                    continue
-                # Only convert arrays and scalars that are not registers
-                if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
-                    not_persistent.add(dnode.data)
-                    continue
-                if desc.storage == dtypes.StorageType.Register:
-                    not_persistent.add(dnode.data)
-                    continue
-                # Only convert arrays where the size depends on SDFG parameters
-                try:
-                    if set(map(str, desc.total_size.free_symbols)) - fsyms:
-                        not_persistent.add(dnode.data)
-                        continue
-                except AttributeError:  # total_size is an integer / has no free symbols
-                    pass
-
-                # Only convert arrays with top-level access nodes
-                if xfh.get_parent_map(state, dnode) is not None:
-                    if toplevel_only:
-                        not_persistent.add(dnode.data)
-                        continue
-                    elif desc.lifetime == dtypes.AllocationLifetime.Scope:
-                        not_persistent.add(dnode.data)
-                        continue
-
-                if desc.lifetime == dtypes.AllocationLifetime.External:
-                    not_persistent.add(dnode.data)
-                    continue
-
-                persistent.add(dnode.data)
-
-        for aname in (persistent - not_persistent):
-            nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
-
-        result[nsdfg.cfg_id] = (persistent - not_persistent)
+    result = MakeTransientsPersistent(toplevel_only=toplevel_only).apply_pass(sdfg, {})
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
@@ -535,7 +485,7 @@ def make_transients_persistent(sdfg: SDFG,
             for edge in state.edges():
                 edge.data.wcr_nonatomic = False
 
-    return result
+    return result or {}
 
 
 def apply_gpu_storage(sdfg: SDFG) -> None:
