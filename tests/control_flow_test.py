@@ -341,6 +341,7 @@ def test_fsm():
 
 
 def test_optional_parameters():
+
     def optional_parameters_func(A: dace.int32[3], B: Optional[dace.int32[3]] = None):
         if B is None:
             A[1] = 3
@@ -352,10 +353,9 @@ def test_optional_parameters():
         optional_parameters_func(A)
         optional_parameters_func(A, B)
 
-
     sdfg: dace.SDFG = optional_parameters_program.to_sdfg()
-    A = np.zeros((3,), dtype=np.int32)
-    B = np.zeros((3,), dtype=np.int32)
+    A = np.zeros((3, ), dtype=np.int32)
+    B = np.zeros((3, ), dtype=np.int32)
 
     sdfg(A, B)
     assert A[0] == 0
