@@ -48,6 +48,20 @@ def is_start_block(graph, block) -> bool:
     return graph._start_block is block
 
 
+def keep_start_block(graph, block) -> None:
+    """Make ``block`` the region entry after a fusion removed the previous one.
+
+    A region with a single source block derives its entry, so pinning there would turn an
+    implicit entry into an explicit one for no gain -- and index-set splitting later hits a
+    region whose entry is pinned to a block the split no longer owns. Pin only what the
+    region cannot derive.
+    """
+    sources = graph.source_nodes()
+    if len(sources) == 1 and sources[0] is block:
+        return
+    graph.start_block = graph.node_id(block)
+
+
 def scope_edge_is_walkable(state: SDFGState, sdfg, e) -> bool:
     """Whether ``memlet_path`` can trace ``e``'s scope chain instead of raising.
 
@@ -610,7 +624,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
             if was_start:
-                graph.start_block = graph.node_id(second_state)
+                keep_start_block(graph, second_state)
             return
 
         # Special case 2: second state is empty
@@ -620,7 +634,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
             if was_start:
-                graph.start_block = graph.node_id(first_state)
+                keep_start_block(graph, first_state)
             return
 
         # Normal case: both states are not empty
@@ -715,4 +729,4 @@ class StateFusion(transformation.MultiStateTransformation):
         sdutil.change_edge_src(graph, second_state, first_state)
         graph.remove_node(second_state)
         if was_start:
-            graph.start_block = graph.node_id(first_state)
+            keep_start_block(graph, first_state)

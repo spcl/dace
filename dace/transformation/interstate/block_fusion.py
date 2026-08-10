@@ -3,6 +3,7 @@
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import transformation
+from dace.transformation.interstate.state_fusion import is_start_block, keep_start_block
 
 
 @transformation.explicit_cf_compatible
@@ -80,7 +81,7 @@ class BlockFusion(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
-        first_is_start = graph.start_block is self.first_block
+        first_is_start = is_start_block(graph, self.first_block)
         connecting_edge = graph.edges_between(self.first_block, self.second_block)[0]
         assignments_to_absorb = connecting_edge.data.assignments
         graph.remove_edge(connecting_edge)
@@ -92,9 +93,9 @@ class BlockFusion(transformation.MultiStateTransformation):
             # We remove the first block and let the second one remain.
             for ie in graph.in_edges(self.first_block):
                 graph.add_edge(ie.src, self.second_block, ie.data)
-            if first_is_start:
-                graph.start_block = self.second_block.block_id
             graph.remove_node(self.first_block)
+            if first_is_start:
+                keep_start_block(graph, self.second_block)
         else:
             # We remove the second block and let the first one remain.
             for oe in graph.out_edges(self.second_block):

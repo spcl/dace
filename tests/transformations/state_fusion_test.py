@@ -533,7 +533,55 @@ def test_side_effect_free_single_cc_fuses():
     assert sdfg.number_of_nodes() == 1
 
 
+def empty_entry_then_worker(name: str, island: bool):
+    """A pinned empty entry state feeding a worker state -- StateFusion's "first state is empty"
+    path, the one that has to decide what the region entry becomes. With ``island`` an extra
+    disconnected source block stands in for the mid-surgery shape index-set splitting produces,
+    where the region can no longer derive its entry."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [1], dace.float64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    worker = sdfg.add_state('worker')
+    tasklet = worker.add_tasklet('write', {}, {'out'}, 'out = 1.0')
+    worker.add_edge(tasklet, 'out', worker.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.add_edge(entry, worker, dace.InterstateEdge())
+    if island:
+        sdfg.add_state('island')
+    return sdfg, entry, worker
+
+
+def test_state_fusion_leaves_a_derivable_region_entry_implicit():
+    """Fusing away the entry of a region that is left with ONE source block must NOT pin the
+    survivor: the region derives its entry, and an explicit pin is what later broke index-set
+    splitting (a pinned entry the split no longer owns). Read ``_start_block`` directly -- the
+    ``start_block`` getter answers from the single source either way, so the pin is invisible
+    through it."""
+    sdfg, _entry, worker = empty_entry_then_worker('fusion_implicit_entry', island=False)
+    assert sdfg._start_block is not None, 'precondition: the entry starts out pinned'
+
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.number_of_nodes() == 1
+    assert sdfg._start_block is None, 'a derivable region entry must stay implicit after fusion'
+    assert sdfg.start_block is worker
+
+
+def test_state_fusion_pins_the_region_entry_the_region_cannot_derive():
+    """The other half of the contract: with a second source block around, nothing derives the
+    entry, so the fusion MUST pin the survivor -- otherwise the region is left with no answer.
+    Applied directly: the extra source is exactly the shape a whole-SDFG validation rejects,
+    which is why it only ever occurs between two transformations."""
+    sdfg, entry, worker = empty_entry_then_worker('fusion_pinned_entry', island=True)
+
+    StateFusion.apply_to(sdfg, first_state=entry, second_state=worker, verify=False, save=False, annotate=False)
+    assert sdfg.number_of_nodes() == 2
+    assert len(sdfg.source_nodes()) == 2, 'the island must keep the entry underivable'
+    assert sdfg._start_block is worker, 'an underivable region entry must be pinned to the survivor'
+    assert sdfg.start_block is worker
+
+
 if __name__ == "__main__":
+    test_state_fusion_leaves_a_derivable_region_entry_implicit()
+    test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
     test_fuse_assignments()
     test_fuse_assignments_2()
     test_fuse_assignment_in_use()

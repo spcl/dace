@@ -13,7 +13,8 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import MATCH_ERRORS, is_fusible_state_shape, is_start_block
+from dace.transformation.interstate.state_fusion import (MATCH_ERRORS, is_fusible_state_shape, is_start_block,
+                                                         keep_start_block)
 
 
 # Helper class for finding connected component correspondences
@@ -257,7 +258,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         #  is what the s253 flake actually needed. (``match_nodes`` is built from a ``sorted``
         #  intersection above, so its order is stable too; this does not rely on that.)
         #
-        # ⛔ Deliberately NOT strengthened to "every (first, second) pair is connected by some
+        # Deliberately NOT strengthened to "every (first, second) pair is connected by some
         #  match". That property is stronger than the hazard being covered, and pricing it costs
         #  a BFS per (first_node, second_node, match) triple -- measured 14.8s vs 0.1ms at 160
         #  nodes, which stalled the cloudsc ``pretreat`` phase for over an hour. The weaker
@@ -854,7 +855,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
             if was_start:
-                graph.start_block = graph.node_id(second_state)
+                keep_start_block(graph, second_state)
             return
 
         # Special case 2: second state is empty
@@ -864,7 +865,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
             if was_start:
-                graph.start_block = graph.node_id(first_state)
+                keep_start_block(graph, first_state)
             return
 
         # Normal case: both states are not empty
@@ -1010,7 +1011,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         sdutil.change_edge_src(graph, second_state, first_state)
         graph.remove_node(second_state)
         if was_start:
-            graph.start_block = graph.node_id(first_state)
+            keep_start_block(graph, first_state)
 
         # Technically unneeded, but better to keep track.
         self.connections_to_make.clear()
