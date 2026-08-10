@@ -62,12 +62,18 @@ test_cscs_gh200:
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
-    # EXPERIMENT (temporary, revert when concluded): the nanobind interface tests are excluded
-    # from this job so we can see whether the remaining GPU failures involve nanobind at all.
-    # The job itself already runs the ctypes interface - these tests are the only thing here
-    # that pins nanobind, which they do themselves via a fixture, so ignoring the file makes
-    # the run nanobind-free. If it still fails without them, the next experiment is the
-    # opposite one: force nanobind everywhere and run the job repeatedly.
+    # EXPERIMENT arm 2 of 4 (temporary; the whole block reverts to a plain pytest line once the
+    # matrix has been walked). Isolating which interface, or which mixture of them, the
+    # intermittent GPU failures depend on:
+    #
+    #   arm 1  ctypes,   nanobind test file ignored   -> 3 consecutive passes  [done]
+    #   arm 2  nanobind, nanobind test file ignored   -> THIS ARM
+    #   arm 3  nanobind, nanobind test file enabled
+    #   arm 4  ctypes,   nanobind test file enabled   (the original configuration)
+    #
+    # If arms 2 and 3 pass but arm 4 fails, the fault is in the interaction between the two
+    # interfaces within one job rather than in either interface alone.
+    - export DACE_compiler_interface=nanobind
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/codegen/nanobind_interface_test.py
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
