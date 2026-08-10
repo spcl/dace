@@ -351,7 +351,7 @@ def test_optional_parameters():
     def optional_parameters_program(A: dace.int32[3], B: dace.int32[3]):
         optional_parameters_func(A)
         optional_parameters_func(A, B)
-    
+
 
     sdfg: dace.SDFG = optional_parameters_program.to_sdfg()
     A = np.zeros((3,), dtype=np.int32)
