@@ -469,7 +469,7 @@ def test_branch_with_cpu_else_gpu():
 
 def test_nested_IR():
     sdfg = nested_sdfg()
-    #sdfg.view()
+    sdfg.view()
     IR = OtA().get_IR(sdfg)
     print(IR)
 
@@ -492,7 +492,7 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # offload sdfg (in place)
     OtA().apply_pass(sdfg, {})
     sdfg.validate()
-    #sdfg.view()
+    sdfg.view()
 
     # compile and run offloaded sdfg (part may be on GPU, necessary copies were added)
     sdfg._recompile = True
@@ -805,7 +805,7 @@ def test_len1_array_init():
 @pytest.mark.gpu_offload
 def test_reduce_to_array():
     sdfg = reduce_to_array_sdfg()
-    #sdfg.view()
+    sdfg.view()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
@@ -821,7 +821,7 @@ def test_reduce_to_array():
 @pytest.mark.gpu_offload
 def test_reduce_to_scalar():
     sdfg = reduce_to_scalar_sdfg()
-    #sdfg.view()
+    sdfg.view()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
@@ -862,7 +862,7 @@ if __name__ == "__main__":
     # Run with: python testsuite_offloading.py
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
-    
+
     """
     import importlib
     import sys
@@ -873,9 +873,12 @@ if __name__ == "__main__":
     if str(npbench_repo_root) not in sys.path:
         sys.path.insert(0, str(npbench_repo_root))
 
-    module = importlib.import_module("npbench.benchmarks.spmv.spmv_dace")
-    sdfg = module.spmv.to_sdfg()
+    module = importlib.import_module("npbench.benchmarks.azimint_hist.azimint_hist_dace")
+    sdfg = module.azimint_hist.to_sdfg()
+    sdfg.view()
     OtA().apply_pass(sdfg, {})
     sdfg.validate()
+    sdfg.view()
     """
+    
     
