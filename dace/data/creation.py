@@ -258,7 +258,9 @@ def make_reference_from_descriptor(descriptor: Array,
             raise NotImplementedError('GPU memory can only be referenced in Python if cupy is installed')
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            # Only the buffer's ADDRESS is used below, so it is taken as raw
+            # bytes -- see the CPU branch for why the element type is avoided.
+            buffer = dtypes.ptrtocupy(original_array, np.uint8, (total_size * dtype.itemsize, ))
             view = cp.ndarray(shape=shape,
                               dtype=dtype,
                               memptr=buffer.data,
@@ -268,7 +270,16 @@ def make_reference_from_descriptor(descriptor: Array,
     else:
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            # Take the memory as raw bytes and let the view below impose the
+            # element type. Going through the dtype's ctypes equivalent
+            # instead makes this fail for every type whose C representation
+            # NumPy cannot view: complex128's is ``c_longdouble``, which has
+            # no PEP-3118 format, so referencing a complex array raised
+            # ValueError -- inside a callback, where it could only be a silent
+            # no-op. It is also more portable, since a ctypes type need not
+            # have the same width as the DaCe type it stands in for (``long
+            # double`` is 16 bytes here but 8 under MSVC).
+            buffer = dtypes.ptrtonumpy(original_array, ctypes.c_uint8, (total_size * dtype.itemsize, ))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
 
