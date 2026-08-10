@@ -366,6 +366,9 @@ def _subset_exprs(subset) -> List:
 def _symbolic_sources(sdfg: 'dace.sdfg.SDFG'):
     """Yield ``(exprs, where)`` per GROUP, ``where`` unformatted. Loop init/update statements are
     skipped: SymPy cannot parse a statement and a raising parse is not memoized.
+
+    :param sdfg: The SDFG to walk, at this level only.
+    :yield: A group of stored expressions and its unformatted location tuple.
     """
     from dace.sdfg import nodes as nd
     from dace.sdfg.state import LoopRegion, SDFGState

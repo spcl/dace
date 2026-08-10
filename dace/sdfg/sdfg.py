@@ -951,9 +951,10 @@ class SDFG(ControlFlowRegion):
         """``expr`` with bare symbols re-minted from the registry, for REASONING only.
 
         :param expr: A symbolic expression, or any value, which is returned unchanged.
-        :return: ``expr`` with each registered symbol carrying its recorded assumptions. The
-                 assumed objects are local to the result and must never be stored back.
-        :rtype: sympy.Basic
+        :return: ``expr`` with each registered symbol carrying its recorded assumptions, or
+                 ``expr`` unchanged when it is not symbolic. The assumed objects are local to
+                 the result and must never be stored back.
+        :rtype: Any
         """
         if not self.symbol_assumptions or not isinstance(expr, sympy.Basic):
             return expr
