@@ -575,10 +575,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             code_uses: Dict[str, List[Tuple[SDFGState, nodes.Node]]] = collections.defaultdict(list)
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
-            # A use with no access node of its own is represented below by a stand-in access node,
-            # which is NOT in any state's graph. That is harmless for an array (allocation only reads
-            # the descriptor) but not for a view, whose pointer is taken from its viewed edge -- so
-            # views are never stood in for. Their declaration follows the data they view regardless.
+            # The stand-in nodes below are not in any state's graph, which a view's pointer needs.
             standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
@@ -587,10 +584,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
-                # A code node may reference a container directly in its code (a free
-                # symbol without connector/memlet/AccessNode). The allocation analysis
-                # must count those states as uses too, otherwise the declaration can
-                # land in a scope that does not enclose the reading code.
+                # A container named in tasklet code alone is a use, with no access node to find it by.
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
@@ -722,8 +716,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if name in block_syms:
                         multistate = True
 
-                # Code nodes reading the container directly from their code (no
-                # AccessNode) count as uses for the scope decision as well.
                 code_users = code_instances[sdfg.cfg_id].get(name, [])
                 for state in sdfg.states():
                     if multistate:
@@ -768,9 +760,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                       and scope_allocation_repeats_per_iteration(curstate)
                       and first_node_instance is not None and not utils.is_nonfree_sym_dependent(
                           first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id])):
-                    # Placing it at the one state that uses it re-allocates the buffer on every iteration of
-                    # the enclosing loop; the SDFG entry dominates that state, so one buffer serves them all.
-                    # Only the PLACEMENT moves -- ``desc.lifetime`` stays Scope.
+                    # Only the placement moves; ``desc.lifetime`` stays Scope.
                     alloc_scope = sdfg
                     alloc_state = curstate
                 else:

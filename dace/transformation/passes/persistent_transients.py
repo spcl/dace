@@ -11,8 +11,7 @@ from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
-#: Lifetimes that outlive a Persistent allocation, or already are one. Promoting any of them is a
-#: demotion: Global memory belongs to the program, External memory to the caller.
+#: Lifetimes a promotion would DEMOTE: Global belongs to the program, External to the caller.
 STRONGER_THAN_PERSISTENT = (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global,
                             dtypes.AllocationLifetime.External)
 
@@ -32,8 +31,7 @@ def persistent_size_symbols(sdfg: SDFG) -> Set[str]:
     """
     allowed = {str(s) for s in sdfg.free_symbols} | set(sdfg.constants_prop.keys())
     reassigned: Set[str] = set()
-    # Collected across the whole tree: a nested assignment to a name the root also owns is a
-    # collision this cannot tell apart from a rebinding, and refusing the promotion is the safe read.
+    # Tree-wide: a nested assignment to a root-owned name is indistinguishable from a rebinding.
     for nested in sdfg.all_sdfgs_recursive():
         for edge in nested.all_interstate_edges():
             reassigned |= set(edge.data.assignments.keys())
@@ -147,8 +145,7 @@ class MakeTransientsPersistent(ppl.Pass):
                 if dnode.data in refused:
                     continue
                 desc = dnode.desc(nsdfg)
-                # A struct member follows its container: promoting it alone would place it in a
-                # state-struct field its parent descriptor does not have.
+                # A struct member follows its container.
                 if (dnode.root_data != dnode.data
                         and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
                     continue

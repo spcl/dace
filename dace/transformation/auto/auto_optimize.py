@@ -478,8 +478,7 @@ def make_transients_persistent(sdfg: SDFG,
     :return: A dictionary mapping every SDFG ID in the tree to the set of transient arrays that were
              made persistent in it, empty for the ones where nothing qualified.
     """
-    # The pass returns None when nothing qualified, per the Pass convention, and omits nothing
-    # otherwise -- but this helper's callers may index any cfg_id, so keep the total mapping.
+    # Callers may index any cfg_id; the pass returns only the ones where something qualified.
     result: Dict[int, Set[str]] = {nsdfg.cfg_id: set() for nsdfg in sdfg.all_sdfgs_recursive()}
     result.update(MakeTransientsPersistent(toplevel_only=toplevel_only).apply_pass(sdfg, {}) or {})
 

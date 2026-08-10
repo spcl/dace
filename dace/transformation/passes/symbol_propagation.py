@@ -80,9 +80,7 @@ class SymbolPropagation(ppl.Pass):
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
     ) -> Dict[str, Any]:
-        # The container-aware filters below must consult the SDFG that OWNS this block: the traversal
-        # spans every nested SDFG while ``sdfg`` is always the top-level one, so a nested block's
-        # containers are invisible in ``sdfg.arrays`` and the filters silently no-op for them.
+        # ``sdfg`` is always the top-level one, so a nested block's containers are not in its arrays.
         owner = cfg_blk.sdfg
         # Combine the outgoing symbols of all incoming edges with their assignments to the cfg_blk
         new_in_syms = {}
