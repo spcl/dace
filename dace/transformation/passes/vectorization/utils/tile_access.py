@@ -266,7 +266,7 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
 def build_symbol_definition_map(
     inner_sdfg: Optional[SDFG],
     state=None,
-    scan_cache: Optional[Dict[int, Tuple[Dict[str, Set[str]], Dict[str, Set[sympy.Expr]]]]] = None
+    scan_cache: Optional[Dict[int, Tuple[Dict[str, Set[str]], Dict[str, Set[sympy.Expr]], Set[str]]]] = None
 ) -> Dict[str, sympy.Expr]:
     """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
     (optionally reaching-def-disambiguated at ``state``).
@@ -302,7 +302,7 @@ def build_symbol_definition_map(
     # exactly (default None -> every caller unchanged).
     cache_key = id(inner_sdfg)
     if scan_cache is not None and cache_key in scan_cache:
-        ise_rhs, scalar_defs = scan_cache[cache_key]
+        ise_rhs, scalar_defs, unreadable_writes = scan_cache[cache_key]
     else:
         # --- source 1: interstate-edge symbol assignments ---
         ise_rhs: Dict[str, Set[str]] = {}
@@ -318,25 +318,37 @@ def build_symbol_definition_map(
         # the recurrence scan) made this the single most costly step of the tile pipeline on a large
         # body. The loop state is ``scan_state`` (not ``state``): this scan must not touch the param.
         scalar_defs: Dict[str, Set[sympy.Expr]] = {}
+        # Names carrying a write this scan cannot READ as a definition: a second incoming edge, a
+        # WCR accumulation, or a producer that is not a single-output ``__out = <body>`` tasklet.
+        # Recording only the readable writes and ignoring the rest reports a PARTIAL definition as
+        # the whole truth: the early-exit search seeds ``exit_buf`` to the sentinel ``N`` with a
+        # plain tasklet and then MIN-reduces the found index into it through a map exit, so the
+        # readable write alone makes the container look like the constant ``N`` and every subset
+        # resolved through it lands on the sentinel (``a[_exit_i] -> a[LEN_1D]``).
+        unreadable_writes: Set[str] = set()
         for sd in inner_sdfg.all_sdfgs_recursive():
             for scan_state in sd.states():
                 for node in scan_state.nodes():
                     if not isinstance(node, nodes.AccessNode):
                         continue
                     in_edges = scan_state.in_edges(node)
-                    if len(in_edges) != 1:
-                        continue
+                    if not in_edges:
+                        continue  # pure read -- says nothing about the definition
                     producer = in_edges[0].src
-                    if not isinstance(producer, nodes.Tasklet) or len(producer.out_connectors) != 1:
+                    if (len(in_edges) != 1 or in_edges[0].data is None or in_edges[0].data.wcr is not None
+                            or not isinstance(producer, nodes.Tasklet) or len(producer.out_connectors) != 1):
+                        unreadable_writes.add(node.data)
                         continue
                     out_conn = next(iter(producer.out_connectors))
                     body = producer.code.as_string if producer.code is not None else ""
                     body = body.strip().rstrip(";").strip()
                     prefix = f"{out_conn} = "
                     if not body.startswith(prefix):
+                        unreadable_writes.add(node.data)
                         continue
                     rhs_expr = _sympify_tasklet_rhs(body[len(prefix):].strip())
                     if rhs_expr is None:
+                        unreadable_writes.add(node.data)
                         continue
                     # Rewrite input connectors -> source data names
                     rename = {}
@@ -352,7 +364,7 @@ def build_symbol_definition_map(
                     scalar_defs.setdefault(node.data, set()).add(rhs_expr)
 
         if scan_cache is not None:
-            scan_cache[cache_key] = (ise_rhs, scalar_defs)
+            scan_cache[cache_key] = (ise_rhs, scalar_defs, unreadable_writes)
 
     defs: Dict[str, sympy.Expr] = {}
     for k, rhs_set in ise_rhs.items():
@@ -369,8 +381,8 @@ def build_symbol_definition_map(
             defs[k] = expr
 
     for name, rhs_set in scalar_defs.items():
-        if name in defs or len(rhs_set) != 1:
-            continue  # ISE def wins / ambiguous scalar def -> skip
+        if name in defs or name in unreadable_writes or len(rhs_set) != 1:
+            continue  # ISE def wins / partially-readable or ambiguous scalar def -> skip
         defs[name] = next(iter(rhs_set))
     # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
     # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap

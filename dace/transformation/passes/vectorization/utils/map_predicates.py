@@ -255,6 +255,26 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Option
     return True
 
 
+def map_body_has_foreign_language_tasklet(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """True if the map's body holds a tasklet whose code is NOT Python (recursively).
+
+    Such a body is opaque twice over. The tile emitters rewrite a body by rebuilding its Python
+    AST, so a C++ tasklet cannot be widened -- the map would stride by W over a body that stays
+    scalar. And ``CodeBlock.get_free_symbols`` reports nothing for a non-Python language, so a
+    body that reads the map parameter from its own code text (the early-exit chunked scan's
+    ``__ee_c0``) looks symbol-free: nesting it into a body NestedSDFG drops that symbol from the
+    ``symbol_mapping`` and the generated C++ no longer compiles. Leave the map scalar.
+    """
+    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+        if isinstance(node, dace.nodes.Tasklet) and node.language != dace.dtypes.Language.Python:
+            return True
+        if isinstance(node, dace.nodes.NestedSDFG) and any(
+                isinstance(n, dace.nodes.Tasklet) and n.language != dace.dtypes.Language.Python
+                for n, _ in node.sdfg.all_nodes_recursive()):
+            return True
+    return False
+
+
 def map_body_has_library_node(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if the map's body contains an OPAQUE library node (recursively, incl. nested SDFGs).
 
@@ -440,8 +460,8 @@ def is_vectorizable_map(state: SDFGState,
     tile-lowerable: the shared tile-candidate gate.
 
     All tile passes select through this predicate so an un-vectorizable map (non-innermost,
-    recurrence-indexed, wrapping an opaque library node, or carrying a per-lane access the tile
-    emitter cannot soundly widen -- see :func:`map_body_is_tile_lowerable`) is refused
+    recurrence-indexed, wrapping an opaque library node or a non-Python tasklet, or carrying a
+    per-lane access the tile emitter cannot soundly widen -- see :func:`map_body_is_tile_lowerable`) is refused
     CONSISTENTLY -- never tiled by one pass while another skips it (the desync that strides a map
     by W over a body that stays scalar).
 
@@ -464,6 +484,8 @@ def is_vectorizable_map(state: SDFGState,
     if not (is_innermost_map(state, map_entry) and is_tile_eligible(state, map_entry, K)):
         return False
     if map_body_has_library_node(state, map_entry):
+        return False
+    if map_body_has_foreign_language_tasklet(state, map_entry):
         return False
     if map_body_has_inner_loop(state, map_entry):
         return False
