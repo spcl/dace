@@ -128,16 +128,25 @@ def test_emits_block_reduce_and_single_atomic(kind):
     from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
     cu = _device_code(_vectorized(_PROGRAMS[kind][0]))
     suffix = _PROGRAMS[kind][1]
-    # The block-reduce is typed to the reduction map's block thread count -- a compile-time
-    # constant chosen by gpu_block_size_selection (not a fixed magic number).
-    assert re.search(r"cub::BlockReduce<dace::float16,\s*\d+>", cu), \
+    # The block-reduce is typed to the reduction map's block thread count -- compile-time
+    # constants chosen by gpu_block_size_selection (not fixed magic numbers). All THREE block
+    # dimensions are spelled: the 1-D ``BlockReduce<T, N>`` form assumes threadIdx.y/z == 0 and
+    # mis-maps threads whenever the block is 2-D/3-D.
+    assert re.search(r"cub::BlockReduce<dace::float16,\s*\d+,\s*cub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu), \
         "block reduce not emitted / not typed to a constant-thread block"
     assert ".Reduce(" in cu, "cub block Reduce call missing"
     assert f"dace::ReductionType::{suffix}" in cu, f"block reduce not using the {suffix} functor"
     assert "reduce_atomic" in cu, "thread-0 atomic to the global accumulator missing"
     assert "threadIdx.x == 0" in cu, "atomic not guarded to a single thread per block"
     assert "__shared__" in cu, "block-reduce temp storage not in shared memory"
-    assert "folded by GPU block reduction" in cu, "per-thread atomic not suppressed"
+    # Per-thread atomic suppressed: the covered WCR write lands in this thread's REGISTER partial
+    # (``__bpart_*``) instead, and every ``reduce_atomic`` in the TU sits under a thread-0 guard --
+    # so the TU commits one atomic per block, never one per thread.
+    assert re.search(
+        r"__bpart_\S+\[[^\]]*\]\s*=\s*dace::_wcr_fixed<dace::ReductionType::%s,\s*dace::float16>\(\)\(" % suffix,
+        cu), "per-thread atomic not suppressed into a register partial"
+    assert cu.count("reduce_atomic") == cu.count("threadIdx.x == 0"), \
+        "a reduce_atomic outside the thread-0 block-fold guard = one atomic per thread"
 
 
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
