@@ -20,16 +20,8 @@ from dace.transformation.passes.analysis import loop_analysis
 
 
 def _align_itersym(expr, itersym):
-    """Re-point every free symbol NAMED like ``itersym`` at ``itersym`` itself.
-
-    A :class:`dace.symbolic.symbol` carries SymPy assumptions, and SymPy makes two same-named
-    symbols with different assumptions DISTINCT objects. Canonicalization stamps
-    ``nonnegative=True`` on every integer symbol, so a subset written after it holds a different
-    ``i`` from the one rebuilt out of the loop header -- and ``i.match(a*i + b)`` then matches the
-    WILDCARD instead (``a=0, b=i``), reading a per-iteration write as iteration-INVARIANT. Both
-    spellings can coexist in one loop, so the fix is to normalize the expression rather than to
-    pick one instance.
-    """
+    """Re-point free symbols named like ``itersym`` at ``itersym``: same-named sympy symbols
+    with different assumptions are distinct objects and silently mismatch in ``.match()``."""
     repl = {s: itersym for s in expr.free_symbols if s.name == itersym.name and s is not itersym}
     return expr.subs(repl) if repl else expr
 

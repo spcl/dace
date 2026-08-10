@@ -49,12 +49,9 @@ def is_start_block(graph, block) -> bool:
 
 
 def keep_start_block(graph, block) -> None:
-    """Make ``block`` the region entry after a fusion removed the previous one.
-
-    A region with a single source block derives its entry, so pinning there would turn an
-    implicit entry into an explicit one for no gain -- and index-set splitting later hits a
-    region whose entry is pinned to a block the split no longer owns. Pin only what the
-    region cannot derive.
+    """Make ``block`` the region entry after a fusion removed the previous one. Skip pinning
+    if ``block`` is already the sole (implicit) source -- an explicit pin there is a no-op
+    that later trips up index-set splitting.
     """
     sources = graph.source_nodes()
     if len(sources) == 1 and sources[0] is block:

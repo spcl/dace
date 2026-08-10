@@ -1212,8 +1212,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     new_nodes = []
     new_entry = None
     new_exit = None
-    # List, not a set: the replicas are renamed in this order, so a set would hand the same graph
-    # different transient names run to run.
+    # List, not a set: rename order must stay deterministic run to run.
     to_find_new_names: List[nodes.AccessNode] = []
     # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
     # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
@@ -1247,11 +1246,8 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # Set the exit node's map to match the entry node
     new_exit.map = new_entry.map
 
-    # Replicate all temporary transients within scope. ONE new name per container, shared by every
-    # replica of it: a scope can hold several AccessNodes for the same transient (a written node
-    # plus a later reader that carries only ordering edges -- tsvc_2_5 ``halo_broadcast``'s
-    # ``a_index_0``), and a fresh name each would split the definition from its use, leaving the
-    # reader on an uninitialised container.
+    # Replicate all temporary transients within scope. One new name per container, shared by
+    # every AccessNode replica of it, so a later reader stays bound to its writer's name.
     renamed: Dict[str, str] = {}
     for node in to_find_new_names:
         desc = node.desc(sdfg)
@@ -1272,12 +1268,8 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
                 # is skipped by the same guard.
                 if e.data is None or e.data.data != old_name:
                     continue
-                # Stop at an OUT-OF-SCOPE AccessNode of the same container. A staging copy
-                # ``AccessNode(x) -> MapEntry -> AccessNode(x)`` keeps its outer read on the
-                # original container -- only the in-scope replica is renamed -- so renaming the
-                # outer edge too would leave ``AccessNode(x) -[x_0]-> MapEntry``, a memlet naming
-                # neither of its own endpoints. An in-scope sibling replica is a different case:
-                # it takes the SAME new name, so the edge between them must be renamed as well.
+                # Skip an edge touching an out-of-scope AccessNode of the same container (its
+                # container wasn't renamed); an in-scope sibling replica shares the new name.
                 if any(n is not node and isinstance(n, nodes.AccessNode) and n.data == old_name and not any(
                         n is m for m in new_nodes) for n in (e.src, e.dst)):
                     continue

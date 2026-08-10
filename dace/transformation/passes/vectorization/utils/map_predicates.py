@@ -258,12 +258,9 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Option
 def map_body_has_foreign_language_tasklet(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if the map's body holds a tasklet whose code is NOT Python (recursively).
 
-    Such a body is opaque twice over. The tile emitters rewrite a body by rebuilding its Python
-    AST, so a C++ tasklet cannot be widened -- the map would stride by W over a body that stays
-    scalar. And ``CodeBlock.get_free_symbols`` reports nothing for a non-Python language, so a
-    body that reads the map parameter from its own code text (the early-exit chunked scan's
-    ``__ee_c0``) looks symbol-free: nesting it into a body NestedSDFG drops that symbol from the
-    ``symbol_mapping`` and the generated C++ no longer compiles. Leave the map scalar.
+    The tile emitters rewrite a body via its Python AST, so a non-Python tasklet cannot be
+    widened; its free symbols are also invisible to ``get_free_symbols``, which can drop a map
+    parameter it reads from raw code text out of a nested SDFG's symbol mapping.
     """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
         if isinstance(node, dace.nodes.Tasklet) and node.language != dace.dtypes.Language.Python:

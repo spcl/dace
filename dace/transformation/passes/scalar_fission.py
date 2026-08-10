@@ -224,8 +224,8 @@ class ScalarFission(ppl.Pass):
 
     @staticmethod
     def _rename_memlet_path(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:
-        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE that
-        belongs to ``node``'s access.
+        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE belonging
+        to ``node``'s access.
 
         An access-node write/read that flows THROUGH a scope boundary (MapExit /
         MapEntry) has more than one edge carrying the same data: the inner edge
@@ -241,12 +241,8 @@ class ScalarFission(ppl.Pass):
         linear route and renames only one of those branches, leaving its siblings
         naming a container their endpoint no longer references.
 
-        The tree STOPS at another AccessNode of ``old``. A staging copy
-        ``AccessNode(x) -> MapEntry -> AccessNode(x)`` puts two SEPARATE accesses of the same
-        container in one tree, and the shadow analysis versions them separately. Renaming the
-        whole tree for the first of them also renames the other one's edge, and the second
-        rename then skips that edge (its memlet no longer names ``old``) -- leaving
-        ``AccessNode(x_1) -[x_0]-> MapEntry``, a memlet naming neither of its own endpoints.
+        The tree STOPS at another AccessNode of ``old``: a staging copy puts two separate
+        accesses of the same container in one tree, versioned separately by the shadow analysis.
         """
         for pe in state.memlet_tree(edge):
             if pe.data is None or pe.data.data != old:

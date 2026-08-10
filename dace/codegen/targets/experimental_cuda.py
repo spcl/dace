@@ -310,11 +310,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             kernel_function_stream = self._globalcode
 
             self._in_device_code = True
-            # Everything emitted from here to the matching ``False`` lands in the .cu, so the delegate
-            # must key its generated-function dedup on the .cu owner for the WHOLE window -- not only
-            # inside the tasklet / nested-SDFG calls that used to set it. Scope generation itself
-            # allocates arrays, and an ``<array>_idx`` helper flushed there under the host key is
-            # re-emitted under the device key = a C++ redefinition in the one .cu.
+            # Key generated-function dedup to the .cu owner for this whole scope: helpers flushed
+            # during scope allocation under the host key would otherwise be redefined in the .cu.
             old_codegen = self._cpu_codegen.calling_codegen
             self._cpu_codegen.calling_codegen = self
             try:

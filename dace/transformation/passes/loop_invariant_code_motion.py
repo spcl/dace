@@ -345,14 +345,8 @@ def _written_data_in_region(region: ControlFlowRegion) -> Set[str]:
 
 
 def write_edge_count(state: SDFGState, node: nodes.AccessNode) -> int:
-    """Number of value-carrying in-edges of ``node`` (empty memlets are ordering
-    edges, not writes).
-
-    Counting EDGES, not nodes: several producers can write the same data through
-    ONE AccessNode -- a ``Reduce`` accumulating into the same scalar an ``s = 0.0``
-    tasklet seeds is exactly that shape, and a per-node count reports one writer
-    for two writes.
-    """
+    """Number of value-carrying in-edges of ``node`` (empty memlets are ordering, not writes);
+    counts edges, not nodes, since several producers can write one AccessNode."""
     return sum(1 for e in state.in_edges(node) if e.data is not None and not e.data.is_empty())
 
 
@@ -476,13 +470,9 @@ def _is_tasklet_invariant(
 def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
     """Free symbols that appear in the tasklet code, minus its connectors.
 
-    Only Python code has an AST to walk. Any other language falls back to a plain
-    identifier scan of the text -- an over-approximation, which is the safe direction
-    here: the caller refuses to hoist when the result meets a variant symbol. Returning
-    an empty set instead (the historical behaviour, reached both through ``language`` and
-    through the ``SyntaxError`` this parse raises on C++) makes a C++ body look free of
-    every symbol it reads, so a tasklet that indexes its own map parameter -- the
-    early-exit chunked scan's ``__ee_c0`` -- is hoisted OUT of the map that defines it.
+    Non-Python code has no AST, so fall back to a plain identifier scan (an over-approximation,
+    safe since the caller only refuses to hoist); an empty set would instead let a C++ tasklet
+    reading its own map parameter get hoisted out of the map that defines it.
     """
     syms: Set[str] = set()
     code = tasklet.code

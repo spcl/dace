@@ -114,11 +114,8 @@ _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileRedu
 #: :meth:`VectorizeMultiDim.apply_pass`). ``semantic_lifting=False`` is the whole point: canon's
 #: map -> library-node lifts (Einsum / Copy / Memset) would hand the tiler an opaque node with no
 #: per-lane body to widen, so the vectorizer needs the residual left as raw maps.
-#: ``unroll_limit=0`` for the same reason one level down: a constant-trip loop of at most
-#: ``optimizer.canonicalization.unroll_limit`` (8) iterations is straight-lined by
-#: ``ShortLoopUnroll``, which deletes the very map the tiler was called to widen -- and a trip
-#: count that small is exactly ONE full tile at W=8, the best case, not a candidate for scalar
-#: replication. Canon's own default is untouched; only this entry call opts out.
+#: ``unroll_limit=0``: ShortLoopUnroll would straight-line a short constant-trip loop and delete
+#: the very map the tiler was called to widen.
 ENTRY_CANONICALIZE_KWARGS = {'semantic_lifting': False, 'unroll_limit': 0}
 
 

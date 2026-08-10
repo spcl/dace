@@ -261,19 +261,11 @@ def unit_positive_stride(loop: LoopRegion) -> bool:
 
 
 def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
-    """The array window a pure anti-dependence snapshot state copies, or ``None`` when
-    ``state`` is not one: one copy edge ``AccessNode(arr) -> AccessNode(arr_split_snap)``
-    and nothing else. ``BreakAntiDependence`` inserts exactly this before a loop to break a
-    per-iteration anti-dependence; the wavefront can absorb it (the diagonal schedule already
-    reads the old value before it is overwritten).
-
-    The copy is NOT required to span the whole array -- ``BreakAntiDependence`` narrows it to
-    the window its redirected edges read, so on the 5-point Gauss-Seidel it is a single row
-    ``arr[i, 2:N]``. Outside that window the snapshot holds nothing, so containment of every
-    redirected read is discharged over the iteration domain by
-    :func:`snapshot_reads_in_window`. What stays mandatory here is the IDENTITY index mapping
-    (equal source and destination subsets, unit stride): without it ``snap[idx]`` and
-    ``arr[idx]`` name different cells and :func:`commit_split_snapshots` would move the read.
+    """The array window a pure anti-dependence snapshot copy state covers (one
+    ``AccessNode(arr) -> AccessNode(arr_split_snap)`` edge, nothing else), or ``None`` if
+    ``state`` isn't one. The window need not span the whole array -- callers must check
+    containment of each read separately (:func:`snapshot_reads_in_window`) -- but the index
+    mapping must be identity (equal subsets, unit stride) or a redirected read would move.
     """
     ns = list(state.nodes())
     if len(ns) != 2 or not all(isinstance(n, nodes.AccessNode) for n in ns):
@@ -304,8 +296,7 @@ def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
 
 
 def is_split_snapshot_state(state: SDFGState) -> bool:
-    """``state`` is a snapshot copy the wavefront can absorb (see
-    :func:`split_snapshot_window`)."""
+    """``state`` is a snapshot copy the wavefront can absorb."""
     return split_snapshot_window(state) is not None
 
 
@@ -423,13 +414,8 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: Tuple[str, 'Writ
 
 
 def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain: List[object]) -> bool:
-    """Every redirected read must index a cell the snapshot copy actually held.
-
-    ``BreakAntiDependence`` narrows the copy to the window its redirected edges read, so
-    outside that window the snapshot mirrors nothing and the live array is not the value the
-    read saw. Discharged with the same ISL emptiness query the legality checks use: over the
-    iteration domain, the region in which a read index leaves the window must be empty.
-    Refuses whatever ISL cannot decide."""
+    """Every redirected read must index a cell the snapshot window actually covers; refuses
+    whatever ISL cannot decide."""
     dims = [u, v]
     iters = (u, v)
     for (_st, _node, _e, ridx, _src, window) in snap_reads:
@@ -912,9 +898,7 @@ class WavefrontSkew(ppl.Pass):
         domain = domain_constraints(u, v, ub, vb)
         dims = [u, v]
 
-        # The copy only mirrors the live array inside the window it covered; a read outside it
-        # would take a value the snapshot never held. Needs the domain, so it runs here -- still
-        # before any mutation.
+        # Needs the domain, so checked here, still before any mutation.
         if not snapshot_reads_in_window(snap_reads, u, v, domain):
             return False
 

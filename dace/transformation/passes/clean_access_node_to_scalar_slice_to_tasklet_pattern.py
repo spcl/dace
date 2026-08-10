@@ -115,12 +115,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         ``an_slice`` node -- another data node in the same state, a data node in
         another state, or an interstate edge.
 
-        The structural match constrains only ``an_slice`` itself (one writer, one
-        reader). The SAME state may hold a SECOND AccessNode for the scalar that
-        reads the value this copy defines (TSVC s255's rotated ``x``: the peeled
-        prologue writes ``x = b[LEN_1D - 1]`` on one node and a later node reads
-        ``x`` into ``y_1``). Dropping the scalar there deletes its only definition
-        and the second node reads an uninitialised transient.
+        The same state can hold a second AccessNode reading the value this copy defines
+        (TSVC s255's rotated ``x``); dropping the scalar there leaves it uninitialised.
 
         :param sdfg: SDFG to scan.
         :param scalar_name: The scalar transient's data name.

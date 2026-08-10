@@ -318,13 +318,8 @@ def build_symbol_definition_map(
         # the recurrence scan) made this the single most costly step of the tile pipeline on a large
         # body. The loop state is ``scan_state`` (not ``state``): this scan must not touch the param.
         scalar_defs: Dict[str, Set[sympy.Expr]] = {}
-        # Names carrying a write this scan cannot READ as a definition: a second incoming edge, a
-        # WCR accumulation, or a producer that is not a single-output ``__out = <body>`` tasklet.
-        # Recording only the readable writes and ignoring the rest reports a PARTIAL definition as
-        # the whole truth: the early-exit search seeds ``exit_buf`` to the sentinel ``N`` with a
-        # plain tasklet and then MIN-reduces the found index into it through a map exit, so the
-        # readable write alone makes the container look like the constant ``N`` and every subset
-        # resolved through it lands on the sentinel (``a[_exit_i] -> a[LEN_1D]``).
+        # Names with an unreadable write (WCR, multi-edge, non-``__out = <body>`` producer): must
+        # be excluded below, or a later readable write alone would look like the whole definition.
         unreadable_writes: Set[str] = set()
         for sd in inner_sdfg.all_sdfgs_recursive():
             for scan_state in sd.states():

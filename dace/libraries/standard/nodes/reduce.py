@@ -61,14 +61,8 @@ def route_gpu_reduce_result_to_host_output(nsdfg: SDFG, last_state: SDFGState, d
                          dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
 
 
-#: Connector names for the tasklets this module emits.  Deliberately NOT the ``_in`` / ``_out`` the
-#: expansions give their nested-SDFG arrays, and never a bare ``a`` / ``b`` / ``o``: a tasklet
-#: connector that collides with an array name in the SAME SDFG is rejected by validation, and
-#: ``AllNode`` / ``AnyNode`` declare exactly such an ``_out`` array, since that is their own output
-#: connector name.  A nested SDFG is exempt from that check only while it stays nested -- codegen
-#: inlines it (``inline_host_nested_sdfgs``), which drops its tasklets straight into the parent
-#: state, so the expansions returning one need the same namespaced names as the OpenMP expansion,
-#: which emits its tasklet there directly.
+#: Namespaced tasklet connector names: after nested-SDFG inlining a bare ``a``/``b``/``o`` would
+#: collide with the ``AllNode``/``AnyNode`` ``_out`` array and fail validation.
 _IN = '_reduce_in'
 _OUT = '_reduce_out'
 _ACC = '_reduce_acc'
