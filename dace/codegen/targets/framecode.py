@@ -758,6 +758,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 if multistate:
                     alloc_scope = sdfg
+                elif (isinstance(curscope, SDFGState) and curstate is not None and desc.storage
+                      in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, dtypes.StorageType.Default)
+                      and scope_allocation_repeats_per_iteration(curstate)
+                      and first_node_instance is not None and not utils.is_nonfree_sym_dependent(
+                          first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id])):
+                    # Placing it at the one state that uses it re-allocates the buffer on every iteration of
+                    # the enclosing loop; the SDFG entry dominates that state, so one buffer serves them all.
+                    # Only the PLACEMENT moves -- ``desc.lifetime`` stays Scope.
+                    alloc_scope = sdfg
+                    alloc_state = curstate
                 else:
                     alloc_scope = curscope
                     alloc_state = curstate
@@ -1080,6 +1090,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
+
+
+def scope_allocation_repeats_per_iteration(state: SDFGState) -> bool:
+    """Whether a scope allocation placed at ``state`` re-runs on every iteration of an enclosing loop.
+
+    Ascends exactly as the dominator walk does: a block that is its region's entry is dominated by
+    whatever dominates the region, so the region collapses to a single node in its parent and the walk
+    continues. Reaching a :class:`LoopRegion` on that path means the allocation sits in a loop body.
+    """
+    block: ControlFlowBlock = state
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return True
+        block, region = region, region.parent_graph
+    return False
 
 
 def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
