@@ -147,16 +147,26 @@ class ScatterToGuardedMaps(ppl.Pass):
         # the loop's OWNING sdfg (may be nested -- the slice's fixed-dim expressions can
         # reference symbols, e.g. an outer loop variable, that only exist there), keyed by
         # (owner sdfg, name) since the same array name can be sliced differently per scope.
+        # The guard STATES themselves are hoisted to the outermost enclosing loop that
+        # natively defines those symbols (see :func:`_hoist_slice_region`): splicing them into
+        # the loop's own immediate owning sdfg would turn that sdfg's trivial single-state
+        # LoopToMap wrapper multi-state, blocking the later inline+collapse of the surrounding
+        # map nest.
         sliced_dup_syms: dict = {}
         for loop, idx_name, index_slice in sliced_guards:
             owner_sdfg = _owning_sdfg(sdfg, loop)
+            host_region = _hoist_slice_region(sdfg, owner_sdfg, index_slice)
+            host_sdfg = host_region.sdfg
+            if idx_name not in host_sdfg.arrays:
+                host_region, host_sdfg = owner_sdfg, owner_sdfg
             try:
-                trap_sym = insert_scatter_guard(owner_sdfg,
+                trap_sym = insert_scatter_guard(host_sdfg,
                                                 idx_name,
                                                 emit_trap=not self.emit_unparallelized_else_branch,
-                                                index_slice=index_slice)
+                                                index_slice=index_slice,
+                                                region=host_region)
                 if trap_sym is not None:
-                    sliced_dup_syms[(id(owner_sdfg), idx_name)] = trap_sym
+                    sliced_dup_syms[(id(loop), idx_name)] = trap_sym
             except ValueError as exc:
                 if 'already exists' not in str(exc):
                     raise
@@ -175,9 +185,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # to the sequential branch.
                 loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
                 loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
-                loop_idx_syms += [
-                    sliced_dup_syms[(id(owner_sdfg), i)] for i in loop_idx if (id(owner_sdfg), i) in sliced_dup_syms
-                ]
+                loop_idx_syms += [sliced_dup_syms[(id(loop), i)] for i in loop_idx if (id(loop), i) in sliced_dup_syms]
                 if loop_idx_syms:
                     cond = ' + '.join(loop_idx_syms) + ' > 0'
                     _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
@@ -421,6 +429,35 @@ def _owning_sdfg(root: SDFG, loop: LoopRegion) -> SDFG:
         if loop in list(sd.all_control_flow_regions()):
             return sd
     return root  # defensive fallback
+
+
+def _hoist_slice_region(sdfg: SDFG, owner_sdfg: SDFG, index_slice: ScatterIndexSlice):
+    """Return the control-flow region a sliced guard's STATES should be placed into.
+
+    Placing them at ``owner_sdfg`` (the loop's own immediate owning sdfg) is always valid but
+    turns a LoopToMap-produced single-state wrapper multi-state, which blocks a later
+    ``InlineSDFG``/``InlineMultistateSDFG`` + ``MapCollapse`` pass from fusing the surrounding
+    map nest (the wrapper is no longer a trivial pass-through). Hoisting past that boundary is
+    safe exactly when the region hoisted to still natively defines every symbol
+    ``index_slice.fixed`` references -- not merely forwards it through a NestedSDFG's
+    ``symbol_mapping`` the way ``owner_sdfg`` does.
+
+    :param sdfg: The root SDFG (searched top-down so the outermost match wins).
+    :param owner_sdfg: ``loop``'s own immediate owning sdfg -- the un-hoisted fallback.
+    :param index_slice: The slice whose ``fixed`` expressions must remain resolvable.
+    :returns: The outermost ``LoopRegion`` whose own loop variable appears in
+              ``index_slice.fixed``, or ``owner_sdfg`` when none is found.
+    """
+    free: Set[str] = set()
+    for expr in index_slice.fixed.values():
+        free |= {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
+    if not free:
+        return owner_sdfg
+    for sd in sdfg.all_sdfgs_recursive():
+        for region in sd.all_control_flow_regions():
+            if isinstance(region, LoopRegion) and region.loop_variable in free:
+                return region
+    return owner_sdfg
 
 
 def _subscript_dims(idx) -> List[ast.AST]:

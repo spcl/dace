@@ -219,13 +219,12 @@ def insert_scatter_guard(sdfg: SDFG,
                          idx_name: str,
                          emit_trap: bool = True,
                          elide_if_injective: bool = True,
-                         index_slice: Optional[ScatterIndexSlice] = None) -> Optional[str]:
+                         index_slice: Optional[ScatterIndexSlice] = None,
+                         region: Optional[SDFG] = None) -> Optional[str]:
     """Emit a tag+verify+abort guard for ``idx_name`` at the earliest legal CFG point.
 
-    :param sdfg: The SDFG to mutate in place. For ``index_slice=None`` this is normally the
-        root SDFG; for a sliced guard it must be the loop's OWNING sdfg (may be nested), since
-        ``index_slice.fixed`` expressions can reference symbols -- an outer loop variable --
-        that only exist in that scope.
+    :param sdfg: The data-owning SDFG: ``idx_name`` and the new count/tag descriptors are
+        resolved and added here. Normally the root SDFG.
     :param idx_name: The integer array whose runtime values must be all distinct.
     :param emit_trap: When ``True`` (default), the chain ends in a state whose
         tasklet calls ``std::abort()`` if the duplicate count is positive.
@@ -243,6 +242,12 @@ def insert_scatter_guard(sdfg: SDFG,
         covers a 1-D full-array producer.
     :param index_slice: When given, ``idx_name`` may be a rank>=2 Array: the guard scans only
         the 1-D window ``index_slice`` describes instead of requiring the whole array be 1-D.
+    :param region: The control-flow region the new guard STATES are placed into (its own
+        ``add_state``/``start_block``/edges), defaulting to ``sdfg`` itself. Pass a nested
+        ``LoopRegion`` here to place a sliced guard OUTSIDE an inner loop-to-map nest whose
+        wrapper NestedSDFG must stay a trivial single-state body for a later inline+collapse
+        pass to fuse -- ``index_slice.fixed`` expressions only need to resolve against
+        ``region``, not the innermost owning sdfg.
     :returns: ``None`` when ``emit_trap=True`` OR when the guard was elided as provably
               conflict-free; the duplicate-count symbol name
               (``__scatter_guard_check_<count>``) when ``emit_trap=False`` and a guard was
@@ -253,6 +258,8 @@ def insert_scatter_guard(sdfg: SDFG,
         ``_scatter_guard_count_`` scalar is present).
     """
     from dace.libraries.sort.nodes._helpers import is_integer_dtype
+
+    region = sdfg if region is None else region
 
     desc = sdfg.arrays.get(idx_name)
     if desc is None:
@@ -279,14 +286,15 @@ def insert_scatter_guard(sdfg: SDFG,
 
     # Capture the original CFG entry + definer states BEFORE adding the guard states, whose
     # new states would otherwise pollute the source-node set both queries depend on.
-    def_states = _find_definition_states(sdfg, idx_name) & set(sdfg.states())
-    original_start = sdfg.start_block
+    def_states = _find_definition_states(sdfg, idx_name) & set(region.all_states())
+    original_start = region.start_block
 
     check_state, trap_state, count_name, trap_sym = _build_guard_states(sdfg,
                                                                         idx_name,
                                                                         emit_trap=emit_trap,
-                                                                        index_slice=index_slice)
-    _splice_guard_into_cfg(sdfg, idx_name, check_state, trap_state, count_name, trap_sym, def_states, original_start)
+                                                                        index_slice=index_slice,
+                                                                        region=region)
+    _splice_guard_into_cfg(region, idx_name, check_state, trap_state, count_name, trap_sym, def_states, original_start)
     sdfg.reset_cfg_list()
     return None if emit_trap else trap_sym
 
@@ -300,11 +308,11 @@ def _find_definition_states(sdfg: SDFG, idx_name: str) -> Set[SDFGState]:
     }
 
 
-def _build_guard_states(
-        sdfg: SDFG,
-        idx_name: str,
-        emit_trap: bool = True,
-        index_slice: Optional[ScatterIndexSlice] = None) -> tuple[SDFGState, Optional[SDFGState], str, str]:
+def _build_guard_states(sdfg: SDFG,
+                        idx_name: str,
+                        emit_trap: bool = True,
+                        index_slice: Optional[ScatterIndexSlice] = None,
+                        region: Optional[SDFG] = None) -> tuple[SDFGState, Optional[SDFGState], str, str]:
     """Build (but do not splice) the guard states: check, [trap].
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
@@ -318,10 +326,14 @@ def _build_guard_states(
     dimension ``index_slice.dim`` ranges over ``offset + k*stride`` for ``extent`` steps, every
     other dimension pinned at ``index_slice.fixed[d]``.
 
+    ``sdfg`` owns the new count/tag descriptors; the new STATES are added to ``region``
+    (``sdfg`` when not given) -- see :func:`insert_scatter_guard`'s ``region`` parameter.
+
     :returns: ``(check_state, trap_state, count_name, trap_sym)``.
     """
     from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 
+    region = sdfg if region is None else region
     desc = sdfg.arrays[idx_name]
     if index_slice is None:
         idx_subset = subsets.Range([(0, desc.shape[0] - 1, 1)])
@@ -341,7 +353,7 @@ def _build_guard_states(
     # check: opaque ScatterConflictCheck libnode (tag each written slot, verify the tags) -> host
     # count. A library node, so the tile vectorizer never looks through it -> the guard leaves
     # the scatter Map fully vectorizable.
-    check_state = sdfg.add_state(f"_scatter_guard_check_{idx_name}")
+    check_state = region.add_state(f"_scatter_guard_check_{idx_name}")
     idx_read = check_state.add_read(idx_name)
     count_write = check_state.add_write(count_name)
     check_node = ScatterConflictCheck(f"conflict_check_{idx_name}")
@@ -357,7 +369,7 @@ def _build_guard_states(
     # else the whole guard chain feeding ``trap_sym`` looks dead and the scatter goes unguarded.
     trap_state: Optional[SDFGState] = None
     if emit_trap:
-        trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
+        trap_state = region.add_state(f"_scatter_guard_trap_{idx_name}")
         trap_tasklet = trap_state.add_tasklet(f"check_assumption_{idx_name}", {}, {},
                                               f"if ({trap_sym} > 0) {{ std::abort(); }}",
                                               language=dtypes.Language.CPP)
@@ -435,9 +447,11 @@ def _wire_owner_scratch(sdfg: SDFG, idx_name: str, check_state: SDFGState, check
                          None, mm.Memlet(data=owner_name, subset=subsets.Range([(0, domain - 1, 1)])))
 
 
-def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, trap_state: Optional[SDFGState],
+def _splice_guard_into_cfg(region: SDFG, idx_name: str, check_state: SDFGState, trap_state: Optional[SDFGState],
                            count_name: str, trap_sym: str, def_states: Set[SDFGState], original_start) -> None:
-    """Splice ``check -> [trap] -> downstream`` in at the earliest legal CFG point.
+    """Splice ``check -> [trap] -> downstream`` in at the earliest legal CFG point of ``region``
+    (the same control-flow region the guard states were added to -- ``sdfg`` itself, or the
+    hoisted ``region`` from :func:`insert_scatter_guard`).
 
     The edge leaving the last guard state binds the count to ``trap_sym``: onto ``check ->
     trap`` when a trap is emitted, else onto the edge out of ``check`` (the caller then
@@ -447,7 +461,7 @@ def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, tr
     - Otherwise -> inserted right after the topologically-latest top-level definer state.
     """
     if trap_state is not None:
-        sdfg.add_edge(check_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
+        region.add_edge(check_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
         chain_tail = trap_state
         downstream_iedge_assignments = None
     else:
@@ -455,20 +469,20 @@ def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, tr
         downstream_iedge_assignments = {trap_sym: count_name}
 
     if def_states:
-        topo_order = list(sdfg.bfs_nodes(original_start))
+        topo_order = list(region.bfs_nodes(original_start))
         last_def = max(def_states, key=topo_order.index)
-        for e in list(sdfg.out_edges(last_def)):
-            sdfg.remove_edge(e)
+        for e in list(region.out_edges(last_def)):
+            region.remove_edge(e)
             if downstream_iedge_assignments is not None:
                 merged = dict(e.data.assignments or {})
                 merged.update(downstream_iedge_assignments)
-                sdfg.add_edge(chain_tail, e.dst, dace.InterstateEdge(condition=e.data.condition, assignments=merged))
+                region.add_edge(chain_tail, e.dst, dace.InterstateEdge(condition=e.data.condition, assignments=merged))
             else:
-                sdfg.add_edge(chain_tail, e.dst, e.data)
-        sdfg.add_edge(last_def, check_state, dace.InterstateEdge())
+                region.add_edge(chain_tail, e.dst, e.data)
+        region.add_edge(last_def, check_state, dace.InterstateEdge())
     else:
-        sdfg.add_edge(chain_tail, original_start, dace.InterstateEdge(assignments=downstream_iedge_assignments))
-        sdfg.start_block = sdfg.node_id(check_state)
+        region.add_edge(chain_tail, original_start, dace.InterstateEdge(assignments=downstream_iedge_assignments))
+        region.start_block = region.node_id(check_state)
 
 
 # Public re-exports for the explicit-API style ("call this function") on top of
