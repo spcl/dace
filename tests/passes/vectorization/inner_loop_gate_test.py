@@ -19,7 +19,8 @@ import copy
 import dace
 import pytest
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_has_inner_loop)
+from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_has_inner_loop,
+                                                                           map_body_has_tiled_param_dependent_branch)
 
 N = 16
 
@@ -31,7 +32,13 @@ def _map_over_body(inner: dace.SDFG, arrays):
         sdfg.add_array(a, [N, N], dace.float64)
     st = sdfg.add_state('main', is_start_block=True)
     me, mx = st.add_map('row', dict(i=f'0:{N}'))
-    ns = st.add_nested_sdfg(inner, set(arrays), set(arrays), symbol_mapping={'i': 'i'})
+    # Every symbol the body declares rides in under its own name. ``i`` is the map param -- the one
+    # striding rebinds to the tile base; anything else is a free symbol of the wrapper and therefore
+    # LANE-UNIFORM inside the tile.
+    for sym, stype in inner.symbols.items():
+        if sym != 'i':
+            sdfg.add_symbol(sym, stype)
+    ns = st.add_nested_sdfg(inner, set(arrays), set(arrays), symbol_mapping={s: s for s in inner.symbols})
     for a in arrays:
         st.add_memlet_path(st.add_access(a), me, ns, dst_conn=a, memlet=dace.Memlet(f'{a}[0:{N}, 0:{N}]'))
         st.add_memlet_path(ns, mx, st.add_access(a), src_conn=a, memlet=dace.Memlet(f'{a}[0:{N}, 0:{N}]'))
@@ -80,15 +87,21 @@ def _loop_body(arrays):
     return inner
 
 
-def _conditional_body():
-    """A body NSDFG whose work sits under a ``ConditionalBlock`` guard."""
+def _conditional_body(guard: str = 'lim > 0'):
+    """A body NSDFG whose work sits under a ``ConditionalBlock`` guard.
+
+    The default guard is over ``lim``, a symbol the tile never strides, so it holds the SAME answer
+    for all W lanes -- the maskable shape this gate must let through. Pass ``'i > 0'`` for the
+    opposite case: a guard over the param striding rebinds to the tile base.
+    """
     inner = dace.SDFG('guarded')
     inner.add_symbol('i', dace.int64)
+    inner.add_symbol('lim', dace.int64)
     inner.add_array('p', [N, N], dace.float64)
     cond = ConditionalBlock('guard', sdfg=inner)
     inner.add_node(cond, is_start_block=True)
     branch = ControlFlowRegion('then', sdfg=inner)
-    cond.add_branch(dace.properties.CodeBlock('i > 0'), branch)
+    cond.add_branch(dace.properties.CodeBlock(guard), branch)
     _elementwise_state(branch, 'p', 'then_body', '0')
     return inner
 
@@ -114,6 +127,17 @@ def test_conditional_body_is_still_allowed():
     _sdfg, state, map_entry = _map_over_body(_conditional_body(), ['p'])
     assert map_body_has_inner_loop(state, map_entry) is False
     assert is_vectorizable_map(state, map_entry, 1) is True
+
+
+def test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate():
+    """The complement of the test above, so "conditionals are allowed" cannot quietly widen into
+    "every conditional is allowed": a guard over the param about to be STRIDED is evaluated once per
+    tile at the tile base, so lane 0 decides for all W lanes. That one is refused -- and refused by
+    the branch gate, not the loop gate, which still reports no inner loop."""
+    _sdfg, state, map_entry = _map_over_body(_conditional_body('i > 0'), ['p'])
+    assert map_body_has_inner_loop(state, map_entry) is False
+    assert map_body_has_tiled_param_dependent_branch(state, map_entry, ('i', )) is True
+    assert is_vectorizable_map(state, map_entry, 1) is False
 
 
 @pytest.mark.parametrize('name', ['adi', 'deriche', 'lu'])
