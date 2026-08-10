@@ -604,6 +604,40 @@ def test_code_only_container_read_scope(schedule):
     assert np.allclose(b, a)
 
 
+def view_read_without_an_access_node(name: str, from_code: bool) -> dace.SDFG:
+    """A View whose EARLIEST use names it with no AccessNode -- from tasklet code, or from an
+    interstate edge. The allocation analysis fabricates an access node for such a use, and that node
+    is not in the state graph, so every graph query on it raises."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('inp', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_array('buf', [8], dace.float64, transient=True)
+    sdfg.add_view('v', [8], dace.float64)
+
+    s0 = sdfg.add_state('s0', is_start_block=True)
+    code = 'y = x + v' if from_code else 'y = x'
+    t0 = s0.add_tasklet('first', {'x'}, {'y'}, code)
+    s0.add_edge(s0.add_read('inp'), None, t0, 'x', dace.Memlet('inp[0]'))
+    s0.add_edge(t0, 'y', s0.add_write('buf'), None, dace.Memlet('buf[0]'))
+
+    s1 = sdfg.add_state('s1')
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={} if from_code else {'k': 'v'}))
+    vn = s1.add_access('v')
+    s1.add_edge(s1.add_read('buf'), None, vn, 'views', dace.Memlet('buf[0:8]'))
+    t1 = s1.add_tasklet('use', {'x'}, {'y'}, 'y = x * 2.0')
+    s1.add_edge(vn, None, t1, 'x', dace.Memlet('v[0]'))
+    s1.add_edge(t1, 'y', s1.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('from_code', [True, False])
+def test_view_read_without_an_access_node(from_code):
+    """Both fabricated-node sources reach is_nonfree_sym_dependent, whose View branch queries the
+    node's edges. Raised ``KeyError: AccessNode (v)`` before get_view_edge tolerated the absence."""
+    sdfg = view_read_without_an_access_node(f'view_no_access_node_{int(from_code)}', from_code)
+    sdfg.generate_code()
+
+
 def test_multisize():
     """ An array that needs to be allocated once, with runtime-dependent sizes. """
     sdfg = dace.SDFG('test')
@@ -679,4 +713,6 @@ if __name__ == '__main__':
     # test_scope_multisize()
     test_code_only_container_read_scope(dace.ScheduleType.Sequential)
     test_code_only_container_read_scope(dace.ScheduleType.CPU_Multicore)
+    test_view_read_without_an_access_node(True)
+    test_view_read_without_an_access_node(False)
     test_multisize()

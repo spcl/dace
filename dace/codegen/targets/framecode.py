@@ -575,6 +575,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             code_uses: Dict[str, List[Tuple[SDFGState, nodes.Node]]] = collections.defaultdict(list)
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            # A use with no access node of its own is represented below by a stand-in access node,
+            # which is NOT in any state's graph. That is harmless for an array (allocation only reads
+            # the descriptor) but not for a view, whose pointer is taken from its viewed edge -- so
+            # views are never stood in for. Their declaration follows the data they view regardless.
+            standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
@@ -589,7 +594,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
-                    for used in (node.free_symbols & array_names):
+                    for used in (node.free_symbols & standin_names):
                         instances[used].append((state, nodes.AccessNode(used)))
                         code_uses[used].append((state, node))
 
@@ -597,7 +602,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 edge_fsyms: Set[str] = set()
                 for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
+                for edge_array in edge_fsyms & standin_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
             #############################################
 
