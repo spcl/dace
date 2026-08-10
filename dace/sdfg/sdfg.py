@@ -137,12 +137,9 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
-        elif (
-            isinstance(subnode, ast.Compare)
-            and len(subnode.ops) == 1 and isinstance(subnode.ops[0], ast.Is | ast.IsNot)
-            and len(subnode.comparators) == 1 and isinstance(subnode.comparators[0], ast.Constant)
-            and subnode.comparators[0].value is None
-        ):
+        elif (isinstance(subnode, ast.Compare) and len(subnode.ops) == 1
+              and isinstance(subnode.ops[0], ast.Is | ast.IsNot) and len(subnode.comparators) == 1
+              and isinstance(subnode.comparators[0], ast.Constant) and subnode.comparators[0].value is None):
             # Parsing `array is [not] None`
             data = astutils.rname(subnode.left)
             if data in arrays:
