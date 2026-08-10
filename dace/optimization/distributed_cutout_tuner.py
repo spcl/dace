@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import OrderedDict
-import dace
 import json
 import itertools
 

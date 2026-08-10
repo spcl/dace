@@ -36,7 +36,7 @@ test_cscs_gh200:
     - .container-runner-daint-gh200
   image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
   variables:
-    TEST_VARIANTS: 'gpu'
+    TEST_VARIANTS: 'gpu and not mpi'  # no MPI launcher here; the GPU workflow covers those
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
     SLURM_TIMELIMIT: 30
@@ -54,6 +54,12 @@ test_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
     - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install cutensor-cu12
+    - CUTENSOR_DIR="${VIRTUAL_ENV}/lib/python${PY_VERSION}/site-packages/cutensor"
+    - ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+    - export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+    - export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+    - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"

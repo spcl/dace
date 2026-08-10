@@ -2,7 +2,7 @@
 """ This module contains classes and functions that implement the orthogonal
     tiling transformation. """
 
-from dace import registry, symbolic
+from dace import symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil

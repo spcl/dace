@@ -402,7 +402,7 @@ class Config(object):
     @staticmethod
     def get_default(*key_hierarchy):
         """ Returns the default value of a given configuration entry.
-            Takes into accound current operating system.
+            Takes into account current operating system.
 
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.
@@ -460,7 +460,7 @@ class Config(object):
 
         Examples::
 
-            Config.append('compiler', 'cpu', 'args', value='-fPIC')
+            Config.append('compiler', 'cpu', 'args', value='-fno-plt')
         """
         return Config._data.append(*key_hierarchy, value=value, autosave=autosave)
 

@@ -17,8 +17,6 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
 # Frontend imports and helpers
-from dace.frontend.common.op_repository import replaces
-from dace.frontend.python.newast import ProgramVisitor
 
 # Transformations
 from dace.transformation.interstate import GPUTransformSDFG
@@ -28,7 +26,6 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.dispatcher import DefinedType
-from typing import Any, List
 
 # Other imports
 import itertools

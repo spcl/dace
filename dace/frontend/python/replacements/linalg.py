@@ -2,6 +2,7 @@
 """
 Contains linear algebra function and operator replacements.
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor

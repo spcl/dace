@@ -5,7 +5,6 @@ import pytest
 
 ##################
 # Lists
-from dace.frontend.python.common import DaceSyntaxError
 
 global_axes = [0, 2, 1]
 

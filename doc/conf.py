@@ -21,7 +21,7 @@ from schema_generator import generate_docs
 # -- Project information -----------------------------------------------------
 
 project = 'DaCe'
-copyright = '2019-2022, Scalable Parallel Computing Laboratory, ETH Zurich'
+copyright = '2019-2026, Scalable Parallel Computing Laboratory, ETH Zurich'
 author = 'Scalable Parallel Computing Laboratory, ETH Zurich and the DaCe authors'
 
 # The full version, including alpha/beta/rc tags
@@ -33,6 +33,37 @@ release = __version__
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = ['sphinx.ext.autodoc', 'sphinx_autodoc_typehints', 'sphinx.ext.mathjax', 'sphinx_rtd_theme']
+
+# sphinx_autodoc_typehints emits ``forward_reference`` warnings whenever it
+# cannot resolve a forward reference (string annotation) in the *defining*
+# module of an object. Sympy >= 1.12 carries ``ClassVar[...]`` annotations as
+# strings on classes like ``sympy.Function`` / ``sympy.Number`` without
+# importing ``ClassVar`` into those modules' globals. Every DaCe class that
+# subclasses sympy classes (``int_floor``, ``int_ceil``, ``OR``, ``AND``,
+# ``IfExpr``, ``dace.dtypes.Float``, ...) inherits the broken annotation and
+# triggers the warning. The signature ``name 'ClassVar' is not defined`` is
+# unique to this upstream sympy issue, so filter only those records and let
+# any genuine DaCe-side forward-reference warnings through.
+import logging as _logging
+
+
+class _SympyClassVarForwardRefFilter(_logging.Filter):
+    _signature = "name 'ClassVar' is not defined"
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return self._signature not in msg
+
+
+# Attach the filter to both the sphinx logger tree (where Sphinx actually
+# emits the formatted warning) and the extension's own logger (belt and
+# braces, since sphinx_autodoc_typehints may log through either).
+_filter = _SympyClassVarForwardRefFilter()
+for _name in ('sphinx', 'sphinx_autodoc_typehints'):
+    _logging.getLogger(_name).addFilter(_filter)
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

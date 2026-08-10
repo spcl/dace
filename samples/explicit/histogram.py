@@ -2,7 +2,6 @@
 """ 2D histogram sample that showcases memlets with write-conflict resolution and unknown element. """
 import argparse
 import dace
-import math
 import numpy as np
 
 W = dace.symbol('W')

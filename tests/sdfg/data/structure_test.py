@@ -1,10 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-import pytest
 
-from dace import serialize
-from dace.properties import make_properties
 from scipy import sparse
 
 
@@ -98,16 +95,23 @@ def test_write_structure():
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='vindices', subset='idx'))
     if_body.add_edge(indices, 'views', B, None, dace.Memlet(data='B.indices', subset='0:nnz'))
     # Make For Loop  for j
-    j_before, j_guard, j_after = sdfg.add_loop(None,
-                                               if_before,
-                                               None,
-                                               'j',
-                                               '0',
-                                               'j < N',
-                                               'j + 1',
-                                               loop_end_state=if_after)
+    j_before, _, j_after = sdfg.add_loop_state_machine(None,
+                                                       if_before,
+                                                       None,
+                                                       'j',
+                                                       '0',
+                                                       'j < N',
+                                                       'j + 1',
+                                                       loop_end_state=if_after)
     # Make For Loop  for i
-    i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
+    i_before, i_guard, i_after = sdfg.add_loop_state_machine(None,
+                                                             j_before,
+                                                             None,
+                                                             'i',
+                                                             '0',
+                                                             'i < M',
+                                                             'i + 1',
+                                                             loop_end_state=j_after)
     sdfg.start_state = sdfg.node_id(i_before)
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
@@ -183,16 +187,23 @@ def test_local_structure():
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='tmp_vindices', subset='idx'))
     if_body.add_edge(indices, 'views', tmp, None, dace.Memlet(data='tmp.indices', subset='0:nnz'))
     # Make For Loop  for j
-    j_before, j_guard, j_after = sdfg.add_loop(None,
-                                               if_before,
-                                               None,
-                                               'j',
-                                               '0',
-                                               'j < N',
-                                               'j + 1',
-                                               loop_end_state=if_after)
+    j_before, _, j_after = sdfg.add_loop_state_machine(None,
+                                                       if_before,
+                                                       None,
+                                                       'j',
+                                                       '0',
+                                                       'j < N',
+                                                       'j + 1',
+                                                       loop_end_state=if_after)
     # Make For Loop  for i
-    i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
+    i_before, i_guard, i_after = sdfg.add_loop_state_machine(None,
+                                                             j_before,
+                                                             None,
+                                                             'i',
+                                                             '0',
+                                                             'i < M',
+                                                             'i + 1',
+                                                             loop_end_state=j_after)
     sdfg.start_state = sdfg.node_id(i_before)
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
@@ -347,16 +358,23 @@ def test_write_nested_structure():
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='vindices', subset='idx'))
     if_body.add_edge(indices, 'views', B, None, dace.Memlet(data='B.csr.indices', subset='0:nnz'))
     # Make For Loop  for j
-    j_before, j_guard, j_after = sdfg.add_loop(None,
-                                               if_before,
-                                               None,
-                                               'j',
-                                               '0',
-                                               'j < N',
-                                               'j + 1',
-                                               loop_end_state=if_after)
+    j_before, j_guard, j_after = sdfg.add_loop_state_machine(None,
+                                                             if_before,
+                                                             None,
+                                                             'j',
+                                                             '0',
+                                                             'j < N',
+                                                             'j + 1',
+                                                             loop_end_state=if_after)
     # Make For Loop  for i
-    i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
+    i_before, i_guard, i_after = sdfg.add_loop_state_machine(None,
+                                                             j_before,
+                                                             None,
+                                                             'i',
+                                                             '0',
+                                                             'i < M',
+                                                             'i + 1',
+                                                             loop_end_state=j_after)
     sdfg.start_state = sdfg.node_id(i_before)
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
@@ -465,16 +483,8 @@ def test_direct_read_structure_loops():
     state.add_edge(data, None, t, '__val', dace.Memlet(data='A.data', subset='idx'))
     state.add_edge(t, '__out', B, None, dace.Memlet(data='B', subset='0:M, 0:N', volume=1))
 
-    idx_before, idx_guard, idx_after = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]',
-                                                     'idx + 1')
-    i_before, i_guard, i_after = sdfg.add_loop(None,
-                                               idx_before,
-                                               None,
-                                               'i',
-                                               '0',
-                                               'i < M',
-                                               'i + 1',
-                                               loop_end_state=idx_after)
+    idx_loop = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]', 'idx + 1')
+    sdfg.add_loop(None, idx_loop, None, 'i', '0', 'i < M', 'i + 1')
 
     func = sdfg.compile()
 

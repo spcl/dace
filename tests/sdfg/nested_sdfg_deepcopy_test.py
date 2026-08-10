@@ -2,7 +2,6 @@
 """ Tests deepcopying (nested) SDFGs. """
 import copy
 import dace
-import numpy as np
 
 
 def test_deepcopy_same_state():

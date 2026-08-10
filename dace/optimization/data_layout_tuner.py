@@ -9,7 +9,6 @@ from typing import Any, Generator, Optional, Tuple, Dict, List, Sequence, Set
 
 from dace import data as dt, SDFG, dtypes
 from dace.optimization import cutout_tuner
-from dace.sdfg.state import SDFGState
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.codegen.instrumentation.data import data_report

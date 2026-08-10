@@ -10,7 +10,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, Control
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
-from typing import Any, Dict, Set, Optional, Tuple
+from typing import Any, Dict, List, Set, Optional, Tuple
 
 
 class _UnknownValue:
@@ -20,6 +20,7 @@ class _UnknownValue:
 
 ConstsT = Dict[str, Any]
 BlockConstsT = Dict[ControlFlowBlock, ConstsT]
+OrderCacheT = Dict[ControlFlowBlock, List[ControlFlowBlock]]
 
 
 @dataclass(unsafe_hash=True)
@@ -215,7 +216,8 @@ class ConstantPropagation(ppl.Pass):
 
     def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
                                            in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,
-                                           post_const_dict: BlockConstsT, out_const_dict: BlockConstsT) -> None:
+                                           post_const_dict: BlockConstsT, out_const_dict: BlockConstsT,
+                                           order_cache: OrderCacheT, last_in: BlockConstsT) -> None:
         """
         Collect the constants for and inside of a conditional region.
         Recursively collects constants inside of nested regions.
@@ -230,13 +232,15 @@ class ConstantPropagation(ppl.Pass):
                                 contents are executed. Populated by this function.
         :param out_const_dict: Dictionary mapping each control flow block to the set of constants observed right after
                                the block is executed. Populated by this function.
+        :param order_cache: See ``_collect_constants_for_region``.
+        :param last_in: See ``_collect_constants_for_region``.
         """
         in_consts = in_const_dict[conditional]
         # First, collect all constants for each of the branches.
         for _, branch in conditional.branches:
             in_const_dict[branch] = in_consts
             self._collect_constants_for_region(branch, arrays, in_const_dict, pre_const_dict, post_const_dict,
-                                               out_const_dict)
+                                               out_const_dict, order_cache, last_in)
         # Second, determine the 'post constants' (constants at the end of the conditional region) as an intersection
         # between the output constants of each of the branches.
         post_consts = {}
@@ -285,9 +289,15 @@ class ConstantPropagation(ppl.Pass):
             assignments_within.add(loop.loop_variable)
         return assignments_within
 
-    def _collect_constants_for_region(self, cfg: ControlFlowRegion, arrays: Set[str], in_const_dict: BlockConstsT,
-                                      pre_const_dict: BlockConstsT, post_const_dict: BlockConstsT,
-                                      out_const_dict: BlockConstsT) -> None:
+    def _collect_constants_for_region(self,
+                                      cfg: ControlFlowRegion,
+                                      arrays: Set[str],
+                                      in_const_dict: BlockConstsT,
+                                      pre_const_dict: BlockConstsT,
+                                      post_const_dict: BlockConstsT,
+                                      out_const_dict: BlockConstsT,
+                                      order_cache: Optional[OrderCacheT] = None,
+                                      last_in: Optional[BlockConstsT] = None) -> None:
         """
         Finds all constants and constant-assigned symbols in the control flow graph for each block.
         Recursively collects constants for nested control flow regions.
@@ -302,7 +312,11 @@ class ConstantPropagation(ppl.Pass):
                                 contents are executed. Populated by this function.
         :param out_const_dict: Dictionary mapping each control flow block to the set of constants observed right after
                                the block is executed. Populated by this function.
+        :param order_cache: Avoids re-sorting a region on every sweep. Created on the outermost call.
+        :param last_in: Avoids re-collecting a nested region whose inputs did not change.
         """
+        order_cache = {} if order_cache is None else order_cache
+        last_in = {} if last_in is None else last_in
         # Given the 'in constants', i.e., the constants for before the current region is executed, compute the 'pre
         # constants', i.e., the set of constants seen inside the region when executing.
         if cfg in in_const_dict:
@@ -335,13 +349,17 @@ class ConstantPropagation(ppl.Pass):
             in_const_dict[start_block] = {}
             in_const_dict[start_block].update(pre_const)
 
+        # Collection does not mutate the CFG, so the order is the same on every sweep below.
+        if cfg not in order_cache:
+            order_cache[cfg] = list(cfg_analysis.blockorder_topological_sort(cfg, recursive=False))
+        block_order = order_cache[cfg]
+
         redo = True
         while redo:
             redo = False
             # Traverse CFG topologically
-            for block in optional_progressbar(cfg_analysis.blockorder_topological_sort(cfg, recursive=False),
-                                              'Collecting constants for ' + cfg.label, cfg.number_of_nodes(),
-                                              self.progress):
+            for block in optional_progressbar(block_order, 'Collecting constants for ' + cfg.label,
+                                              cfg.number_of_nodes(), self.progress):
                 # Get predecessors
                 in_edges = cfg.in_edges(block)
                 assignments = {}
@@ -390,12 +408,17 @@ class ConstantPropagation(ppl.Pass):
                 if assignments:
                     redo |= self._propagate(in_const_dict[block], assignments)
 
-                if isinstance(block, ControlFlowRegion):
-                    self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict, post_const_dict,
-                                                       out_const_dict)
-                elif isinstance(block, ConditionalBlock):
-                    self._collect_constants_for_conditional(block, arrays, in_const_dict, pre_const_dict,
-                                                            post_const_dict, out_const_dict)
+                if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
+                    # A nested region is a function of its 'in constants', so unchanged ones give the same fixpoint.
+                    if last_in.get(block) != in_const_dict[block]:
+                        last_in[block] = in_const_dict[block].copy()
+                        if isinstance(block, ControlFlowRegion):
+                            self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict,
+                                                               post_const_dict, out_const_dict, order_cache, last_in)
+                        else:
+                            self._collect_constants_for_conditional(block, arrays, in_const_dict, pre_const_dict,
+                                                                    post_const_dict, out_const_dict, order_cache,
+                                                                    last_in)
                 else:
                     # Simple case, no change in constants through this block (states and other basic blocks).
                     pre_const_dict[block] = in_const_dict[block].copy()
@@ -513,6 +536,6 @@ class ConstantPropagation(ppl.Pass):
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
         return {
-            k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue
+            k: v if (not ((symbolic.free_symbols_and_functions(v) | symbolic.arrays(v)) & arrays)) else _UnknownValue
             for k, v in edge.assignments.items()
         }

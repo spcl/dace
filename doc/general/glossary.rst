@@ -10,7 +10,7 @@ Below you can find any concept used in the DaCe framework and where it is descri
 * :ref:`Environment <libraries>`
 * :ref:`Inter-State Edge <sdfg-lang>`
 * :ref:`Library <libraries>`
-* Library Node: :ref:`Definition <libnodes>`, :ref:`Implementation <libnodes-impl>`
+* :ref:`Library Node <libnodes>`
 * :ref:`Map scope <sdfg-lang>`, :ref:`sdfg-map`
 * Memlet: :ref:`Element <sdfg-lang>`, :ref:`Anatomy <sdfg-memlet>`
 * :ref:`Memlet Propagation <memprop>`

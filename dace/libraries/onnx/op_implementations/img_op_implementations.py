@@ -7,8 +7,7 @@ import numpy as np
 
 import dace
 from dace import SDFGState, SDFG, dtypes
-from dace.sdfg import nodes, propagation
-from dace.transformation.dataflow import MapExpansion, MapCollapse
+from dace.sdfg import nodes
 from dace.sdfg.nodes import Node
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp

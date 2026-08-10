@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
 
 
 @dace.library.expansion
@@ -32,7 +32,7 @@ class ExpandRecvMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = '1'
         buffer_offset = 0  # this is here because the frontend already changes the ptr
-        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, _src, _tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
@@ -71,6 +71,9 @@ class Recv(MPINode):
                 src = sdfg.arrays[e.data.data]
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
+
+        validate_integer_descriptor(src, 'Source')
+        validate_integer_descriptor(tag, 'Tag')
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):

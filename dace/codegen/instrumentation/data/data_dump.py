@@ -35,6 +35,18 @@ class DataInstrumentationProviderMixin:
         # For other file headers
         sdfg.append_global_code('\n#include <%s>' % header_name, None)
 
+    def _generate_device_sync(self, sdfg: SDFG, global_stream: CodeIOStream) -> str:
+        """ Waits for every stream, or returns an empty string if the SDFG has no device data.
+
+        The generated streams are non-blocking, so nothing orders instrumentation against the copies
+        and kernels that fill the buffer: a host buffer may still be the target of an in-flight
+        device-to-host copy, and a default-stream memcpy off a device buffer does not wait either.
+        """
+        if not self.uses_gpu:
+            return ''
+        self._setup_gpu_runtime(sdfg, global_stream)
+        return f'{self.backend}DeviceSynchronize();\n'
+
     def _generate_copy_to_host(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
         """ Copies to host and returns (preamble, postamble, name of new host pointer). """
         new_ptr = f'__dinstr_{node.data}'
@@ -83,6 +95,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
     def __init__(self):
         super().__init__()
         self.gpu_runtime_init = False
+        self.uses_gpu = False
         self.framecode: 'DaCeCodeGenerator' = None
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
@@ -90,6 +103,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         # Initialize serializer versioning object
         if sdfg.parent is None:
             self.framecode = codegen
+            self.uses_gpu = any(d.storage == dtypes.StorageType.GPU_Global for _, _, d in sdfg.arrays_recursive())
             path = os.path.abspath(os.path.join(sdfg.build_folder, 'data')).replace('\\', '/')
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("{path}");\n')
@@ -158,10 +172,11 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         uuid = f'{cfg.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
-        preamble, postamble = '', ''
+        postamble = ''
+        preamble = self._generate_device_sync(sdfg, global_stream)
         if desc.storage == dtypes.StorageType.GPU_Global:
-            self._setup_gpu_runtime(sdfg, global_stream)
-            preamble, postamble, ptrname = self._generate_copy_to_host(node, desc, ptrname)
+            copy_preamble, postamble, ptrname = self._generate_copy_to_host(node, desc, ptrname)
+            preamble += copy_preamble
 
         # Encode runtime shape and strides
         shape = ', '.join(cpp.sym2cpp(s) for s in desc.shape)
@@ -184,6 +199,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
     def __init__(self):
         super().__init__()
         self.gpu_runtime_init = False
+        self.uses_gpu = False
         self.framecode: 'DaCeCodeGenerator' = None
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
@@ -198,6 +214,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         # Initialize serializer versioning object
         if sdfg.parent is None:
             self.framecode = codegen
+            self.uses_gpu = any(d.storage == dtypes.StorageType.GPU_Global for _, _, d in sdfg.arrays_recursive())
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("");\n')
 
@@ -269,10 +286,11 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         uuid = f'{cfg.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
-        preamble, postamble = '', ''
+        postamble = ''
+        preamble = self._generate_device_sync(sdfg, global_stream)
         if desc.storage == dtypes.StorageType.GPU_Global:
-            self._setup_gpu_runtime(cfg, global_stream)
-            preamble, postamble, ptrname = self._generate_copy_to_device(node, desc, ptrname)
+            copy_preamble, postamble, ptrname = self._generate_copy_to_device(node, desc, ptrname)
+            preamble += copy_preamble
 
         # Write code
         inner_stream.write(condition_preamble, cfg, state_id, node_id)

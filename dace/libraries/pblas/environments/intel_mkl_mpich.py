@@ -4,7 +4,6 @@ from dace.config import Config
 import dace.library
 import ctypes.util
 import warnings
-from typing import Union
 
 
 @dace.library.environment

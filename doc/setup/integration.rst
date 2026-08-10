@@ -104,7 +104,7 @@ A compiled SDFG library contains three functions, which are named after the SDFG
       between invocations of the SDFG. The other functions take this handle as their first argument. The arguments to
       this function are only the symbols used in the SDFG, ordered by name.
     * ``__dace_exit_<SDFG name>``: Deallocates all arrays and frees all data descriptors in the given handle. Returns
-                                   a value of 0 if finalized successfully, or another value on failure.
+      a value of 0 if finalized successfully, or another value on failure.
     * ``__program_<SDFG name>``: The actual SDFG function, which takes the handle as its first argument, followed by
       the arguments to the SDFG, ordered by name, followed by the symbol arguments, also ordered by name.
 

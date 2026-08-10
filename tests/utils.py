@@ -1,10 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import os
-import typing
 import urllib.request, urllib.parse
 import pathlib
-import pytest
 import dace
 import numpy as np
 

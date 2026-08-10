@@ -40,16 +40,20 @@ The following keywords are recognized (for at least a subset of their Python fun
 - or, and, not
 - if, elif, else
 - for, while, break, continue, in
-- def, return, lambda, with
+- def, return, lambda, with, pass
+- assert, raise (handled by the preprocessor; see 7.3 and 7.8 below)
+- class (only when used together with ``@dace.method``; see 8.7)
 
-The following keywords are NOT accepted:
+The following keywords are NOT accepted in the body of a ``@dace.program``:
 
 - global, nonlocal
-- class
 - try, except, finally
-- raise, yield, pass
+- yield
 - import, from, as
-- assert, async, await, del
+- async, await, del
+
+The authoritative list lives in ``DISALLOWED_STMTS`` and ``_DISALLOWED_STMTS`` in
+:mod:`dace.frontend.python.newast`.
 
 2.3.2 Reserved classes of identifiers:
 
@@ -178,7 +182,10 @@ Supported
 6.14 Lambdas
 ^^^^^^^^^^^^
 
-Supported only for defining WCR/reduction operators
+Lambdas used as the WCR (write-conflict-resolution) argument of
+``dace.reduce`` and similar reductions are supported as-is. Lambdas used
+as regular callables are inlined at their call site by the preprocessor.
+Returning a lambda from a ``@dace.program`` is not supported.
 
 6.15 Expression lists
 ^^^^^^^^^^^^^^^^^^^^^
@@ -216,12 +223,22 @@ Supported with the same constraints for targets as in assignment statements.
 
 7.2.2 Annotated assignment statements:
 
-Unsupported
+Supported. Annotations on local variables are accepted by ``visit_AnnAssign``
+(see :mod:`~dace.frontend.python.newast`); the annotation is honored when
+creating the underlying data container.
+
+Note that annotated assignments to *compile-time constants* in the closure are
+rejected by ``DisallowedAssignmentChecker`` during preprocessing.
 
 7.3 The assert statement
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-Unsupported
+The Python preprocessor evaluates assertions statically against the program's
+closure (``globals`` plus any captured constants). If the condition is
+statically true, the ``assert`` is dropped; if it is statically false, the
+DaCe program fails to compile with an ``AssertionError``. ``assert``
+statements that depend on runtime values cannot be checked and are skipped
+with a warning.
 
 7.4 The pass statement
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -245,7 +262,10 @@ Unsupported
 
 7.8 The raise statement
 ^^^^^^^^^^^^^^^^^^^^^^^
-Unsupported
+
+Not supported at runtime. ``raise`` statements found in a ``@dace.program``
+are reported with a warning during preprocessing and stripped from the
+generated code; control will continue past the would-be raise site.
 
 7.9 The break statement
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -262,7 +282,9 @@ SDFG-level as the for/while statement.
 7.11 The import statement
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Unsupported, including 7.11.1 Future statements
+Unsupported inside the body of a ``@dace.program``. ``from __future__``
+imports placed at module scope are tolerated (the preprocessor strips them
+before parsing).
 
 7.12 The global statement
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -316,18 +338,38 @@ Unsupported
 8.5 The with statement
 ^^^^^^^^^^^^^^^^^^^^^^
 
-Only supported ``with dace.tasklet``
+``with dace.tasklet`` is the canonical form for explicit-dataflow tasklets
+(see :ref:`explicit-dataflow-mode`). General ``with`` statements are supported through
+the preprocessing-time :class:`~dace.frontend.python.preprocessing.ContextManagerInliner`,
+which inlines the ``__enter__`` / ``__exit__`` calls of the context manager
+at the appropriate program points. ``with`` blocks that depend on raised
+exceptions for control flow are not supported.
 
 8.6 Function definitions
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-Supported only with the ``dace.program`` decorator. Function arguments must be
-type-annotated. Nested ``dace.program`` definitions are not supported.
+The top-level callable must be decorated with ``@dace.program`` (or
+``@dace.method`` when defined inside a class - see 8.7). Function arguments
+must be type-annotated.
+
+Calls from one ``@dace.program`` to another are supported and lower to
+nested SDFGs. *Defining* a ``@dace.program`` inside the body of another
+``@dace.program`` is not supported; nested ``def`` blocks without the
+decorator are inlined by the Python preprocessor when called.
+
+Lambdas defined as part of a reduction (``dace.reduce``) or other library
+nodes that take a WCR are accepted as-is; other lambdas are inlined at their
+call site by the preprocessor (see 6.14).
 
 8.7 Class definitions
 ^^^^^^^^^^^^^^^^^^^^^
 
-Supported through the Preprocessing component of the Python frontend.
+``class`` blocks themselves cannot appear inside a ``@dace.program``
+(``ClassDef`` is in :data:`~dace.frontend.python.newast.DISALLOWED_STMTS`).
+Methods of regular Python classes can however be turned into DaCe programs
+by decorating them with ``@dace.method``: the preprocessor binds ``self`` as
+part of the program's closure so that attribute accesses on ``self`` resolve
+to data containers, scalars, or constants of the enclosing instance.
 
 8.8 Coroutines
 ^^^^^^^^^^^^^^

@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests atomic WCR detection in code generation. """
 import dace
-import numpy as np
 
 N = dace.symbol('N')
 

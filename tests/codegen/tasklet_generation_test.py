@@ -1,5 +1,4 @@
 import dace
-import pytest
 
 
 def _gen_sdfg_with_a_print_tasklet_between_map_exits() -> dace.SDFG:
