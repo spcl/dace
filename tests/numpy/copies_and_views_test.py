@@ -170,6 +170,26 @@ def test_overlapping_self_copy_reads_before_writing():
     assert np.allclose(result, reference)
 
 
+def test_strided_copy_map_to_outer_transient():
+    """A copy inside a map, into a transient declared outside it, leaves the scope."""
+
+    @dace.program
+    def via_transient(dst: dace.uint32[20], src: dace.uint32[40]):
+        tmp = np.full([20], 3, dtype=np.uint32)
+        for i in dace.map[0:2]:
+            tmp[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+        dst[:] = tmp
+
+    src = np.arange(1, 41, dtype=np.uint32)
+    reference = np.full(20, 3, dtype=np.uint32)
+    for i in range(2):
+        reference[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+
+    dst = np.zeros(20, dtype=np.uint32)
+    via_transient(dst=dst, src=src.copy())
+    assert np.array_equal(dst, reference)
+
+
 def _test_strided_copy_program(program, symbols=None):
 
     src = np.ones(40, dtype=np.uint32)
@@ -366,5 +386,6 @@ if __name__ == '__main__':
     test_strided_copy_symbolic_3()
     test_strided_copy_map_0()
     test_strided_copy_map_1()
+    test_strided_copy_map_to_outer_transient()
     test_strided_copy_map_symbolic_0()
     test_strided_copy_map_symbolic_1()

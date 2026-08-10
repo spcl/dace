@@ -113,6 +113,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
+        self._containers_outside_scope: dict[int, set[str]] = {}
+        """Containers referenced outside a dataflow scope's subtree, keyed by
+        id(scope). Decides whether a write inside the scope has to leave it
+        (see _escapes_dataflow_scope)."""
+
         self._consume_streams: dict[int, str] = {}
         """Consumed stream container per ConsumeEntry (keyed by id(entry)),
         so tasklet inputs reading the stream route through OUT_stream."""
@@ -943,6 +948,38 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
+    def _escapes_dataflow_scope(self, container: str, scope: tn.ScheduleTreeScope, sdfg: SDFG) -> bool:
+        """
+        Whether a container written inside a dataflow scope is visible outside
+        it, and so has to be written out through the scope's exit.
+
+        A non-transient container always is: it belongs to the SDFG's
+        interface. A transient is decided from the tree — one that no node
+        outside this scope's subtree touches is local to the scope (a tile
+        declared in a map body), and its write stays inside.
+
+        :param container: The container being written.
+        :param scope: The schedule-tree scope the write sits in.
+        :param sdfg: The SDFG being built, for the container's descriptor.
+        :return: True if the write has to leave the scope.
+        """
+        if not sdfg.arrays[container].transient:
+            return True
+        key = id(scope)
+        if key not in self._containers_outside_scope:
+            local = {id(descendant) for descendant in scope.preorder_traversal()}
+            outside: set[str] = set()
+            for other in scope.get_root().preorder_traversal():
+                # Scopes are covered by their children, which the traversal
+                # visits in turn; asking a scope for its memlets would
+                # propagate them, which is both costly and beside the point.
+                if id(other) in local or isinstance(other, tn.ScheduleTreeScope):
+                    continue
+                for memlet in (*other.input_memlets(), *other.output_memlets()):
+                    outside.add(memlet.data)
+            self._containers_outside_scope[key] = outside
+        return container in self._containers_outside_scope[key]
+
     def _copy_out_of_scope(self, node: tn.CopyNode, scope_node: nodes.EntryNode, to_connect: dict, access_cache: dict,
                            sdfg: SDFG) -> None:
         """
@@ -1013,7 +1050,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # A copy inside a dataflow scope, writing a container that is visible
         # outside it, has to leave through the scope exit.
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
-        if isinstance(scope_node, nodes.EntryNode) and not sdfg.arrays[node.target].transient:
+        if (isinstance(scope_node, nodes.EntryNode)
+                and self._escapes_dataflow_scope(node.target, self._ctx.current_scope, sdfg)):
             self._copy_out_of_scope(node, scope_node, to_connect, access_cache, sdfg)
             return
 

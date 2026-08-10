@@ -873,6 +873,31 @@ def test_string_callback():
     assert result == ('hello', 'world')
 
 
+def test_complex_array_callback():
+    """A complex array DaCe allocated itself must reach a callback intact."""
+    seen = []
+
+    @dace_inhibitor
+    def cb(source, target):
+        seen.append(np.asarray(source).copy())
+        target[:] = source * 2
+
+    @dace.program
+    def complexcb(A: dace.complex128[4], B: dace.complex128[4]):
+        # A transient, so the callback gets a reference DaCe builds from the
+        # descriptor rather than the caller's own array object.
+        tmp = A + 1
+        cb(tmp, B)
+
+    A = np.array([1 + 2j, 3 + 4j, 5 + 6j, 7 + 8j], dtype=np.complex128)
+    B = np.zeros(4, dtype=np.complex128)
+    complexcb(A=A, B=B)
+
+    assert len(seen) == 1
+    assert np.allclose(seen[0], A + 1)
+    assert np.allclose(B, (A + 1) * 2)
+
+
 def test_unknown_pyobject():
     counter = 1334
     last_seen = counter
@@ -1284,6 +1309,7 @@ if __name__ == '__main__':
     test_unused_callback()
     test_callback_with_nested_calls()
     test_string_callback()
+    test_complex_array_callback()
     test_unknown_pyobject()
     test_pyobject_return()
     test_pyobject_return_tuple()
