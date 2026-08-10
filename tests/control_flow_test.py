@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Optional
 import pytest
 import dace
 import numpy as np
@@ -339,6 +340,29 @@ def test_fsm():
         assert 'for ' not in code
 
 
+def test_optional_parameters():
+    def optional_parameters_func(A: dace.int32[3], B: Optional[dace.int32[3]] = None):
+        if B is None:
+            A[1] = 3
+        elif B is not None:
+            A[2] = 5
+
+    @dace.program
+    def optional_parameters_program(A: dace.int32[3], B: dace.int32[3]):
+        optional_parameters_func(A)
+        optional_parameters_func(A, B)
+    
+
+    sdfg: dace.SDFG = optional_parameters_program.to_sdfg()
+    A = np.zeros((3,), dtype=np.int32)
+    B = np.zeros((3,), dtype=np.int32)
+
+    sdfg(A, B)
+    assert A[0] == 0
+    assert A[1] == 3
+    assert A[2] == 5
+
+
 if __name__ == '__main__':
     test_control_flow_basic()
     test_function_in_condition()
@@ -352,3 +376,4 @@ if __name__ == '__main__':
     test_ifchain_manual()
     #test_switchcase()
     test_fsm()
+    test_optional_parameters()
