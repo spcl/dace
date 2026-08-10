@@ -62,7 +62,13 @@ test_cscs_gh200:
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
+    # EXPERIMENT (temporary, revert when concluded): the nanobind interface tests are excluded
+    # from this job so we can see whether the remaining GPU failures involve nanobind at all.
+    # The job itself already runs the ctypes interface - these tests are the only thing here
+    # that pins nanobind, which they do themselves via a fixture, so ignoring the file makes
+    # the run nanobind-free. If it still fails without them, the next experiment is the
+    # opposite one: force nanobind everywhere and run the job repeatedly.
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/codegen/nanobind_interface_test.py
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
     - ./tests/cuda_test.sh
