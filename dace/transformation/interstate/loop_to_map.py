@@ -19,12 +19,27 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
 
+def _align_itersym(expr, itersym):
+    """Re-point every free symbol NAMED like ``itersym`` at ``itersym`` itself.
+
+    A :class:`dace.symbolic.symbol` carries SymPy assumptions, and SymPy makes two same-named
+    symbols with different assumptions DISTINCT objects. Canonicalization stamps
+    ``nonnegative=True`` on every integer symbol, so a subset written after it holds a different
+    ``i`` from the one rebuilt out of the loop header -- and ``i.match(a*i + b)`` then matches the
+    WILDCARD instead (``a=0, b=i``), reading a per-iteration write as iteration-INVARIANT. Both
+    spellings can coexist in one loop, so the fix is to normalize the expression rather than to
+    pick one instance.
+    """
+    repl = {s: itersym for s in expr.free_symbols if s.name == itersym.name and s is not itersym}
+    return expr.subs(repl) if repl else expr
+
+
 def _check_range(subset, a, itersym, b, step):
     found = False
     for rb, re, _ in subset.ndrange():
         # ``ndrange()`` yields plain ints as well as sympy expressions, and an int has no ``match``
         # -- a fixed-slot write such as a scalar's ``[0]`` would raise instead of failing the test.
-        rb, re = sp.sympify(rb), sp.sympify(re)
+        rb, re = _align_itersym(sp.sympify(rb), itersym), _align_itersym(sp.sympify(re), itersym)
         if rb != 0:
             m = rb.match(a * itersym + b)
             if m is None:
