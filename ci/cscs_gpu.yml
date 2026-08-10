@@ -74,7 +74,7 @@ test_cscs_gh200:
     # If arms 2 and 3 pass but arm 4 fails, the fault is in the interaction between the two
     # interfaces within one job rather than in either interface alone.
     - export DACE_compiler_interface=nanobind
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/codegen/nanobind_interface_test.py
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
     - ./tests/cuda_test.sh
