@@ -74,11 +74,6 @@ test_cscs_gh200:
     # If arms 2 and 3 pass but arm 4 fails, the fault is in the interaction between the two
     # interfaces within one job rather than in either interface alone.
     - export DACE_compiler_interface=nanobind
-    # Surface GPU errors at their origin instead of at the next synchronization point. The
-    # intermittent "invalid device ordinal" failures all land on a CUB temp-storage size query
-    # in __dace_init_cuda, which is a strong hint that the error is inherited rather than
-    # caused there; synchronous mode is what distinguishes the two.
-    - export DACE_compiler_cuda_syncdebug=1
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/codegen/nanobind_interface_test.py
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
