@@ -2491,9 +2491,11 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
-            integer = True
-            nonnegative = None
-            positive = None
+            # An assumption we cannot establish is OMITTED, never passed as None: sympy folds the
+            # explicit None into symbol identity, so `symbol('i', nonnegative=None)` is a different
+            # object from the plain `i` every reparse of a loop bound mints. The two then never
+            # cancel and `i in expr.free_symbols` is silently False.
+            assumptions = {'integer': True}
 
             start = self._replace_with_global_symbols(symbolic.pystr_to_symbolic(ranges[0][0]))
             stop = self._replace_with_global_symbols(symbolic.pystr_to_symbolic(ranges[0][1]))
@@ -2504,19 +2506,17 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
                 if (conditions == [True, True, True] or (start > stop and step < 0)):
-                    nonnegative = True
+                    assumptions['nonnegative'] = True
                     if start != 0:
-                        positive = True
+                        assumptions['positive'] = True
             except:
                 pass
 
-            sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
-                                      integer=integer,
-                                      nonnegative=nonnegative,
-                                      positive=positive)
+            sym_obj = symbolic.symbol(
+                indices[0],
+                dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
+                                      infer_expr_type(ranges[0][1], self.sdfg.symbols),
+                                      infer_expr_type(ranges[0][2], self.sdfg.symbols)), **assumptions)
 
             if sym_name not in self.sdfg.symbols:
                 sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
