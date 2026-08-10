@@ -67,6 +67,50 @@ def test_frontend_mints_the_canonical_spelling():
         sdfg.validate()
 
 
+def test_declared_assumptions_go_to_the_registry():
+    """A public-API assumption symbol is recorded, and only the BARE symbol is stored."""
+    M = dace.symbol('M', positive=True)
+
+    @dace.program
+    def scal(A: dace.float64[M]):
+        return A * 2.0
+
+    sdfg = scal.to_sdfg(simplify=False, validate=True)
+
+    assert symbol_assumption_collisions(sdfg) == {}
+    assert sdfg.symbol_assumptions['M']['positive'] is True
+    # Stored spellings are bare: nothing in the graph knows M is positive.
+    for spelling in symbol_assumption_spellings(sdfg)['M']:
+        assert ('positive', True) not in spelling, spelling
+    # The facts are still reachable, transiently, for reasoning.
+    assert sdfg.assume_symbols(dace.symbolic.pystr_to_symbolic('M')).is_positive is True
+
+    j = sdfg.to_json()
+    assert dict(dace.SDFG.from_json(j).symbol_assumptions) == dict(sdfg.symbol_assumptions)
+    del j['attributes']['symbol_assumptions']
+    assert dict(dace.SDFG.from_json(j).symbol_assumptions) == {}  # legacy file
+
+
+def test_update_symbol_assumptions_is_strict():
+    """The registry is the only mutation path, and it only refines."""
+    sdfg = dace.SDFG('registry')
+    sdfg.add_symbol('n', dace.int32)
+
+    with pytest.raises(KeyError):
+        sdfg.update_symbol_assumptions('undeclared', positive=True)
+
+    sdfg.update_symbol_assumptions('n', positive=True)
+    sdfg.update_symbol_assumptions('n', positive=True)  # idempotent
+    sdfg.update_symbol_assumptions('n', integer=True)  # refinement
+    with pytest.raises(ValueError):
+        sdfg.update_symbol_assumptions('n', positive=False)
+    assert sdfg.symbol_assumptions['n'] == {'positive': True, 'integer': True}
+
+    # add_symbol stays strict and assumption-free.
+    with pytest.raises(FileExistsError):
+        sdfg.add_symbol('n', dace.int32)
+
+
 def test_one_spelling_passes():
     """A single instance used by both subsets is not a collision."""
     plain = dace.symbolic.symbol('i', dace.int32)
@@ -134,6 +178,8 @@ def test_name_filter():
 if __name__ == '__main__':
     test_explicit_none_assumption_splits_the_symbol()
     test_frontend_mints_the_canonical_spelling()
+    test_declared_assumptions_go_to_the_registry()
+    test_update_symbol_assumptions_is_strict()
     test_one_spelling_passes()
     test_two_spellings_raise()
     test_validate_rejects_a_collision()

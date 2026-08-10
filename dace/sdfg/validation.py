@@ -356,7 +356,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
 
 def _subset_exprs(subset) -> List:
-    """The stored entries of ``subset``, read from its storage rather than rebuilt."""
     if isinstance(subset, subsets.Range):
         return [expr for rng in subset.ranges for expr in rng]
     if isinstance(subset, subsets.Indices):
@@ -365,10 +364,8 @@ def _subset_exprs(subset) -> List:
 
 
 def _symbolic_sources(sdfg: 'dace.sdfg.SDFG'):
-    """Yield ``(exprs, where)`` per GROUP, ``where`` unformatted: the walk allocates almost nothing.
-
-    Loop init/update statements are skipped, since SymPy cannot parse a statement and a raising
-    parse is not memoized; the loop variable shows up in the condition and in the subsets anyway.
+    """Yield ``(exprs, where)`` per GROUP, ``where`` unformatted. Loop init/update statements are
+    skipped: SymPy cannot parse a statement and a raising parse is not memoized.
     """
     from dace.sdfg import nodes as nd
     from dace.sdfg.state import LoopRegion, SDFGState
@@ -403,7 +400,6 @@ def _symbolic_sources(sdfg: 'dace.sdfg.SDFG'):
 
 
 def _parsed_expr(code: Optional[str]):
-    """``pystr_to_symbolic`` without a symbol map, so ``lru_cache``d; ``None`` if unparsable."""
     if not code:
         return None
     try:
@@ -413,7 +409,6 @@ def _parsed_expr(code: Optional[str]):
 
 
 def _format_where(where: Tuple[str, ...]) -> str:
-    """Render a :func:`_symbolic_sources` location tuple as text."""
     kind = where[0]
     if kind == 'array':
         return f'array "{where[1]}" shape/strides/offset'
@@ -429,8 +424,11 @@ def _format_where(where: Tuple[str, ...]) -> str:
 
 
 def symbol_assumption_spellings(sdfg: 'dace.sdfg.SDFG') -> Dict[str, Dict[Tuple, List[str]]]:
-    """Every assumption set each symbol NAME is spelled with in ``sdfg``, and where: name -> sorted
-    ``assumptions0`` items -> locations. Diagnostic path only, this SDFG level only.
+    """Census every assumption set each symbol NAME is spelled with, and where. Diagnostic path.
+
+    :param sdfg: The SDFG to inspect, at this level only; nested SDFGs are validated separately.
+    :return: name -> sorted ``assumptions0`` items -> locations spelling the name that way.
+    :rtype: Dict[str, Dict[Tuple, List[str]]]
     """
     spellings: Dict[str, Dict[Tuple, List[str]]] = {}
     for exprs, where in _symbolic_sources(sdfg):
@@ -438,7 +436,7 @@ def symbol_assumption_spellings(sdfg: 'dace.sdfg.SDFG') -> Dict[str, Dict[Tuple,
         for expr in exprs:
             if not isinstance(expr, sympy.Basic):
                 continue
-            # `free_symbols` is a SET: sort so reported locations do not depend on hash order.
+            # `free_symbols` is a SET: sort so locations do not depend on hash order.
             for sym in sorted(expr.free_symbols, key=str):
                 key = tuple(sorted(sym.assumptions0.items()))
                 spellings.setdefault(sym.name, {}).setdefault(key, []).append(location)
@@ -449,7 +447,10 @@ def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG',
                                  name: Optional[str] = None) -> Dict[str, Dict[Tuple, List[str]]]:
     """:func:`symbol_assumption_spellings` restricted to names with MORE THAN ONE spelling.
 
+    :param sdfg: The SDFG to inspect.
     :param name: Only this symbol name; ``None`` reports every name.
+    :return: name -> sorted ``assumptions0`` items -> sorted locations.
+    :rtype: Dict[str, Dict[Tuple, List[str]]]
     """
     spellings = symbol_assumption_spellings(sdfg)
     return {
@@ -462,14 +463,14 @@ def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG',
 
 
 def check_symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = None):
-    """Raise when one symbol name in ``sdfg`` is spelled with two different SymPy assumption sets.
+    """Raise when one symbol name in ``sdfg`` is spelled with two different assumption sets.
 
-    Two spellings of one name are undefined behaviour, so this runs unconditionally. The walk only
-    dedupes symbol objects by identity; ``assumptions0`` and the located report come afterwards.
-
+    :param sdfg: The SDFG to check.
     :param name: Check only this symbol name; ``None`` checks every name.
+    :return: ``None`` when every checked name has a single spelling.
+    :rtype: None
+    :raises InvalidSDFGError: If any checked name has more than one spelling.
     """
-    # Both caches key on ``id`` and pin the object in the value, so no id is recycled.
     distinct: Dict[int, Any] = {}
     free_symbols: Dict[int, Tuple[Any, Any]] = {}
     for exprs, _ in _symbolic_sources(sdfg):
@@ -503,7 +504,6 @@ def check_symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[st
 
 
 def _raise_symbol_assumption_collision(sdfg: 'dace.sdfg.SDFG', name: Optional[str]):
-    """Build the located report for a collision already found, and raise. Never returns."""
     collisions = symbol_assumption_collisions(sdfg, name)
     lines = []
     for sym_name, variants in collisions.items():
