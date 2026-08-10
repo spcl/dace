@@ -53,7 +53,13 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
 
 def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
     """Multi-dim index for a 1-D walker into a packed-layout array. Only C (row-major) and
-    F (column-major) layouts are supported."""
+    F (column-major) layouts are supported.
+
+    :param b_i: the 1-D map symbol.
+    :param shape: per-dim extents in descriptor order.
+    :param layout: ``'C'`` (stride-1 is the last dim) or ``'F'`` (stride-1 is the first dim).
+    :returns: list of per-dim symbolic index expressions, in descriptor order.
+    """
     cum_strides = []
     cum = 1
     iter_shape = reversed(shape) if layout == 'C' else iter(shape)
@@ -67,7 +73,12 @@ def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], lay
 
 def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve ``CopyLibraryNode.implementation`` when set to ``'Auto'`` (the default); never
-    returns ``'Auto'`` itself."""
+    returns ``'Auto'`` itself.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: a concrete implementation name from ``CopyLibraryNode.implementations``.
+    """
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=True)
@@ -131,7 +142,14 @@ def cuda2d_pitch_params(
     source of truth for the ``MemcpyCUDA2D`` selector gate and the expander, so the two can't
     drift: selector treats a non-``None`` result as "applies"; expander formats the same
     components into the emitted call. Values are in elements; caller multiplies pitch/width by
-    ``sizeof(dtype)``."""
+    ``sizeof(dtype)``.
+
+    :param copy_shape: Two-element collapsed copy shape ``(rows, columns)``.
+    :param src_strides: Two-element source strides aligned with ``copy_shape``.
+    :param dst_strides: Two-element destination strides aligned with ``copy_shape``.
+    :returns: ``(dpitch, spitch, width, height)`` in elements, or ``None`` if not a single
+        ``cudaMemcpy2DAsync``.
+    """
     if src_strides[1] == 1 and dst_strides[1] == 1:
         return dst_strides[0], src_strides[0], copy_shape[1], copy_shape[0]
     if src_strides[0] == 1 and dst_strides[0] == 1:
@@ -157,6 +175,12 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
                                                          host can't issue cudaMemcpyAsync for
                                                          non-contiguous regions, device code can't
                                                          issue it at all)
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: the refined impl name, or ``None`` when both subsets are contiguous (keeps
+        ``MemcpyCUDA1D``).
+    :raises ValueError: cross-CPU/GPU strided pattern with no common stride-1 axis.
     """
     _, inp, in_subset, _, out, out_subset = node.validate(parent_state.sdfg, parent_state, allow_cross_storage=True)
 
@@ -196,7 +220,13 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
 def _make_expansion_sdfg(node: "CopyLibraryNode",
                          parent_state: dace.SDFGState,
                          allow_cross_storage: bool = False) -> CopyExpansion:
-    """Shared validation + wrapper-SDFG skeleton for expansions."""
+    """Shared validation + wrapper-SDFG skeleton for expansions.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param allow_cross_storage: permit differing src/dst storages.
+    :returns: a :class:`CopyExpansion` with the skeleton SDFG and collapsed shape/stride state.
+    """
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
                                                                         allow_cross_storage=allow_cross_storage)
@@ -235,6 +265,12 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
     Schedule from storages: ``Sequential`` for thread-level (Register/Register,
     Register<->GPU_Shared) or any in-kernel copy; ``GPU_Device`` if any side is GPU storage
     at host level; else ``Default``.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node``.
+    :param allow_cross_storage: permit differing src/dst storages.
+    :returns: the wrapper SDFG holding the mapped tasklet.
+    :raises ValueError: the copy crosses the CPU/GPU boundary.
     """
     ctx = _make_expansion_sdfg(node, parent_state, allow_cross_storage=allow_cross_storage)
     inp, out = ctx.inp, ctx.out
@@ -333,6 +369,12 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     Emits ``cudaMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU allowed, direction
     (HostToDevice/DeviceToHost/DeviceToDevice/HostToHost) inferred from endpoint storages --
     else a same-storage ``std::memcpy``.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
+    :param cuda: emit ``cudaMemcpyAsync`` (else ``memcpy``).
+    :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the copy.
+    :raises ValueError: a subset is non-contiguous.
     """
     label = "MemcpyCUDA1D" if cuda else "MemcpyCPU"
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
@@ -370,6 +412,12 @@ def _build_shmem_collective_copy_code(inp: data.Data, in_subset: dace.subsets.Ra
     Picks the most-specific static template: ``CopyND<T, 1, false, dims...>`` for static shapes
     (else ``CopyNDDynamic<T, 1, false, ndims>``), refined by ``ConstDst``/``ConstSrc``/``Dynamic``
     based on which stride set is constexpr; runtime args are whatever's not in the template.
+
+    :param inp: source descriptor (provides ``ctype`` and ``strides``).
+    :param in_subset: source memlet subset.
+    :param out: destination descriptor (provides ``strides``).
+    :param out_subset: destination memlet subset.
+    :returns: full code: ``...::Copy(...);\\n__syncthreads();``.
     """
     copy_shape, src_strides = collapse_shape_and_strides(in_subset, inp.strides)
     _, dst_strides = collapse_shape_and_strides(out_subset, out.strides)
@@ -703,7 +751,11 @@ class CopyLibraryNode(nodes.LibraryNode):
                          **kwargs)
 
     def src_storage(self, state) -> dtypes.StorageType:
-        """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired."""
+        """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
+
+        :param state: state containing this libnode (owning SDFG is ``state.sdfg``).
+        :returns: the source :class:`~dace.dtypes.StorageType`.
+        """
         in_edges = [e for e in state.in_edges(self) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
         if not in_edges:
             return dtypes.StorageType.Default
@@ -713,7 +765,11 @@ class CopyLibraryNode(nodes.LibraryNode):
         return state.sdfg.arrays[outer.data].storage
 
     def dst_storage(self, state) -> dtypes.StorageType:
-        """Storage of the array fed by ``_cpy_out``, or ``Default`` if unwired."""
+        """Storage of the array fed by ``_cpy_out``, or ``Default`` if unwired.
+
+        :param state: state containing this libnode (owning SDFG is ``state.sdfg``).
+        :returns: the destination :class:`~dace.dtypes.StorageType`.
+        """
         out_edges = [e for e in state.out_edges(self) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
         if not out_edges:
             return dtypes.StorageType.Default
@@ -726,7 +782,14 @@ class CopyLibraryNode(nodes.LibraryNode):
         """Resolve in/out edges, names, and subsets: ``(inp_name, inp, in_subset, out_name, out,
         out_subset)``. Raises ``ValueError`` if not wired with exactly one input and one output
         data edge, dtypes mismatch, an extraneous non-reserved input connector wired, or (when
-        ``allow_cross_storage`` is False) the two storages differ."""
+        ``allow_cross_storage`` is False) the two storages differ.
+
+        :param sdfg: SDFG containing ``state``.
+        :param state: state containing this libnode.
+        :param allow_cross_storage: when False, require matching src/dst storages.
+        :returns: ``(inp_name, inp, in_subset, out_name, out, out_subset)``.
+        :raises ValueError: see above.
+        """
         out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(out_edges) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "

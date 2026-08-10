@@ -15,7 +15,12 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
     """Derive the absent side of a copy memlet: the full array when volumes are not
-    provably unequal, else ``src_subset``."""
+    provably unequal, else ``src_subset``.
+
+    :param src_subset: the known (source) side of the copy.
+    :param dst_desc: descriptor whose subset is being derived.
+    :returns: the destination :class:`~dace.subsets.Range`.
+    """
     dst_range = subsets.Range.from_array(dst_desc)
     if symbolic.equal(src_subset.num_elements(), dst_range.num_elements()) is not False:
         return dst_range
@@ -43,8 +48,12 @@ class InsertExplicitCopies(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``; returns
-        the number inserted, or ``None`` if none."""
+        """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``.
+
+        :param sdfg: The SDFG to transform, recursively including nested SDFGs.
+        :param pipeline_results: Results of previously applied passes (unused).
+        :returns: The number of copy nodes inserted, or ``None`` if none.
+        """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -53,8 +62,11 @@ class InsertExplicitCopies(ppl.Pass):
         return count if count > 0 else None
 
     def _replace_direct_copies(self, state: SDFGState) -> int:
-        """Replace direct ``AccessNode -> AccessNode`` edges in ``state`` with ``CopyLibraryNode``
-        instances; returns the count inserted."""
+        """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.
+
+        :param state: The state to scan for direct copy edges (owning SDFG is ``state.sdfg``).
+        :returns: The number of copy nodes inserted in ``state``.
+        """
         sdfg = state.sdfg
         edges = list(state.edges())
         count = 0
@@ -132,8 +144,14 @@ class InsertExplicitCopies(ppl.Pass):
         return count
 
     def _replace_map_staging_copies(self, state: SDFGState) -> int:
-        """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` in ``state`` to
-        ``CopyLibraryNode`` instances (placed inside the map scope); returns the count inserted."""
+        """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
+
+        The libnode sits inside the map scope; chained MapEntries / MapExits are followed via
+        ``memlet_path``.
+
+        :param state: The state to scan (owning SDFG is ``state.sdfg``).
+        :returns: Number of libnodes inserted.
+        """
         count = 0
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
@@ -147,8 +165,10 @@ class InsertExplicitCopies(ppl.Pass):
         return count
 
     def _lift_staging_edge(self, state: SDFGState, edge, stage_in: bool) -> bool:
-        """Lift one stage-in (``stage_in=True``) or stage-out copy edge to a libnode; returns True
-        iff the edge was lifted."""
+        """Lift one stage-in (``stage_in=True``) or stage-out copy edge to a libnode.
+
+        :returns: True iff the edge was lifted.
+        """
         sdfg = state.sdfg
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():

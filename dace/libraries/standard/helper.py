@@ -24,7 +24,12 @@ CPU_RESIDENT_STORAGES = frozenset({
 def collapse_shape_and_strides(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
-    """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step."""
+    """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
+
+    :param subset: The access range, one ``(begin, end, step)`` per dimension.
+    :param strides: The parent array strides, aligned with ``subset``.
+    :returns: ``(collapsed_shape, collapsed_strides)`` with singletons removed.
+    """
     collapsed_shape = []
     collapsed_strides = []
     for (b, e, s), stride in zip(subset, strides):
@@ -37,7 +42,11 @@ def collapse_shape_and_strides(
 
 def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
     """True (parallel path) only when ``num_elements`` is a compile-time constant >=
-    ``compiler.cpu.parallel_transfer_min_elements``; symbolic size stays serial."""
+    ``compiler.cpu.parallel_transfer_min_elements``; symbolic size stays serial.
+
+    :param num_elements: total contiguous element count (constant or symbolic).
+    :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
+    """
     try:
         threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
         return int(dace.symbolic.simplify(num_elements)) >= threshold
@@ -48,7 +57,14 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> b
 def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
                   select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
     """Dispatch a library node's ``'Auto'`` implementation to the one ``select_fn`` picks, setting
-    ``node.implementation`` so introspection reflects what was chosen."""
+    ``node.implementation`` so introspection reflects what was chosen.
+
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
+    :param select_fn: callable returning a concrete implementation name (not ``'Auto'``).
+    :param library_cls: the library node class with the ``implementations`` dict.
+    :returns: whatever the resolved expansion returns.
+    """
     impl_name = select_fn(node, parent_state)
     assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
