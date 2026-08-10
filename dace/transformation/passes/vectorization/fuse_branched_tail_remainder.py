@@ -380,6 +380,13 @@ class FuseBranchedTailRemainder(ppl.Pass):
                                   inputs=dict(rem_nsdfg.in_connectors),
                                   outputs=dict(rem_nsdfg.out_connectors),
                                   symbol_mapping=sym_map)
+        # A producer-only body (no inputs, e.g. an accumulator init) or a consumer-only one still
+        # has to sit INSIDE the lane loop. The empty memlet is the ordering edge that puts it there;
+        # without it the entry/exit dangles and the scope is unresolvable.
+        if not rem_nsdfg.in_connectors:
+            st.add_nedge(me, node, dace.Memlet())
+        if not rem_nsdfg.out_connectors:
+            st.add_nedge(node, mx, dace.Memlet())
         for conn in rem_nsdfg.in_connectors:
             an = st.add_access(conn)
             st.add_memlet_path(an, me, node, dst_conn=conn, memlet=dace.Memlet.from_array(conn, body.arrays[conn]))

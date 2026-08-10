@@ -174,6 +174,13 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         The walk stops at an :class:`~dace.sdfg.nodes.ExitNode`: a write that leaves the scope is the
         chain's DRAIN, not a competing in-scope writer, so following it would let the outer access
         node masquerade as the overwrite and suppress the one hop that must publish.
+
+        A downstream write sourced from another AccessNode of the SAME array is a plain COPY, so it
+        carries the bridge's own value rather than a new one -- it is a drain, not an overwrite. The
+        flat NSDFG-internal body has exactly this shape (``bridge -> A_io``) with no ExitNode to stop
+        at, and counting it as superseding suppressed the only hop that publishes, leaving the
+        NSDFG's out-connector unwritten. Only a write produced by a non-AccessNode source (a Tasklet
+        in the RMW chain) supersedes.
         """
         seen = {bridge}
         stack = [e.dst for e in state.out_edges(bridge)]
@@ -183,7 +190,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 continue
             seen.add(node)
             if isinstance(node, dace.nodes.AccessNode) and node.data == array_name and any(
-                    cls._subset_key(cls._array_side_subset(e, array_name)) == subset_key for e in state.in_edges(node)):
+                    not (isinstance(e.src, dace.nodes.AccessNode) and e.src.data == array_name)
+                    and cls._subset_key(cls._array_side_subset(e, array_name)) == subset_key
+                    for e in state.in_edges(node)):
                 return True
             stack.extend(e.dst for e in state.out_edges(node))
         return False
