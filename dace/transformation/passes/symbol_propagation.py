@@ -80,6 +80,10 @@ class SymbolPropagation(ppl.Pass):
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
     ) -> Dict[str, Any]:
+        # The container-aware filters below must consult the SDFG that OWNS this block: the traversal
+        # spans every nested SDFG while ``sdfg`` is always the top-level one, so a nested block's
+        # containers are invisible in ``sdfg.arrays`` and the filters silently no-op for them.
+        owner = cfg_blk.sdfg
         # Combine the outgoing symbols of all incoming edges with their assignments to the cfg_blk
         new_in_syms = {}
         for i, edge in enumerate(parent.in_edges(cfg_blk)):
@@ -93,13 +97,13 @@ class SymbolPropagation(ppl.Pass):
             sym_table = {
                 k: v
                 for k, v in sym_table.items() if v is None or not any([
-                    str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.View)
+                    str(s) in owner.arrays and isinstance(owner.arrays[str(s)], dt.View)
                     for s in pystr_to_symbolic(v).free_symbols
                 ])
             }
 
             # Also skip assignments that read a scalar (scalars cannot be propagated as symbols)
-            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, sdfg.arrays)}
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not scalars(v, owner.arrays)}
 
             # Combine the symbols
             if i == 0:
