@@ -2,17 +2,14 @@
 """One symbol name spelled with two SymPy assumption sets is two DISTINCT objects.
 
 Index arithmetic over them does not cancel and dependence predicates silently answer wrong, so
-:func:`dace.sdfg.validation.check_symbol_assumption_collisions` reports it as a structural defect.
+:func:`dace.sdfg.validation.check_symbol_assumption_collisions` rejects it during validation.
 """
 import pytest
 
 import dace
 from dace import subsets
-from dace.config import Config
 from dace.sdfg.validation import (InvalidSDFGError, check_symbol_assumption_collisions, symbol_assumption_collisions,
                                   symbol_assumption_spellings)
-
-FLAG = 'experimental.check_symbol_assumption_collisions'
 
 
 def build(read_sym, write_sym) -> dace.SDFG:
@@ -38,6 +35,38 @@ def build(read_sym, write_sym) -> dace.SDFG:
     return sdfg
 
 
+def test_explicit_none_assumption_splits_the_symbol():
+    """The defect the frontend fix prevents: ``None`` is an assumption, not the absence of one."""
+    omitted = dace.symbolic.symbol('i', dace.int32)
+    explicit_none = dace.symbolic.symbol('i', dace.int32, nonnegative=None)
+
+    assert omitted != explicit_none, 'precondition: SymPy folds the explicit None into identity'
+    assert (omitted - explicit_none) != 0, 'two spellings of one name do not cancel'
+    assert omitted not in (explicit_none + 1).free_symbols
+
+    # What every reparse of a loop bound mints is the omitted spelling, so that is the canonical one.
+    assert dace.symbolic.pystr_to_symbolic('i') == omitted
+
+
+def test_frontend_mints_the_canonical_spelling():
+    """A parsed program is free of collisions, including a loop with established bounds."""
+
+    @dace.program
+    def constant_bounds(A: dace.float64[128]):
+        for i in range(1, 127):
+            A[i] = A[i - 1] + A[i + 1]
+
+    @dace.program
+    def symbolic_bounds(A: dace.float64[128], N: dace.int32):
+        for i in range(N):
+            A[i] = A[i] + 1.0
+
+    for program in (constant_bounds, symbolic_bounds):
+        sdfg = program.to_sdfg(simplify=False, validate=True)
+        assert symbol_assumption_collisions(sdfg) == {}, program.name
+        sdfg.validate()
+
+
 def test_one_spelling_passes():
     """A single instance used by both subsets is not a collision."""
     plain = dace.symbolic.symbol('i', dace.int32)
@@ -47,6 +76,7 @@ def test_one_spelling_passes():
     assert len(spellings['i']) == 1, spellings['i']
     assert symbol_assumption_collisions(sdfg) == {}
     check_symbol_assumption_collisions(sdfg)  # must not raise
+    sdfg.validate()  # must not raise
 
 
 def test_two_spellings_raise():
@@ -78,6 +108,17 @@ def test_two_spellings_raise():
     assert 'integer=True' not in message, message
 
 
+def test_validate_rejects_a_collision():
+    """The check is unconditional: no flag has to be set for validation to reject the SDFG."""
+    plain = dace.symbolic.symbol('i', dace.int32)
+    nonneg = dace.symbolic.symbol('i', dace.int32, nonnegative=True)
+    sdfg = build(plain, nonneg)
+
+    with pytest.raises(InvalidSDFGError) as exc:
+        sdfg.validate()
+    assert 'is spelled 2 ways' in str(exc.value)
+
+
 def test_name_filter():
     """A name-scoped check ignores collisions on other names."""
     plain = dace.symbolic.symbol('i', dace.int32)
@@ -90,50 +131,10 @@ def test_name_filter():
         check_symbol_assumption_collisions(sdfg, 'i')
 
 
-def test_validate_honors_flag():
-    """``validate`` only runs the check when the experimental flag is on."""
-    plain = dace.symbolic.symbol('i', dace.int32)
-    nonneg = dace.symbolic.symbol('i', dace.int32, nonnegative=True)
-    sdfg = build(plain, nonneg)
-
-    with dace.config.set_temporary('experimental', 'check_symbol_assumption_collisions', value=False):
-        sdfg.validate()  # off by default: the collision does not fail validation
-
-    with dace.config.set_temporary('experimental', 'check_symbol_assumption_collisions', value=True):
-        with pytest.raises(InvalidSDFGError) as exc:
-            sdfg.validate()
-    assert 'is spelled 2 ways' in str(exc.value)
-
-
-def test_add_symbol_tripwire():
-    """Registering a symbol trips on a name the SDFG already spells two ways."""
-    plain = dace.symbolic.symbol('i', dace.int32)
-    nonneg = dace.symbolic.symbol('i', dace.int32, nonnegative=True)
-    sdfg = build(plain, nonneg)
-
-    with dace.config.set_temporary('experimental', 'check_symbol_assumption_collisions', value=False):
-        sdfg.add_symbol('i', dace.int32)  # off by default: registration succeeds
-    del sdfg.symbols['i']
-
-    with dace.config.set_temporary('experimental', 'check_symbol_assumption_collisions', value=True):
-        with pytest.raises(InvalidSDFGError) as exc:
-            sdfg.add_symbol('i', dace.int32)
-        assert 'i' not in sdfg.symbols, 'the tripwire must fire BEFORE the name is registered'
-        # A name the SDFG spells only one way still registers fine.
-        sdfg.add_symbol('k', dace.int32)
-    assert 'k' in sdfg.symbols
-    assert 'is spelled 2 ways' in str(exc.value)
-
-
-def test_flag_defaults_off():
-    """The check costs nothing unless asked for."""
-    assert Config.get_bool(*FLAG.split('.')) is False
-
-
 if __name__ == '__main__':
+    test_explicit_none_assumption_splits_the_symbol()
+    test_frontend_mints_the_canonical_spelling()
     test_one_spelling_passes()
     test_two_spellings_raise()
+    test_validate_rejects_a_collision()
     test_name_filter()
-    test_validate_honors_flag()
-    test_add_symbol_tripwire()
-    test_flag_defaults_off()

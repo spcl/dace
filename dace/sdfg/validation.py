@@ -5,7 +5,7 @@ import copy
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import networkx as nx
 import sympy
@@ -230,7 +230,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
-    from dace.config import Config
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
@@ -344,8 +343,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
-        if Config.get_bool('experimental.check_symbol_assumption_collisions'):
-            check_symbol_assumption_collisions(sdfg)
+        check_symbol_assumption_collisions(sdfg)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
@@ -357,91 +355,101 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         raise
 
 
-def symbol_assumption_spellings(sdfg: 'dace.sdfg.SDFG') -> Dict[str, Dict[str, List[str]]]:
-    """Every SymPy assumption set each symbol NAME is spelled with in ``sdfg``, and where.
+def _subset_exprs(subset) -> List:
+    """The stored entries of ``subset``, read from its storage rather than rebuilt."""
+    if isinstance(subset, subsets.Range):
+        return [expr for rng in subset.ranges for expr in rng]
+    if isinstance(subset, subsets.Indices):
+        return list(subset.indices)
+    return [expr for rng in subset.ndrange() for expr in rng]
 
-    A name denotes ONE value in an SDFG, but SymPy folds the assumptions into symbol identity, so
-    ``symbol('i', integer=True)`` and ``symbol('i', integer=True, nonnegative=True)`` are distinct
-    objects that never cancel: ``i - i`` stays unsimplified, ``i in expr.free_symbols`` is silently
-    ``False`` and ``expr.match(a*i + b)`` binds the WILDCARD instead. Nothing raises when it happens,
-    so a dependence predicate just quietly stops holding. This is the census that makes it visible.
 
-    One SDFG level only -- a nested SDFG has its own symbol namespace behind ``symbol_mapping``, and
-    :func:`validate_sdfg` already recurses into it.
+def _symbolic_sources(sdfg: 'dace.sdfg.SDFG'):
+    """Yield ``(exprs, where)`` per GROUP, ``where`` unformatted: the walk allocates almost nothing.
 
-    Assumptions only -- the declared dtype is not compared. A ``CodeBlock`` reparse cannot know what
-    the SDFG declared and falls back to the default symbol type, so its ``integer`` assumption can
-    differ from the stored symbol's for a non-integral symbol. That case is reported like any other.
-
-    :param sdfg: The SDFG to inspect.
-    :returns: name -> sorted ``assumptions0`` items -> locations spelling the name that way.
+    Loop init/update statements are skipped, since SymPy cannot parse a statement and a raising
+    parse is not memoized; the loop variable shows up in the condition and in the subsets anyway.
     """
     from dace.sdfg import nodes as nd
     from dace.sdfg.state import LoopRegion, SDFGState
 
-    spellings: Dict[str, Dict[str, List[str]]] = {}
+    for name, desc in sdfg.arrays.items():
+        yield (*desc.shape, *desc.strides, *desc.offset, desc.total_size), ('array', name)
 
-    def record(expr, where: str):
-        if not isinstance(expr, sympy.Basic):
-            return
-        # `free_symbols` is a SET: sort so the reported locations do not depend on hash order.
-        for sym in sorted(expr.free_symbols, key=str):
-            key = tuple(sorted(sym.assumptions0.items()))
-            spellings.setdefault(sym.name, {}).setdefault(key, []).append(where)
-
-    def record_str(code: Optional[str], where: str):
-        if not code:
-            return
-        try:
-            record(symbolic.pystr_to_symbolic(code), where)
-        except Exception:  # noqa: BLE001 -- a code string may hold a statement SymPy cannot parse
-            pass
-
-    def record_code(code, where: str):
-        record_str(None if code is None else code.as_string, where)
-
-    for name in sorted(sdfg.arrays):
-        desc = sdfg.arrays[name]
-        for expr in (*desc.shape, *desc.strides, *desc.offset, desc.total_size):
-            record(expr, f'array "{name}" shape/strides/offset')
-
-    for block in sorted(sdfg.all_control_flow_blocks(), key=lambda b: b.label):
+    for block in sdfg.all_control_flow_blocks():
         if isinstance(block, LoopRegion):
-            record_code(block.init_statement, f'loop "{block.label}" init statement')
-            record_code(block.update_statement, f'loop "{block.label}" update statement')
-            record_code(block.loop_condition, f'loop "{block.label}" condition')
+            if block.loop_condition is not None:
+                yield (_parsed_expr(block.loop_condition.as_string), ), ('loop', block.label)
         elif isinstance(block, SDFGState):
             for node in block.nodes():
                 if isinstance(node, nd.MapEntry):
-                    for rng in node.map.range:
-                        for expr in rng:
-                            record(expr, f'state "{block.label}" map "{node.map.label}" range')
+                    yield _subset_exprs(node.map.range), ('map', block.label, node.map.label)
             for edge in block.edges():
                 mem = edge.data
                 if mem is None or mem.data is None:
                     continue
-                for subset in (mem.subset, mem.other_subset):
-                    if subset is None:
-                        continue
-                    for rng in subset.ndrange():
-                        for expr in rng:
-                            record(expr, f'state "{block.label}" memlet "{mem.data}" subset')
+                exprs = _subset_exprs(mem.subset) if mem.subset is not None else []
+                if mem.other_subset is not None:
+                    exprs += _subset_exprs(mem.other_subset)
+                if exprs:
+                    yield exprs, ('memlet', block.label, mem.data)
 
     for edge in sdfg.all_interstate_edges():
-        record_code(edge.data.condition, f'interstate edge {edge.src.label} -> {edge.dst.label} condition')
-        for assigned in sorted(edge.data.assignments):
-            record_str(edge.data.assignments[assigned],
-                       f'interstate edge {edge.src.label} -> {edge.dst.label} assignment "{assigned}"')
+        ise = edge.data
+        if not ise.is_unconditional():
+            yield (ise.condition_sympy(), ), ('condition', edge.src.label, edge.dst.label)
+        for assigned, value in ise.assignments.items():
+            yield (_parsed_expr(value), ), ('assignment', edge.src.label, edge.dst.label, assigned)
 
+
+def _parsed_expr(code: Optional[str]):
+    """``pystr_to_symbolic`` without a symbol map, so ``lru_cache``d; ``None`` if unparsable."""
+    if not code:
+        return None
+    try:
+        return symbolic.pystr_to_symbolic(code)
+    except Exception:  # noqa: BLE001 -- a code string need not be a SymPy-parsable expression
+        return None
+
+
+def _format_where(where: Tuple[str, ...]) -> str:
+    """Render a :func:`_symbolic_sources` location tuple as text."""
+    kind = where[0]
+    if kind == 'array':
+        return f'array "{where[1]}" shape/strides/offset'
+    if kind == 'map':
+        return f'state "{where[1]}" map "{where[2]}" range'
+    if kind == 'memlet':
+        return f'state "{where[1]}" memlet "{where[2]}" subset'
+    if kind == 'loop':
+        return f'loop "{where[1]}" condition'
+    if kind == 'condition':
+        return f'interstate edge {where[1]} -> {where[2]} condition'
+    return f'interstate edge {where[1]} -> {where[2]} assignment "{where[3]}"'
+
+
+def symbol_assumption_spellings(sdfg: 'dace.sdfg.SDFG') -> Dict[str, Dict[Tuple, List[str]]]:
+    """Every assumption set each symbol NAME is spelled with in ``sdfg``, and where: name -> sorted
+    ``assumptions0`` items -> locations. Diagnostic path only, this SDFG level only.
+    """
+    spellings: Dict[str, Dict[Tuple, List[str]]] = {}
+    for exprs, where in _symbolic_sources(sdfg):
+        location = _format_where(where)
+        for expr in exprs:
+            if not isinstance(expr, sympy.Basic):
+                continue
+            # `free_symbols` is a SET: sort so reported locations do not depend on hash order.
+            for sym in sorted(expr.free_symbols, key=str):
+                key = tuple(sorted(sym.assumptions0.items()))
+                spellings.setdefault(sym.name, {}).setdefault(key, []).append(location)
     return spellings
 
 
-def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = None) -> Dict[str, Dict[str, List[str]]]:
-    """The subset of :func:`symbol_assumption_spellings` whose name has MORE THAN ONE spelling.
+def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG',
+                                 name: Optional[str] = None) -> Dict[str, Dict[Tuple, List[str]]]:
+    """:func:`symbol_assumption_spellings` restricted to names with MORE THAN ONE spelling.
 
-    :param sdfg: The SDFG to inspect.
-    :param name: Restrict the report to this one symbol name; ``None`` reports every name.
-    :returns: name -> sorted ``assumptions0`` items -> sorted locations, for colliding names only.
+    :param name: Only this symbol name; ``None`` reports every name.
     """
     spellings = symbol_assumption_spellings(sdfg)
     return {
@@ -456,19 +464,47 @@ def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = N
 def check_symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = None):
     """Raise when one symbol name in ``sdfg`` is spelled with two different SymPy assumption sets.
 
-    Off by default in :func:`validate_sdfg` and in :meth:`~dace.sdfg.sdfg.SDFG.add_symbol`
-    (``experimental.check_symbol_assumption_collisions``): validation runs on every simplify, and
-    the reparse of a ``CodeBlock`` cannot recover an assumption a pass stamped onto the stored
-    symbols, so the check reports real but currently pervasive divergence. Callable directly to
-    gate a pipeline whose proofs depend on the symbols being one object.
+    Two spellings of one name are undefined behaviour, so this runs unconditionally. The walk only
+    dedupes symbol objects by identity; ``assumptions0`` and the located report come afterwards.
 
-    :param sdfg: The SDFG to check.
     :param name: Check only this symbol name; ``None`` checks every name.
-    :raises InvalidSDFGError: If any checked name has more than one spelling.
     """
+    # Both caches key on ``id`` and pin the object in the value, so no id is recycled.
+    distinct: Dict[int, Any] = {}
+    free_symbols: Dict[int, Tuple[Any, Any]] = {}
+    for exprs, _ in _symbolic_sources(sdfg):
+        for expr in exprs:
+            if isinstance(expr, sympy.Symbol):
+                syms = (expr, )
+            elif isinstance(expr, sympy.Basic):
+                entry = free_symbols.get(id(expr))
+                if entry is None:
+                    syms = expr.free_symbols
+                    free_symbols[id(expr)] = (expr, syms)
+                else:
+                    syms = entry[1]
+            else:
+                continue
+            for sym in syms:
+                key = id(sym)
+                if key not in distinct:
+                    distinct[key] = sym
+
+    first_by_name: Dict[str, Any] = {}
+    for sym in distinct.values():
+        sym_name = sym.name
+        if name is not None and sym_name != name:
+            continue
+        first = first_by_name.setdefault(sym_name, sym)
+        if first is sym:
+            continue
+        if tuple(sorted(first.assumptions0.items())) != tuple(sorted(sym.assumptions0.items())):
+            _raise_symbol_assumption_collision(sdfg, name)
+
+
+def _raise_symbol_assumption_collision(sdfg: 'dace.sdfg.SDFG', name: Optional[str]):
+    """Build the located report for a collision already found, and raise. Never returns."""
     collisions = symbol_assumption_collisions(sdfg, name)
-    if not collisions:
-        return
     lines = []
     for sym_name, variants in collisions.items():
         # SymPy's `assumptions0` is the full DERIVED closure -- ~25 facts, nearly all shared. Report

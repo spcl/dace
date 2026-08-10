@@ -19,7 +19,7 @@ from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.validation import (InvalidSDFGError, check_symbol_assumption_collisions, validate_sdfg)
+from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
@@ -887,12 +887,6 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
-        # Tripwire at REGISTRATION rather than at the next full validation: the name is about to
-        # denote one value, so the SDFG must not already spell it two ways. Scoped to this one name
-        # and gated, since it walks the graph. ``symbols`` records dtypes only, so the incoming
-        # object's own assumptions are not visible here -- what is checked is what is already there.
-        if Config.get_bool('experimental.check_symbol_assumption_collisions'):
-            check_symbol_assumption_collisions(self, name)
         self.symbols[name] = stype
         return name
 
