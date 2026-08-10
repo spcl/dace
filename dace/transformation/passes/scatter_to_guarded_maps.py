@@ -33,14 +33,16 @@ The ordering is intentional: guards are emitted *before* permissive lifts, so on
 collision the abort fires before any consumer reads the corrupted output.
 """
 import ast
-from typing import Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, data, properties
+from dace import SDFG, data, properties, symbolic
+from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.scatter_conflict_guard import ScatterIndexSlice, insert_scatter_guard
 
 
 @properties.make_properties
@@ -110,7 +112,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
-        scatter_loops, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
+        scatter_loops, idx_arrays, sliced_guards = detect_scatter_loops_and_idx_arrays(sdfg)
 
         if self.assume_no_conflicts:
             # Caller asserts every idx array is a permutation: skip the sort +
@@ -126,7 +128,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                     instance.apply(parent, _owning_sdfg(sdfg, loop))
                 except Exception:
                     pass
-            return len(idx_arrays) or None
+            return (len(idx_arrays) + len(sliced_guards)) or None
 
         # Track each idx_array's duplicate-count symbol so the else-branch
         # dispatcher knows which symbol to gate on per scatter loop. None when
@@ -141,13 +143,31 @@ class ScatterToGuardedMaps(ppl.Pass):
                 if 'already exists' not in str(exc):
                     raise
 
+        # A rank>=2 idx array classified to a single contiguous varying dimension: guarded at
+        # the loop's OWNING sdfg (may be nested -- the slice's fixed-dim expressions can
+        # reference symbols, e.g. an outer loop variable, that only exist there), keyed by
+        # (owner sdfg, name) since the same array name can be sliced differently per scope.
+        sliced_dup_syms: dict = {}
+        for loop, idx_name, index_slice in sliced_guards:
+            owner_sdfg = _owning_sdfg(sdfg, loop)
+            try:
+                trap_sym = insert_scatter_guard(owner_sdfg,
+                                                idx_name,
+                                                emit_trap=not self.emit_unparallelized_else_branch,
+                                                index_slice=index_slice)
+                if trap_sym is not None:
+                    sliced_dup_syms[(id(owner_sdfg), idx_name)] = trap_sym
+            except ValueError as exc:
+                if 'already exists' not in str(exc):
+                    raise
+
         for loop in scatter_loops:
             parent = loop.parent_graph
             if parent is None or loop not in parent.nodes():
                 continue  # already removed by a sibling lift
             owner_sdfg = _owning_sdfg(sdfg, loop)
 
-            if self.emit_unparallelized_else_branch and dup_count_syms:
+            if self.emit_unparallelized_else_branch and (dup_count_syms or sliced_dup_syms):
                 # Find the dup-count symbol for any idx array this loop
                 # scatters into. Loops with multiple idx arrays would need ALL
                 # of them to be conflict-free for the parallel branch to be
@@ -155,6 +175,9 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # to the sequential branch.
                 loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
                 loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
+                loop_idx_syms += [
+                    sliced_dup_syms[(id(owner_sdfg), i)] for i in loop_idx if (id(owner_sdfg), i) in sliced_dup_syms
+                ]
                 if loop_idx_syms:
                     cond = ' + '.join(loop_idx_syms) + ' > 0'
                     _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
@@ -166,7 +189,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 instance.apply(parent, owner_sdfg)
             except Exception:
                 pass
-        return len(idx_arrays) or None
+        return (len(idx_arrays) + len(sliced_guards)) or None
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
@@ -175,34 +198,44 @@ def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
     See :func:`detect_scatter_loops_and_idx_arrays` for the underlying scan; this
     helper drops the loops set and returns only the idx-array names.
     """
-    _, idx_arrays = detect_scatter_loops_and_idx_arrays(sdfg)
-    return idx_arrays
+    _, idx_arrays, sliced_guards = detect_scatter_loops_and_idx_arrays(sdfg)
+    return idx_arrays | {idx_name for _loop, idx_name, _index_slice in sliced_guards}
 
 
 def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
     """Scan ``sdfg`` (and nested SDFGs) for scatter loops; return
-    ``(scatter_loops, idx_arrays)``.
+    ``(scatter_loops, idx_arrays, sliced_guards)``.
 
     A ``LoopRegion`` qualifies as a scatter loop iff any interstate edge in the
     region binds a symbol via ``sym := arr[loop_var]`` AND a write-memlet to a
     non-transient array inside the region's body references that symbol.
 
     :param sdfg: The SDFG to scan; nested SDFGs are walked too.
-    :returns: ``(list[LoopRegion], set[str])`` -- deterministic-order list of
-              the scatter ``LoopRegion`` instances + set of ``idx`` array names
-              resolved against the owning SDFG's ``arrays`` table.
+    :returns: ``(list[LoopRegion], set[str], list[tuple])`` -- deterministic-order list of
+              the scatter ``LoopRegion`` instances; the set of 1-D ``idx`` array names (guarded
+              once, at ``sdfg``, over the whole array); and the deterministic-order list of
+              ``(loop, idx_name, ScatterIndexSlice)`` triples for a rank>=2 ``idx`` array whose
+              subscript classified to a single contiguous varying dimension (see
+              :func:`_classify_index_slice`) -- each guarded at its own loop's owning sdfg.
     """
     scatter_loops: list = []
     idx_arrays: Set[str] = set()
+    sliced_guards: list = []
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions():
             if not (isinstance(region, LoopRegion) and region.loop_variable):
                 continue
-            loop_arrays = _scatter_idx_arrays_for_loop(region, sd)
-            if loop_arrays:
-                scatter_loops.append(region)
-                idx_arrays |= loop_arrays
-    return scatter_loops, idx_arrays
+            loop_arrays = _scatter_idx_targets_for_loop(region, sd)
+            if not loop_arrays:
+                continue
+            scatter_loops.append(region)
+            for idx_name, (_tgts, index_slice) in loop_arrays.items():
+                if index_slice is None:
+                    idx_arrays.add(idx_name)
+                else:
+                    sliced_guards.append((region, idx_name, index_slice))
+    sliced_guards.sort(key=lambda t: (t[0].label, t[1]))
+    return scatter_loops, idx_arrays, sliced_guards
 
 
 def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
@@ -223,7 +256,9 @@ def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
     for region in sdfg.all_control_flow_regions():
         if not (isinstance(region, LoopRegion) and region.loop_variable):
             continue
-        targets |= _scatter_idx_targets_for_loop(region, sdfg).get(idx_name, set())
+        entry = _scatter_idx_targets_for_loop(region, sdfg).get(idx_name)
+        if entry is not None:
+            targets |= entry[0]
     return targets
 
 
@@ -236,9 +271,10 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
     return set(_scatter_idx_targets_for_loop(region, sdfg))
 
 
-def _scatter_idx_targets_for_loop(region: LoopRegion, sdfg: SDFG) -> dict[str, Set[str]]:
+def _scatter_idx_targets_for_loop(region: LoopRegion,
+                                  sdfg: SDFG) -> Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]]:
     """Map each scatter index-array name driving an indirect WRITE in ``region`` to the arrays
-    it writes through.
+    it writes through, plus (for a rank>=2 index array) the 1-D window the guard should scan.
 
     Recognises the three lowered forms an ``out[idx[f(i)]] = ...`` scatter takes,
     where ``f(i)`` is any expression referencing the loop variable (a bare
@@ -255,14 +291,21 @@ def _scatter_idx_targets_for_loop(region: LoopRegion, sdfg: SDFG) -> dict[str, S
        spans) memlet whose write index traces back to an integer array read at
        ``[f(i)]`` (``ext_scatter_store``, lowered from a ``dace.map`` scatter).
 
+    A 1-D index array is always included (``index slice = None`` -- the guard scans the whole
+    declared array). A rank>=2 index array (forms 1/2 only -- form 3 has no subscript AST to
+    classify) is included only when :func:`_classify_index_slice` pins its subscript to a
+    single contiguous varying dimension; otherwise it is dropped and the loop stays un-lifted
+    for that array.
+
     :param region: The candidate loop region.
     :param sdfg: The SDFG owning ``region``'s arrays.
-    :returns: ``{idx array name: set of arrays scattered into}`` (empty if ``region`` is not a
-              scatter).
+    :returns: ``{idx array name: (arrays scattered into, index slice or None)}`` (empty if
+              ``region`` is not a scatter).
     """
     loop_var = region.loop_variable
     bindings = _collect_indirect_bindings(region, sdfg)
-    loop_arrays: dict[str, Set[str]] = {}
+    loop_arrays: Dict[str, Set[str]] = {}
+    dim_nodes_by_arr: Dict[str, List[ast.AST]] = {}
     for state in region.all_states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -275,21 +318,81 @@ def _scatter_idx_targets_for_loop(region: LoopRegion, sdfg: SDFG) -> dict[str, S
                     continue
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:
-                    arr = bindings.get(str(sym))
-                    if arr is not None:
+                    binding = bindings.get(str(sym))
+                    if binding is not None:
+                        arr, dim_nodes = binding
                         loop_arrays.setdefault(arr, set()).add(node.data)
+                        dim_nodes_by_arr.setdefault(arr, dim_nodes)
                 # Form 2: index array inline-subscripted inside the write subset.
-                for arr in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg):
+                for arr, dim_nodes in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg).items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
+                    dim_nodes_by_arr.setdefault(arr, dim_nodes)
         # Form 3: nested-SDFG data-dependent write.
         for arr, tgts in _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var).items():
             loop_arrays.setdefault(arr, set()).update(tgts)
-    return loop_arrays
+
+    result: Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]] = {}
+    for arr, tgts in loop_arrays.items():
+        desc = sdfg.arrays[arr]
+        if len(desc.shape) == 1:
+            result[arr] = (tgts, None)
+            continue
+        dim_nodes = dim_nodes_by_arr.get(arr)
+        if dim_nodes is None:
+            continue  # form 3 only -- no subscript AST to classify, stays excluded.
+        index_slice = _classify_index_slice(desc, dim_nodes, region)
+        if index_slice is not None:
+            result[arr] = (tgts, index_slice)
+    return result
 
 
-def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]:
+def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
+                          region: LoopRegion) -> Optional[ScatterIndexSlice]:
+    """Classify a rank>=2 index-array subscript ``arr[dim_nodes...]`` against ``region``'s loop
+    variable: accepted iff exactly one dimension is affine in the loop variable and every other
+    dimension is loop-invariant. ``ScatterConflictCheck`` scans its input through a flat
+    pointer, so the varying dimension's per-iteration element stride (its affine coefficient,
+    times the loop's own stride, times ``desc.strides[dim]``) must additionally resolve to 1 --
+    a genuinely contiguous window. Returns ``None`` (leave the loop un-lifted) on any mismatch.
+    """
+    if len(dim_nodes) != len(desc.shape):
+        return None
+    loop_var = region.loop_variable
+    varying = [
+        d for d, node in enumerate(dim_nodes) if loop_var in {n.id
+                                                              for n in ast.walk(node) if isinstance(n, ast.Name)}
+    ]
+    if len(varying) != 1:
+        return None
+    dim = varying[0]
+
+    init = loop_analysis.get_init_assignment(region)
+    end = loop_analysis.get_loop_end(region)
+    lstride = loop_analysis.get_loop_stride(region)
+    if init is None or end is None or lstride is None:
+        return None
+
+    j = symbolic.pystr_to_symbolic(loop_var)
+    dim_expr = symbolic.pystr_to_symbolic(astutils.unparse(dim_nodes[dim]))
+    coeff = dim_expr.coeff(j, 1)
+    const = dim_expr.coeff(j, 0)
+    if symbolic.simplify(dim_expr - (coeff * j + const)) != 0:
+        return None  # not affine in the loop variable
+
+    elem_stride = symbolic.simplify(coeff * lstride * desc.strides[dim])
+    if symbolic.simplify(elem_stride - 1) != 0:
+        return None  # not contiguous -- unsafe for the flat-pointer conflict-check scan
+
+    extent = symbolic.simplify(symbolic.int_floor(end - init, lstride) + 1)
+    offset = symbolic.simplify(coeff * init + const)
+    fixed: Dict[int, str] = {d: astutils.unparse(node) for d, node in enumerate(dim_nodes) if d != dim}
+    return ScatterIndexSlice(dim=dim, offset=str(offset), extent=str(extent), stride='1', fixed=fixed)
+
+
+def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, Tuple[str, List[ast.AST]]]:
     """Map each symbol bound by ``region``'s interstate edges to its source data
-    array, when the binding is of the form ``sym := arr[f(loop_var)]``.
+    array plus per-dimension subscript AST nodes, when the binding is of the
+    form ``sym := arr[f(loop_var)]``.
 
     Conservative: only a bare index-array subscript ``arr[<expr>]`` whose index
     ``<expr>`` references the loop variable is recognised (see
@@ -299,13 +402,13 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]
     frontend's scatter lowering, and extending the recognition surface risks
     misclassifying non-scatter interstate computations.
     """
-    bindings: dict[str, str] = {}
+    bindings: Dict[str, Tuple[str, List[ast.AST]]] = {}
     loop_var = region.loop_variable
     for e in region.edges():
         for lhs, rhs in (e.data.assignments or {}).items():
-            arr = _resolve_indirect_source(rhs, loop_var, sdfg)
-            if arr is not None:
-                bindings[lhs] = arr
+            resolved = _resolve_indirect_source(rhs, loop_var, sdfg)
+            if resolved is not None:
+                bindings[lhs] = resolved
     return bindings
 
 
@@ -320,10 +423,17 @@ def _owning_sdfg(root: SDFG, loop: LoopRegion) -> SDFG:
     return root  # defensive fallback
 
 
-def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
-    """Return ``arr`` if ``rhs_str`` is ``arr[f(loop_var)]`` (``arr`` a data
-    descriptor in ``sdfg`` and the index a function of ``loop_var``); ``None``
-    otherwise.
+def _subscript_dims(idx) -> List[ast.AST]:
+    """Split a subscript's (already ``ast.Index``-unwrapped) ``.slice`` into one AST node per
+    dimension: the elements of an ``ast.Tuple`` for ``arr[a, b]``, else the single node itself.
+    """
+    return list(idx.elts) if isinstance(idx, ast.Tuple) else [idx]
+
+
+def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optional[Tuple[str, List[ast.AST]]]:
+    """Return ``(arr, dim_nodes)`` if ``rhs_str`` is ``arr[f(loop_var)]`` (``arr`` a data
+    descriptor in ``sdfg`` and the index a function of ``loop_var``); ``None`` otherwise.
+    ``dim_nodes`` is one AST node per subscript dimension (see :func:`_subscript_dims`).
 
     The index ``f(loop_var)`` may be the bare loop variable (``arr[loop_var]``,
     unit-stride scatters) or any expression referencing it (``arr[c*loop_var +
@@ -348,10 +458,10 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
         idx = idx.value
     if loop_var not in {n.id for n in ast.walk(idx) if isinstance(n, ast.Name)}:
         return None
-    return arr
+    return arr, _subscript_dims(idx)
 
 
-def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Set[str]:
+def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Dict[str, List[ast.AST]]:
     """Data-array names inline-subscripted inside a memlet ``subset`` with an
     index referencing ``loop_var`` -- the ``out[idx[f(i)]]`` form where the index
     array ``idx`` is embedded directly in the write subset rather than bound on an
@@ -360,9 +470,9 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Set[str]:
     :param subset: A memlet subset (its ``str`` is parsed for ``idx[...]`` nodes).
     :param loop_var: The loop variable that a genuine scatter index must reference.
     :param sdfg: The SDFG whose ``arrays`` table qualifies the subscript bases.
-    :returns: The set of index-array names found (empty if none).
+    :returns: ``{index-array name: per-dimension subscript AST nodes}`` (empty if none).
     """
-    arrays: Set[str] = set()
+    arrays: Dict[str, List[ast.AST]] = {}
     try:
         tree = ast.parse(str(subset), mode='eval').body
     except (SyntaxError, ValueError, TypeError):
@@ -377,7 +487,7 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Set[str]:
         if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
             idx = idx.value
         if loop_var in {n.id for n in ast.walk(idx) if isinstance(n, ast.Name)}:
-            arrays.add(arr)
+            arrays.setdefault(arr, _subscript_dims(idx))
     return arrays
 
 
