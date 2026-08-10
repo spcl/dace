@@ -20,6 +20,7 @@ import pytest
 
 import dace
 from dace import memlet as mm
+from dace.codegen.codegen import inline_host_nested_sdfgs
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -329,6 +330,38 @@ def test_reduce_inside_parallel_map_never_emits_the_parallel_entry(schedule):
     b = np.zeros(8)
     sdfg(A=a.copy(), B=b)
     assert np.allclose(b, a.sum(axis=1), rtol=_TOL, atol=_TOL)
+
+
+def test_sequential_expansion_connectors_survive_inlining_beside_same_named_arrays():
+    """The sequential expansion returns a nested SDFG, and codegen inlines it -- its tasklets then
+    live in the PARENT SDFG, where a connector sharing a name with an array is invalid. So the
+    connectors must be namespaced, not the bare ``a`` / ``b`` / ``o`` a user array really carries
+    (npbench ``channel_flow`` reduces ``u`` in an SDFG holding ``b``).
+    """
+    sdfg = dace.SDFG('reduce_beside_colliding_names')
+    sdfg.add_array('a', [_NELEM], dace.float64)
+    sdfg.add_array('b', [1], dace.float64)
+    sdfg.add_array('o', [1], dace.float64)
+    state = sdfg.add_state()
+    red = state.add_reduce('lambda x, y: x + y', None, 0.0)
+    state.add_edge(state.add_read('a'), None, red, None, mm.Memlet(f'a[0:{_NELEM}]'))
+    state.add_edge(red, None, state.add_write('b'), None, mm.Memlet('b[0]'))
+    sdfg.validate()
+    red.schedule = dace.ScheduleType.Sequential
+
+    sdfg.expand_library_nodes()
+    inline_host_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert tasklets, 'the sequential expansion emits tasklets; none survived the inline'
+    connectors = {c for t in tasklets for c in t.in_connectors.keys() | t.out_connectors.keys()}
+    assert not (connectors & set(sdfg.arrays)), f'connectors shadow array names: {connectors & set(sdfg.arrays)}'
+
+    a = np.arange(_NELEM, dtype=np.float64)
+    b = np.zeros(1)
+    sdfg(a=a.copy(), b=b, o=np.zeros(1))
+    assert np.allclose(b, a.sum(), rtol=_TOL, atol=_TOL)
 
 
 def test_openmp_expansion_calls_dace_reduce():

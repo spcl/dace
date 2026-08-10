@@ -823,7 +823,10 @@ class CopyLibraryNode(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
+        # The label names the wrapper SDFG of every mapped expansion, which codegen emits as a C++
+        # function. Callers build it from data names, and a structure member IS dotted
+        # (``tmp.indptr``) -- legal for data, never for an identifier.
+        super().__init__(name.replace('.', '_'),
                          *args,
                          inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME},
                          outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME},

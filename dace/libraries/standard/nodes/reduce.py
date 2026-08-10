@@ -61,6 +61,19 @@ def route_gpu_reduce_result_to_host_output(nsdfg: SDFG, last_state: SDFGState, d
                          dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
 
 
+#: Connector names for the tasklets this module emits.  Deliberately NOT the ``_in`` / ``_out`` the
+#: expansions give their nested-SDFG arrays, and never a bare ``a`` / ``b`` / ``o``: a tasklet
+#: connector that collides with an array name in the SAME SDFG is rejected by validation, and
+#: ``AllNode`` / ``AnyNode`` declare exactly such an ``_out`` array, since that is their own output
+#: connector name.  A nested SDFG is exempt from that check only while it stays nested -- codegen
+#: inlines it (``inline_host_nested_sdfgs``), which drops its tasklets straight into the parent
+#: state, so the expansions returning one need the same namespaced names as the OpenMP expansion,
+#: which emits its tasklet there directly.
+_IN = '_reduce_in'
+_OUT = '_reduce_out'
+_ACC = '_reduce_acc'
+
+
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
     """
@@ -266,12 +279,12 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         #wcr_str=node.wcr)
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
-        idt = nstate.add_tasklet('reset', {}, {'o'}, f'o = {node.identity}')
+        idt = nstate.add_tasklet('reset', {}, {_OUT}, f'{_OUT} = {node.identity}')
         nstate.add_edge(ome, None, idt, None, dace.Memlet())
 
         accread = nstate.add_access('acc')
         accwrite = nstate.add_access('acc')
-        nstate.add_edge(idt, 'o', accread, None, dace.Memlet('acc'))
+        nstate.add_edge(idt, _OUT, accread, None, dace.Memlet('acc'))
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
@@ -282,23 +295,23 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                                   schedule=dtypes.ScheduleType.Sequential)
 
         # Add identity tasklet for reduction
-        t = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = b')
+        t = nstate.add_tasklet('identity', {_ACC, _IN}, {_OUT}, f'{_OUT} = {_IN}')
 
         # Connect everything
         r = nstate.add_read('_in')
         w = nstate.add_write('_out')
-        nstate.add_memlet_path(r, ome, ime, t, dst_conn='b', memlet=inmm)
-        nstate.add_memlet_path(accread, ime, t, dst_conn='a', memlet=dace.Memlet('acc[0]'))
-        nstate.add_memlet_path(t, imx, accwrite, src_conn='o', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
+        nstate.add_memlet_path(r, ome, ime, t, dst_conn=_IN, memlet=inmm)
+        nstate.add_memlet_path(accread, ime, t, dst_conn=_ACC, memlet=dace.Memlet('acc[0]'))
+        nstate.add_memlet_path(t, imx, accwrite, src_conn=_OUT, memlet=dace.Memlet('acc[0]', wcr=node.wcr))
         if nsdfg.arrays['acc'].dtype == nsdfg.arrays['_out'].dtype:
             nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
         else:
             # The accumulator keeps the input type so partial results are not truncated; a
             # mixed-type reduction (summing an integer array into a real) then needs a tasklet to
             # carry the cast, since an access-to-access edge copies raw bytes.
-            cast = nstate.add_tasklet('store', {'a'}, {'o'}, 'o = a')
-            nstate.add_edge(accwrite, None, cast, 'a', dace.Memlet('acc[0]'))
-            nstate.add_memlet_path(cast, omx, w, src_conn='o', memlet=outm)
+            cast = nstate.add_tasklet('store', {_ACC}, {_OUT}, f'{_OUT} = {_ACC}')
+            nstate.add_edge(accwrite, None, cast, _ACC, dace.Memlet('acc[0]'))
+            nstate.add_memlet_path(cast, omx, w, src_conn=_OUT, memlet=outm)
 
         inedge._dst_conn = '_in'
         outedge._src_conn = '_out'
@@ -371,16 +384,6 @@ class ExpandReduceAuto(pm.ExpandTransformation):
             # Un-inferred: stay in dataflow form so later passes can still match the reduction.
             return ExpandReducePure.expansion(node, state, sdfg)
         return ExpandReduceOpenMP.expansion(node, state, sdfg)
-
-
-#: Connector names for the OpenMP reduce tasklet.  Deliberately NOT the ``_in`` / ``_out`` that the
-#: other expansions use: those return a nested SDFG or a library node, both of which validation
-#: exempts from the connector-vs-array-name check, whereas this expansion drops a bare Tasklet into
-#: the parent state.  A tasklet connector that collides with an array in the same SDFG is rejected --
-#: and ``AllNode`` / ``AnyNode`` declare exactly such an ``_out`` array, since that is their own
-#: output connector name.
-_IN = '_reduce_in'
-_OUT = '_reduce_out'
 
 
 @dace.library.expansion

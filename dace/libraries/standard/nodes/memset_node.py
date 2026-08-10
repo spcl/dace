@@ -215,7 +215,9 @@ class MemsetLibraryNode(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = "_mset_out"
 
     def __init__(self, name: str, *args, **kwargs):
-        super().__init__(name, *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
+        # Dotted structure-member data names reach here through the callers that build the label;
+        # the label names the wrapper SDFG, i.e. a C++ function. See CopyLibraryNode.__init__.
+        super().__init__(name.replace('.', '_'), *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range]:
         """Validate wiring and resolve the output edge.
