@@ -740,7 +740,7 @@ required:
 
     cache_distaware:
         type: bool
-        default: false
+        default: true
         title: Distribution-aware build cache
         description: >
             Give every rank of a job its own build folder, named after the rank its launcher
