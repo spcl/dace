@@ -666,6 +666,7 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
                 and nondegenerate_shape(source_access.subset) == nondegenerate_shape(target_access.subset)):
             # A plain memlet copy cannot reverse a traversal, so a reversed
             # access on either side falls through to the elementwise map.
+            source_access = _buffer_overlapping_source(source_access, target_access, state)
             state.emitter.emit(
                 tn.CopyNode(target=target_access.container,
                             memlet=Memlet(data=source_access.container,
@@ -674,6 +675,43 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
             return
 
     dispatch.lower_computation(target_access, value, statement, state)
+
+
+def _buffer_overlapping_source(source: DataAccess, target: DataAccess, state: LoweringState) -> DataAccess:
+    """
+    Read the source of a copy into a temporary first, when it is a subset of
+    the same container the copy writes and the two ranges may overlap.
+
+    ``q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 1:4]`` reads and writes ``q``
+    over ranges that share elements, and NumPy evaluates the whole right-hand
+    side before assigning any of it. A memlet copy has no such ordering, so
+    element 2 could be read after element 1's write has already replaced it.
+    Staging the read makes the ordering explicit.
+
+    Only a copy that may overlap is buffered: a subset the copy provably does
+    not write (``q[..., 0:3] = q[..., 3:6]``) is copied directly, since a
+    temporary there costs a round trip through memory for nothing. Overlap is
+    decided conservatively, because the ranges are usually symbolic -- anything
+    :func:`~dace.subsets.intersects` cannot rule out is treated as overlapping.
+
+    :param source: The access the copy reads.
+    :param target: The access the copy writes.
+    :param state: The lowering state to emit the staging copy into.
+    :return: The access to read from: ``source`` itself, or the temporary.
+    """
+    if source.container != target.container:
+        return source
+    if subsets.intersects(source.subset, target.subset) is False:
+        return source
+    staged_descriptor = data.Array(source.descriptor.dtype, nondegenerate_shape(source.subset) or [1])
+    staged_descriptor.transient = True
+    staged = state.context.add_container('__selfcopy', staged_descriptor)
+    state.emitter.emit(
+        tn.CopyNode(target=staged,
+                    memlet=Memlet(data=source.container,
+                                  subset=source.subset,
+                                  other_subset=subsets.Range.from_array(staged_descriptor))))
+    return DataAccess(staged, subsets.Range.from_array(staged_descriptor), staged_descriptor)
 
 
 def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statement: ast.Assign,

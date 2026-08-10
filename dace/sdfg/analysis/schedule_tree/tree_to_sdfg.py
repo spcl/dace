@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final, Optional, Sequence
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -613,10 +613,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 self._current_state.add_edge(access_node, name, exit_node, in_connector_name, memlet)
             else:
                 assert isinstance(access_node, nodes.AccessNode)
-                if self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(access_node) == 1:
+                edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
+                if (self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(access_node) == 1
+                        and not isinstance(edges[0].src, nodes.EntryNode)):
                     # this access_node is not used for anything else.
-                    # let's remove it and add a direct connection instead
-                    edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
+                    # let's remove it and add a direct connection instead --
+                    # unless it is fed by the scope entry itself (a copy staged
+                    # by _copy_out_of_scope), since collapsing that leaves an
+                    # entry-to-exit data edge, which code generation cannot
+                    # dispatch: neither end is a data node to copy between.
                     assert len(edges) == 1
                     self._current_state.add_memlet_path(edges[0].src,
                                                         exit_node,
@@ -938,6 +943,59 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
+    def _copy_out_of_scope(self, node: tn.CopyNode, scope_node: nodes.EntryNode, to_connect: dict, access_cache: dict,
+                           sdfg: SDFG) -> None:
+        """
+        Lower a copy whose target leaves the enclosing dataflow scope, by
+        reading into a scope-local transient that the scope exit then writes
+        out.
+
+        The target cannot simply get an access node inside the scope: the
+        container already has one outside it, and two access nodes of one
+        container either side of the exit make code generation emit a copy
+        BETWEEN them. For ``dst[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) *
+        20:4]`` the strided copy lands correctly and is then re-copied to the
+        container's base, contiguously, silently overwriting it. Writing
+        through the exit's connector is what avoids that -- the same shape the
+        classic frontend gets by nesting an SDFG per statement -- and a
+        transient is what gives the copy somewhere to land first.
+
+        :param node: The copy to lower.
+        :param scope_node: The entry node of the scope the copy sits in.
+        :param to_connect: The scope's pending writes, keyed by container.
+        :param access_cache: Access nodes already created in this scope.
+        :param sdfg: The SDFG being built.
+        """
+        source_name = node.memlet.data
+        source_descriptor = sdfg.arrays[source_name]
+        staged_name, staged_descriptor = sdfg.add_transient(f'__scopecopy_{node.target}',
+                                                            node.memlet.subset.size(),
+                                                            source_descriptor.dtype,
+                                                            find_new_name=True)
+        staged = self._current_state.add_access(staged_name)
+        staged_subset = subsets.Range.from_array(staged_descriptor)
+
+        read = Memlet(data=source_name, subset=node.memlet.subset, other_subset=copy.deepcopy(staged_subset))
+        if source_name in access_cache:
+            self._current_state.add_memlet_path(access_cache[source_name], staged, memlet=read)
+        else:
+            # Source it from outside the scope, through the entry's IN_/OUT_
+            # passthrough connectors, exactly as a tasklet's input is sourced.
+            connector = f'{PREFIX_PASSTHROUGH_OUT}{source_name}'
+            if connector not in scope_node.out_connectors:
+                added_in = scope_node.add_in_connector(f'{PREFIX_PASSTHROUGH_IN}{source_name}')
+                added_out = scope_node.add_out_connector(connector)
+                assert added_in == added_out
+            self._current_state.add_edge(scope_node, connector, staged, None, read)
+
+        target_subset = node.memlet.other_subset
+        if target_subset is None:
+            target_subset = subsets.Range.from_array(sdfg.arrays[node.target])
+        to_connect[node.target] = (staged,
+                                   Memlet(data=node.target,
+                                          subset=copy.deepcopy(target_subset),
+                                          other_subset=copy.deepcopy(staged_subset)))
+
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
         # ensure we have an access_cache and fetch it
         cache_key = (self._current_state, id(self._ctx.current_scope))
@@ -951,6 +1009,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # enclosing SDFG; an access node needs the descriptor to be present here.
         self._ensure_nested_container(src_name, sdfg)
         self._ensure_nested_container(node.target, sdfg)
+
+        # A copy inside a dataflow scope, writing a container that is visible
+        # outside it, has to leave through the scope exit.
+        scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+        if isinstance(scope_node, nodes.EntryNode) and not sdfg.arrays[node.target].transient:
+            self._copy_out_of_scope(node, scope_node, to_connect, access_cache, sdfg)
+            return
+
         if src_name not in access_cache:
             # cache new read access
             access_cache[src_name] = self._current_state.add_read(src_name)

@@ -154,6 +154,22 @@ def test_needs_copy():
     assert found_copy
 
 
+def test_overlapping_self_copy_reads_before_writing():
+    """A copy whose source and target overlap must read the source first."""
+
+    @dace.program
+    def selfcopy(q: dace.float64[8]):
+        q[0:5] = q[1:6]
+
+    values = np.arange(8, dtype=np.float64)
+    reference = values.copy()
+    reference[0:5] = reference[1:6]
+
+    result = values.copy()
+    selfcopy(result)
+    assert np.allclose(result, reference)
+
+
 def _test_strided_copy_program(program, symbols=None):
 
     src = np.ones(40, dtype=np.uint32)
@@ -337,6 +353,7 @@ if __name__ == '__main__':
     test_is_a_copy()
     test_needs_view()
     test_needs_copy()
+    test_overlapping_self_copy_reads_before_writing()
 
     for _function in (_negative_start, _negative_start_open_stop, _negative_stop, _reversed_whole, _reversed_range):
         test_negative_step_slice_bounds(_function)
