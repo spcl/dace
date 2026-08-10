@@ -20,9 +20,10 @@ not a concern.
 """
 import ast
 import copy
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, properties, symbolic
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.sdfg import nodes, InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -343,20 +344,32 @@ def _written_data_in_region(region: ControlFlowRegion) -> Set[str]:
     return written
 
 
+def write_edge_count(state: SDFGState, node: nodes.AccessNode) -> int:
+    """Number of value-carrying in-edges of ``node`` (empty memlets are ordering
+    edges, not writes).
+
+    Counting EDGES, not nodes: several producers can write the same data through
+    ONE AccessNode -- a ``Reduce`` accumulating into the same scalar an ``s = 0.0``
+    tasklet seeds is exactly that shape, and a per-node count reports one writer
+    for two writes.
+    """
+    return sum(1 for e in state.in_edges(node) if e.data is not None and not e.data.is_empty())
+
+
 def _region_writer_counts(region: ControlFlowRegion) -> Dict[str, int]:
-    """Per-data count of writer AccessNodes across every state of ``region``.
+    """Per-data count of writes across every state of ``region``.
 
     Used to reject hoisting an invariant assignment (e.g. ``s = 0.0``) whose
     target is *also* written elsewhere in the loop (e.g. an inner-loop
-    accumulation ``s = s + a[i, j]``): moving the init to the preheader would
-    stop it re-running per iteration, so later iterations would see the carried
-    value instead of the constant.
+    accumulation ``s = s + a[i, j]``, or a ``Reduce`` node accumulating into the
+    same scalar): moving the init to the preheader would stop it re-running per
+    iteration, so later iterations would see the carried value instead of the
+    constant.
     """
     counts: Dict[str, int] = {}
     for state in region.all_states():
         for n in state.data_nodes():
-            if state.in_degree(n) > 0:
-                counts[n.data] = counts.get(n.data, 0) + 1
+            counts[n.data] = counts.get(n.data, 0) + write_edge_count(state, n)
     return counts
 
 
@@ -441,11 +454,8 @@ def _is_tasklet_invariant(
             return False
 
     out_data = oe.dst.data
-    # Count writers to this data in the whole state.
-    writers = 0
-    for n in state.data_nodes():
-        if n.data == out_data and state.in_degree(n) > 0:
-            writers += 1
+    # Count writes to this data in the whole state.
+    writers = sum(write_edge_count(state, n) for n in state.data_nodes() if n.data == out_data)
     if writers != 1:
         return False
     # ...and across the whole loop region: if ``out_data`` is written anywhere
@@ -464,12 +474,25 @@ def _is_tasklet_invariant(
 
 
 def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
-    """Free symbols that appear in the tasklet code AST, minus its connectors."""
+    """Free symbols that appear in the tasklet code, minus its connectors.
+
+    Only Python code has an AST to walk. Any other language falls back to a plain
+    identifier scan of the text -- an over-approximation, which is the safe direction
+    here: the caller refuses to hoist when the result meets a variant symbol. Returning
+    an empty set instead (the historical behaviour, reached both through ``language`` and
+    through the ``SyntaxError`` this parse raises on C++) makes a C++ body look free of
+    every symbol it reads, so a tasklet that indexes its own map parameter -- the
+    early-exit chunked scan's ``__ee_c0`` -- is hoisted OUT of the map that defines it.
+    """
     syms: Set[str] = set()
     code = tasklet.code
     if code is None:
         return syms
     stmts = code.code
+    if tasklet.language != dtypes.Language.Python:
+        text = stmts if isinstance(stmts, str) else str(stmts)
+        connectors = set(tasklet.in_connectors.keys()) | set(tasklet.out_connectors.keys())
+        return set(re.findall(r'[A-Za-z_]\w*', text)) - connectors
     if isinstance(stmts, str):
         try:
             stmts = [ast.parse(stmts)]

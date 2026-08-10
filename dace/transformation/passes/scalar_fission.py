@@ -131,10 +131,10 @@ class ScalarFission(ppl.Pass):
                     write_node.data = newname
                     for iedge in write[0].in_edges(write_node):
                         if iedge.data.data == name:
-                            self._rename_memlet_path(write[0], iedge, name, newname)
+                            self._rename_memlet_path(write[0], iedge, name, newname, write_node)
                     for oeade in write[0].out_edges(write_node):
                         if oeade.data.data == name:
-                            self._rename_memlet_path(write[0], oeade, name, newname)
+                            self._rename_memlet_path(write[0], oeade, name, newname, write_node)
 
                     # Replace all dominated reads and connected memlets.
                     affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
@@ -144,10 +144,10 @@ class ScalarFission(ppl.Pass):
                             read_node.data = newname
                             for iedge in read[0].in_edges(read_node):
                                 if iedge.data.data == name:
-                                    self._rename_memlet_path(read[0], iedge, name, newname)
+                                    self._rename_memlet_path(read[0], iedge, name, newname, read_node)
                             for oeade in read[0].out_edges(read_node):
                                 if oeade.data.data == name:
-                                    self._rename_memlet_path(read[0], oeade, name, newname)
+                                    self._rename_memlet_path(read[0], oeade, name, newname, read_node)
                             if isinstance(read[0], SDFGState):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
@@ -223,8 +223,9 @@ class ScalarFission(ppl.Pass):
         return carried
 
     @staticmethod
-    def _rename_memlet_path(state: SDFGState, edge, old: str, new: str) -> None:
-        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE.
+    def _rename_memlet_path(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:
+        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE that
+        belongs to ``node``'s access.
 
         An access-node write/read that flows THROUGH a scope boundary (MapExit /
         MapEntry) has more than one edge carrying the same data: the inner edge
@@ -238,12 +239,21 @@ class ScalarFission(ppl.Pass):
         inside the scope (an array read like ``pn[i+1, j]`` and ``pn[i-1, j]``
         both arriving through one ``OUT_pn`` connector). ``memlet_path`` is a single
         linear route and renames only one of those branches, leaving its siblings
-        naming a container their endpoint no longer references. Every edge of the
-        tree belongs to the same access, so renaming all of them is exactly right.
+        naming a container their endpoint no longer references.
+
+        The tree STOPS at another AccessNode of ``old``. A staging copy
+        ``AccessNode(x) -> MapEntry -> AccessNode(x)`` puts two SEPARATE accesses of the same
+        container in one tree, and the shadow analysis versions them separately. Renaming the
+        whole tree for the first of them also renames the other one's edge, and the second
+        rename then skips that edge (its memlet no longer names ``old``) -- leaving
+        ``AccessNode(x_1) -[x_0]-> MapEntry``, a memlet naming neither of its own endpoints.
         """
         for pe in state.memlet_tree(edge):
-            if pe.data is not None and pe.data.data == old:
-                pe.data.data = new
+            if pe.data is None or pe.data.data != old:
+                continue
+            if any(n is not node and isinstance(n, nd.AccessNode) and n.data == old for n in (pe.src, pe.dst)):
+                continue
+            pe.data.data = new
 
     # ------------------------------------------------------------------ #
     #  Privatization of undominated (None-scope) loop-local scalars
@@ -293,10 +303,10 @@ class ScalarFission(ppl.Pass):
                     # loop-local reduction accumulator ``sum``.)
                     for e in block.in_edges(node):
                         if e.data.data == name:
-                            self._rename_memlet_path(block, e, name, newname)
+                            self._rename_memlet_path(block, e, name, newname, node)
                     for e in block.out_edges(node):
                         if e.data.data == name:
-                            self._rename_memlet_path(block, e, name, newname)
+                            self._rename_memlet_path(block, e, name, newname, node)
                     if isinstance(block, SDFGState):
                         affected_states.add(block)
                 elif isinstance(node, InterstateEdge):
