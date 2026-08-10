@@ -434,6 +434,21 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // Drain whatever the runtime's per-thread error slot already holds. That slot is shared with
+    // every other GPU user in this process (CuPy, another SDFG, a library), and a value left in it
+    // is NOT ours: the next checked call would report someone else's failure as its own. The CUB
+    // temp-storage size query emitted below is the usual victim - it is the first checked call in
+    // many generated modules, so a stale error surfaces as an unrelated init failure.
+    {{
+        gpuError_t __pre_existing = {backend}GetLastError();
+        if (__pre_existing != (gpuError_t)0)
+        {{
+            printf("WARNING: a GPU error was already pending on entry to __dace_init_cuda and has "
+                   "been discarded: %s (%d). It was not caused by this SDFG.\\n",
+                   gpuGetErrorString(__pre_existing), __pre_existing);
+        }}
+    }}
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
