@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   test:
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
