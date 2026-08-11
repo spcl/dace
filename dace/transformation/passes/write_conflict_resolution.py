@@ -515,7 +515,17 @@ def _reference_targets(sdfg: SDFG) -> Set[str]:
 
 def _partitions(subset, params: Set[str]) -> bool:
     """Whether a write subset varies with every enclosing parallel parameter,
-    so that distinct iterations touch distinct elements."""
+    so that distinct iterations touch distinct elements.
+
+    .. note::
+       Varying with every parameter is necessary but NOT sufficient. The real
+       question is whether the index expression is injective over the COMBINED
+       iteration domain. ``A[2*i:2*i+3] += 1`` lowers to the single-element
+       write ``A[__i0 + 2*i]`` over ``i`` and the inner ``__i0`` in [0,3); each
+       parameter separates on its own, yet ``(i=0,__i0=2)`` and ``(i=1,__i0=0)``
+       both write index 2. Deciding this needs the parameters' RANGES, which
+       this predicate is not given. See wcr_atomic_test's overlapping cases.
+    """
     free_symbols = {str(symbol) for symbol in subset.free_symbols}
     return all(param in free_symbols for param in params)
 
