@@ -83,13 +83,14 @@ def test_augassign_wcr2():
 
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr2.to_sdfg(simplify=False)
-    wcr_count = 0
+    # Containers, not edges -- see test_augassign_wcr.
+    wcr_containers = set()
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.wcr:
-                    wcr_count += 1
-    assert (wcr_count == 2)
+                    wcr_containers.add(edge.data.data)
+    assert (len(wcr_containers) == 2)
 
     count = test_sdfg(A=A, B=B, W=W)
     C = np.add.reduce(A, axis=(1, 2), where=W)
