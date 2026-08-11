@@ -32,11 +32,14 @@ try:
         output = subprocess.check_output([cmake_path, '--version']).decode('utf-8')
         cmake_version = tuple(int(t) for t in output.splitlines()[0].split(' ')[-1].split('.'))
         # If version meets minimum requirements, CMake is not necessary
-        if cmake_version >= (3, 17):
+        if cmake_version >= (3, 18):
             cmake_requires = []
 except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
     # Any failure in getting the CMake version counts as "not found"
     pass
+
+# Ninja generates the build for generated code (see dace/codegen/compiler.py). Any version will do.
+ninja_requires = [] if shutil.which('ninja') else ['ninja']
 
 with open("README.md", "r") as fp:
     long_description = fp.read()
@@ -69,8 +72,8 @@ setup(
     include_package_data=True,
     install_requires=[
         'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3, != 0.2.3',
-        'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions'
-    ] + cmake_requires,
+        'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions', 'ml_dtypes'
+    ] + cmake_requires + ninja_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
         'testing': [

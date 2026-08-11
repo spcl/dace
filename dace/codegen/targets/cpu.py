@@ -9,7 +9,7 @@ import warnings
 import numpy as np
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
-from dace.codegen import cppunparse, exceptions as cgx
+from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
@@ -276,12 +276,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
 
-        if Config.get('compiler', 'cpu', 'executable'):
-            compiler = make_absolute(Config.get('compiler', 'cpu', 'executable'))
-            options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
+        # Always pinned, so the compiler the flags were chosen for is the one CMake uses. This wins
+        # over a CMAKE_CXX_COMPILER set in a toolchain file passed through extra_cmake_args.
+        options.append('-DCMAKE_CXX_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
-        if Config.get('compiler', 'cpu', 'args'):
-            flags = Config.get('compiler', 'cpu', 'args')
+        flags = compiler_family.cpu_args()
+        if flags:
             options.append('-DCMAKE_CXX_FLAGS="{}"'.format(flags))
 
         return options
@@ -680,9 +680,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
-                state_id, node)
+            aligned = ''
+            if _use_aligned_operator_new(nodedesc):
+                align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                aligned = f'(std::align_val_t({align_value}))'
+            allocation_stream.write(f"{alloc_name} = new {aligned} {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}];\n",
+                                    cfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -739,13 +742,19 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
+            aligned = ''
+            if _use_aligned_operator_new(nodedesc):
+                align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                aligned = f'(std::align_val_t({align_value}))'
+
             allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
-                                                                              name=alloc_name,
-                                                                              arrsize=cpp.sym2cpp(arrsize)),
+                    {name} = new {aligned}{ctype} [{arrsize}];""".format(aligned=aligned,
+                                                                         ctype=nodedesc.dtype.ctype,
+                                                                         name=alloc_name,
+                                                                         arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
                 state_id,
                 node,
@@ -789,19 +798,36 @@ class CPUCodeGen(TargetCodeGenerator):
                   (symbolic.issymbolic(arrsize, sdfg.constants) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
-                callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
+                # Memory from the aligned operator new[] must be released by the aligned operator
+                # delete[]. The direct operator call skips destructors and relies on the new-expression
+                # emitting no array cookie - both only hold for trivially destructible element types.
+                if _use_aligned_operator_new(nodedesc):
+                    align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                    callsite_stream.write(
+                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                        f"\"aligned heap deallocation skips destructors\");\n"
+                        f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));\n", cfg, state_id, node)
+                else:
+                    callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:
                 callsite_stream.write(f"delete {alloc_name};\n", cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                deleteop = "delete[]"
+                # Aligned pairing + trivial-destructibility guard as above.
+                if _use_aligned_operator_new(nodedesc):
+                    align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                                   f"\"aligned heap deallocation skips destructors\"); "
+                                   f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));")
+                else:
+                    delete_stmt = f"delete[] {alloc_name};"
             else:
-                deleteop = "delete"
+                delete_stmt = f"delete {alloc_name};"
             callsite_stream.write(
                 f"""#pragma omp parallel
                 {{
-                    {deleteop} {alloc_name};
+                    {delete_stmt}
                 }}""",
                 cfg,
                 state_id,
@@ -975,7 +1001,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id,
                             [src_node, dst_node],
                         )
-                    elif hasattr(src_nodedesc, "src"):  # ArrayStreamView
+                    elif hasattr(src_nodedesc, "src"):  # Array-stream view, ``src`` set by is_array_stream_view
                         stream.write(
                             "{s}.push({arr});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
                                                       arr=self.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src],

@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import warnings
 
 import sympy as sp
@@ -392,9 +393,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
-    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
-    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
-    expr = expr.replace('.', '->')
+    # NOTE: A dot separating names indicates nested data and structures, and structures are
+    # implemented as pointers, so it becomes an arrow. Only a dot BETWEEN NAMES qualifies: `expr`
+    # ends in an index expression, so a decimal literal there was rewritten too, e.g.
+    # `&A[(0.5 * j)]` -> `&A[(0->5 * j)]`, which does not compile.
+    expr = re.sub(r'\.(?=[A-Za-z_])', '->', expr)
 
     return (typedef + ref, pointer_name, expr)
 
@@ -453,8 +456,7 @@ def ndcopy_to_strided_copy(
     """
 
     # Cannot degenerate tiled copies
-    # In the case where subset is of type Indices, there are no tile_sizes
-    if hasattr(subset, 'tile_sizes') and any(ts != 1 for ts in subset.tile_sizes):
+    if isinstance(subset, subsets.Range) and any(ts != 1 for ts in subset.tile_sizes):
         return None
 
     # If the copy is contiguous, the difference between the first and last
@@ -898,8 +900,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         elif host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
             if max_streams >= 0:
                 callsite_stream.write(
-                    'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                    % (node._cuda_stream, common.get_gpu_backend()),
+                    '%sStream_t __dace_current_stream = %s;' %
+                    (common.get_gpu_backend(), common.gpu_stream_expr(node._cuda_stream)),
                     cfg,
                     state_id,
                     node,
@@ -1368,7 +1370,7 @@ class StructInitializer(ExtNodeTransformer):
 
         # Find all struct types in SDFG
         for array in sdfg.arrays.values():
-            if array is None or not hasattr(array, "dtype"):
+            if array is None:
                 continue
             if isinstance(array.dtype, dace.dtypes.struct):
                 self._structs[array.dtype.name] = array.dtype
@@ -1405,8 +1407,8 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
     enclosing_cfg = state_dfg.parent_graph
     enclosing_state_id = enclosing_cfg.node_id(state_dfg)
     for e in state_dfg.in_edges(node):
-        if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
-            cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
+        if hasattr(e.src, "_cuda_stream"):
+            cudastream = common.gpu_stream_expr(e.src._cuda_stream)
             callsite_stream.write(
                 "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
                 enclosing_cfg,
@@ -1420,7 +1422,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
+        cudastream = common.gpu_stream_expr(node._cuda_stream)
     else:  # Only default stream is used
         cudastream = 'nullptr'
 
@@ -1469,11 +1471,10 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));"""
-                    .format(
+DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
                         ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
-                        dst_stream=edge.dst._cuda_stream,
+                        dst_stream=common.gpu_stream_expr(edge.dst._cuda_stream),
                         backend=backend,
                     ),
                     cfg,
@@ -1502,11 +1503,10 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
                         """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".
-                        format(
+    {backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0);""".format(
                             ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
-                            dst_stream=e.dst._cuda_stream,
+                            dst_stream=common.gpu_stream_expr(e.dst._cuda_stream),
                             backend=backend,
                         ),
                         cfg,

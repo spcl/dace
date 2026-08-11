@@ -140,10 +140,10 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
                                                                    _) = _get_matmul_operands(node, state, sdfg)
 
-    if getattr(node, 'transA', False):
+    if node.transA:
         ashape = list(reversed(ashape))
         astride = list(reversed(astride))
-    if getattr(node, 'transB', False):
+    if node.transB:
         bshape = list(reversed(bshape))
         bstride = list(reversed(bstride))
 

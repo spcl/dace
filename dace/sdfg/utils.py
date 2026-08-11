@@ -123,19 +123,19 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     :note: If a source is not specified then a source is chosen arbitrarily and
            repeatedly until all components in the graph are searched.
     """
+    is_dace_graph = isinstance(G, gr.Graph)
     if reverse:
-        source_nodes = 'sink_nodes'
+        source_nodes = G.sink_nodes if is_dace_graph else None
         predecessors = G.successors
         neighbors = G.predecessors
     else:
-        source_nodes = 'source_nodes'
+        source_nodes = G.source_nodes if is_dace_graph else None
         predecessors = G.predecessors
         neighbors = G.successors
 
     if sources is None:
         # produce edges for all components
-        src_nodes = getattr(G, source_nodes, lambda: G)
-        nodes = list(src_nodes())
+        nodes = list(source_nodes()) if source_nodes is not None else list(G)
         if len(nodes) == 0:
             nodes = G
     else:
@@ -331,19 +331,19 @@ def scope_aware_topological_sort(G: SDFGState,
     :param reverse: If True, the graph will be traversed in reverse order (entering scopes via their exit node)
     :param visited: An optional set that will be filled with the visited nodes.
     """
+    is_dace_graph = isinstance(G, gr.Graph)
     if reverse:
-        source_nodes = 'sink_nodes'
+        source_nodes = G.sink_nodes if is_dace_graph else None
         predecessors = G.successors
         neighbors = G.predecessors
     else:
-        source_nodes = 'source_nodes'
+        source_nodes = G.source_nodes if is_dace_graph else None
         predecessors = G.predecessors
         neighbors = G.successors
 
     if sources is None:
         # produce edges for all components
-        src_nodes = getattr(G, source_nodes, lambda: G)
-        nodes = list(src_nodes())
+        nodes = list(source_nodes()) if source_nodes is not None else list(G)
         if len(nodes) == 0:
             nodes = G
     else:

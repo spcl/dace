@@ -20,6 +20,7 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import inspect
 from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
@@ -96,7 +97,7 @@ class PatternTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 
@@ -859,7 +860,7 @@ class SubgraphTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 

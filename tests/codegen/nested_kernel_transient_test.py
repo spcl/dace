@@ -15,7 +15,9 @@ def _test_kernel_transient(persistent: bool):
     sdfg = nested.to_sdfg()
     sdfg.apply_gpu_transformations()
 
-    top_sdfg = dace.SDFG('transient')
+    # Distinct per variant: these differ only in generated code, so sharing a name would put them in
+    # one build folder and let two of them clobber each other's build when run in parallel.
+    top_sdfg = dace.SDFG('kernel_transient_persistent' if persistent else 'kernel_transient')
     top_sdfg.arg_names = ['A']
     top_sdfg.add_datadesc('A', copy.deepcopy(sdfg.arrays['A']))
     state = top_sdfg.add_state()
@@ -55,6 +57,7 @@ def _test_transient(persistent: bool):
             A[i, :] = gpu_A
 
     sdfg = transient.to_sdfg()
+    sdfg.name = 'nested_transient_persistent' if persistent else 'nested_transient'
     sdfg.apply_gpu_transformations()
 
     if persistent:
@@ -94,6 +97,7 @@ def _test_double_transient(persistent: bool):
 
     # Simplify, but do not inline
     sdfg = transient.to_sdfg(simplify=False)
+    sdfg.name = 'double_transient_persistent' if persistent else 'double_transient'
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.NestedSDFG):
             node.no_inline = True

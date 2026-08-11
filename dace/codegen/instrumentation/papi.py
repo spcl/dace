@@ -3,7 +3,7 @@
     Used for collecting CPU performance counters. """
 
 import dace
-from dace import dtypes, registry, symbolic
+from dace import dtypes, library, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.common import sym2cpp
 from dace.config import Config
@@ -12,9 +12,10 @@ from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import DataflowGraphView
+from dace.sdfg.state import DataflowGraphView, SDFGState
 
 import sympy as sp
+import ctypes.util
 import os
 import ast
 import subprocess
@@ -26,6 +27,41 @@ VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028', '0
                       '0x40000024')
 MEM_COUNTER_SET = ('PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS')
 CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
+
+
+@library.environment
+class PAPI:
+    """Build requirements of the PAPI provider.
+
+    An environment, not ``Config.append``: linking libpapi belongs to the instrumented SDFGs, not
+    the process. The old append to ``compiler.cpu.libs`` ran once per SDFG and grew without bound.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = ['papi']
+    cmake_compile_flags = []
+    cmake_link_flags = []
+
+    headers = []
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = []
+
+    @staticmethod
+    def cmake_files():
+        """The vectorization report as a CMake fragment (``papi_vectorization.cmake``), so CMake
+        picks the per-compiler flag. Evaluated per build, so toggling the setting is honoured."""
+        if not Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
+            return []
+        return ['papi_vectorization']
+
+    @staticmethod
+    def is_installed():
+        return ctypes.util.find_library('papi') is not None
 
 
 def _unified_id(node_id: int, state_id: int) -> int:
@@ -67,19 +103,13 @@ class PAPIInstrumentation(InstrumentationProvider):
             warnings.warn('Skipping missing PAPI performance counters: %s' % missing_counters)
         PAPIInstrumentation._counters &= set(counters.keys())
 
-        # Compiler arguments for vectorization output
-        if Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
-            Config.append('compiler', 'cpu', 'args', value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
-
         # If no PAPI counters are available, disable PAPI
         if len(self._counters) == 0:
             self._papi_used = False
             warnings.warn('No PAPI counters found. Disabling PAPI')
             return
 
-        # Link with libpapi
-        Config.append('compiler', 'cpu', 'libs', value=' papi ')
-
+        # Linking libpapi is declared by the PAPI environment, which the caller registers.
         self._papi_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
@@ -89,6 +119,9 @@ class PAPIInstrumentation(InstrumentationProvider):
 
             if not self._papi_used:
                 return
+
+            # Declare the build requirements against this SDFG rather than the process config.
+            codegen.dispatcher.used_environments.add(PAPI.full_class_path())
 
             # Add instrumentation includes and initialize PAPI
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
@@ -483,10 +516,12 @@ class PAPIUtils(object):
     def is_papi_used(sdfg: dace.SDFG) -> bool:
         """ Returns True if any of the SDFG elements includes PAPI counter
             instrumentation. """
+        instrumented_types = (SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.NestedSDFG, nodes.MapEntry,
+                              nodes.ConsumeEntry)
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
-            if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
+            if isinstance(node, instrumented_types) and node.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
         return False
 
