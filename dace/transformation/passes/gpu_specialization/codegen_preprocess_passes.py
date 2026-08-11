@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
 members so codegen-preprocess ordering is declarative and testable."""
+import warnings
 from typing import Any, Dict, Optional
 
 from dace import SDFG, dtypes, nodes, properties
@@ -67,7 +68,7 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
         from dace.sdfg.scope import is_devicelevel_gpu
         from dace.transformation.helpers import wrap_code_node_in_unit_gpu_map
         from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-            is_already_lowered_gpu_runtime_call, is_pipeline_sync_tasklet)
+            is_already_lowered_gpu_runtime_call, is_host_callback_tasklet, is_pipeline_sync_tasklet)
         kernel_internal_schedules = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                                      dtypes.ScheduleType.GPU_Warp)
         gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
@@ -83,7 +84,10 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
                   and not is_devicelevel_gpu(state.parent, state, node)
                   # Host-side GPU runtime-call tasklets (cudaMemcpyAsync launchers, sync
                   # tasklets) legitimately touch GPU data from the host -- leave them be.
-                  and not is_already_lowered_gpu_runtime_call(node) and not is_pipeline_sync_tasklet(node)):
+                  and not is_already_lowered_gpu_runtime_call(node) and not is_pipeline_sync_tasklet(node)
+                  # A host callback invokes a host function pointer: it must stay on the host, and is
+                  # ordered against the streams by ``SynchronizeStreamUnawareGPUCallbacks`` instead.
+                  and not is_host_callback_tasklet(node)):
                 touches_gpu_data = any(not e.data.is_empty() and state.parent.arrays[e.data.data].storage in gpu_storage
                                        for e in state.all_edges(node))
                 if touches_gpu_data:
@@ -133,6 +137,72 @@ class NormalizeHostLevelGPUSchedulesEarly(NormalizeHostLevelGPUSchedules):
 
     A subclass only because ``Pipeline`` rejects two passes of the same type.
     """
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
+    """Fence host callbacks that touch GPU memory without being stream-aware.
+
+    Such a callback enqueues its own device work (a cupy kernel, say) on a stream this SDFG knows
+    nothing about, so the asynchronous copies the pipeline emits around it on ``gpu_streams`` are
+    unordered with respect to it. The legacy CUDA codegen forces the callback's whole component onto
+    the null stream; the experimental stream pipeline has no per-node null-stream slot, so a device-
+    wide synchronization tasklet is inserted between the callback and its successors instead, which
+    orders the callback against every stream.
+
+    A callback that names ``__dace_current_stream`` orders itself and is left alone.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
+        from dace.codegen import common
+        from dace.sdfg.scope import is_devicelevel_gpu
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (DEVICE_SYNC_TASKLET_LABEL,
+                                                                                       STREAM_CONNECTOR,
+                                                                                       dependency_edge,
+                                                                                       is_host_callback_tasklet)
+        gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
+
+        targets = []
+        for cursdfg in sdfg.all_sdfgs_recursive():
+            for state in cursdfg.states():
+                for node in state.nodes():
+                    if not is_host_callback_tasklet(node) or is_devicelevel_gpu(cursdfg, state, node):
+                        continue
+                    if STREAM_CONNECTOR in node.code.as_string:
+                        continue
+                    if not any(not e.data.is_empty() and cursdfg.arrays[e.data.data].storage in gpu_storage
+                               for e in state.all_edges(node)):
+                        continue
+                    # Re-application must not stack a second fence (or repeat the warning).
+                    if any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node)):
+                        continue
+                    targets.append((state, node))
+
+        backend = common.get_gpu_backend()
+        for state, node in targets:
+            warnings.warn(
+                f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so a full device '
+                'synchronization is emitted after it. Add a "dace.current_stream" argument to the callback '
+                'and use it (e.g. cupy ExternalStream) to keep the work asynchronous.', UserWarning)
+            sync = state.add_tasklet(name=DEVICE_SYNC_TASKLET_LABEL,
+                                     inputs=set(),
+                                     outputs=set(),
+                                     code=f'DACE_GPU_CHECK({backend}DeviceSynchronize());',
+                                     language=dtypes.Language.CPP,
+                                     side_effects=True)
+            # Every new edge gets its own Memlet: never hand two live edges the same object.
+            for succ in list(state.successors(node)):
+                state.add_edge(sync, None, succ, None, dependency_edge())
+            state.add_edge(node, None, sync, None, dependency_edge())
+
+        return bool(targets) or None
 
 
 @properties.make_properties

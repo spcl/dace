@@ -157,7 +157,9 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
     return STREAM_CONNECTOR in node.code.as_string
 
 
-SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization")
+DEVICE_SYNC_TASKLET_LABEL = "gpu_callback_device_synchronization"
+
+SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization", DEVICE_SYNC_TASKLET_LABEL)
 
 
 def is_pipeline_sync_tasklet(node) -> bool:
@@ -165,6 +167,16 @@ def is_pipeline_sync_tasklet(node) -> bool:
     label). Excluded from consumer re-detection despite its ``gpuStream_t`` connector.
     """
     return isinstance(node, nodes.Tasklet) and node.label in SYNC_TASKLET_LABELS
+
+
+def is_host_callback_tasklet(node) -> bool:
+    """True for a Tasklet that calls back into host code, i.e. a ``dace.callback`` invocation.
+
+    ``side_effects`` is set explicitly only by the frontend's callback lowering and by the stream
+    pipeline's own sync tasklets; the latter carry a canonical label and are excluded here. A
+    callback dereferences a host function pointer and can therefore never run on the device.
+    """
+    return isinstance(node, nodes.Tasklet) and node.side_effects is True and not is_pipeline_sync_tasklet(node)
 
 
 def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:

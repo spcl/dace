@@ -55,7 +55,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # twice.
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
             AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules, NormalizeHostLevelGPUSchedulesEarly,
-            ReinferConnectorTypes)
+            ReinferConnectorTypes, SynchronizeStreamUnawareGPUCallbacks)
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
@@ -72,6 +72,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * ``DemoteKernelInternalArraysToScalars`` after structure is final and before
         #     ``ReinferConnectorTypes``: it scalarizes length-1 arrays and resets connectors, which
         #     re-inference then re-derives as scalar references.
+        #   * ``SynchronizeStreamUnawareGPUCallbacks`` after wiring: it fences host callbacks the
+        #     stream scheduler cannot order, and its sync tasklet takes no stream connector.
         #   * ``ReinferConnectorTypes`` last: earlier passes mutate NestedSDFG-connector descriptors,
         #     so connector types must be re-derived for correct codegen signatures.
         # Scheduling writes ``Node.gpu_stream_id``; wiring reads it and lays down the
@@ -93,6 +95,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             NormalizeHostLevelGPUSchedules(),
             strategy,
             GPUStreamWiring(strategy),
+            SynchronizeStreamUnawareGPUCallbacks(),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
             DemoteKernelInternalArraysToScalars(),
