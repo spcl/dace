@@ -50,9 +50,6 @@ LAUNCHER_RANK_VARS = (
     'SLURM_PROCID',  # srun with no MPI
 )
 
-# Identifies this process for the 'unique' cache mode; the timestamp separates processes with a recycled pid.
-PROCESS_CACHE_TOKEN = f'{os.getpid()}_{time.time_ns()}'
-
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport

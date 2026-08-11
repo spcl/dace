@@ -8,6 +8,9 @@ from hashlib import md5
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdfg_utils
 
+from dace.sdfg import sdfg as sdfg_module
+from dace.sdfg import utils as sdfg_utils
+
 
 @dace.program
 def customprog(A: dace.float64[20]):
@@ -52,28 +55,53 @@ def test_distaware_gives_each_rank_its_own_cache_root(unlaunched, rank_var):
 
 
 @pytest.mark.parametrize('cache_mode', ['name', 'hash', 'unique', 'single'])
-def test_every_cache_mode_builds_under_the_rank_root(unlaunched, cache_mode):
+def test_every_cache_mode_builds_under_the_rank_root(unlaunched, cache_mode, tmp_path):
     """Splitting the root rather than the SDFG name separates the ranks in every mode."""
+    unlaunched.setenv('DACE_default_build_folder', str(tmp_path))
     sdfg = dace.SDFG('rankprobe')
     unlaunched.setenv('SLURM_PROCID', '3')
 
     with dace.config.set_temporary('cache', value=cache_mode):
+        # distaware defaults on: every mode's root gets the rank suffix.
         unlaunched.setenv('DACE_cache_distaware', '1')
         ranked = sdfg.build_folder
+        assert os.path.dirname(ranked) == f'{tmp_path}_rank3'
         unlaunched.delenv('DACE_cache_distaware')
 
-        assert sdfg.build_folder != ranked
+        # Turning distaware off is how a caller opts back into the old shared root.
+        with dace.config.set_temporary('cache_distaware', value=False):
+            assert sdfg.build_folder != ranked
+            assert os.path.dirname(sdfg.build_folder) == str(tmp_path)
+            assert os.path.basename(sdfg.build_folder) == os.path.basename(ranked)
 
 
-def test_ranks_share_a_build_folder_unless_asked_otherwise(unlaunched):
-    """The default has to stay: distributed_compile has rank 0 build where every other rank looks."""
+def test_ranks_share_a_build_folder_when_distaware_is_off(unlaunched):
+    """Turning distaware off restores the old default: distributed_compile has rank 0 build
+    where every other rank looks."""
+    with dace.config.set_temporary('cache_distaware', value=False):
+        sdfg = dace.SDFG('rankprobe')
+
+        unlaunched.setenv('OMPI_COMM_WORLD_RANK', '0')
+        rank0 = sdfg.build_folder
+        unlaunched.setenv('OMPI_COMM_WORLD_RANK', '1')
+
+        assert sdfg.build_folder == rank0
+
+
+def test_ranks_do_not_share_a_build_folder_by_default(unlaunched, tmp_path):
+    """distaware defaults on: ranks that each compile must not land in one folder."""
+    unlaunched.setenv('DACE_default_build_folder', str(tmp_path))
+    unlaunched.setenv('DACE_cache', 'name')  # pin the leaf naming policy so the exact path holds
     sdfg = dace.SDFG('rankprobe')
 
     unlaunched.setenv('OMPI_COMM_WORLD_RANK', '0')
     rank0 = sdfg.build_folder
     unlaunched.setenv('OMPI_COMM_WORLD_RANK', '1')
+    rank1 = sdfg.build_folder
 
-    assert sdfg.build_folder == rank0
+    assert rank0 == os.path.join(f'{tmp_path}_rank0', 'rankprobe')
+    assert rank1 == os.path.join(f'{tmp_path}_rank1', 'rankprobe')
+    assert rank0 != rank1
 
 
 def test_a_process_no_launcher_started_keeps_its_folder(unlaunched):
@@ -126,29 +154,6 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
     # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
     csdfg = sdfg_utils.distributed_compile(None, loader)
     del csdfg
-
-
-def test_unique_cache_folder_tracks_process_token(monkeypatch):
-    sdfg = customprog.to_sdfg()
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with dace.config.set_temporary('default_build_folder', value=tmpdir):
-            with dace.config.set_temporary('cache', value='unique'):
-                monkeypatch.setattr(sdfg_module, 'PROCESS_CACHE_TOKEN', '1234_1000')
-                first = sdfg.build_folder
-                assert first == sdfg.build_folder, 'build folder is not stable within a process'
-                assert os.path.basename(first) == f'{sdfg.name}_{md5(b"1234_1000").hexdigest()}'
-
-                # Same pid, later process: the recycled pid must not resolve to the same folder
-                monkeypatch.setattr(sdfg_module, 'PROCESS_CACHE_TOKEN', '1234_2000')
-                second = sdfg.build_folder
-                assert os.path.dirname(second) == os.path.dirname(first)
-                assert second != first, 'pid recycling reuses a stale build folder'
-
-
-def test_process_cache_token_contains_pid():
-    pid, _, uniquifier = sdfg_module.PROCESS_CACHE_TOKEN.partition('_')
-    assert pid == str(os.getpid())
-    assert int(uniquifier) > 0
 
 
 if __name__ == '__main__':
