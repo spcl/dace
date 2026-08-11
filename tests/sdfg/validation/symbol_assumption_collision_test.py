@@ -91,6 +91,29 @@ def test_declared_assumptions_go_to_the_registry():
     assert dict(dace.SDFG.from_json(j).symbol_assumptions) == {}  # legacy file
 
 
+def test_map_range_stores_the_bare_spelling():
+    """A pass minting an assumed symbol into a map range must not split the name.
+
+    ``add_datadesc`` absorbs the assumptions off a fresh transient, so a range that kept them
+    would be the second spelling -- which is how the distribution passes broke the samples.
+    """
+    P = dace.symbolic.symbol('P', dace.int32, positive=True)
+    assert P != dace.symbolic.symbol('P', dace.int32), 'precondition: the two spellings differ'
+
+    sdfg = dace.SDFG('map_range_intake')
+    sdfg.add_array('A', [20], dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    entry, _ = state.add_map('m', {'i': '0:20'})
+    entry.map.range = subsets.Range([(0, 20 // P - 1, 1)])
+    sdfg.add_transient('t', [20 // P], dace.float64)
+
+    stored = symbol_assumption_spellings(sdfg)['P']
+    assert len(stored) == 1, stored
+    assert all(('positive', True) not in key for key in stored), stored
+    assert symbol_assumption_collisions(sdfg) == {}
+    check_symbol_assumption_collisions(sdfg)  # must not raise
+
+
 def test_update_symbol_assumptions_is_strict():
     """The registry is the only mutation path, and it only refines."""
     sdfg = dace.SDFG('registry')
@@ -179,6 +202,7 @@ if __name__ == '__main__':
     test_explicit_none_assumption_splits_the_symbol()
     test_frontend_mints_the_canonical_spelling()
     test_declared_assumptions_go_to_the_registry()
+    test_map_range_stores_the_bare_spelling()
     test_update_symbol_assumptions_is_strict()
     test_one_spelling_passes()
     test_two_spellings_raise()

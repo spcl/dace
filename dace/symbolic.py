@@ -554,6 +554,44 @@ class SymExpr(object):
         return self > pystr_to_symbolic(other)
 
 
+@lru_cache(maxsize=2048, typed=True)
+def _bare_spelling(sym: symbol) -> Optional[symbol]:
+    """The bare same-named symbol, or ``None`` when ``sym`` is already bare.
+
+    :param sym: A :class:`symbol`; :class:`UndefinedSymbol` must be filtered out by the caller,
+                its equality is symbolic and would poison the cache.
+    :return: The bare spelling, or ``None``.
+    :rtype: Optional[symbol]
+    """
+    bare = symbol(sym.name, sym.dtype)
+    return None if bare.assumptions0 == sym.assumptions0 else bare
+
+
+def bare_symbols(expr):
+    """``expr`` with every assumed symbol swapped for the bare same-named one.
+
+    Symbol identity is the name: assumptions belong in ``SDFG.symbol_assumptions``, never in an
+    object stored in a graph, where a second spelling of the same name stops index arithmetic from
+    cancelling. Plain SymPy symbols and :class:`UndefinedSymbol` are left alone.
+
+    :param expr: A symbolic expression, or any value, which is returned unchanged.
+    :return: ``expr`` spelled bare.
+    :rtype: Any
+    """
+    if isinstance(expr, SymExpr):
+        return SymExpr(bare_symbols(expr.expr), bare_symbols(expr.approx))
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    replacements = {}
+    for sym in expr.free_symbols:
+        if type(sym) is not symbol:
+            continue
+        bare = _bare_spelling(sym)
+        if bare is not None:
+            replacements[sym] = bare
+    return expr.xreplace(replacements) if replacements else expr
+
+
 def _sympy_constant_value(value):
     if isinstance(value, TypedConstant):
         return value.value

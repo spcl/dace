@@ -776,6 +776,10 @@ class RangeProperty(Property):
     def __set__(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
+        if value is not None:
+            # A map range is graph state, so it is stored bare: a caller minting
+            # `dace.symbol('N', positive=True)` into it must not split the name.
+            value = dace.subsets.bare_range(value)
         super(RangeProperty, self).__set__(obj, value)
 
     @property

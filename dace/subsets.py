@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -304,6 +305,24 @@ def tuple_to_symexpr(val):
     string, an already-symbolic value -- goes through ``pystr_to_symbolic``.
     """
     return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
+
+
+def bare_range(rng: 'Range') -> 'Range':
+    """``rng`` with every bound spelled bare, or ``rng`` itself when it already is.
+
+    :param rng: The range to normalize; it is never mutated.
+    :return: A range free of assumed symbols. Assumptions belong in ``SDFG.symbol_assumptions``,
+             not in an object stored in a graph, where a second spelling of one name stops index
+             arithmetic from cancelling.
+    :rtype: Range
+    """
+    bared = [tuple(symbolic.bare_symbols(bound) for bound in r) for r in rng.ranges]
+    if all(new is old for new_r, old_r in zip(bared, rng.ranges) for new, old in zip(new_r, old_r)):
+        return rng
+    out = copy.copy(rng)
+    out.ranges = bared
+    out.tile_sizes = [symbolic.bare_symbols(tile) for tile in rng.tile_sizes]
+    return out
 
 
 def symbolic_range_tuple(value):
