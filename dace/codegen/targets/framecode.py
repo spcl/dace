@@ -300,6 +300,15 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
             if target.has_initializer:
                 callsite_stream.write(
                     '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
+        # A failed target initializer leaves its part of the state struct unset, and everything below
+        # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
+        # __dace_init_cuda never constructs when it bails out on a missing device. Leave here first.
+        callsite_stream.write(f"""
+    if (__result) {{
+        delete __state;
+        return nullptr;
+    }}
+""", sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
