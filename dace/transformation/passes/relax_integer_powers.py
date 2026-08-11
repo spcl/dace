@@ -13,6 +13,7 @@ ranges (``K - i - 1`` with ``for i in range(K)``.
 """
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
+import numpy
 from ordered_set import OrderedSet
 
 from dace import SDFG, data, subsets, symbolic, symbolic_engine
@@ -104,23 +105,22 @@ def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbo
 
 
 def _symbol_facts(sdfg: SDFG) -> _Facts:
-    """Sign / integrality facts per symbol name, read off the symbol objects in ``sdfg``'s array
-    descriptors (recursively -- a size symbol may appear only in a nested SDFG's shapes), since
-    ``sdfg.free_symbols`` yields bare names."""
-    syms = OrderedSet()
-    for g in sdfg.all_sdfgs_recursive():
-        for desc in g.arrays.values():
-            if isinstance(desc, data.Array):
-                syms |= desc.free_symbols
+    """Sign / integrality facts per symbol name, from each SDFG's declared symbol dtypes and its
+    ``symbol_assumptions`` registry (recursively -- a fact may be recorded only on a nested
+    SDFG). Stored expressions spell their symbols BARE, so the objects carry no facts."""
     facts: Dict[str, OrderedSet] = {}
-    for sym in syms:
-        declared = facts.setdefault(sym.name, OrderedSet())
-        if sym.is_integer:
-            declared.add('integer')
-        if sym.is_positive:
-            declared.add('positive')
-        elif sym.is_nonnegative:
-            declared.add('nonnegative')
+    for g in sdfg.all_sdfgs_recursive():
+        for name, dtype in g.symbols.items():
+            if numpy.issubdtype(dtype.type, numpy.integer):
+                facts.setdefault(name, OrderedSet()).add('integer')
+        for name, recorded in g.symbol_assumptions.items():
+            declared = facts.setdefault(name, OrderedSet())
+            if recorded.get('integer'):
+                declared.add('integer')
+            if recorded.get('positive'):
+                declared.add('positive')
+            elif recorded.get('nonnegative'):
+                declared.add('nonnegative')
     return {name: frozenset(declared) for name, declared in facts.items()}
 
 

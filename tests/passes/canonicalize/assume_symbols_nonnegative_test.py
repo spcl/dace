@@ -126,42 +126,44 @@ def test_second_canonicalize_keeps_the_guard_its_own_block():
     sdfg.validate()
 
 
-def _plain_map_bound_symbols(sdfg):
-    """Symbol names a map range still spells WITHOUT the nonnegativity assumption."""
+def _assumed_map_bound_symbols(sdfg):
+    """Symbol names a map range spells WITH some assumption -- the split-spelling state the
+    unconditional collision check rejects, so this must always come back empty."""
     return {
         str(s)
         for sd in sdfg.all_sdfgs_recursive()
         for st in sd.states()
         for n in st.nodes() if isinstance(n, nodes.MapEntry) for rng in n.map.range.ndrange() for bound in rng
-        if isinstance(bound, sympy.Basic) for s in bound.free_symbols if not s.is_nonnegative
+        if isinstance(bound, sympy.Basic) for s in bound.free_symbols
+        if s.assumptions0 != dace.symbolic.symbol(str(s)).assumptions0
     }
 
 
-def test_map_bounds_keep_the_assumption_across_a_second_canonicalize():
-    """The assumption lives on the symbol OBJECTS threaded through the graph, and a stage that
-    rebuilds a map bound by PARSING mints a plain one. The terminal pass therefore has to decide
-    "already assumed" over everything it rewrites, not over the descriptors alone: run 1 marks
-    the descriptors, so a descriptor-only look makes run 2 skip and leaves the map bounds spelled
-    ``N`` where run 1 spelled ``symbol(N, nonnegative=True)`` -- the same bound, two digests."""
+def test_map_bounds_stay_bare_and_the_registry_remembers():
+    """Stored symbols are BARE -- a second spelling of one name stops index arithmetic from
+    cancelling and validation rejects it. The nonnegativity fact therefore lives in
+    ``SDFG.symbol_assumptions``, and it must be there after every canonicalize, stably."""
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
-    assert not _plain_map_bound_symbols(sdfg)
+    assert not _assumed_map_bound_symbols(sdfg)
+    assert sdfg.symbol_assumptions.get('N', {}).get('nonnegative') is True
     canonicalize(sdfg)
-    assert not _plain_map_bound_symbols(sdfg)
+    assert not _assumed_map_bound_symbols(sdfg)
+    assert sdfg.symbol_assumptions.get('N', {}).get('nonnegative') is True
 
 
-def test_reassumes_a_map_bound_that_was_rebuilt_plain():
-    """A bound re-parsed after the pass ran is exactly what a later stage leaves behind. The pass
-    must see it and re-mark -- and report that it did, since it rewrote the graph."""
+def test_rebuilt_bound_is_already_canonical():
+    """A bound re-parsed after the pass ran mints the bare spelling -- the SAME spelling the
+    stores keep, so the pass has nothing to rewrite and must report ``None`` (the registry is
+    its convergence memory), keeping the recorded fact intact."""
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
     entries = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
     assert entries
     entries[0].map.range = subsets.Range.from_string(str(entries[0].map.range))
-    assert _plain_map_bound_symbols(sdfg) == {'N'}
-    assert set_symbol_nonnegative_assumptions(sdfg) == 1
-    assert not _plain_map_bound_symbols(sdfg)
+    assert not _assumed_map_bound_symbols(sdfg)
     assert set_symbol_nonnegative_assumptions(sdfg) is None
+    assert sdfg.symbol_assumptions.get('N', {}).get('nonnegative') is True
 
 
 def test_guard_leads_the_block_list_on_every_canonicalize():

@@ -123,14 +123,13 @@ def test_exponent_classifier_reuses_relax_proof():
 
 
 def test_set_symbol_nonnegative_assumptions():
-    """``set_symbol_nonnegative_assumptions`` marks a signed-integer free symbol nonnegative in
-    place (so a size-power proof can conclude ``>= 0``)."""
+    """``set_symbol_nonnegative_assumptions`` records a signed-integer free symbol nonnegative in
+    the SDFG registry (so a size-power proof can conclude ``>= 0``); stored symbols stay bare."""
     sdfg = symbolic_power.to_sdfg(simplify=True)
-    before = {s.name: s.is_nonnegative for s in sdfg.arrays["A"].free_symbols}
-    assert before.get("S") is None
+    assert sdfg.symbol_assumptions.get("S", {}).get("nonnegative") is None
     set_symbol_nonnegative_assumptions(sdfg)
-    after = {s.name: s.is_nonnegative for s in sdfg.arrays["A"].free_symbols}
-    assert after.get("S") is True
+    assert sdfg.symbol_assumptions.get("S", {}).get("nonnegative") is True
+    assert all(s.is_nonnegative is None for s in sdfg.arrays["A"].free_symbols if s.name == "S")
 
 
 if __name__ == "__main__":
