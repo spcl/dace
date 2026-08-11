@@ -434,7 +434,9 @@ class InterstateEdge(object):
 def absorb_symbol_assumptions(sdfg: 'SDFG', descs: List[dt.Data]):
     """Move assumptions off the symbols stored in ``descs`` into ``sdfg``'s registry.
 
-    Symbols stored in an SDFG are BARE: identity is the name.
+    Symbols stored in an SDFG are BARE: identity is the name. :class:`~dace.symbolic.UndefinedSymbol`
+    is skipped: it is a runtime-deferred sentinel spelled "?", it holds no assumptions, and its name
+    is not a legal symbol name, so it never enters the registry.
 
     :param sdfg: The SDFG whose registry receives the facts.
     :param descs: Data descriptors to normalize, rewritten in place.
@@ -444,7 +446,7 @@ def absorb_symbol_assumptions(sdfg: 'SDFG', descs: List[dt.Data]):
     assumed = {}
     for desc in descs:
         for sym in desc.free_symbols:
-            if sym in assumed:
+            if isinstance(sym, symbolic.UndefinedSymbol) or sym in assumed:
                 continue
             bare = symbolic.symbol(sym.name, sym.dtype)
             known = bare.assumptions0
