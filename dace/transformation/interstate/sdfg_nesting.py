@@ -18,7 +18,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation, helpers
-from dace.properties import make_properties, Property
+from dace.properties import CodeBlock, make_properties, Property
 from dace import data
 
 
@@ -972,6 +972,51 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod
+    def _non_dataflow_reads(nsdfg: SDFG) -> Iterable[Memlet]:
+        """
+        Every read an SDFG performs outside of dataflow: on its interstate
+        edges, and in the conditions and loop statements of its control flow
+        regions.
+
+        The two carry the same reads in different places depending on how the
+        SDFG was built. ``if select[i, j]`` becomes an interstate edge condition
+        when control flow is expressed with edges, and a
+        :class:`~dace.sdfg.state.ConditionalBlock` branch condition when it is
+        expressed with regions -- so looking only at interstate edges misses the
+        read entirely for the latter, and the access is not refined.
+
+        :param nsdfg: The nested SDFG to scan.
+        :return: The memlets read, in no particular order.
+        """
+        from dace.sdfg.sdfg import memlets_in_ast
+
+        for edge in nsdfg.all_interstate_edges():
+            yield from edge.data.get_read_memlets(nsdfg.arrays)
+
+        for code_block in RefineNestedAccess._region_code_blocks(nsdfg):
+            for node in code_block.code:
+                yield from memlets_in_ast(node, nsdfg.arrays)
+
+    @staticmethod
+    def _region_code_blocks(nsdfg: SDFG) -> Iterable[CodeBlock]:
+        """
+        The code a control flow region evaluates outside of dataflow: a
+        conditional's branch conditions, and a loop's condition, initializer and
+        update. Anything found here is refined alongside interstate edges.
+
+        :param nsdfg: The nested SDFG to scan.
+        :return: The code blocks, in no particular order.
+        """
+        from dace.sdfg.state import ConditionalBlock
+
+        for block in nsdfg.all_control_flow_blocks():
+            if isinstance(block, ConditionalBlock):
+                yield from (condition for condition, _ in block.branches if condition is not None)
+            elif isinstance(block, LoopRegion):
+                yield from (code for code in (block.loop_condition, block.init_statement, block.update_statement)
+                            if code is not None)
+
+    @staticmethod
     def _candidates(
             state: SDFGState,
             nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
@@ -1024,21 +1069,24 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # Check read memlets in interstate edges for candidates
-        for e in nsdfg.sdfg.all_interstate_edges():
-            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
-                # If more than one unique element detected, remove from candidates
-                if m.data in in_candidates:
-                    memlet, ns, indices = in_candidates[m.data]
-                    # Try to find dimensions in which there is a mismatch and remove them from list
-                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
-                        if s1 != s2 and i in indices:
-                            indices.remove(i)
-                    if len(indices) == 0:
-                        ignore.add(m.data)
-                    in_candidates[m.data] = (memlet, ns, indices)
-                    continue
-                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
+        # Check read memlets outside of dataflow for candidates: interstate
+        # edges, and the conditions of control flow regions. A frontend that
+        # emits explicit control flow puts 'if select[i, j]' on a
+        # ConditionalBlock rather than an interstate edge, and the read is just
+        # as real either way.
+        for m in RefineNestedAccess._non_dataflow_reads(nsdfg.sdfg):
+            # If more than one unique element detected, remove from candidates
+            if m.data in in_candidates:
+                memlet, ns, indices = in_candidates[m.data]
+                # Try to find dimensions in which there is a mismatch and remove them from list
+                for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
+                    if s1 != s2 and i in indices:
+                        indices.remove(i)
+                if len(indices) == 0:
+                    ignore.add(m.data)
+                in_candidates[m.data] = (memlet, ns, indices)
+                continue
+            in_candidates[m.data] = (m, None, set(range(len(m.subset))))
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
@@ -1153,6 +1201,15 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                             isedge.data.condition.code[i] = refiner.visit(stmt)
                     else:
                         raise NotImplementedError
+                # Refine accesses in control flow region conditions and loop
+                # statements. These read the container exactly as an interstate
+                # edge condition does, so leaving them alone would narrow the
+                # outer memlet while the inner code kept the old indices.
+                for code_block in RefineNestedAccess._region_code_blocks(nsdfg):
+                    if code_block.language is not dtypes.Language.Python:
+                        raise NotImplementedError
+                    for i, stmt in enumerate(code_block.code):
+                        code_block.code[i] = refiner.visit(stmt)
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges
