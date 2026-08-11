@@ -2029,3 +2029,39 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     aa = aa0.copy()
     sdfg(aa=aa, bb=bb, L=n)
     assert np.allclose(aa, expected), 'second canonicalize diverged from the sequential oracle'
+
+
+def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
+    """TSVC s322 ``a[i] = a[i] + a[i-1]*b[i] + a[i-2]*c[i]``: a TWO-step recurrence.
+
+    The multi-offset guard counts the carrier's distinct read subsets, but a folded unit copy
+    names the DESTINATION in ``Memlet.data`` and parks the carrier's index in ``other_subset``.
+    Reading ``subset`` reports the destination's scalar slot ``0`` for all three of ``a[i]``,
+    ``a[i-1]`` and ``a[i-2]``, so the guard sees ONE distinct read and blesses a one-step
+    recurrence that does not exist -- the scan lift then drops the ``a[i-2]`` term (max|diff|
+    3.1 on the corpus gate). Companion refusal to
+    :func:`test_scan_survives_two_sided_carry_copy_memlet`, which pins that a GENUINE one-step
+    carry in the same two-sided form still lifts.
+    """
+
+    @dace.program
+    def second_order(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(2, N):
+            a[i] = a[i] + a[i - 1] * b[i] + a[i - 2] * c[i]
+
+    sdfg = second_order.to_sdfg(simplify=True)
+    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_scan_nodes(sdfg) == 0, 'a two-step recurrence is not a scan, whichever side the memlet names'
+
+    rng = np.random.default_rng(0)
+    n = 64
+    a0, b, c = rng.random(n), rng.random(n), rng.random(n)
+    expected = a0.copy()
+    for i in range(2, n):
+        expected[i] = expected[i] + expected[i - 1] * b[i] + expected[i - 2] * c[i]
+    a = a0.copy()
+    sdfg(a=a, b=b, c=c, N=n)
+    assert np.allclose(a, expected), f'second-order recurrence diverged: max diff {np.abs(a - expected).max():.2e}'

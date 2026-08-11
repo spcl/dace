@@ -850,15 +850,28 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     infos_per_array: Dict[str, int] = {}
     for s in matched:
         infos_per_array[s.out_name] = infos_per_array.get(s.out_name, 0) + 1
+    # The subset counted must be the one on the CARRIER's side of the edge. An AccessNode ->
+    # AccessNode copy names the DESTINATION in ``data`` and parks the carrier's own range in
+    # ``other_subset``, so reading ``.subset`` blindly reports the destination's scalar slot
+    # ``0`` for every read and collapses ``a[i]``, ``a[i-1]`` and ``a[i-2]`` into ONE distinct
+    # subset -- the guard then "proves" a one-step recurrence that is not there and TSVC s322
+    # (``a[i] = a[i] + a[i-1]*b[i] + a[i-2]*c[i]``) is lifted to a scan, off by max|diff| 3.1.
+    # Only reachable on a SECOND canonicalize: the first run reads the carrier through
+    # ``_assign_*`` tasklets, whose memlets are already written from the carrier's side, and the
+    # AccessNode -> AccessNode form the later cleanup leaves behind is what flips the side.
     carrier_reads: Dict[str, set] = {name: set() for name in carrier_set}
     for st in loop.all_states():
         for n in st.data_nodes():
             if n.data not in carrier_set:
                 continue
             for e in st.out_edges(n):
-                if e.data is None or e.data.subset is None:
+                if e.data is None or e.data.is_empty():
                     continue
-                carrier_reads[n.data].add(str(e.data.subset))
+                sub = e.data.get_src_subset(e, st)
+                # No carrier-side range spelled out means the whole array is read; say so rather
+                # than skipping the edge, which would under-count the distinct reads.
+                carrier_reads[n.data].add(
+                    str(sub) if sub is not None else str(subsets.Range.from_array(st.sdfg.arrays[n.data])))
     for name, subs in carrier_reads.items():
         allowed = infos_per_array.get(name, 1) if allow_multi_slot else 1
         if len(subs) > allowed:
