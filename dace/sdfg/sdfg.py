@@ -36,11 +36,40 @@ from typing import BinaryIO
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
+#: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
+#: which is optional and initializes MPI. All are job-unique; node-local counters are not.
+LAUNCHER_RANK_VARS = (
+    'OMPI_COMM_WORLD_RANK',  # Open MPI and the vendor MPIs built on it
+    'MV2_COMM_WORLD_RANK',  # MVAPICH2
+    'PMIX_RANK',  # Open MPI 4+, Slurm pmix
+    'PMI_RANK',  # MPICH, Intel MPI, Cray MPICH
+    'PMI_ID',  # older MPICH
+    'FLUX_TASK_RANK',  # Flux
+    'PALS_RANKID',  # HPE/Cray PALS
+    'ALPS_APP_PE',  # Cray ALPS
+    'SLURM_PROCID',  # srun with no MPI
+)
+
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
+
+
+def build_folder_root() -> str:
+    """The build cache root, one per rank if ``cache_distaware`` is on and a launcher set a rank.
+
+    Ranks that each compile otherwise share a folder and can load each other's half-written library.
+    """
+    base = Config.get('default_build_folder')
+    if not Config.get_bool('cache_distaware'):
+        return base
+    for var in LAUNCHER_RANK_VARS:
+        rank = os.environ.get(var)
+        if rank:
+            return f'{base}_rank{rank}'
+    return base
 
 
 class NestedDict(dict):
@@ -1227,7 +1256,7 @@ class SDFG(ControlFlowRegion):
         if self._build_folder is not None:
             return self._build_folder
         cache_config = Config.get('cache')
-        base_folder = Config.get('default_build_folder')
+        base_folder = build_folder_root()
         if cache_config == 'single':
             # Always use the same directory, overwriting any other program,
             # preventing parallelism and caching of multiple programs, but
