@@ -10,10 +10,6 @@ import numpy as np
 import pytest
 from typing import List, Tuple
 
-skip_pyobject_return_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind returns arrays only (pyobject returns unsupported by design)')
-
 
 @dataclass
 class SomeClass:
@@ -105,7 +101,7 @@ def test_function_that_needs_replacement():
                 notworking(A)
 
 
-@pytest.mark.parametrize('typed_callbacks', (pytest.param(False, marks=skip_pyobject_return_on_nanobind), True))
+@pytest.mark.parametrize('typed_callbacks', (False, True))
 def test_nested_autoparse(typed_callbacks):
 
     def notworking_nested(a):

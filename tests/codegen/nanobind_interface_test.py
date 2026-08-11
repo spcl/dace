@@ -729,28 +729,162 @@ def test_nanobind_interface_get_exported_function(nanobind_interface):
     assert csdfg.get_exported_function('definitely_not_a_symbol') is None
 
 
-def test_nanobind_interface_pyobject_rejected():
-    """pyobject returns are dropped (arrays only); pyobject ARRAY arguments are
-    not supported (only scalars are).
+def test_nanobind_interface_pyobject_array_and_return_binding():
+    """pyobject ARRAY arguments and pyobject RETURNS both bind through the
+    array-interface dict, not through nb::ndarray.
 
-    Both are rejected at codegen (the generator must refuse instead of emitting
-    C++ that does not compile), with distinct messages.
+    DLPack refuses object arrays outright ("DLPack only supports signed/unsigned
+    integers, float and complex dtypes"), exactly as it refuses the ml_dtypes-backed
+    low-precision types, so both take the same __array_interface__ route: read the
+    dict, check the typestr kind letter, cast the raw pointer. A pyobject return is
+    additionally decayed to the single contained object on the way out, which is what
+    the ctypes interface does (``_return_arrays[i].item()`` whenever the return is a
+    pyobject).
     """
-    import pytest
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    # pyobject return value: dropped, arrays-only message.
-    ret_sdfg = dace.SDFG('pyobject_return_reject_probe')
-    ret_sdfg.add_array('__return', [1], dtypes.pyobject())
-    with pytest.raises(NotImplementedError, match='arrays only'):
-        generate_bindings_code(ret_sdfg)
-
-    # pyobject array argument: only scalars pass through.
-    arg_sdfg = dace.SDFG('pyobject_arr_reject_probe')
+    # Array argument: nb::object parameter, pointer from the interface dict.
+    arg_sdfg = dace.SDFG('pyobject_arr_bind_probe')
     arg_sdfg.add_array('objs', [4], dtypes.pyobject())
-    with pytest.raises(NotImplementedError, match='scalar'):
-        generate_bindings_code(arg_sdfg)
+    code = generate_bindings_code(arg_sdfg)
+    assert 'nb::object objs' in code
+    assert '__array_interface__' in code
+    assert "objs__ts[1] != 'O'" in code  # object arrays are typestr '|O' - no size suffix
+    assert 'reinterpret_cast<pyobject *>(objs__ptr)' in code
+
+    # Return value: allocated as a numpy object array, decayed via .item().
+    ret_sdfg = dace.SDFG('pyobject_return_bind_probe')
+    ret_sdfg.add_array('__return', [1], dtypes.pyobject())
+    code = generate_bindings_code(ret_sdfg)
+    assert '__mod.attr("dtype")("object")' in code
+    assert 'return __return__obj.attr("item")();' in code
+
+
+def test_nanobind_interface_pyobject_array_arg_e2e(nanobind_interface):
+    """E2E: every element of an object array reaches a callback as the very same
+    Python object. The caller's array owns the references and the nb::object
+    parameter keeps it alive across the call, so the slots stay valid while the
+    program dereferences them - the same lifetime contract as ctypes, which also
+    hands out pointers into the caller's buffer."""
+    from dace import dtypes
+
+    sdfg = dace.SDFG('pyobject_array_passthrough')
+    sdfg.add_array('objs', [3], dtypes.pyobject())
+    sdfg.add_array('A', [3], dace.float64)
+    sdfg.add_symbol('consume', dace.callback(None, dtypes.pyobject()))
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:3'))
+    t = state.add_tasklet('t', {'o_in'}, {'a_out'}, 'consume(o_in)\na_out = 1.0')
+    state.add_memlet_path(state.add_read('objs'), me, t, dst_conn='o_in', memlet=dace.Memlet('objs[i]'))
+    state.add_memlet_path(t, mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[i]'))
+
+    csdfg = sdfg.compile()
+
+    class Payload:
+
+        def __init__(self, tag):
+            self.tag = tag
+
+    payloads = [Payload(0), Payload(1), Payload(2)]
+    objs = np.empty(3, dtype=object)
+    objs[:] = payloads
+    seen = []
+    a = np.zeros(3)
+    csdfg(objs=objs, A=a, consume=lambda x: seen.append(x))
+
+    assert len(seen) == 3
+    assert sorted(o.tag for o in seen) == [0, 1, 2]
+    assert all(s is p for s, p in zip(sorted(seen, key=lambda o: o.tag), payloads))  # identity, not copies
+    assert np.allclose(a, 1.0)
+
+
+def test_nanobind_interface_pyobject_return_e2e(nanobind_interface):
+    """E2E: a pyobject return comes back as the object itself, not as a 1-element
+    object array. Asserted against the ctypes interface in the same test, since
+    the decay-to-single-object convention is what is being matched."""
+    from dace import dtypes
+
+    def build_and_run(interface):
+        with set_temporary('compiler', 'interface', value=interface):
+            sdfg = dace.SDFG(f'pyobj_ret_parity_{interface}')
+            sdfg.add_array('A', [4], dace.float64)
+            sdfg.arrays['A'].optional = False
+            sdfg.add_array('__return', [1], dtypes.pyobject())
+            sdfg.add_symbol('produce', dace.callback(dtypes.pyobject()))
+            sdfg.arg_names = ['A']
+            st = sdfg.add_state()
+            t = st.add_tasklet('t', {}, {'o'}, 'o = produce()')
+            st.add_edge(t, 'o', st.add_write('__return'), None, dace.Memlet('__return[0]'))
+            csdfg = sdfg.compile()
+            payload = {'tag': 'the-object'}
+            return csdfg(A=np.zeros(4), produce=lambda: payload), payload
+
+    nb_result, nb_payload = build_and_run('nanobind')
+    assert nb_result is nb_payload  # the object itself, and the very same one
+
+    ct_result, ct_payload = build_and_run('ctypes')
+    assert ct_result is ct_payload
+    assert type(nb_result) is type(ct_result)
+
+
+def test_nanobind_interface_lowp_return_binding():
+    """A bfloat16/float8 RETURN allocates through ml_dtypes and takes its pointer
+    from the array-interface dict.
+
+    numpy cannot resolve the dtype NAME without ml_dtypes imported (np.dtype('bfloat16')
+    raises TypeError), and nb::ndarray cannot ingest the result, so the allocation
+    imports ml_dtypes and the extraction skips the nb::cast. The storage is NOT
+    special-cased: the dtype goes to CuPy for a GPU return exactly as the ctypes
+    allocator hands it over, and CuPy succeeds or raises on its own.
+    """
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('lowp_return_bind_probe')
+    sdfg.add_array('A', [8], dace.bfloat16)
+    sdfg.add_array('__return', [8], dace.bfloat16)
+    sdfg.arrays['__return'].optional = False
+    code = generate_bindings_code(sdfg)
+    assert 'nb::module_::import_("ml_dtypes")' in code
+    assert '__mod.attr("dtype")("bfloat16")' in code
+    assert '__return__ai' in code and '__array_interface__' in code
+    assert 'reinterpret_cast<dace::bfloat16 *>(__return__ptr)' in code
+    assert 'nb::cast<nb::ndarray<' not in code.split('__return__obj')[1][:400]  # no DLPack view
+
+    # GPU storage takes the CUDA flavour of the protocol and allocates via CuPy.
+    gpu_sdfg = dace.SDFG('lowp_return_gpu_bind_probe')
+    gpu_sdfg.add_array('__return', [8], dace.bfloat16, storage=dace.StorageType.GPU_Global)
+    gpu_sdfg.arrays['__return'].optional = False
+    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        gpu_code = generate_bindings_code(gpu_sdfg)
+    assert 'nb::module_::import_("cupy")' in gpu_code
+    assert '__cuda_array_interface__' in gpu_code
+
+
+def test_nanobind_interface_lowp_return_e2e(nanobind_interface):
+    """E2E: a bfloat16 return array is allocated in the binding and comes back as a
+    numpy array of the right dtype and values."""
+    ml_dtypes = pytest.importorskip('ml_dtypes')
+
+    sdfg = dace.SDFG('bf16_return_e2e')
+    sdfg.add_array('A', [8], dace.bfloat16)
+    sdfg.add_array('__return', [8], dace.bfloat16)
+    sdfg.arrays['A'].optional = False
+    sdfg.arrays['__return'].optional = False
+    sdfg.arg_names = ['A']
+    st = sdfg.add_state()
+    st.add_mapped_tasklet('copy',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('A[i]')),
+                          'out = inp',
+                          dict(out=dace.Memlet('__return[i]')),
+                          external_edges=True)
+
+    csdfg = sdfg.compile()
+    a = np.arange(8, dtype=np.float32).astype(ml_dtypes.bfloat16)
+    result = csdfg(A=a)
+    assert result.dtype == ml_dtypes.bfloat16
+    assert np.array_equal(result.astype(np.float32), a.astype(np.float32))
 
 
 def test_nanobind_interface_pyobject_scalar_binding():

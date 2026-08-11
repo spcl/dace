@@ -316,13 +316,35 @@ def _argument_binding(arglist: Dict[str, dt.Data],
         # retain the pointer beyond the call (ctypes-interface parity, which
         # passes a borrowed ctypes.py_object the same way). Arrays of
         # pyobjects are refused.
-        if isinstance(desc.dtype, dtypes.pyobject):
-            if name.startswith('__return'):
-                raise NotImplementedError(f'Nanobind interface: pyobject return value "{name}" is not supported; '
-                                          f'the nanobind interface returns arrays only.')
+        # Returns fall through to the __return branch below, which allocates the object array
+        # and decays it to the single contained object on the way out (ctypes parity).
+        if isinstance(desc.dtype, dtypes.pyobject) and not name.startswith('__return'):
+            if isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray):
+                # An ARRAY of pyobjects, i.e. numpy dtype=object: the buffer is a flat run of
+                # PyObject* slots. nb::ndarray cannot ingest it (DLPack refuses object arrays
+                # outright), so the pointer comes from __array_interface__ exactly as for the
+                # ml_dtypes-backed low-precision arrays below. The itemsize guard is
+                # sizeof(void*); the kind letter is 'O'.
+                #
+                # Lifetime is the caller's array: it owns references to the contained objects
+                # and the nb::object parameter keeps it alive across the call, so the slots
+                # stay valid while the program dereferences them. This is what the ctypes
+                # marshaller does too - it hands out pointers into the same buffer.
+                setup_stmts.append(
+                    f'nb::object {name}__ai = {name}.attr("__array_interface__");\n'
+                    f'        const std::string {name}__ts = nb::cast<std::string>({name}__ai["typestr"]);\n'
+                    f'        if ({name}__ts.size() < 2 || {name}__ts[1] != \'O\')\n'
+                    f'            throw std::invalid_argument("SDFG argument error: argument \'{name}\': expected '
+                    f'an object array (numpy dtype=object), got typestr \'" + {name}__ts + "\'.");\n'
+                    f'        const std::uintptr_t {name}__ptr = '
+                    f'nb::cast<std::uintptr_t>(nb::tuple({name}__ai["data"])[0]);')
+                params_by_name[name] = f'nb::object {name}'
+                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
+                nb_args_by_name[name] = f'nb::arg("{name}")'
+                continue
             if not isinstance(desc, dt.Scalar):
                 raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is only supported '
-                                          f'as a scalar, not as a {type(desc).__name__}; '
+                                          f'as a scalar or a plain array, not as a {type(desc).__name__}; '
                                           f'use the ctypes interface (compiler.interface=ctypes).')
             params_by_name[name] = f'nb::object {name}'
             call_args.append(f'reinterpret_cast<{desc.dtype.ctype}>({name}.ptr())')
@@ -359,15 +381,17 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                 raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                           f'{type(desc).__name__}[{desc.dtype}] is not supported; '
                                           f'returns are plain arrays only.')
-            if desc.dtype.base_type in _LOWP_TYPES:
-                raise NotImplementedError(f'Nanobind interface: return value "{name}" of low-precision type '
-                                          f'{desc.dtype} is not supported.')
             if any(str(o) != '0' for o in desc.offset):
                 raise NotImplementedError(f'Nanobind interface: return value "{name}" has a non-zero offset; '
                                           f'in-binding allocation assumes offset 0.')
 
             is_struct_ret = isinstance(desc.dtype, dtypes.struct)
             is_vector_ret = isinstance(desc.dtype, dtypes.vector)
+            is_lowp_ret = desc.dtype.base_type in _LOWP_TYPES
+            is_pyobj_ret = isinstance(desc.dtype, dtypes.pyobject)
+            # Both are dtypes nb::ndarray cannot ingest (DLPack refuses ml_dtypes-backed and
+            # object arrays alike), so both take the pointer from the array-interface dict.
+            is_iface_ret = is_lowp_ret or is_pyobj_ret
             gpu = desc.storage == dtypes.StorageType.GPU_Global
             if is_struct_ret:
                 # A record dtype is rebuilt from its field descriptor list; the
@@ -385,6 +409,11 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                 nb_scalar = _ndarray_scalar_ctype(desc.dtype)
                 device = _ndarray_device(desc)
                 dtype_expr = f'__mod.attr("dtype")("{desc.dtype.base_type.as_numpy_dtype().name}")'
+            elif is_pyobj_ret:
+                # numpy dtype "object": a flat run of PyObject* slots, allocated zeroed (i.e.
+                # None-filled) exactly as the ctypes allocator does.
+                nb_scalar = device = None
+                dtype_expr = '__mod.attr("dtype")("object")'
             else:
                 nb_scalar = _ndarray_scalar_ctype(desc.dtype)
                 device = _ndarray_device(desc)
@@ -417,13 +446,24 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             # Mirrors the former Python allocation: a zeroed flat buffer
             # wrapped with the descriptor's shape and (byte) strides.
             # cupy.ndarray takes memptr/strides positionally after dtype.
+            # bfloat16/float8 are registered with NumPy by ml_dtypes; without that import the
+            # dtype NAME cannot be resolved - by NumPy, nor by CuPy, which re-exports
+            # numpy.dtype. The ctypes allocator relies on exactly the same registration, so
+            # neither interface special-cases the storage: hand the dtype to CuPy and let it
+            # succeed or raise on its own (CuPy gained experimental ml_dtypes.bfloat16 support
+            # in v15.0.0a1; float8 is not covered).
+            lowp_import = 'nb::module_::import_("ml_dtypes"); ' if is_lowp_ret else ''
+            # An object array must be allocated with numpy even for GPU storage - a pyobject
+            # return is a host-side Python object, never device memory.
+            if is_pyobj_ret:
+                gpu = False
             if gpu:
-                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("cupy");\n'
+                alloc = (f'[&]() {{ {lowp_import}nb::object __mod = nb::module_::import_("cupy");\n'
                          f'            nb::object __dt = {dtype_expr};\n'
                          f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
                          f'__mod.attr("zeros")({total}, __dt).attr("data"), nb::make_tuple({strides_b})); }}()')
             else:
-                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("numpy");\n'
+                alloc = (f'[&]() {{ {lowp_import}nb::object __mod = nb::module_::import_("numpy");\n'
                          f'            nb::object __dt = {dtype_expr};\n'
                          f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
                          f'__mod.attr("zeros")({total}, __dt), 0, nb::make_tuple({strides_b})); }}()')
@@ -445,6 +485,27 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                 return_setup.append(f'{obtain}\n'
                                     f'        _DacePyBuffer {name}__buf({name}__obj.ptr());')
                 call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__buf.data())')
+            elif is_iface_ret:
+                # Same reason as low-precision ARGUMENTS: nb::ndarray can never ingest an
+                # ml_dtypes-backed array (no DLPack, no buffer protocol), so the pointer comes
+                # from the array-interface dict instead. The return object is already an
+                # nb::object here, so unlike the argument path there is no type caster to
+                # bypass - only the nb::cast is replaced. Object arrays take the same route.
+                iface = '__cuda_array_interface__' if gpu else '__array_interface__'
+                extract = (f'nb::object {name}__ai = {name}__obj.attr("{iface}");\n'
+                           f'        const std::uintptr_t {name}__ptr = '
+                           f'nb::cast<std::uintptr_t>(nb::tuple({name}__ai["data"])[0]);')
+                if allow_return_override:
+                    # ``size`` rather than the nd view (which does not exist here); both NumPy
+                    # and CuPy arrays expose it. Same contract as below: too small is refused,
+                    # larger is legitimate.
+                    extract += (f'\n        if (!{name}.is_none() && '
+                                f'nb::cast<size_t>({name}__obj.attr("size")) < '
+                                f'static_cast<size_t>({total}))\n'
+                                f'            throw std::invalid_argument("SDFG argument error: return buffer '
+                                f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
+                return_setup.append(f'{obtain}\n        {extract}')
+                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
             else:
                 extract = f'auto {name}__nd = nb::cast<nb::ndarray<{nb_scalar}, {device}>>({name}__obj, false);'
                 if allow_return_override:
@@ -1048,16 +1109,29 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     # Codegen-time call metadata, exposed on the handle so the Python wrapper
     # does not re-derive it (the __return naming convention and the callback
     # detection live in one place).
+    def _ret_obj(n: str) -> str:
+        """The expression yielding the Python object handed back for return ``n``.
+
+        A ``pyobject`` return decays to the single contained object, matching the ctypes
+        interface, which returns ``self._return_arrays[i].item()`` whenever the return is a
+        pyobject (a proper Scalar, or an Array that wraps one). Everything else hands back the
+        array itself.
+        """
+        desc = sdfg.arrays.get(n)
+        if desc is not None and isinstance(desc.dtype, dtypes.pyobject):
+            return f'{n}__obj.attr("item")()'
+        return f'{n}__obj'
+
     if '__return' in sdfg.arrays:
         return_names = ('__return', )
         # The single-value convention returns the bare array, not a 1-tuple.
-        ret_expr = '__return__obj'
+        ret_expr = _ret_obj('__return')
     else:
         found_returns = {n for n in sdfg.arrays if n.startswith('__return_')}
         return_names = tuple(f'__return_{i}' for i in range(len(found_returns)))
         if found_returns != set(return_names):
             raise ValueError(f"SDFG '{sdfg.name}': non-contiguous return-array numbering: {sorted(found_returns)}")
-        ret_expr = ('nb::make_tuple(' + ', '.join(f'{n}__obj'
+        ret_expr = ('nb::make_tuple(' + ', '.join(_ret_obj(n)
                                                   for n in return_names) + ')') if return_names else 'nb::none()'
     return_names_def = ', '.join(f'"{n}"' for n in return_names)
     callback_names_def = ', '.join(f'"{n}"' for n in arglist if isinstance(arglist[n].dtype, dtypes.callback))
