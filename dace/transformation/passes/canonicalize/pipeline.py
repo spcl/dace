@@ -1412,6 +1412,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # them via SIMPLIFY_PASSES) already ran earlier, so prune again here.
     s += [('end', RemoveUnusedSymbols())]
 
+    # ConvertLengthOneArraysToScalars a SECOND time (it leads ``prep``): the canonical spelling of
+    # a single-value transient is a Scalar, and the stages between the two -- map fusion's
+    # ``__map_fusion_*`` carriers above all -- MINT length-1 Array transients that the ``prep``
+    # occurrence ran too early to see. Left as Arrays they are the descriptor a re-canonicalize
+    # then converts at ``prep``, i.e. the output is one pass short of its own canonical form.
+    s += [('end', ConvertLengthOneArraysToScalars())]
+
     # revert_nonreduction_wcr (terminal): the terminal ``LoopToMap`` + fusion above form fresh
     # ``map_exit -> output`` WCR edges that the earlier ``revert_nonreduction_wcr`` (which ran
     # before those maps existed) never saw -- an injective slice aug-assign such as seidel's
