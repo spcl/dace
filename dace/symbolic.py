@@ -3384,6 +3384,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{self._print(expr.args[0])}{sep}{attribute}'
             # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         if str(expr.func) == 'Subscript':
+            # rank>=2 reparses as ast.Tuple downstream -> invalid std::make_tuple on a raw
+            # pointer; caller must lower the nested subscript to a flat index first.
+            if self.cpp_mode and len(expr.args) > 2:
+                raise NotImplementedError('cpp_mode Subscript printing does not support rank>=2 indices '
+                                          f'({expr}); lower the nested subscript to a flat index before printing.')
             indices = ', '.join(self._print(a) for a in expr.args[1:])
             return f'{self._print(expr.args[0])}[{indices}]'
         # Operator-backed functions: the ``__``-prefixed variants (from the operators)

@@ -1455,6 +1455,25 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         return fnname, call_args
 
 
+class NestedMultiDimSubscriptLowerer(ast.NodeTransformer):
+    """Rewrites a nested multi-dim array subscript (``idx[i, j]``) found inside an index
+    expression to its ``<array>_idx`` C++ text, via the same ``_bare_access`` path a top-level
+    subscript uses. A rank>=2 nested subscript's ``Tuple`` slice reparses as a Python
+    ``ast.Tuple`` downstream (``format_index_access`` -> ``sym2cpp`` -> ``pystr_to_symbolic``)
+    and corrupts to ``std::make_tuple`` on a raw pointer; a rank-1 nested subscript (``idx[i]``)
+    already round-trips as valid C++ and is left untouched."""
+
+    def __init__(self, remover: 'ReadableKeywordRemover'):
+        self.remover = remover
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        if isinstance(node.slice, ast.Tuple) and self.remover._is_bare_data(rname(node)):
+            access = self.remover._bare_access(node)
+            if access is not None:
+                return ast.copy_location(ast.Name(id=access), node)
+        return self.generic_visit(node)
+
+
 class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     """
     Extends the classic keyword remover: in addition to connector accesses, it
@@ -1561,4 +1580,5 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         return super().visit_Name(node)
 
     def _index_list(self, slicenode: ast.AST) -> List[str]:
-        return subscript_index_strings(slicenode)
+        lowerer = NestedMultiDimSubscriptLowerer(self)
+        return [ast.unparse(lowerer.visit(astutils.copy_tree(e))) for e in index_expr_nodes(slicenode)]
