@@ -1601,7 +1601,8 @@ class fma(DaceFunction):
     lowering can emit a single fused multiply-add -- ``std::fma`` (scalar), ``__hfma2`` (CUDA
     fp16), ``_mm*_fmadd`` (AVX), ``vfmaq`` (NEON), ``svmla`` (SVE) -- where the ISA supports
     it, and multiply-then-add where it does not. A residual (non-tiled) ``fma`` tasklet lowers
-    to the C ``fma`` (``std::fma``). The argument order matches C ``fma(a, b, c) == a*b + c``."""
+    to ``dace::math::fma``, which forwards to ``std::fma``. The argument order matches C
+    ``fma(a, b, c) == a*b + c``."""
 
     @classmethod
     def eval(cls, a, b, c):

@@ -830,6 +830,26 @@ template <typename T>
 DACE_CONSTEXPR DACE_HDFI T hypot(const T& a, const T& b) {
   return std::hypot(a, b);
 }
+
+// Fused multiply-add ``a*b + c``, where ``cppunparse`` sends the tasklet-body
+// ``fma(a, b, c)``.  Forwards verbatim, so 32/64-bit stay bit-identical.
+template <typename T, typename U, typename V>
+DACE_CONSTEXPR DACE_HDFI auto fma(const T& a, const U& b, const V& c) {
+  return std::fma(a, b, c);
+}
+
+// A 16-bit float reaches ``float`` through one user-defined conversion, making
+// all three ``std::fma`` overloads equally good -- ambiguous, not a call.  Go
+// through ``float``, as ``tileops::tile_fma`` does for lanes it cannot pack
+// into ``__hfma2``.  Not ``DACE_CONSTEXPR``: ``__half(float)`` never folds, and
+// a non-template ``constexpr`` that cannot is -Winvalid-constexpr.
+#define DACE_MATH_FMA_LP(TYPE)                                             \
+  static DACE_HDFI TYPE fma(const TYPE& a, const TYPE& b, const TYPE& c) { \
+    return TYPE(std::fma(float(a), float(b), float(c)));                   \
+  }
+DACE_MATH_FMA_LP(dace::float16)
+DACE_MATH_FMA_LP(dace::bfloat16)
+#undef DACE_MATH_FMA_LP
 }  // namespace math
 
 namespace cmath {

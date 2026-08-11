@@ -1195,9 +1195,14 @@ class CPPUnparser:
     # C++ name, then the (single) argument list.  This is the tasklet-body
     # spelling for a complex's components, mirroring how ``int_floor`` maps to
     # ``dace::math::ifloor``.
+    # ``fma`` goes the same way: bare, it binds to ``std::fma``, whose three
+    # overloads are all equally good for a 16-bit float -- ambiguous, and a
+    # hard nvcc error.  ``dace::math::fma`` adds the 16-bit overloads and
+    # forwards every other type to ``std::fma`` unchanged.
     _renamed_funcs = {
         're': 'dace::math::re',
         'im': 'dace::math::im',
+        'fma': 'dace::math::fma',
     }
 
     def _Call(self, t: ast.Call):
