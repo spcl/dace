@@ -1574,15 +1574,6 @@ required:
                 description: >
                     Check for potential race conditions during validation.
 
-            check_symbol_assumption_collisions:
-                type: bool
-                default: false
-                title: Check symbol assumption collisions
-                description: >
-                    Raise during validation if one symbol name is spelled with two different SymPy
-                    assumption sets. Such symbols are DISTINCT objects, so index arithmetic over
-                    them does not cancel and dependence predicates silently answer wrong.
-
 
     #############################################
     # Features for unit testing

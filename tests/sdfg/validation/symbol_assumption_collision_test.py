@@ -9,11 +9,8 @@ import sympy
 
 import dace
 from dace import subsets
-from dace.config import Config
 from dace.sdfg.validation import (InvalidSDFGError, check_symbol_assumption_collisions, scope_parameter_shadowings,
                                   symbol_assumption_collisions, symbol_assumption_spellings)
-
-FLAG = ('experimental', 'check_symbol_assumption_collisions')
 
 
 def build(read_sym, write_sym) -> dace.SDFG:
@@ -300,22 +297,13 @@ def test_two_spellings_raise():
     assert 'integer=True' not in message, message
 
 
-def test_validate_honors_flag():
-    """``validate`` runs the check only when the experimental flag is on."""
+def test_validate_rejects_a_collision():
+    """The check is unconditional: no flag has to be set for validation to reject the SDFG."""
     sdfg = resized(dace.symbolic.symbol('N', dace.int32, nonnegative=True))
 
-    with dace.config.set_temporary(*FLAG, value=False):
-        sdfg.validate()  # off by default: the collision does not fail validation
-
-    with dace.config.set_temporary(*FLAG, value=True):
-        with pytest.raises(InvalidSDFGError) as exc:
-            sdfg.validate()
+    with pytest.raises(InvalidSDFGError) as exc:
+        sdfg.validate()
     assert 'is spelled 2 ways' in str(exc.value)
-
-
-def test_flag_defaults_off():
-    """The check costs nothing unless asked for."""
-    assert Config.get_default(*FLAG) is False
 
 
 def test_name_filter():
