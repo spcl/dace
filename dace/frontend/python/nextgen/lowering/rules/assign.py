@@ -45,8 +45,8 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.semantics import structures as structure_support
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
-from dace.frontend.python.nextgen.lowering.access import (DataAccess, lower_indirect_write, nondegenerate_shape,
-                                                          resolve_access, scalar_read_expression)
+from dace.frontend.python.nextgen.lowering.access import (DataAccess, indirect_index_reads, lower_indirect_write,
+                                                          nondegenerate_shape, resolve_access, scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.mechanisms import conflict, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred, is_none_literal
@@ -297,6 +297,10 @@ def _lower_indirect_accumulation(target: ast.expr, statement: ast.Assign, wcr: s
     # desugared ``AugAssign`` carries no side marker and is always left-folded.
     accumulated = (statement.value.left
                    if getattr(statement, 'accumulator_side', 'left') == 'right' else statement.value.right)
+    # Detect indirection from the AST first; ``resolve_access`` does not fail
+    # on a scalar container used as an index (see _lower_subscript_assign).
+    if indirect_index_reads(target, state):
+        return lower_indirect_write(target, accumulated, statement, state, wcr=wcr)
     try:
         resolve_access(target, state)
     except UnsupportedFeatureError:
@@ -652,6 +656,15 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
     # must reach ``A``, not a disposable copy.
     target = dispatch.rewrite_attribute_subscript_base(target, state, writable=True)
     if _lower_advanced_index_write(target, value, statement, state):
+        return
+    # A data-dependent target has to be recognized from the AST BEFORE
+    # ``resolve_access`` runs -- the contract ``indirect_index_reads`` states
+    # for itself. ``resolve_access`` does not fail on a scalar CONTAINER used
+    # as an index; it silently yields a subset naming that container as though
+    # it were a symbol (``hist[bin]``), which survives to code generation as an
+    # undeclared identifier. Relying on the ``except`` arm below caught only
+    # the targets that happen to make the parse fail outright.
+    if indirect_index_reads(target, state) and lower_indirect_write(target, value, statement, state):
         return
     try:
         target_access = resolve_access(target, state)
