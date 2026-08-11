@@ -9,6 +9,7 @@ import dace
 from dace import dtypes
 
 BAILOUT = r'if \(__result\)'
+EVENT_CALL = r'(?:cuda|hip)(?:EventRecord|StreamWaitEvent)\('
 
 
 def generated_code(sdfg: dace.SDFG) -> str:
@@ -43,6 +44,50 @@ def persistent_gpu_transient() -> dace.SDFG:
     return sdfg
 
 
+def cross_stream_consumer() -> dace.SDFG:
+    """Two independent kernels feeding a third, so one producer is ordered against another stream."""
+    sdfg = dace.SDFG('cross_stream_consumer')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [20], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_transient('T1', [20], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_transient('T2', [20], dace.float64, storage=dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('main')
+    accesses = {name: state.add_access(name) for name in ('A', 'B', 'C', 'T1', 'T2')}
+
+    def producer(name: str, src: str, dst: str, code: str) -> None:
+        entry, exit_ = state.add_map(name, {'i': '0:20'}, schedule=dtypes.ScheduleType.GPU_Device)
+        tasklet = state.add_tasklet(name + '_t', {'inp'}, {'out'}, code)
+        entry.add_in_connector('IN_x')
+        entry.add_out_connector('OUT_x')
+        exit_.add_in_connector('IN_y')
+        exit_.add_out_connector('OUT_y')
+        state.add_edge(accesses[src], None, entry, 'IN_x', dace.Memlet(f'{src}[0:20]'))
+        state.add_edge(entry, 'OUT_x', tasklet, 'inp', dace.Memlet(f'{src}[i]'))
+        state.add_edge(tasklet, 'out', exit_, 'IN_y', dace.Memlet(f'{dst}[i]'))
+        state.add_edge(exit_, 'OUT_y', accesses[dst], None, dace.Memlet(f'{dst}[0:20]'))
+
+    producer('k1', 'A', 'T1', 'out = inp * 2')
+    producer('k2', 'B', 'T2', 'out = inp * 3')
+
+    entry, exit_ = state.add_map('k3', {'i': '0:20'}, schedule=dtypes.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet('k3_t', {'p', 'q'}, {'out'}, 'out = p + q')
+    for conn in ('IN_1', 'IN_2'):
+        entry.add_in_connector(conn)
+    for conn in ('OUT_1', 'OUT_2'):
+        entry.add_out_connector(conn)
+    exit_.add_in_connector('IN_c')
+    exit_.add_out_connector('OUT_c')
+    state.add_edge(accesses['T1'], None, entry, 'IN_1', dace.Memlet('T1[0:20]'))
+    state.add_edge(accesses['T2'], None, entry, 'IN_2', dace.Memlet('T2[0:20]'))
+    state.add_edge(entry, 'OUT_1', tasklet, 'p', dace.Memlet('T1[i]'))
+    state.add_edge(entry, 'OUT_2', tasklet, 'q', dace.Memlet('T2[i]'))
+    state.add_edge(tasklet, 'out', exit_, 'IN_c', dace.Memlet('C[i]'))
+    state.add_edge(exit_, 'OUT_c', accesses['C'], None, dace.Memlet('C[0:20]'))
+    sdfg.validate()
+    return sdfg
+
+
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
     """``__dace_init_cuda`` returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), 'persistent_gpu_transient')
@@ -64,6 +109,16 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
         'nothing checks __result after the allocation and init code, so a failure there returns a live state')
 
 
+def test_cross_stream_event_synchronization_is_checked():
+    """A silent EventRecord failure loses the ordering it was supposed to establish."""
+    code = generated_code(cross_stream_consumer())
+    calls = list(re.finditer(EVENT_CALL, code))
+    assert calls, 'no cross-stream event synchronization was emitted, so this test is anchored on nothing'
+    unchecked = [call.group(0) for call in calls if not code[:call.start()].endswith('DACE_GPU_CHECK(')]
+    assert not unchecked, f'event synchronization emitted without an error check: {unchecked}'
+
+
 if __name__ == '__main__':
     test_a_failed_target_initializer_stops_before_the_state_it_left_unset()
     test_the_init_function_still_checks_what_runs_after_the_allocations()
+    test_cross_stream_event_synchronization_is_checked()

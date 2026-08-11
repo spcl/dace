@@ -1548,18 +1548,29 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
-                callsite_stream.write(
-                    """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
+                # Stream assignment gives a cross-stream edge its own event. Event 0 belongs to some
+                # other edge, so recording into it when this edge has none breaks that edge's
+                # ordering instead of establishing this one -- let the host wait instead.
+                if hasattr(edge, "_cuda_event"):
+                    callsite_stream.write(
+                        """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
 DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
-                        ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
-                        src_stream=cudastream,
-                        dst_stream=common.gpu_stream_expr(edge.dst._cuda_stream),
-                        backend=backend,
-                    ),
-                    cfg,
-                    state_id,
-                    [edge.src, edge.dst],
-                )
+                            ev=edge._cuda_event,
+                            src_stream=cudastream,
+                            dst_stream=common.gpu_stream_expr(edge.dst._cuda_stream),
+                            backend=backend,
+                        ),
+                        cfg,
+                        state_id,
+                        [edge.src, edge.dst],
+                    )
+                else:
+                    callsite_stream.write(
+                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        cfg,
+                        state_id,
+                        [edge.src, edge.dst],
+                    )
                 continue
 
             # If a view, get the relevant access node
@@ -1584,16 +1595,25 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->even
                 # If different stream at destination: record event and wait
                 # for it in target stream.
                 elif e.dst._cuda_stream != node._cuda_stream:
-                    callsite_stream.write(
-                        """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0);""".format(
-                            ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
-                            src_stream=cudastream,
-                            dst_stream=common.gpu_stream_expr(e.dst._cuda_stream),
-                            backend=backend,
-                        ),
-                        cfg,
-                        state_id,
-                        [e.src, e.dst],
-                    )
+                    # Same as above: without an event of its own there is nothing to record into.
+                    if hasattr(e, "_cuda_event"):
+                        callsite_stream.write(
+                            """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
+DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
+                                ev=e._cuda_event,
+                                src_stream=cudastream,
+                                dst_stream=common.gpu_stream_expr(e.dst._cuda_stream),
+                                backend=backend,
+                            ),
+                            cfg,
+                            state_id,
+                            [e.src, e.dst],
+                        )
+                    else:
+                        callsite_stream.write(
+                            "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                            cfg,
+                            state_id,
+                            [e.src, e.dst],
+                        )
                 # Otherwise, no synchronization necessary
