@@ -173,9 +173,11 @@ class RocblasHandle {
     return f->second;
   }
 
+  // A destructor that throws terminates the process. Teardown failures have nowhere left to go, so
+  // they are dropped rather than turned into a crash that hides whatever the program computed.
   ~RocblasHandle() {
     for (auto& h : handles_) {
-      CheckRocblasError(rocblas_destroy_handle(h.second));
+      static_cast<void>(rocblas_destroy_handle(h.second));
     }
   }
 
