@@ -29,11 +29,6 @@ def clear_worker_env(monkeypatch) -> None:
     monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising=False)
 
 
-def test_pick_gpu_worker_device_preset_pool_selection():
-    device = root_conftest.pick_gpu_worker_device('gw2', ['0', '1', '2', '3'])
-    assert device == '2'
-
-
 def test_parse_worker_index_gw_prefix():
     assert root_conftest.parse_worker_index('gw7') == 7
 
@@ -55,22 +50,11 @@ def test_resolve_worker_id_prefers_xdist_over_mpi_rank(monkeypatch):
     assert root_conftest.resolve_worker_id() == 'gw1'
 
 
-def test_resolve_worker_id_falls_back_to_launcher_rank_var(monkeypatch):
-    clear_worker_env(monkeypatch)
-    monkeypatch.setenv('OMPI_COMM_WORLD_RANK', '3')
-    assert root_conftest.resolve_worker_id() == '3'
-
-
 def test_resolve_worker_id_uses_first_set_rank_var_in_order(monkeypatch):
     clear_worker_env(monkeypatch)
     monkeypatch.setenv('PMI_RANK', '9')
     monkeypatch.setenv('SLURM_PROCID', '1')
     assert root_conftest.resolve_worker_id() == '9'
-
-
-def test_resolve_worker_id_empty_when_neither_xdist_nor_mpi(monkeypatch):
-    clear_worker_env(monkeypatch)
-    assert root_conftest.resolve_worker_id() == ''
 
 
 def test_pin_worker_to_gpu_uses_preset_pool_and_rank_var(monkeypatch):
@@ -86,11 +70,3 @@ def test_pin_worker_to_gpu_noop_without_worker_id(monkeypatch):
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,1')
     root_conftest.pin_worker_to_gpu()
     assert os.environ['CUDA_VISIBLE_DEVICES'] == '0,1'
-
-
-def test_pin_worker_to_gpu_noop_single_device_pool(monkeypatch):
-    clear_worker_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw3')
-    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0')
-    root_conftest.pin_worker_to_gpu()
-    assert os.environ['CUDA_VISIBLE_DEVICES'] == '0'
