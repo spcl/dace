@@ -6,6 +6,8 @@ import functools
 import itertools
 import warnings
 
+import numpy as np
+
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
@@ -23,6 +25,22 @@ from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def _use_aligned_operator_new(desc: data.Data) -> bool:
+    """Whether heap arrays are allocated with aligned ``operator new``.
+
+    The function considers the selected C++ standard and the `alignment` property
+    of the data descriptor.
+    """
+    try:
+        if int(Config.get('compiler', 'cpp_standard')) < 17:
+            return False  # Aligned `new` not supported by the standard.
+        if desc.alignment >= 0:
+            return True  # Alignment requested either default (0) or concrete value
+        return False
+    except ValueError:
+        return False
 
 
 def gpu_block_reduction_write_slot(subset, base, length):

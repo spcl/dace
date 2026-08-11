@@ -20,9 +20,8 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, cuda_stream_expr,
-                                      memlet_copy_to_absolute_strides, sym2cpp, synchronize_streams, unparse_cr,
-                                      mangle_dace_state_struct_name)
+from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
+                                      synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
 from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -1976,7 +1975,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         # A kernel reachable from a stream-unaware GPU callback is pinned to the null stream.
-        cudastream = cuda_stream_expr(scope_entry._cuda_stream) if max_streams >= 0 else 'nullptr'
+        cudastream = common.gpu_stream_expr(scope_entry._cuda_stream) if max_streams >= 0 else 'nullptr'
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
