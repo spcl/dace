@@ -11,8 +11,8 @@ from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, NamedRegion,
-                             ReturnBlock, SDFGState)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
+                             LoopRegion, NamedRegion, ReturnBlock, SDFGState)
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from dace.transformation.passes.write_conflict_resolution import ResolveWriteConflicts
@@ -1190,10 +1190,25 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = _insert_and_split_assignments(named_region, label=f'named_region_after_{id(node)}')
 
     def visit_FunctionCallScope(self, node: tn.FunctionCallScope, sdfg: SDFG) -> None:
-        # An inlined nested-program body: its contents lower transparently in
-        # place (the frontend already resolved arguments to shared containers).
-        # Early returns inside the scope are rejected by visit_ReturnNode.
+        # An inlined nested-program body. The contents lower in place -- the
+        # frontend already resolved arguments to shared containers -- but they
+        # go into a FunctionCallRegion so the call and its argument binding
+        # survive inlining, the same way a NamedRegionScope keeps its label.
+        # The region constrains nothing; SimplifyPass inlines it away unless
+        # asked not to. Early returns inside the scope are rejected by
+        # visit_ReturnNode.
+        current_state = self._current_state
+        assert current_state is not None
+        cf_region = current_state.parent_graph
+
+        call_region = FunctionCallRegion(f'{node.call.callee_name}_{id(node)}', arguments=dict(node.call.arguments))
+        cf_region.add_node(call_region, ensure_unique_name=True)
+        _insert_and_split_assignments(current_state, call_region, assignments=self._pending_interstate_assignments())
+
+        self._current_state = call_region.add_state(f'call_state_{id(node)}', is_start_block=True)
         self.visit(node.children, sdfg=sdfg)
+
+        self._current_state = _insert_and_split_assignments(call_region, label=f'call_after_{id(node)}')
 
     def visit_ReturnNode(self, node: tn.ReturnNode, sdfg: SDFG) -> None:
         # Frontends materialize return values into their (non-transient)
