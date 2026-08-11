@@ -837,8 +837,12 @@ def _user_call_binding(sdfg,
         if isinstance(desc, dt.ContainerArray) or isinstance(desc, dt.Structure):
             supported = False
         elif isinstance(desc, dt.Array):
+            # pyobject arrays are excluded for the same reason as the low-precision ones: both
+            # take their pointer from __array_interface__ via setup statements, and the fast
+            # path has no setup scope (see the `assert not setup` below). A pyobject SCALAR is
+            # still fine - it forwards `.ptr()` inline.
             supported = (not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
-                         and desc.dtype.base_type not in _LOWP_TYPES)
+                         and desc.dtype.base_type not in _LOWP_TYPES and not isinstance(desc.dtype, dtypes.pyobject))
         elif isinstance(desc, dt.Scalar):
             supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.vector)) and desc.dtype != dtypes.string
                          and desc.dtype.base_type != dtypes.float16)

@@ -2927,6 +2927,25 @@ def test_nanobind_interface_user_args_validation():
     with pytest.raises(ValueError, match="missing argument"):
         probe([('A', 'B')])  # alpha unlisted and not inferable
 
+    # A pyobject ARRAY is outside the initial scope: like the low-precision arrays it takes
+    # its pointer from __array_interface__ through a setup statement, and the fast path has
+    # no setup scope. Without this the generator hits `assert not setup` instead of a usable
+    # error. A pyobject SCALAR stays eligible - it forwards `.ptr()` inline.
+    sdfg = dace.SDFG('uargs_pyobject_array_probe')
+    sdfg.add_array('objs', [4], dtypes.pyobject())
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.arrays['A'].optional = False
+    sdfg.user_args = ['objs', 'A']
+    with pytest.raises(ValueError, match="'objs'.*not supported"):
+        generate_bindings_code(sdfg)
+
+    sdfg = dace.SDFG('uargs_pyobject_scalar_probe')
+    sdfg.add_scalar('obj', dtypes.pyobject())
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.arrays['A'].optional = False
+    sdfg.user_args = ['obj', 'A']
+    generate_bindings_code(sdfg)  # eligible
+
     # A string scalar is outside the initial primitive-only scope.
     sdfg = dace.SDFG('uargs_string_probe')
     sdfg.add_array('A', [1], dace.float64)
