@@ -21,15 +21,15 @@ import sys
 import textwrap
 
 import numpy as np
+import sympy
 
 import dace
+from dace import subsets
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (AssumeSymbolConstraints,
-                                                                                AssumeSymbolsNonnegative,
-                                                                                insert_assumption_guards,
-                                                                                insert_symbol_nonnegative_guard,
-                                                                                _GUARD_STATE_LABEL)
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
+    set_symbol_nonnegative_assumptions, _GUARD_STATE_LABEL)
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -111,6 +111,88 @@ def test_survives_full_canonicalize_and_runs():
     ref = a * x + y
     sdfg(a=a, x=x, y=y, N=16)
     assert np.allclose(y, ref)
+
+
+def test_second_canonicalize_keeps_the_guard_its_own_block():
+    """The trap has to run BEFORE the computation it guards, and only its own block keeps it
+    there. A re-canonicalize (the vectorizer canonicalizes at its own entry) must therefore not
+    let state fusion merge the guard into the compute state."""
+    sdfg = _axpy_sdfg()
+    canonicalize(sdfg)
+    canonicalize(sdfg)
+    traps = _trap_tasklets(sdfg)
+    assert len(traps) == 1
+    assert sdfg.start_block.nodes() == traps
+    sdfg.validate()
+
+
+def _plain_map_bound_symbols(sdfg):
+    """Symbol names a map range still spells WITHOUT the nonnegativity assumption."""
+    return {
+        str(s)
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes() if isinstance(n, nodes.MapEntry) for rng in n.map.range.ndrange() for bound in rng
+        if isinstance(bound, sympy.Basic) for s in bound.free_symbols if not s.is_nonnegative
+    }
+
+
+def test_map_bounds_keep_the_assumption_across_a_second_canonicalize():
+    """The assumption lives on the symbol OBJECTS threaded through the graph, and a stage that
+    rebuilds a map bound by PARSING mints a plain one. The terminal pass therefore has to decide
+    "already assumed" over everything it rewrites, not over the descriptors alone: run 1 marks
+    the descriptors, so a descriptor-only look makes run 2 skip and leaves the map bounds spelled
+    ``N`` where run 1 spelled ``symbol(N, nonnegative=True)`` -- the same bound, two digests."""
+    sdfg = _axpy_sdfg()
+    canonicalize(sdfg)
+    assert not _plain_map_bound_symbols(sdfg)
+    canonicalize(sdfg)
+    assert not _plain_map_bound_symbols(sdfg)
+
+
+def test_reassumes_a_map_bound_that_was_rebuilt_plain():
+    """A bound re-parsed after the pass ran is exactly what a later stage leaves behind. The pass
+    must see it and re-mark -- and report that it did, since it rewrote the graph."""
+    sdfg = _axpy_sdfg()
+    canonicalize(sdfg)
+    entries = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
+    assert entries
+    entries[0].map.range = subsets.Range.from_string(str(entries[0].map.range))
+    assert _plain_map_bound_symbols(sdfg) == {'N'}
+    assert set_symbol_nonnegative_assumptions(sdfg) == 1
+    assert not _plain_map_bound_symbols(sdfg)
+    assert set_symbol_nonnegative_assumptions(sdfg) is None
+
+
+def test_guard_leads_the_block_list_on_every_canonicalize():
+    """The guard is the start block, and it must also be block 0 of the list ``nodes()``
+    reports. That list is insertion order, so the guard -- emitted by the terminal stage --
+    is APPENDED on a first canonicalize while a second run inherits it already in place and
+    fuses away the blocks that preceded it. Same graph, permuted node indices, different
+    content digest: the position has to be pinned to the role, on both runs."""
+    sdfg = _axpy_sdfg()
+    canonicalize(sdfg)
+    first = sdfg.nodes()
+    assert first[0].label == _GUARD_STATE_LABEL and first[0] is sdfg.start_block
+    canonicalize(sdfg)
+    second = sdfg.nodes()
+    assert second[0].label == _GUARD_STATE_LABEL and second[0] is sdfg.start_block
+    assert len(first) == len(second)
+    sdfg.validate()
+
+
+def test_repositioning_alone_is_reported_as_a_change():
+    """Moving the guard IS a rewrite, so the pass must report it -- a pass that mutates while
+    returning ``None`` stalls a fixed-point pipeline. Re-applied with the guard already at the
+    head it must then report nothing."""
+    sdfg = _axpy_sdfg()
+    canonicalize(sdfg)
+    guard = sdfg.start_block
+    sdfg.reorder_nodes([b for b in sdfg.nodes() if b is not guard] + [guard])
+    assert sdfg.nodes()[0] is not guard
+    assert insert_assumption_guards(sdfg) == 1
+    assert sdfg.nodes()[0] is guard
+    assert insert_assumption_guards(sdfg) is None
 
 
 def test_guard_aborts_on_negative_symbol():
@@ -208,6 +290,11 @@ if __name__ == '__main__':
     test_noop_without_signed_int_symbols()
     test_pass_wrapper_matches_helper()
     test_survives_full_canonicalize_and_runs()
+    test_second_canonicalize_keeps_the_guard_its_own_block()
+    test_map_bounds_keep_the_assumption_across_a_second_canonicalize()
+    test_reassumes_a_map_bound_that_was_rebuilt_plain()
+    test_guard_leads_the_block_list_on_every_canonicalize()
+    test_repositioning_alone_is_reported_as_a_change()
     test_guard_aborts_on_negative_symbol()
     test_tracked_assumption_emitted_as_own_tasklet()
     test_tracked_assumption_deduped_and_true_dropped()

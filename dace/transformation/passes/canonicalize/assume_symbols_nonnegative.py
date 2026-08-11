@@ -48,24 +48,46 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
 
-def _names_already_nonnegative(sdfg: SDFG) -> dict:
-    """Names whose symbol instances inside ``sdfg`` already carry ``nonnegative=True``.
+def _names_still_plain(sdfg: SDFG) -> dict:
+    """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``.
 
     ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
     set earlier, so asking it whether a name is nonnegative always answers ``None``. The assumption
-    lives on the symbol objects ``replace_dict`` threaded into the descriptors, which is where this
-    reads it -- otherwise the pass re-marks every symbol on every run and never reports ``None``,
-    so a fixed-point pipeline containing it cannot converge.
+    lives on the symbol objects ``replace_dict`` threaded into the graph, which is what this reads
+    -- otherwise the pass re-marks every symbol on every run and never reports ``None``, so a
+    fixed-point pipeline containing it cannot converge.
+
+    Scanned over every sympy-typed property ``replace_dict`` WRITES, not just the descriptors: a
+    re-canonicalize starts from a graph whose descriptors are already marked, and the stages in
+    between rebuild map ranges and subsets by PARSING (which mints plain symbols), so a
+    descriptor-only look answers "already assumed" while the map ranges have gone back to bare
+    ``N``. Same SDFG, two spellings of the same bound, two different content digests. String-backed
+    properties (interstate assignments, loop conditions, tasklet code) are deliberately NOT scanned:
+    they cannot carry a sympy assumption at all, so counting them would report "still plain"
+    forever.
 
     :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
-    :returns: The (ordered-set) symbol names already assumed nonnegative, membership-checked only.
+    :returns: The symbol names seen without the assumption, membership-checked only.
     """
-    assumed: dict = {}
-    for desc in sdfg.arrays.values():
-        for expr in (*desc.shape, *desc.strides, desc.total_size):
+    plain: dict = {}
+
+    def scan(*exprs):
+        for expr in exprs:
             if isinstance(expr, sympy.Basic):
-                assumed.update(dict.fromkeys(str(s) for s in expr.free_symbols if s.is_nonnegative))
-    return assumed
+                plain.update(dict.fromkeys(str(s) for s in expr.free_symbols if not s.is_nonnegative))
+
+    for desc in sdfg.arrays.values():
+        scan(*desc.shape, *desc.strides, desc.total_size, *desc.offset)
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                scan(*(bound for rng in node.map.range.ndrange() for bound in rng))
+        for edge in state.edges():
+            scan(edge.data.volume)
+            for subset in (edge.data.subset, edge.data.other_subset):
+                if subset is not None:
+                    scan(*(bound for rng in subset.ndrange() for bound in rng))
+    return plain
 
 
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
@@ -91,12 +113,12 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
         # sorted: ``free_symbols`` is a set of STRINGS (per-process randomized hashing). The substitutions
         # happen to commute here, but the replacement dict's order is otherwise arbitrary -- sorting is free
         # and matches _signed_integer_free_symbols below.
-        assumed = _names_already_nonnegative(g)
+        plain = _names_still_plain(g)
         for name in sorted(g.free_symbols):
             dtype = g.symbols.get(name)
             if dtype not in _SIGNED_INTEGER_DTYPES:
                 continue
-            if name in assumed:
+            if name not in plain:
                 continue
             repl[name] = symbolic.symbol(name, dtype=dtype, nonnegative=True)
         if repl:
@@ -215,9 +237,27 @@ def collect_assumptions(sdfg: SDFG) -> List:
     return assumptions
 
 
+def lead_with_assumption_guard(sdfg: SDFG) -> bool:
+    """Move the guard state to the head of the top-level block list; ``True`` if it moved.
+
+    The guard is already the START block, but ``nodes()`` reports insertion order, so its
+    POSITION in that list records only when it was built. Emitted by the terminal stage, it is
+    APPENDED on a first canonicalize; re-canonicalizing the result runs the whole pipeline with
+    the guard already in place, and the blocks appended before it are the ones the middle stages
+    fuse away -- so the same graph comes out with the guard FIRST. Same SDFG, different node
+    indices, different content digest. Pin the position to the role instead.
+    """
+    blocks = sdfg.nodes()
+    guard = next((b for b in blocks if is_assumption_guard_block(b)), None)
+    if guard is None or blocks[0] is guard:
+        return False
+    sdfg.reorder_nodes([guard] + [b for b in blocks if b is not guard])
+    return True
+
+
 def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     """Prepend one guard state whose tasklets trap on any violated assumption;
-    return ``1`` if emitted, else ``None`` (nothing to guard, or already present).
+    return ``1`` if emitted or repositioned, else ``None``.
 
     Every assumption from :func:`collect_assumptions` becomes its OWN
     side-effecting ``std::abort`` tasklet (``if (!assumption) trap()``) in a
@@ -240,7 +280,10 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
         if c not in guards
     ]
     if not checks:
-        return None
+        if not lead_with_assumption_guard(sdfg):
+            return None
+        sdfg.reset_cfg_list()
+        return 1
 
     # ``add_state_before`` prepends the guard before the current start and
     # reconnects predecessors to it, so it correctly becomes the new start block
@@ -262,8 +305,11 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
         # DeadDataflowElimination would otherwise prune this tasklet -- and with
         # it the guard -- as dead. Mark it side-effecting so simplify keeps it.
         guard.side_effects = True
-        # Predicate reads only free symbols (in scope everywhere), so its position can't change the outcome.
-        guard.ordered_side_effects = False
+        # ``ordered_side_effects`` is left at its default (ordered): the trap has to run BEFORE the
+        # computation it guards, and it is only a separate block that keeps it there.
+        # ``StateFusionExtended`` refuses to fuse a state carrying an ordered side effect -- the
+        # refusal that names "a trap guard" -- so the guard survives as its own dominating block.
+    lead_with_assumption_guard(sdfg)
     sdfg.reset_cfg_list()
     return 1
 
@@ -280,4 +326,5 @@ __all__ = [
     'insert_assumption_guards',
     'insert_symbol_nonnegative_guard',
     'is_assumption_guard_block',
+    'lead_with_assumption_guard',
 ]
