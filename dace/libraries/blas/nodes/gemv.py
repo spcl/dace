@@ -232,6 +232,7 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
                                                                                    name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
+
         veclen = outer_array_x.dtype.veclen
         alpha = f'{dtype.ctype}({node.alpha})'
         beta = f'{dtype.ctype}({node.beta})'
