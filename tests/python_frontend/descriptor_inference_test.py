@@ -402,8 +402,10 @@ def test_operator_inference_unary_negate_array():
 
     stree = prog.to_schedule_tree()
 
-    assert 'x' in stree.containers
-    desc = stree.containers['x']
+    # Returned, so the container is elided into `__return` (see
+    # test_operator_inference_add_broadcast).
+    assert '__return' in stree.containers
+    desc = stree.containers['__return']
     assert isinstance(desc, dace.data.Array)
     assert tuple(desc.shape) == (4, )
     assert desc.dtype == dace.float64
