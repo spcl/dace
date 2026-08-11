@@ -298,7 +298,7 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     # places them right before the map.
     for dynamic_input in dynamic_inputs:
         state.emitter.emit(dynamic_input)
-    map_ = nodes.Map(f'map_{statement.lineno}', params, subsets.Range(ranges))
+    map_ = nodes.Map(state.context.fresh_map_label(statement.lineno), params, subsets.Range(ranges))
     if schedule is not None:
         map_.schedule = schedule
     map_node = nodes.MapEntry(map_)

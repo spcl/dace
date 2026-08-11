@@ -193,6 +193,7 @@ class ProgramContext:
         self.parse_cache = CalleeParseCache()
 
         self._name_counter = 0
+        self._map_label_counters: Dict[str, int] = {}
 
         for argument_name, descriptor in argtypes.items():
             self.containers[argument_name] = descriptor
@@ -214,6 +215,29 @@ class ProgramContext:
             self._name_counter += 1
             if candidate not in self.containers and candidate not in self.symbols:
                 return candidate
+
+    def fresh_map_label(self, line: int) -> str:
+        """
+        Allocate a distinct label for a map scope originating at a source line.
+
+        The line alone does not identify a map: one statement can expand to
+        several map scopes (``b[:] = a * 2 + 1`` is two), and every one of them
+        then carried the same label. Labels need not be unique, but identical
+        ones make a dump unreadable and leave no way -- for a test or a person
+        -- to say which map is meant. So the first map on a line keeps the bare
+        ``map_<line>`` and each further one gets a counting suffix, the same
+        idiom SSA-split containers already use (``pc_0``, ``pc_1``).
+
+        :param line: Source line the map originates at.
+        :return: The label to give the map node.
+        """
+        base = f'map_{line}'
+        index = self._map_label_counters.get(base)
+        if index is None:
+            self._map_label_counters[base] = 0
+            return base
+        self._map_label_counters[base] = index + 1
+        return f'{base}_{index}'
 
     def describe_expression(self, value: Union[ast.AST, str]) -> str:
         """

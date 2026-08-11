@@ -304,7 +304,8 @@ def emit_elementwise(target: DataAccess,
 
     # Array result: elementwise map over the dimensions that actually iterate
     map_range = subsets.Range([(0, size - 1, 1) for _, size in iterating])
-    map_node = nodes.MapEntry(nodes.Map(f'map_{line}', [param for param, _ in iterating], map_range))
+    map_label = state.context.fresh_map_label(line)
+    map_node = nodes.MapEntry(nodes.Map(map_label, [param for param, _ in iterating], map_range))
     if _is_thread_local(target, state):
         # A thread-local destination is a DIFFERENT array in every thread, so a
         # parallel map leaves each one holding only the slice of the result its
