@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final, Optional, Sequence
+from typing import Final, Optional, Sequence, Set
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -1956,10 +1956,19 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
     return stree
 
 
-def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
+def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, views: Optional[Set[str]] = None):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
+
+    :param scope: The scope whose children are scanned for hazards.
+    :param views: Names bound as views anywhere in the tree, collected once at
+                  the top. A view read and written in the same state has no
+                  determinable viewing direction (:func:`_connect_view_edges`
+                  refuses it), so the in-place-update exemption below does not
+                  apply to one.
     """
+    if views is None:
+        views = {node.target for node in scope.preorder_traversal() if isinstance(node, tn.ViewNode)}
     reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
     #: The subset of ``reads`` performed by real dataflow, i.e. excluding the
     #: aliasing bindings a :class:`~...treenodes.ViewNode` records. See the
@@ -1976,12 +1985,12 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
             writes.clear()
             parents.clear()
             if isinstance(n, tn.ControlFlowScope):  # Insert memory boundaries recursively
-                _insert_memory_dependency_state_boundaries(n)
+                _insert_memory_dependency_state_boundaries(n, views)
             continue
 
         # If dataflow scope, insert state boundaries recursively and as a node
         if isinstance(n, tn.DataflowScope):
-            _insert_memory_dependency_state_boundaries(n)
+            _insert_memory_dependency_state_boundaries(n, views)
 
         inputs = n.input_memlets()
         outputs = n.output_memlets()
@@ -2044,9 +2053,32 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
             _restart_state(i)
             continue
 
+        def _is_inplace_update(out: Memlet) -> bool:
+            """
+            Whether ``out`` is this node reading and writing one and the same
+            location -- the shape of an augmented assignment (``A[:] += 1``
+            lowers to a single tasklet whose in- and out-memlet are both
+            ``A[__i0]``).
+
+            Such a read is sequenced inside the node, so it is not a race with
+            the node's own write, and no state boundary could separate a node
+            from itself. Restricted to the node touching exactly one location
+            of that container in each direction: when it touches several
+            (``B[m]`` and ``B[m + 2]`` in one explicit tasklet), state
+            construction still needs the boundary to lay the access nodes out
+            correctly, and removing it produced wrong results.
+            """
+            if out.data in views:
+                return False
+            reads_of_container = [m for m in inputs if m.data == out.data]
+            writes_of_container = [m for m in outputs if m.data == out.data]
+            return (len(reads_of_container) == 1 and len(writes_of_container) == 1
+                    and reads_of_container[0].subset == out.subset)
+
         # Potential read/write data race: if any read is not in the parents of this node, it might
         # be performed in parallel
-        if any(o in reads and any(id(r) not in parents for r in reads[o]) for o in outputs):
+        if any(o in reads and any(not (r is n and _is_inplace_update(o)) and id(r) not in parents for r in reads[o])
+               for o in outputs):
             _restart_state(i)
             continue
 
