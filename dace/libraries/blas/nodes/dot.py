@@ -140,11 +140,11 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         if node.accumulator_type is None:
-            code += f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y,
-                             {stride_y}, _result);"""
+            code += f"""dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y,
+                             {stride_y}, _result));"""
         else:
             code += f"""
-            cublasDotEx(
+            dace::blas::CheckCublasError(cublasDotEx(
                 __dace_cublas_handle,
                 {n},
                 _x,
@@ -155,7 +155,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
                 {stride_y},
                 _result,
                 {blas_helpers.dtype_to_cudadatatype(desc_res.dtype)},
-                {blas_helpers.dtype_to_cudadatatype(node.accumulator_type)});
+                {blas_helpers.dtype_to_cudadatatype(node.accumulator_type)}));
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

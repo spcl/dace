@@ -543,11 +543,13 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
+            call_prefix += f'''{cls.check_error}(
+            {cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host}));
             {dtype.ctype} __alpha = {alpha};
             {dtype.ctype} __beta = {beta};
             '''
-            call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
+            call_suffix += f'''{cls.check_error}(
+            {cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device}));'''
             alpha = f'({cdtype} *)&__alpha'
             beta = f'({cdtype} *)&__beta'
         else:
@@ -563,15 +565,16 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             opt['backend'] = cls.backend
             opt['backend_op_ta'] = cls.backend_op(opt['ta'])
             opt['backend_op_tb'] = cls.backend_op(opt['tb'])
+            opt['check_error'] = cls.check_error
 
-            call = '''{backend}blas{func}(__dace_{backend}blas_handle,
+            call = '''{check_error}({backend}blas{func}(__dace_{backend}blas_handle,
                 {backend_op_ta}, {backend_op_tb},
                 {M}, {N}, {K},
                 {alpha},
                 ({dtype}*){arr_prefix}{x}, {lda},
                 ({dtype}*){arr_prefix}{y}, {ldb},
                 {beta},
-                ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
+                ({dtype}*){arr_prefix}_c, {ldc}));'''.format_map(opt)
         else:
             if node.compute_type is not None:
                 acctype = node.compute_type
@@ -586,7 +589,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 algorithm = node.algorithm
 
             call = f'''
-            {cls.backend}blas{cls.ex_suffix}(__dace_{cls.backend}blas_handle,
+            {cls.check_error}({cls.backend}blas{cls.ex_suffix}(__dace_{cls.backend}blas_handle,
                 {cls.backend_op(opt['ta'])},
                 {cls.backend_op(opt['tb'])},
                 {opt['M']}, {opt['N']}, {opt['K']},
@@ -602,7 +605,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 {dtype_to_cudadatatype(opt['cdtype'])},
                 {opt['ldc']},
                 {acctype},
-                {algorithm});
+                {algorithm}));
             '''
 
         code = (call_prefix + call + call_suffix)
@@ -706,6 +709,7 @@ class ExpandGemmCuBLAS(ExpandGemmGPUBLAS):
     pointer_host = 'CUBLAS_POINTER_MODE_HOST'
     pointer_device = 'CUBLAS_POINTER_MODE_DEVICE'
     ex_suffix = 'GemmEx'
+    check_error = 'dace::blas::CheckCublasError'
 
     @classmethod
     def backend_op(cls, mode: str) -> str:
@@ -725,6 +729,7 @@ class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
     pointer_host = 'rocblas_pointer_mode_host'
     pointer_device = 'rocblas_pointer_mode_device'
     ex_suffix = '_gemm_ex'
+    check_error = 'dace::blas::CheckRocblasError'
 
     @classmethod
     def backend_op(cls, mode: str) -> str:

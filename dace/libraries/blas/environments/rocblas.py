@@ -35,7 +35,7 @@ class rocBLAS:
         code = """\
 const int __dace_cuda_device = {location};
 rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get(__dace_cuda_device);
-rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
+dace::blas::CheckRocblasError(rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream));\n"""
 
         return code.format(location=location)
 

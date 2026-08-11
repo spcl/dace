@@ -7,9 +7,11 @@ import re
 
 import dace
 from dace import dtypes
+from dace.libraries import blas
 
 BAILOUT = r'if \(__result\)'
 EVENT_CALL = r'(?:cuda|hip)(?:EventRecord|StreamWaitEvent)\('
+CUBLAS_CALL = r'cublas[A-Z]\w*\('
 
 
 def generated_code(sdfg: dace.SDFG) -> str:
@@ -88,6 +90,24 @@ def cross_stream_consumer() -> dace.SDFG:
     return sdfg
 
 
+def cublas_gemm(alpha: float = 1.0) -> dace.SDFG:
+    """A GEMM library node expanded onto cuBLAS. ``alpha`` off 1.0 also brings out the pointer mode."""
+    sdfg = dace.SDFG('cublas_gemm')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [20, 20], dace.float64, storage=dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('main')
+    node = blas.Gemm('gemm', alpha=alpha)
+    node.implementation = 'cuBLAS'
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, '_a', dace.Memlet('A[0:20, 0:20]'))
+    state.add_edge(state.add_read('B'), None, node, '_b', dace.Memlet('B[0:20, 0:20]'))
+    state.add_edge(node, '_c', state.add_write('C'), None, dace.Memlet('C[0:20, 0:20]'))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    return sdfg
+
+
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
     """``__dace_init_cuda`` returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), 'persistent_gpu_transient')
@@ -118,7 +138,29 @@ def test_cross_stream_event_synchronization_is_checked():
     assert not unchecked, f'event synchronization emitted without an error check: {unchecked}'
 
 
+def test_cublas_calls_are_checked():
+    """cuBLAS reports through its return value only, so a dropped status is a silently wrong result."""
+    for alpha in (1.0, 2.0):
+        code = generated_code(cublas_gemm(alpha))
+        calls = list(re.finditer(CUBLAS_CALL, code))
+        assert calls, f'no cuBLAS call was emitted for alpha={alpha}, so this test is anchored on nothing'
+        unchecked = [
+            call.group(0) for call in calls
+            if not code[:call.start()].rstrip().endswith('dace::blas::CheckCublasError(')
+        ]
+        assert not unchecked, f'cuBLAS called without checking its status: {unchecked}'
+
+
+def test_the_cublas_gemm_expansion_still_emits_the_pointer_mode_switch():
+    """The check has to wrap the pointer mode switch, not replace it."""
+    code = generated_code(cublas_gemm(2.0))
+    assert 'cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST)' in code
+    assert 'cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE)' in code
+
+
 if __name__ == '__main__':
     test_a_failed_target_initializer_stops_before_the_state_it_left_unset()
     test_the_init_function_still_checks_what_runs_after_the_allocations()
     test_cross_stream_event_synchronization_is_checked()
+    test_cublas_calls_are_checked()
+    test_the_cublas_gemm_expansion_still_emits_the_pointer_mode_switch()

@@ -35,7 +35,7 @@ class cuBLAS:
         code = """\
 const int __dace_cuda_device = {location};
 cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get(__dace_cuda_device);
-cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
+dace::blas::CheckCublasError(cublasSetStream(__dace_cublas_handle, __dace_current_stream));\n"""
 
         return code.format(location=location)
 
