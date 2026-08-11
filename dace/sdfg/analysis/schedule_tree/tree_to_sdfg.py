@@ -1454,7 +1454,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             _materialize_view_bindings(shim.views, created_states)
 
         if isinstance(result, str) and result in sdfg.arrays:
-            if result != node.target:
+            if node.target_is_standin:
+                # ``target`` names no destination -- a bare call statement
+                # declares none, and the frontend recorded one of the call's own
+                # operands so the node has a container reference. The result is
+                # already where the caller asked for it (``dace.elementwise(f,
+                # A, B)`` writes and returns ``B``); copying it into the
+                # stand-in would both duplicate the write and, when the two
+                # differ in dtype, emit an ill-typed copy.
+                pass
+            elif result != node.target:
                 # The replacement allocated its own result container: copy it
                 # into the frontend-declared target (simplify collapses the
                 # copy). The copy goes into a fresh state so it orders after

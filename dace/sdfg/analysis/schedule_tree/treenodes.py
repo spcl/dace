@@ -1396,6 +1396,17 @@ class ReplacementCallNode(ScheduleTreeNode):
                                ``get_assignment_destination``, which is the
                                same distinction the classic frontend draws
                                from the assignment's own syntax.
+    :param target_is_standin: Whether ``target`` names no destination at all.
+                              A bare call statement declares no target, but the
+                              tree still requires a registered container
+                              reference, so the frontend records one of the
+                              call's own data operands as a stand-in. The
+                              call's result must NOT be copied into it: a
+                              replacement that writes a caller-provided output
+                              and returns it (``dace.elementwise(f, A, B)``
+                              returns ``B``) would otherwise be followed by a
+                              spurious ``B -> A`` copy, which is also
+                              ill-typed whenever the two differ in dtype.
     """
     qualname: str = ''
     target: str = ''
@@ -1408,6 +1419,7 @@ class ReplacementCallNode(ScheduleTreeNode):
     ufunc_method: Optional[str] = None
     extra_targets: List[str] = field(default_factory=list)
     target_preexisting: bool = False
+    target_is_standin: bool = False
 
     @property
     def targets(self) -> List[str]:

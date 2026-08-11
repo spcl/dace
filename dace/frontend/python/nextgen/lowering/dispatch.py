@@ -1961,6 +1961,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
         return False
     written: Optional[DataAccess] = target_access
     copy_out = False
+    target_is_standin = False
     if target_access is None and target is None:
         # No frontend-declared target container to write into (a bare
         # statement): the schedule tree still requires a registered
@@ -1980,6 +1981,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
             (value for value in operands if isinstance(value, str) and value in data_arguments), None)
         if target_container is None:
             return False
+        target_is_standin = True
     else:
         if written is None:
             written = _call_target_access(target, inferred, statement, state)
@@ -1992,7 +1994,8 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                data_arguments=data_arguments,
                                receiver=receiver,
                                receiver_object=receiver_object,
-                               target_preexisting=_writes_a_preexisting_target(target, copy_out)))
+                               target_preexisting=_writes_a_preexisting_target(target, copy_out),
+                               target_is_standin=target_is_standin))
     _apply_self_descriptor_side_effect(name, receiver, receiver_object, arguments, keywords, state)
     if target_container in state.context.containers and isinstance(state.context.containers[target_container].dtype,
                                                                    dtypes.pyobject):
