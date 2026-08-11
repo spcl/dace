@@ -48,15 +48,18 @@ def test_applyto_pattern():
 
     state = sdfg.node(0)
 
-    # The multiplication map is called "_Mult__map" (see above graph), we can
-    # query it
-    mult_exit = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapExit) and n.label == '_Mult__map')
-    # Same goes for the addition entry
-    add_entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.label == '_Add__map')
     # Since all redundant arrays have been removed by simplification pass,
     # we can get the only transient array that remains in the graph
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
+
+    # That transient carries the multiplication's result into the addition, so
+    # the two maps are the ones on either side of it. Identifying them
+    # structurally rather than by label keeps the test independent of how a
+    # frontend happens to name a map.
+    assert state.in_degree(access_node) == 1 and state.out_degree(access_node) == 1
+    mult_exit = next(e.src for e in state.in_edges(access_node) if isinstance(e.src, dace.nodes.MapExit))
+    add_entry = next(e.dst for e in state.out_edges(access_node) if isinstance(e.dst, dace.nodes.MapEntry))
 
     assert MapFusionVertical.can_be_applied_to(sdfg,
                                                first_map_exit=mult_exit,
