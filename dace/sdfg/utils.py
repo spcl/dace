@@ -1673,11 +1673,11 @@ def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
-def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: Optional[SDFG], comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
-    :param sdfg: SDFG to be compiled.
+    :param sdfg: SDFG to be compiled. Ranks other than 0 only load, and may pass ``None``.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
@@ -1686,6 +1686,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
            on *every* rank, so a build failure fails the whole job fast instead
            of deadlocking the other ranks at the build-folder broadcast below
            (rank 0 would never reach the broadcast, leaving the rest blocked).
+    :note: Only rank 0 builds, so a rank holding the SDFG is pinned to rank 0's folder.
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
@@ -1708,6 +1709,8 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     if error is not None:
         raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
                            f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
+    if sdfg is not None:
+        sdfg.build_folder = folder
 
     # Loads compiled SDFG.
     if rank > 0:
