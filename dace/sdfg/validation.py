@@ -256,6 +256,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
+    from dace.config import Config
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
@@ -369,7 +370,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
-        check_symbol_assumption_collisions(sdfg)
+        # Off by default: extended's passes still assign assumed symbols straight into
+        # `desc.shape`, the one store `absorb_symbol_assumptions` does not sit in front of.
+        if Config.get_bool('experimental.check_symbol_assumption_collisions'):
+            check_symbol_assumption_collisions(sdfg)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
