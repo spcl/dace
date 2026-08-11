@@ -191,8 +191,13 @@ def test_map_param():
 
     sdfg = map_uses_param.to_sdfg(simplify=True)
 
-    num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
-    assert (num_tasklet_fusions == 3)
+    sdfg.apply_transformations_repeated(TaskletFusion)
+    # Assert the END STATE, not the number of rewrite steps: how many fusions
+    # are needed depends on how many tasklets the frontend emitted, which is not
+    # a property of TaskletFusion. The nextgen frontend emits three tasklets for
+    # this body (the classic one emitted four), so it fuses in two steps rather
+    # than three -- and reaches the same optimum of a single tasklet.
+    assert len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]) == 1
 
     A = np.zeros([10], dtype=np.float32)
     B = np.ones([10], dtype=np.float32)
