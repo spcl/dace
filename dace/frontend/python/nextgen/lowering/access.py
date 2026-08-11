@@ -797,7 +797,15 @@ def lower_indirect_write(target: ast.Subscript,
     for connector, operand in operands:
         in_memlets[connector] = Memlet(data=operand.container, subset=operand.subset)
 
-    out_memlets = {'__arr': Memlet(data=base_access.container, subset=write_subset, wcr=wcr)}
+    # One element is written, however wide the subset has to be: a
+    # data-dependent index is only known to land SOMEWHERE in its dimension, so
+    # the subset covers the whole extent while the volume stays 1. Leaving the
+    # volume to follow the subset counted a full row per iteration, which
+    # propagated outward as M*N**2 accesses to an M-by-N array.
+    out_memlet = Memlet(data=base_access.container, subset=write_subset, wcr=wcr)
+    out_memlet.volume = 1
+    out_memlet.dynamic = True
+    out_memlets = {'__arr': out_memlet}
     line = getattr(statement, 'lineno', 0)
     tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'{index_code} = {code}')
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
