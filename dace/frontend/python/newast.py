@@ -3755,7 +3755,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
-                    elif not result_data.transient or result in self.sdfg.constants_prop:
+                    elif (not result_data.transient or result in self.sdfg.constants_prop
+                          or isinstance(result_data, data.Scalar)):
+                        # Scalars rebind in Python instead of being mutated in place, so ``b = a`` must copy the
+                        # value. Arrays keep aliasing, which is what NumPy does.
                         true_name, new_data = _add_transient_data(self, self.sdfg, result_data, dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
