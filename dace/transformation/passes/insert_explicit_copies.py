@@ -131,6 +131,10 @@ class InsertExplicitCopies(ppl.Pass):
             in_memlet.dynamic = memlet.dynamic
             out_memlet = Memlet(data=dst_name, subset=copy.deepcopy(dst_subset))
             out_memlet.dynamic = memlet.dynamic
+            # ``allow_oob`` is the author's waiver of the src/dst volume check (``validation.py``
+            # honours it the same way); dropping it here turns a legal copy into an expansion error.
+            in_memlet.allow_oob = memlet.allow_oob
+            out_memlet.allow_oob = memlet.allow_oob
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)
