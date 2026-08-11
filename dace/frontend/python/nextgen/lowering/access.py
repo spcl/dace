@@ -787,8 +787,9 @@ def lower_indirect_write(target: ast.Subscript,
         in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
         index_names[astutils.unparse(read)] = connector
 
+    write_subset = _indirect_write_subset(target, reads, base_access, state)
     substituted_index = substitute_index_reads(target.slice, index_names)
-    substituted_index = _squeeze_index_to_memlet(substituted_index, base_access.subset)
+    substituted_index = _squeeze_index_to_memlet(substituted_index, write_subset)
     index_code = astutils.unparse(
         ast.Subscript(value=ast.Name(id='__arr', ctx=ast.Load()), slice=substituted_index, ctx=ast.Load()))
 
@@ -796,11 +797,58 @@ def lower_indirect_write(target: ast.Subscript,
     for connector, operand in operands:
         in_memlets[connector] = Memlet(data=operand.container, subset=operand.subset)
 
-    out_memlets = {'__arr': Memlet(data=base_access.container, subset=base_access.subset, wcr=wcr)}
+    out_memlets = {'__arr': Memlet(data=base_access.container, subset=write_subset, wcr=wcr)}
     line = getattr(statement, 'lineno', 0)
     tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'{index_code} = {code}')
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
     return True
+
+
+def _indirect_write_subset(target: ast.Subscript, reads: List[ast.expr], base_access: DataAccess,
+                           state: LoweringState) -> subsets.Range:
+    """
+    The subset an indirect write actually touches.
+
+    Indirection only lowers whole-ELEMENT accesses -- a subscript that keeps a
+    range has no indirect reads at all (see :func:`indirect_index_reads`) -- so
+    every dimension here carries a scalar index, and each one is either
+    data-dependent or known at compile time:
+
+    * data-dependent (``ind``): the write may land anywhere along that
+      dimension, so it takes the dimension's full extent;
+    * otherwise (``0``, ``i + 1``): exactly that element.
+
+    Taking the whole container instead, as this used to, over-approximates the
+    WRITE set: ``a[0, ind, 0] = 1`` on ``a: float64[1, 2, 3]`` claimed to write
+    all of ``a[0, 0:2, 0:3]`` when it only ever touches ``a[0, 0:2, 0]``. An
+    over-broad write memlet is not merely imprecise -- it tells later passes
+    that elements are defined which the tasklet never assigns.
+
+    It also makes the connector's shape fall out correctly on its own:
+    :meth:`~dace.subsets.Range.data_dims` then drops exactly the constant-index
+    dimensions, which is NumPy's own rule that an integer index removes a
+    dimension while a slice keeps it.
+
+    :return: The precise write subset, or the base access's own subset when the
+             index cannot be read dimension-by-dimension.
+    """
+    shape = list(base_access.descriptor.shape)
+    elements = list(target.slice.elts) if isinstance(target.slice, ast.Tuple) else [target.slice]
+    if len(elements) != len(shape):
+        return base_access.subset  # Not one index per dimension: leave it whole
+
+    ranges = []
+    for element, extent in zip(elements, shape):
+        identifiers = {id(node) for node in ast.walk(element)}
+        if any(id(read) in identifiers for read in reads):
+            ranges.append((0, extent - 1, 1))
+            continue
+        try:
+            index = symbolic.pystr_to_symbolic(astutils.unparse(resolve_symbol_names(element, state)))
+        except Exception:
+            return base_access.subset  # Not symbolizable: keep the safe over-approximation
+        ranges.append((index, index, 1))
+    return subsets.Range(ranges)
 
 
 def _squeeze_index_to_memlet(index: ast.expr, subset: subsets.Range) -> ast.expr:
@@ -809,11 +857,10 @@ def _squeeze_index_to_memlet(index: ast.expr, subset: subsets.Range) -> ast.expr
 
     Inside a tasklet a connector presents only its memlet's NON-degenerate
     dimensions -- the count :meth:`~dace.subsets.Range.data_dims` reports, and
-    the count ``dace.sdfg.tasklet_validation`` checks the subscript against. A
-    write to ``a[0, ind, 0]`` where ``a`` is ``float64[1, 2, 3]`` carries an
-    out-memlet over the whole array, whose leading size-1 dimension is not part
-    of the connector; indexing it with all three subscripts fails validation
-    with "invalid number of dimensions".
+    the count ``dace.sdfg.tasklet_validation`` checks the subscript against.
+    With the precise write subset from :func:`_indirect_write_subset` those are
+    exactly the data-dependent dimensions, so a write to ``a[0, ind, 0]``
+    indexes its connector as ``__arr[__ind0]``.
 
     The degeneracy test is written exactly as ``data_dims`` writes it, so the
     two cannot drift apart.
