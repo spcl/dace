@@ -702,6 +702,29 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nx.add_edge(src, dst, data=data)
         return edge
 
+    def reorder_nodes(self, order: Sequence[NodeT]):
+        """Permute the node list into ``order``, leaving nodes, edges and adjacency untouched.
+
+        ``nodes()`` (and with it ``node_id`` and everything serialized by index) reports insertion
+        order, so a node's position records WHEN it was added. A rewrite that has to place a node
+        at a fixed position -- an entry block that must lead the list whether it was built first or
+        last -- can only say so here. Both node stores are permuted together, so the backing
+        ``networkx`` graph keeps agreeing with ``nodes()`` and traversal tie-breaks stay
+        deterministic.
+
+        :param order: A permutation of the current nodes.
+        """
+        reordered = OrderedDict((n, self._nodes[n]) for n in order)
+        if len(reordered) != len(self._nodes):
+            raise ValueError('reorder_nodes expects a permutation of the current node list')
+        self._nodes = reordered
+        # networkx has no reordering API; popping and re-inserting each node in the wanted order
+        # moves it to the end of every backing dict, so after one sweep they read in ``order``.
+        for n in order:
+            self._nx._node[n] = self._nx._node.pop(n)
+            self._nx._succ[n] = self._nx._succ.pop(n)
+            self._nx._pred[n] = self._nx._pred.pop(n)
+
     def remove_node(self, node: NodeT):
         try:
             for edge in self.all_edges(node):
