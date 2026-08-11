@@ -298,8 +298,10 @@ def test_descriptor_inference_numpy_split_structured_result():
 
     stree = prog.to_schedule_tree()
 
-    assert 'left' in stree.containers
-    left_desc = stree.containers['left']
+    # Only `left` is returned, so only its container is elided into `__return`
+    # (see test_operator_inference_add_broadcast); `right` keeps its own name.
+    assert '__return' in stree.containers
+    left_desc = stree.containers['__return']
     assert isinstance(left_desc, dace.data.Array)
     assert tuple(left_desc.shape) == (3, )
 
