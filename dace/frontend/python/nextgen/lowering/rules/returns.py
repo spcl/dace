@@ -192,7 +192,18 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
     _reject_disagreeing_shape(return_name, [1], value, statement, state)
     if return_name not in state.context.containers:
         return_name = state.context.add_container(return_name, data.Array(dtype, [1]), transient=transient)
-    tasklet = nodes.Tasklet(f'return_{statement.lineno}', set(), {'__out'}, f'__out = {astutils.unparse(value)}')
+    # A name that reaches here resolved to no container (``resolve_access``
+    # declined above), so unparsing it would leave the tasklet reading a name
+    # nothing defines. That is what canonicalization hands us for a hoisted
+    # return: ``return len(A)`` becomes ``__anf0 = len(A); return __anf0``, and
+    # the temporary binds to a compile-time value rather than to storage. The
+    # dangling name survives as a free symbol of the finished SDFG, where
+    # ``SDFG.arglist`` looks it up in ``symbols`` and raises ``KeyError``.
+    # Emit the value the name stands for instead.
+    expression = astutils.unparse(value)
+    if isinstance(value, ast.Name) and inferred.kind in ('symbolic', 'constant') and inferred.value is not None:
+        expression = str(inferred.value)
+    tasklet = nodes.Tasklet(f'return_{statement.lineno}', set(), {'__out'}, f'__out = {expression}')
     state.emitter.emit(
         tn.TaskletNode(node=tasklet,
                        in_memlets={},

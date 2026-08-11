@@ -9,7 +9,10 @@ metadata), so memlet propagation and downstream analysis behave identically
 for frontend-produced and SDFG-derived schedule trees.
 """
 import ast
+import numbers
 from typing import List, Optional, Tuple
+
+import numpy
 
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -372,6 +375,7 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
         access = resolve_access(node, state)
         if access is not None:
             return _dynamic_bound(node, access, state, dynamic_inputs)
+    node = _fold_symbolic_temporaries(node, state)
     node = _promote_bound_reads(node, state, dynamic_inputs)
     expression = astutils.unparse(resolve_symbol_names(node, state))
     try:
@@ -383,6 +387,52 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
                                       state.context.filename,
                                       node,
                                       category='dynamic-bound')
+
+
+def _fold_symbolic_temporaries(node: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Replace every name INSIDE a compound ``dace.map`` bound that stands for a
+    compile-time symbolic value with that value.
+
+    :func:`_bound` already does this for a bound that *is* such a name. But
+    canonicalization also hoists PARTS of a bound: ``dace.map[0:M * N * K]``
+    becomes ``__anf0 = M * N`` followed by the range ``0:2 * __anf0``, and there
+    the temporary sits inside a ``BinOp``. Nothing then substitutes it, so
+    :func:`~dace.symbolic.pystr_to_symbolic` turns ``__anf0`` into a free symbol
+    that no container and no symbol declares. It survives into the finished
+    SDFG, where ``SDFG.arglist`` looks it up in ``symbols`` and raises
+    ``KeyError: '__anf0'``.
+
+    A name that resolves to data is left alone -- :func:`_promote_bound_reads`
+    runs next and turns it into a dynamic-map-range symbol, which is the correct
+    treatment for a bound the program computes at run time.
+    """
+    result = astutils.copy_tree(node)
+
+    class _Folder(ast.NodeTransformer):
+
+        def visit_Name(self, name_node: ast.Name) -> ast.AST:
+            try:
+                inferred = state.inference.infer(name_node)
+            except Exception:
+                return name_node  # Not inferable here; later stages report it
+            if inferred is None or inferred.kind not in ('symbolic', 'constant'):
+                return name_node
+            value = inferred.value
+            # A bound is a symbolic expression or an integer. A bool is neither
+            # (Python makes it an integer, but nothing that reads a bound wants
+            # ``True``), and a float would silently change the iteration space.
+            if not symbolic.issymbolic(value):
+                if not isinstance(value, numbers.Integral) or isinstance(value, (bool, numpy.bool_)):
+                    return name_node
+            try:
+                return ast.parse(str(value), mode='eval').body
+            except SyntaxError:
+                # A value with no Python surface syntax: leave the name for the
+                # ordinary paths to resolve or reject.
+                return name_node
+
+    return ast.fix_missing_locations(_Folder().visit(result))
 
 
 def _promote_bound_reads(node: ast.expr, state: LoweringState, dynamic_inputs: List[tn.DynScopeCopyNode]) -> ast.expr:
