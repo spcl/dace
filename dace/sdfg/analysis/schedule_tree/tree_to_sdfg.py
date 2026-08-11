@@ -1624,23 +1624,50 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if len(return_arrays) < len(node.return_targets):
             raise NotImplementedError("SDFG call with more return targets than callee return containers.")
 
-        # Without dataflow analysis of the callee, arguments conservatively
-        # connect as both inputs and outputs; returns are outputs only.
-        input_connectors = {parameter for parameter, _ in connections}
-        output_connectors = input_connectors | set(return_arrays[:len(node.return_targets)])
+        # Connect an argument as an input only if the callee reads it and as an
+        # output only if it writes it. Connecting every argument both ways made
+        # a pure output look like an input, which adds a read dependency the
+        # program does not have. An argument the callee neither reads nor writes
+        # still connects as an input, so the nested SDFG keeps a connector for
+        # it. Returns are outputs only.
+        callee_reads, callee_writes = inner.read_and_write_sets()
+        parameters = {parameter for parameter, _ in connections}
+        input_connectors = {p for p in parameters if p in callee_reads or p not in callee_writes}
+        output_connectors = {p for p in parameters if p in callee_writes}
+        output_connectors |= set(return_arrays[:len(node.return_targets)])
 
         state = self._current_state
         nested = state.add_nested_sdfg(inner,
                                        inputs=input_connectors,
                                        outputs=output_connectors,
                                        symbol_mapping=symbol_mapping)
+        # Go through the same per-scope access cache the tasklet path uses, so a
+        # later node in this state reading what the call wrote finds the access
+        # node the call wrote to. Bypassing it gave the call its own private
+        # access node and left the reader connected to a fresh, unwritten one --
+        # harmless only as long as an unconditional state boundary followed
+        # every call.
+        cache_key = (state, id(self._ctx.current_scope))
+        cache = self._ctx.access_cache.setdefault(cache_key, {})
+
+        def _write_node(container: str) -> nodes.AccessNode:
+            # Reuse a cached node only when nothing has read from it yet;
+            # reusing one that already has out-edges would route those reads
+            # through this write and make a cycle.
+            if container not in cache or state.out_degree(cache[container]) > 0:
+                cache[container] = state.add_write(container)
+            return cache[container]
+
         for parameter, container in connections:
-            state.add_edge(state.add_read(container), None, nested, parameter,
-                           Memlet.from_array(container, sdfg.arrays[container]))
-            state.add_edge(nested, parameter, state.add_write(container), None,
-                           Memlet.from_array(container, sdfg.arrays[container]))
+            if parameter in input_connectors:
+                read_node = cache[container] if container in cache else state.add_read(container)
+                cache.setdefault(container, read_node)
+                state.add_edge(read_node, None, nested, parameter, Memlet.from_array(container, sdfg.arrays[container]))
+            if parameter in output_connectors:
+                state.add_edge(nested, parameter, _write_node(container), None,
+                               Memlet.from_array(container, sdfg.arrays[container]))
         for inner_name, target in zip(return_arrays, node.return_targets):
-            state.add_edge(nested, inner_name, state.add_write(target), None,
+            state.add_edge(nested, inner_name, _write_node(target), None,
                            Memlet.from_array(target, sdfg.arrays[target]))
 
         # A nested SDFG is one dataflow node: what follows it is ordered by the
@@ -2075,7 +2102,15 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
             (``B[m]`` and ``B[m + 2]`` in one explicit tasklet), state
             construction still needs the boundary to lay the access nodes out
             correctly, and removing it produced wrong results.
+
+            A nested-SDFG call is never an in-place update: its arguments are
+            conservatively reported as BOTH read and written (the callee's
+            dataflow is not analyzed here), so every argument would look like
+            one. Treating them that way let an argument's copy-in and its
+            copy-back share a state, which is a cycle.
             """
+            if isinstance(n, tn.SDFGCallNode):
+                return False
             if out.data in views:
                 return False
             reads_of_container = [m for m in inputs if m.data == out.data]
