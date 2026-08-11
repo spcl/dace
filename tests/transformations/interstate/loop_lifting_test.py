@@ -384,6 +384,144 @@ def test_lift_while_loop_with_data_dependent_condition(extra_state):
     assert a[0] == ref
 
 
+@pytest.mark.parametrize('extra_state', (False, True))
+def test_lift_nested_data_dependent_loops(extra_state):
+    """Two nested loops that BOTH have a guard block with dataflow computing
+    their own condition input. The outer guard writes ``cont1``, the inner one
+    ``cont2``; the inner loop's exit edge is the outer loop's back edge::
+
+        k, i61, i17 = 0, 1, 0
+        while True:
+            cont1 = (k == 3)            # OUTER guard dataflow
+            if cont1:
+                break
+            while True:
+                a[0] += i17             # INNER guard dataflow
+                cont2 = (i61 == 10)
+                if cont2:
+                    k = k + 1
+                    break
+                i60 = i61
+                i61, i17 = i60 + 1, i60 * 12
+
+    Lifting the outer loop must not break the nested one: before the fix the
+    outer lift produced the dead ``(not 1)`` branch, the inner loop was never
+    lifted at all, and the result was 0 instead of 756."""
+    from dace.sdfg.state import ConditionalBlock
+
+    sdfg = SDFG('nested_data_dependent_conds' + ('_extra' if extra_state else ''))
+    sdfg.add_array('a', [1], dace.int64)
+    sdfg.add_scalar('cont1', dace.int64, transient=True)
+    sdfg.add_scalar('cont2', dace.int64, transient=True)
+    init = sdfg.add_state('init', is_start_block=True)
+    outer_guard = sdfg.add_state('outer_guard')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    final = sdfg.add_state('final')
+    sdfg.add_edge(init, outer_guard, InterstateEdge(assignments=dict(k='0', i60='0', i61='1', i17='0')))
+    sdfg.add_edge(outer_guard, final, InterstateEdge('cont1'))
+    sdfg.add_edge(outer_guard, body, InterstateEdge('not cont1'))
+    sdfg.add_edge(body, outer_guard, InterstateEdge('cont2', dict(k='k + 1')))
+    sdfg.add_edge(body, latch, InterstateEdge('not cont2', dict(i60='i61')))
+    if not extra_state:
+        sdfg.add_edge(latch, body, InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+    else:
+        extra = sdfg.add_state('extra')
+        sdfg.add_edge(latch, extra, InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+        sdfg.add_edge(extra, body, InterstateEdge(assignments=dict(i18='i60 + i61')))
+    ot = outer_guard.add_tasklet('outer_cond', {}, {'c'}, 'c = k == 3')
+    outer_guard.add_edge(ot, 'c', outer_guard.add_write('cont1'), None, Memlet('cont1[0]'))
+    t = body.add_tasklet('add', {'inp'}, {'out', 'c'}, 'out = inp + i17; c = i61 == 10')
+    body.add_edge(body.add_read('a'), None, t, 'inp', Memlet('a[0]'))
+    body.add_edge(t, 'out', body.add_write('a'), None, Memlet('a[0]'))
+    body.add_edge(t, 'c', body.add_write('cont2'), None, Memlet('cont2[0]'))
+
+    # BOTH loops must lift - the outer lift used to mangle the inner one out of
+    # any liftable shape, leaving a single (wrong) region behind.
+    assert sdfg.apply_transformations_repeated([LoopLifting]) == 2
+    assert sdfg.using_explicit_control_flow == True
+    assert len([x for x in sdfg.all_control_flow_regions() if isinstance(x, LoopRegion)]) == 2
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, ConditionalBlock):
+            for cond, _ in region.branches:
+                if cond is not None:
+                    assert cond.as_string.strip() not in ('(not 1)', 'not 1', '0', 'false', 'False')
+
+    # Reference: the python equivalent above. The first outer iteration runs the
+    # inner loop for i60 = 0..9; the remaining two re-enter it with i61 already
+    # at 10, so only the inner guard runs (once each, adding the final i17).
+    ref = sum(i60 * 12 for i60 in range(10)) + 2 * (9 * 12)
+
+    from dace.codegen.exceptions import CompilationError
+    from dace.config import Config, set_temporary
+    hardened_args = Config.get('compiler', 'cpu', 'args') + ' -ftrivial-auto-var-init=pattern'
+    with set_temporary('compiler', 'cpu', 'args', value=hardened_args):
+        a = np.zeros([1], np.int64)
+        try:
+            sdfg(a=a)
+        except CompilationError:
+            pytest.skip('CPU compiler does not support -ftrivial-auto-var-init')
+    assert a[0] == ref
+
+
+def test_lift_nested_for_loops_with_dataflow_guards():
+    """Nested for-style loops whose guard blocks BOTH carry dataflow. Each guard
+    runs once more than its body (it also runs on the final, failing check), so
+    the outer guard must execute NI+1 times and the inner one NJ+1 times per
+    outer iteration. Every block accumulates into its own array cell, which
+    pins the exact execution count - a dropped OR a duplicated execution fails.
+
+    Before the fix the outer lift dropped the guard's final execution and
+    mangled the inner loop out of any liftable shape: the outer guard ran NI
+    times and the inner one exactly once per outer iteration."""
+    from dace.sdfg.state import ConditionalBlock
+
+    NI, NJ = 3, 4
+    sdfg = SDFG('nested_for_dataflow_guards')
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_symbol('j', dace.int32)
+    sdfg.add_array('A', (NI + 1, ), dace.int32)
+    sdfg.add_array('B', (NI, NJ + 1), dace.int32)
+    sdfg.add_array('C', (NI, NJ), dace.int32)
+    init_state = sdfg.add_state('init', is_start_block=True)
+    outer_guard = sdfg.add_state('outer_guard')
+    inner_guard = sdfg.add_state('inner_guard')
+    main_state = sdfg.add_state('loop_state')
+    end_state = sdfg.add_state('end')
+    sdfg.add_edge(init_state, outer_guard, InterstateEdge(assignments={'i': '0'}))
+    sdfg.add_edge(outer_guard, inner_guard, InterstateEdge(condition=f'i < {NI}', assignments={'j': '0'}))
+    sdfg.add_edge(outer_guard, end_state, InterstateEdge(condition=f'i >= {NI}'))
+    sdfg.add_edge(inner_guard, main_state, InterstateEdge(condition=f'j < {NJ}'))
+    sdfg.add_edge(inner_guard, outer_guard, InterstateEdge(condition=f'j >= {NJ}', assignments={'i': 'i + 1'}))
+    sdfg.add_edge(main_state, inner_guard, InterstateEdge(assignments={'j': 'j + 1'}))
+
+    def count_executions(state, array, subset):
+        t = state.add_tasklet('t_' + array, {'inp'}, {'out'}, 'out = inp + 1')
+        state.add_edge(state.add_read(array), None, t, 'inp', Memlet(f'{array}[{subset}]'))
+        state.add_edge(t, 'out', state.add_write(array), None, Memlet(f'{array}[{subset}]'))
+
+    count_executions(outer_guard, 'A', 'i')  # outer GUARD: i = 0..NI
+    count_executions(inner_guard, 'B', 'i, j')  # inner GUARD: j = 0..NJ, per i
+    count_executions(main_state, 'C', 'i, j')  # body: j = 0..NJ-1, per i
+
+    assert sdfg.apply_transformations_repeated([LoopLifting]) == 2
+    assert sdfg.using_explicit_control_flow == True
+    assert len([x for x in sdfg.all_control_flow_regions() if isinstance(x, LoopRegion)]) == 2
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, ConditionalBlock):
+            for cond, _ in region.branches:
+                if cond is not None:
+                    assert cond.as_string.strip() not in ('(not 1)', 'not 1', '0', 'false', 'False')
+
+    A = np.zeros((NI + 1, ), dtype=np.int32)
+    B = np.zeros((NI, NJ + 1), dtype=np.int32)
+    C = np.zeros((NI, NJ), dtype=np.int32)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(A, 1)
+    assert np.allclose(B, 1)
+    assert np.allclose(C, 1)
+
+
 if __name__ == '__main__':
     test_lift_regular_for_loop()
     test_lift_loop_llvm_canonical(True)
@@ -395,3 +533,6 @@ if __name__ == '__main__':
     test_lift_for_loop_with_dataflow_guard()
     test_lift_while_loop_with_data_dependent_condition(False)
     test_lift_while_loop_with_data_dependent_condition(True)
+    test_lift_nested_data_dependent_loops(False)
+    test_lift_nested_data_dependent_loops(True)
+    test_lift_nested_for_loops_with_dataflow_guards()
