@@ -518,7 +518,11 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (str(write_set) == "0:M, 0:N - 2")
+    # 'for j in range(2, N)' writes columns 2..N-1, so the write set is
+    # '0:M, 2:N'. The previous expectation '0:M, 0:N - 2' has the right column
+    # COUNT but starts at 0 -- a nested SDFG's shifted view of the loop leaking
+    # into an assertion about subsets of A itself.
+    assert (str(write_set) == "0:M, 2:N")
 
 
 def test_map_in_nested_sdfg_in_map():
