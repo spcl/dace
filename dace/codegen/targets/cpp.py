@@ -1421,10 +1421,14 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->even
             for e in dfg.out_edges(dstnode):
                 if isinstance(e.dst, nodes.AccessNode):
                     continue
-                # If no stream at destination: synchronize stream with host.
+                # If no stream at destination: the consumer runs on the host, so wait for the stream.
                 if not hasattr(e.dst, "_cuda_stream"):
-                    pass
-                    # Done at destination
+                    callsite_stream.write(
+                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        cfg,
+                        state_id,
+                        [e.src, e.dst],
+                    )
 
                 # If different stream at destination: record event and wait
                 # for it in target stream.

@@ -1053,9 +1053,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 if max_streams >= 0:
                     print('WARNING: Undefined stream, reverting to default')
-                if dst_location == 'Host':
-                    is_sync = True
                 cudastream = 'nullptr'
+
+            # The host can read a host-located destination as soon as the copy is done, so the copy
+            # has to be waited for. Stream assignment stamps host containers that sit inside a GPU
+            # dataflow chain, so the stamp says nothing about who reads them.
+            if dst_location == 'Host':
+                is_sync = True
 
             # Handle case of impending kernel/tasklet on another stream
             if max_streams >= 0:
@@ -1064,10 +1068,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         continue
                     if not hasattr(e.dst, '_cuda_stream'):
                         is_sync = True
-                    elif not hasattr(e, '_cuda_event'):
-                        is_sync = True
                     elif e.dst._cuda_stream != cudastream:
-                        syncwith[e.dst._cuda_stream] = e._cuda_event
+                        # A consumer on another stream is ordered by an event, or by the host when
+                        # stream assignment did not leave one.
+                        if hasattr(e, '_cuda_event'):
+                            syncwith[e.dst._cuda_stream] = e._cuda_event
+                        else:
+                            is_sync = True
 
                 cudastream = common.gpu_stream_expr(cudastream)
 
@@ -1283,8 +1290,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Post-copy synchronization
             if is_sync:
-                # Synchronize with host (done at destination)
-                pass
+                # Every copy emitted above is asynchronous, so the host has to wait for the stream
+                # before it may read the destination.
+                callsite_stream.write('DACE_GPU_CHECK(%sStreamSynchronize(%s));\n' % (self.backend, cudastream), cfg,
+                                      state_id, [src_node, dst_node])
             else:
                 # Synchronize with other streams as necessary
                 for streamid, event in syncwith.items():
