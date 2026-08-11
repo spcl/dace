@@ -129,7 +129,15 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     # call scope, so the callee body (and the shapes of anything it allocates)
     # can use them (see ``_map_symbol_keywords``).
     for symbol_name, source_container in pending_symbols:
-        assignment = f'{source_container}[0]'
+        # A Scalar generates as a value rather than a pointer, so subscripting
+        # it does not compile -- the same array-versus-scalar distinction
+        # ``access.scalar_read_expression`` draws, and that the classic frontend
+        # draws in ``newast.ProgramVisitor._parse_sdfg_call``.
+        source_descriptor = state.context.containers.get(source_container)
+        if isinstance(source_descriptor, data.Scalar):
+            assignment = source_container
+        else:
+            assignment = f'{source_container}[0]'
         state.emitter.emit(
             tn.AssignNode(name=symbol_name,
                           value=CodeBlock(assignment),
