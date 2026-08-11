@@ -130,27 +130,32 @@ def specifies_datatype(func: Callable[[Any, data.Data, Any], Tuple[str, data.Dat
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
-    name = pv.get_target_name()
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass, default_name=None):
+    name = pv.get_target_name(default=default_name)
     name, new_data = sdfg.add_scalar(name, dtype, transient=True, find_new_name=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Array)
-def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Array, dtype):
-    name, new_data = sdfg.add_temp_transient_like(sample_data, dtype=dtype, name=pv.get_target_name())
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Array, dtype, default_name=None):
+    name, new_data = sdfg.add_temp_transient_like(sample_data,
+                                                  dtype=dtype,
+                                                  name=pv.get_target_name(default=default_name))
     return name, new_data
 
 
 @specifies_datatype(datatype=data.View)
-def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.View, dtype):
-    name, new_data = sdfg.add_transient(pv.get_target_name(), sample_data.shape, dtype, find_new_name=True)
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.View, dtype, default_name=None):
+    name, new_data = sdfg.add_transient(pv.get_target_name(default=default_name),
+                                        sample_data.shape,
+                                        dtype,
+                                        find_new_name=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Stream)
-def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Stream, dtype):
-    name = pv.get_target_name()
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Stream, dtype, default_name=None):
+    name = pv.get_target_name(default=default_name)
     name, new_data = sdfg.add_stream(name,
                                      dtype,
                                      buffer_size=sample_data.buffer_size,
@@ -160,16 +165,25 @@ def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Stream, dtype):
     return name, new_data
 
 
-def _add_transient_data(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typeclass = None):
+def _add_transient_data(pv: 'ProgramVisitor',
+                        sdfg: SDFG,
+                        sample_data: data.Data,
+                        dtype: dtypes.typeclass = None,
+                        default_name: str = None):
     """ Adds to the sdfg transient data of the same dtype, shape and other
-        parameters as sample_data. """
+        parameters as sample_data.
+
+        :param default_name: Name to fall back on when the target-name heuristic finds none. Without
+            it the descriptor gets an anonymous ``__tmp{N}``, which a nested scope's own counter
+            mints again and then shadows.
+    """
     func = AddTransientMethods.get(type(sample_data))
     if func is None:
         raise NotImplementedError
     if dtype is None:
-        return func(pv, sdfg, sample_data, sample_data.dtype)
+        return func(pv, sdfg, sample_data, sample_data.dtype, default_name)
     else:
-        return func(pv, sdfg, sample_data, dtype)
+        return func(pv, sdfg, sample_data, dtype, default_name)
 
 
 def _is_equivalent(first: data.Data, second: data.Data):
@@ -3758,8 +3772,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif (not result_data.transient or result in self.sdfg.constants_prop
                           or isinstance(result_data, data.Scalar)):
                         # Scalars rebind in Python instead of being mutated in place, so ``b = a`` must copy the
-                        # value. Arrays keep aliasing, which is what NumPy does.
-                        true_name, new_data = _add_transient_data(self, self.sdfg, result_data, dtype)
+                        # value. Arrays keep aliasing, which is what NumPy does. The copy binds to a descriptor
+                        # named after the variable: an anonymous ``__tmp{N}`` collides with the temporaries a
+                        # nested scope mints from its own counter, and the nested one shadows it -- the
+                        # accumulator write in ``if c: tmp += a[j]`` then never reaches the outer scalar.
+                        true_name, new_data = _add_transient_data(self,
+                                                                  self.sdfg,
+                                                                  result_data,
+                                                                  dtype,
+                                                                  default_name=name)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                     else:
