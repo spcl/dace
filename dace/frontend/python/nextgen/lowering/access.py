@@ -788,6 +788,7 @@ def lower_indirect_write(target: ast.Subscript,
         index_names[astutils.unparse(read)] = connector
 
     substituted_index = substitute_index_reads(target.slice, index_names)
+    substituted_index = _squeeze_index_to_memlet(substituted_index, base_access.subset)
     index_code = astutils.unparse(
         ast.Subscript(value=ast.Name(id='__arr', ctx=ast.Load()), slice=substituted_index, ctx=ast.Load()))
 
@@ -800,6 +801,31 @@ def lower_indirect_write(target: ast.Subscript,
     tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'{index_code} = {code}')
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
     return True
+
+
+def _squeeze_index_to_memlet(index: ast.expr, subset: subsets.Range) -> ast.expr:
+    """
+    Drop index expressions for the dimensions a tasklet's memlet squeezes away.
+
+    Inside a tasklet a connector presents only its memlet's NON-degenerate
+    dimensions -- the count :meth:`~dace.subsets.Range.data_dims` reports, and
+    the count ``dace.sdfg.tasklet_validation`` checks the subscript against. A
+    write to ``a[0, ind, 0]`` where ``a`` is ``float64[1, 2, 3]`` carries an
+    out-memlet over the whole array, whose leading size-1 dimension is not part
+    of the connector; indexing it with all three subscripts fails validation
+    with "invalid number of dimensions".
+
+    The degeneracy test is written exactly as ``data_dims`` writes it, so the
+    two cannot drift apart.
+    """
+    elements = list(index.elts) if isinstance(index, ast.Tuple) else [index]
+    ranges = subset.ranges
+    if len(elements) != len(ranges):
+        return index  # Not a full per-dimension index: leave it alone
+    kept = [element for element, (begin, end, _) in zip(elements, ranges) if (end - begin + 1) != 1]
+    if len(kept) == len(elements) or not kept:
+        return index
+    return kept[0] if len(kept) == 1 else ast.Tuple(elts=kept, ctx=ast.Load())
 
 
 def indexed_subset(access: DataAccess, params: List[str], result_shape: List) -> subsets.Range:
