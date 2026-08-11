@@ -952,6 +952,11 @@ class SDFG(ControlFlowRegion):
     def assume_symbols(self, expr):
         """``expr`` with bare symbols re-minted from the registry, for REASONING only.
 
+        This is the inverse of :func:`~dace.symbolic.bare_symbols` and the seam every site that
+        asks SymPy a question about a stored expression has to go through: a bare symbol answers
+        ``is_positive`` with ``None``, so ``Max``, ``sqrt`` and inequality folding all take their
+        conservative branch until the recorded facts are put back on.
+
         :param expr: A symbolic expression, or any value, which is returned unchanged.
         :return: ``expr`` with each registered symbol carrying its recorded assumptions, or
                  ``expr`` unchanged when it is not symbolic. The assumed objects are local to
@@ -960,11 +965,14 @@ class SDFG(ControlFlowRegion):
         """
         if not self.symbol_assumptions or not isinstance(expr, sympy.Basic):
             return expr
-        repl = {
-            sym: symbolic.symbol(sym.name, self.symbols.get(sym.name), **self.symbol_assumptions[sym.name])
-            for sym in expr.free_symbols if sym.name in self.symbol_assumptions
-        }
-        return expr.subs(repl) if repl else expr
+        repl = {}
+        for sym in expr.free_symbols:
+            facts = self.symbol_assumptions.get(sym.name)
+            if facts:
+                repl[sym] = symbolic.assumed_symbol(sym.name, self.symbols.get(sym.name), tuple(sorted(facts.items())))
+        # `xreplace` and not `subs`: the keys ARE the stored objects, so no matching is needed and
+        # none of SymPy's rewriting on the way out is wanted.
+        return expr.xreplace(repl) if repl else expr
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
