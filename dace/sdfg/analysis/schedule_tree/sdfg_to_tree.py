@@ -457,7 +457,15 @@ def _prepare_schedule_tree_edges(
         # Part of a memlet path - only consider innermost memlets
         mtree = state.memlet_tree(edge)
         all_edges = set(e for e in mtree)
-        leaves = set(mtree.leaves())
+        # ``leaves()`` descends from the node it is called on, and
+        # ``memlet_tree`` returns the tree positioned AT the queried edge --
+        # while iterating it yields the WHOLE tree. Taking the leaves from the
+        # queried edge alone therefore put every sibling leaf into
+        # ``edges_to_ignore``, and those edges never got a node. Two dynamic
+        # map ranges fed from one map-entry connector (``A_row[i]`` and
+        # ``A_row[i + 1]`` through ``OUT_A_row``) lost one of the two copies,
+        # leaving a range bound nothing defined. Start from the root.
+        leaves = set(mtree.root().leaves())
         edges_to_ignore.update(all_edges - leaves)
 
         # For every tree leaf, create a copy/view/reference set node as necessary
