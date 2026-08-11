@@ -58,6 +58,67 @@ def test_internal_outarray():
     assert a[1] == 0
 
 
+@pytest.mark.parametrize('full_data', [False, True])
+def test_nest_keeps_ordering_memlets_empty(full_data):
+    """ An empty (happens-before) memlet hanging off the same scope connector as a boundary memlet
+        must stay empty after nesting, rather than being stamped with the boundary array. """
+    sdfg = dace.SDFG(f'ordering_memlet_nesting_{int(full_data)}')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_scalar('tmp', dace.float64, transient=True)
+    state = sdfg.add_state()
+
+    a = state.add_read('A')
+    b = state.add_write('B')
+    me, mx = state.add_map('m', dict(i='0:20'))
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    mx.add_in_connector('IN_B')
+    mx.add_out_connector('OUT_B')
+    compute = state.add_tasklet('compute', {'_in'}, {'_out'}, '_out = _in + 1')
+    side = state.add_tasklet('side', {}, {'_out'}, '_out = 0')
+    scal = state.add_access('tmp')
+
+    state.add_edge(a, None, me, 'IN_A', dace.Memlet('A[0:20]'))
+    state.add_edge(me, 'OUT_A', compute, '_in', dace.Memlet('A[i]'))
+    # Ordering edge: empty memlet, but on the same scope connector as the boundary memlet above
+    state.add_edge(me, 'OUT_A', side, None, dace.Memlet())
+    state.add_edge(side, '_out', scal, None, dace.Memlet('tmp'))
+    state.add_edge(scal, None, compute, None, dace.Memlet())
+    state.add_edge(compute, '_out', mx, 'IN_B', dace.Memlet('B[i]'))
+    state.add_edge(mx, 'OUT_B', b, None, dace.Memlet('B[0:20]'))
+    sdfg.validate()
+
+    nsdfg_node = nest_state_subgraph(sdfg, state, state.scope_subgraph(me), full_data=full_data)
+    sdfg.validate()
+
+    nstate = nsdfg_node.sdfg.states()[0]
+    inner_me = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.MapEntry))
+    inner_side = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == 'side')
+
+    ordering = [e for e in nstate.out_edges(inner_me) if e.dst is inner_side]
+    assert len(ordering) == 1
+    ordering = ordering[0]
+    assert ordering.data.is_empty()
+    assert ordering.data.data is None
+    assert ordering.data.subset is None
+    assert ordering.dst_conn is None
+
+    # The sibling data memlet on the very same connector must still carry the boundary array
+    inner_compute = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == 'compute')
+    data_edge = next(e for e in nstate.out_edges(inner_me) if e.dst is inner_compute and e.dst_conn == '_in')
+    assert not data_edge.data.is_empty()
+    assert data_edge.data.data == 'A'
+
+    # No empty memlet anywhere in the nested state gained a data name
+    assert all(e.data.subset is not None for e in nstate.edges() if e.data.data is not None)
+
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A + 1)
+
+
 def test_symbolic_return():
 
     @dace.program
@@ -315,6 +376,8 @@ def test_symbol_needing_an_incoming_value_stays_an_argument():
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
+    test_nest_keeps_ordering_memlets_empty(False)
+    test_nest_keeps_ordering_memlets_empty(True)
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()
