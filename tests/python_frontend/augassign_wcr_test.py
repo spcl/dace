@@ -58,13 +58,17 @@ def test_augassign_wcr():
 
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr.to_sdfg(simplify=False)
-    wcr_count = 0
+    # Count the CONTAINERS that need conflict resolution, not the edges carrying
+    # it. One conflicting write propagates its WCR along its whole memlet path,
+    # so the edge tally measures path length -- how many scopes and nested SDFGs
+    # the write crosses -- rather than the frontend's WCR decisions.
+    wcr_containers = set()
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.wcr:
-                    wcr_count += 1
-    assert (wcr_count == 1)
+                    wcr_containers.add(edge.data.data)
+    assert (len(wcr_containers) == 1)
 
     count = test_sdfg(A=A, B=B, W=W)
     assert (count[0] == np.count_nonzero(W))
