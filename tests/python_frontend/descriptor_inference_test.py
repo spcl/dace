@@ -363,8 +363,11 @@ def test_operator_inference_add_broadcast():
 
     stree = prog.to_schedule_tree()
 
-    assert 'x' in stree.containers
-    desc = stree.containers['x']
+    # `x` is returned, so `elide_return_copies` renames its container to
+    # `__return` and drops the copy that would otherwise materialize it. The
+    # inferred descriptor -- which is what this test is about -- is unchanged.
+    assert '__return' in stree.containers
+    desc = stree.containers['__return']
     assert isinstance(desc, dace.data.Array)
     assert tuple(desc.shape) == (4, 3)
     assert desc.dtype == dace.float64
