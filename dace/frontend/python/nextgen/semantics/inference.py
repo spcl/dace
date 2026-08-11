@@ -261,11 +261,40 @@ def broadcast_shapes(first: Sequence[Any], second: Sequence[Any]) -> Tuple[Any, 
             result.append(dim_a)
         elif dim_a == 1:
             result.append(dim_b)
+        elif _definitely_unequal(dim_a, dim_b):
+            # Two concrete, different extents, neither of them 1: no runtime
+            # value can reconcile them, so this is a broadcast error rather than
+            # an undecidable comparison. Assuming equality here silently
+            # produced a result of the wrong shape that also read the shorter
+            # operand out of step -- ``int64[4] * int64[3, 5]`` yielded a (3, 4)
+            # result, where NumPy raises.
+            #
+            # DaceSyntaxError, not UnsupportedFeatureError: this is an invalid
+            # program, not a gap in the frontend. An UnsupportedFeatureError is
+            # caught by ``dispatch.fallback_to_callback``, which would turn the
+            # error into a silent Python callback -- and did, suppressing the
+            # errors the neighbouring broadcast-error tests already relied on.
+            raise DaceSyntaxError(
+                None, None, f'Operands could not be broadcast together with shapes '
+                f'{tuple(first)} {tuple(second)}')
         else:
             # Symbolically unequal dimensions: assume equality (matches the
             # stable frontend, which defers mismatches to runtime).
             result.append(dim_a)
     return tuple(result)
+
+
+def _definitely_unequal(dim_a: Any, dim_b: Any) -> bool:
+    """Whether two extents are both known constants and differ.
+
+    Only a concrete disagreement counts. Symbolic extents (``N`` versus ``M``)
+    stay undecidable and are left to the caller's optimistic path, because they
+    may well be equal once the program runs.
+    """
+    try:
+        return int(dim_a) != int(dim_b)
+    except (TypeError, ValueError):
+        return False  # At least one extent is symbolic
 
 
 def _padded(shape: Sequence[Any], other: Sequence[Any]) -> List[Any]:
