@@ -48,82 +48,34 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
 
-def _names_still_plain(sdfg: SDFG) -> dict:
-    """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``.
-
-    ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
-    set earlier, so asking it whether a name is nonnegative always answers ``None``. The assumption
-    lives on the symbol objects ``replace_dict`` threaded into the graph, which is what this reads
-    -- otherwise the pass re-marks every symbol on every run and never reports ``None``, so a
-    fixed-point pipeline containing it cannot converge.
-
-    Scanned over every sympy-typed property ``replace_dict`` WRITES, not just the descriptors: a
-    re-canonicalize starts from a graph whose descriptors are already marked, and the stages in
-    between rebuild map ranges and subsets by PARSING (which mints plain symbols), so a
-    descriptor-only look answers "already assumed" while the map ranges have gone back to bare
-    ``N``. Same SDFG, two spellings of the same bound, two different content digests. String-backed
-    properties (interstate assignments, loop conditions, tasklet code) are deliberately NOT scanned:
-    they cannot carry a sympy assumption at all, so counting them would report "still plain"
-    forever.
-
-    :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
-    :returns: The symbol names seen without the assumption, membership-checked only.
-    """
-    plain: dict = {}
-
-    def scan(*exprs):
-        for expr in exprs:
-            if isinstance(expr, sympy.Basic):
-                plain.update(dict.fromkeys(str(s) for s in expr.free_symbols if not s.is_nonnegative))
-
-    for desc in sdfg.arrays.values():
-        scan(*desc.shape, *desc.strides, desc.total_size, *desc.offset)
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nodes.MapEntry):
-                scan(*(bound for rng in node.map.range.ndrange() for bound in rng))
-        for edge in state.edges():
-            scan(edge.data.volume)
-            for subset in (edge.data.subset, edge.data.other_subset):
-                if subset is not None:
-                    scan(*(bound for rng in subset.ndrange() for bound in rng))
-    return plain
-
-
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
-    """Set the SymPy ``nonnegative=True`` assumption on every signed-integer free symbol of
-    ``sdfg`` (and its nested SDFGs), in place.
+    """Record ``nonnegative=True`` for every signed-integer free symbol of ``sdfg`` (and its
+    nested SDFGs) in each SDFG's ``symbol_assumptions`` registry.
 
     This is the compile-time half of the offset/size nonnegativity contract
     ([[feedback_symbols_nonnegative_canonicalization]]): DaCe size / offset symbols carry no
     sign, so a proof over them (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``,
     the offset-sign reasoning ``LoopToMap`` relies on) cannot conclude ``s >= 0`` even though a
-    size or a loop count always is. Rebuilding each such symbol with ``nonnegative=True`` and
-    substituting it through the SDFG (via ``replace_dict``, which threads it into every
-    descriptor shape / subset / interstate expression) makes those proofs go through.
-    :func:`insert_assumption_guards` emits the matching runtime trap so the assumption is
-    checked at the boundary rather than merely assumed.
+    size or a loop count always is. Symbols STORED in the SDFG stay bare -- a second spelling of
+    one name stops index arithmetic from cancelling, and validation rejects it -- so the fact is
+    recorded in the registry and a proof site applies it transiently via
+    ``sdfg.assume_symbols``. :func:`insert_assumption_guards` emits the matching runtime trap so
+    the assumption is checked at the boundary rather than merely assumed.
 
-    :param sdfg: the SDFG whose symbols are updated in place.
-    :returns: the number of symbols updated, or ``None`` if none.
+    :param sdfg: the SDFG whose registries are updated in place.
+    :returns: the number of symbols newly recorded, or ``None`` if none -- the registry is the
+              convergence memory, so a re-run over an already-recorded SDFG reports ``None``.
     """
     updated = 0
     for g in sdfg.all_sdfgs_recursive():
-        repl = {}
-        # sorted: ``free_symbols`` is a set of STRINGS (per-process randomized hashing). The substitutions
-        # happen to commute here, but the replacement dict's order is otherwise arbitrary -- sorting is free
-        # and matches _signed_integer_free_symbols below.
-        plain = _names_still_plain(g)
         for name in sorted(g.free_symbols):
             dtype = g.symbols.get(name)
             if dtype not in _SIGNED_INTEGER_DTYPES:
                 continue
-            if name not in plain:
+            if g.symbol_assumptions.get(name, {}).get('nonnegative'):
                 continue
-            repl[name] = symbolic.symbol(name, dtype=dtype, nonnegative=True)
-        if repl:
-            g.replace_dict(repl)
-            updated += len(repl)
+            g.update_symbol_assumptions(name, nonnegative=True)
+            updated += 1
     return updated or None
 
 
@@ -137,7 +89,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges
+        return ppl.Modifies.Symbols
 
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
