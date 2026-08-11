@@ -91,7 +91,7 @@ def _inner_maps(sdfg):
 def test_assume_even_single_strided_gpu_map_no_mask():
     """``assume_even=True`` emits ONE ``0:N:2`` GPU_Device map per original map --
     no remainder split, no ``TileMaskGen`` (so no mismatched thread-block sizes on
-    GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_tail``."""
+    GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_masked_tail``."""
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
