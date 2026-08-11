@@ -75,7 +75,11 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     from dace.frontend.python.parser import DaceProgram  # Deferred to avoid an import cycle
     from dace.sdfg import SDFG
 
-    if not isinstance(callee, DaceProgram):
+    # A callee declared ``@dace.program(inline=False)`` keeps its own SDFG, the
+    # same way any other SDFG-convertible callee does. Its parse goes through
+    # ``__sdfg__``, so the callee's declared argument shapes are checked at the
+    # boundary rather than being absorbed into the caller's containers.
+    if not isinstance(callee, DaceProgram) or not getattr(callee, 'inline', True):
         sdfg = callee if isinstance(callee, SDFG) else _convertible_to_sdfg(callee, call, state)
         if sdfg is None:
             fallback_to_callback(statement,

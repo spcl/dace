@@ -272,7 +272,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                  distributed_compilation: bool = False,
                  method: bool = False,
                  use_explicit_cf: bool = True,
-                 ignore_type_hints: bool = False):
+                 ignore_type_hints: bool = False,
+                 inline: bool = True):
 
         signature_source = f.__func__ if method and inspect.ismethod(f) and getattr(f, '__self__',
                                                                                     None) is not None else f
@@ -297,6 +298,15 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         self.use_explicit_cf = use_explicit_cf
         self.distributed_compilation = distributed_compilation
         self.ignore_type_hints = ignore_type_hints
+
+        #: Whether a call to this program from another ``@dace.program`` may be
+        #: inlined into the caller. ``inline=False`` keeps the call a real
+        #: NestedSDFG, which is what transformations and analyses that operate
+        #: on nesting (``InlineMultistateSDFG``, ``RefineNestedAccess``, memlet
+        #: propagation through a nested SDFG) need in order to have something to
+        #: work on. It also makes the callee's declared argument shapes binding
+        #: rather than advisory, since the arguments cross a real boundary.
+        self.inline = inline
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(signature_source)

@@ -31,6 +31,7 @@ def program(*args,
             regenerate_code: bool = True,
             recompile: bool = True,
             constant_functions=False,
+            inline: bool = True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
@@ -46,6 +47,7 @@ def program(f: F,
             distributed_compilation: bool = False,
             constant_functions=False,
             use_explicit_cf=True,
+            inline: bool = True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -66,6 +68,10 @@ def program(f: F,
     :param distributed_compilation: Whether to compile the code from rank 0, and broadcast it to all the other ranks.
                                     If False, every rank performs the compilation. In this case, make sure to check the ``cache`` configuration entry
                                     such that no caching or clashes can happen between different MPI processes.
+    :param inline: If False, a call to this program from another ``@dace.program`` stays a real
+                   NestedSDFG instead of being inlined into the caller. Use it when a
+                   transformation or analysis needs the nesting to operate on, or when the
+                   callee's declared argument shapes should be enforced at the call boundary.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -87,7 +93,8 @@ def program(f: F,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
                               distributed_compilation=distributed_compilation,
-                              use_explicit_cf=use_explicit_cf)
+                              use_explicit_cf=use_explicit_cf,
+                              inline=inline)
 
 
 function = program
@@ -132,6 +139,10 @@ def method(f: F,
                             it.
     :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
                       without recompiling it.
+    :param inline: If False, a call to this program from another ``@dace.program`` stays a real
+                   NestedSDFG instead of being inlined into the caller. Use it when a
+                   transformation or analysis needs the nesting to operate on, or when the
+                   callee's declared argument shapes should be enforced at the call boundary.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
