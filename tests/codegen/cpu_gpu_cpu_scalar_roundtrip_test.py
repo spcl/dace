@@ -16,8 +16,11 @@ def test_cpu_gpu_cpu_scalar_roundtrip():
     sdfg.add_array('output', [1], dace.float32)
 
     state = sdfg.add_state()
-    state.add_nedge(state.add_read('scal_in'), state.add_access('gpu_scal'), dace.Memlet('scal_in'))
-    state.add_nedge(state.add_access('gpu_scal'), state.add_write('output'), dace.Memlet('gpu_scal'))
+    # One access node: a second one would put the copies in disconnected components, which DaCe runs
+    # concurrently (separate CUDA streams, no event), so the read-back would race the write.
+    gpu_scal = state.add_access('gpu_scal')
+    state.add_nedge(state.add_read('scal_in'), gpu_scal, dace.Memlet('scal_in'))
+    state.add_nedge(gpu_scal, state.add_write('output'), dace.Memlet('gpu_scal'))
 
     out = np.zeros(1, dtype=np.float32)
     sdfg(scal_in=np.float32(2), output=out)

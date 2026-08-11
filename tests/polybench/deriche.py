@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
+import polybench
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -203,5 +204,4 @@ def deriche(imgIn: datatype[W, H], imgOut: datatype[W, H]):
 
 
 if __name__ == '__main__':
-    import polybench
     polybench.main(sizes, args, [(1, 'imgOut')], init_array, deriche)

@@ -10,16 +10,13 @@ Bare-identifier references to a promoted name are subscripted ``name[0]`` in
 interstate/loop/branch code slots and ``symbol_mapping`` values; memlets are
 left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
-import re
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
-from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
-
-PatternApplier: type = Callable[[str], str]
+from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots, rewrite_refs_to_element)
 
 
 def invalidate_array_connectors(sdfg: SDFG):
@@ -160,77 +157,28 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
-        compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
-        pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
+        # Shared with the general Scalar <-> length-1 Array passes: the state-machine slots that name a
+        # descriptor textually, and the bare-reference -> ``name[0]`` transform, are the same rewrite.
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, {name: name}))
+        self._rewrite_states(sdfg=sdfg, name=name)
 
-        self._rewrite_state_machine(sdfg, pattern)
-        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern)
-
-    @staticmethod
-    def _rewrite_codeblock(pattern: PatternApplier, codeblock: properties.CodeBlock) -> properties.CodeBlock:
-        codeblock_str = codeblock.as_string
-        new_codeblock_str = pattern(codeblock_str)
-        return properties.CodeBlock(new_codeblock_str, codeblock.language)
-
-    def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
-        """Rewrite bare-identifier references on every state-machine code slot:
-        interstate edges (assignments + condition), ``LoopRegion`` and
-        ``ConditionalBlock`` CodeBlocks. ``InterstateEdge.assignments`` and
-        ``.condition`` are class-level properties so they always exist.
-        """
-        for cfg in sdfg.all_control_flow_regions():
-            for edge in cfg.edges():
-                ise = edge.data
-                if ise is None:
-                    continue
-                for k, v in list(ise.assignments.items()):
-                    if not isinstance(v, str):
-                        continue
-                    new_v = pattern(v)
-                    if new_v != v:
-                        ise.assignments[k] = new_v
-                ise.condition = self._rewrite_codeblock(pattern, ise.condition)
-
-        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock slots
-        # a state-machine walk reaches; other blocks embed no user expressions.
-        for block in sdfg.all_control_flow_blocks(recursive=True):
-            if isinstance(block, ConditionalBlock):
-                for branch in block.branches:
-                    if branch[0] is not None:
-                        branch[0] = self._rewrite_codeblock(pattern, branch[0])
-            elif isinstance(block, LoopRegion):
-                # init/update are optional -- a ``while`` LoopRegion has only the condition.
-                if block.update_statement is not None:
-                    block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
-                if block.init_statement is not None:
-                    block.init_statement = self._rewrite_codeblock(pattern, block.init_statement)
-                if block.loop_condition is not None:
-                    block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
-
-    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
+    def _rewrite_states(self, sdfg: SDFG, name: str) -> None:
         """Apply the promotion in all states."""
         for state in sdfg.states():
-            self._rewrite_state(state=state, name=name, pattern=pattern)
+            self._rewrite_state(state=state, name=name)
 
-    def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier) -> None:
-        """Push the rewrite into NestedSDFGs reached from ``state``.
+    def _rewrite_state(self, state: SDFGState, name: str) -> None:
+        """Push the promotion into NestedSDFGs reached from ``state``.
 
         Memlets are not touched -- a ``Scalar`` access always carries subset
-        ``[0]``, identical to a length-1 array's. The two slots that DO need
-        attention are (a) the inner descriptor when the NSDFG re-declares it
-        as a ``Scalar``, and (b) ``symbol_mapping`` values that bare-reference
-        the promoted name (frontend symbol-promotion threads scalars into the
-        nested scope this way).
+        ``[0]``, identical to a length-1 array's. What DOES need attention is
+        the inner descriptor when the NSDFG re-declares the promoted name as a
+        ``Scalar``; ``symbol_mapping`` values are handled by the shared
+        ``rewrite_code_slots`` walk.
         """
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
-
-            for k, v in list(node.symbol_mapping.items()):
-                v_str = v if isinstance(v, str) else str(v)
-                new_v = pattern(v_str)
-                if new_v != v_str:
-                    node.symbol_mapping[k] = new_v
 
             handled_inner_names: set[str] = set()  # If data is referenced as input and output.
             for iedge in state.in_edges(node):

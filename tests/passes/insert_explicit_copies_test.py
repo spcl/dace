@@ -3,6 +3,7 @@
 import copy as _copy
 import importlib.util
 import os
+import sys
 
 import dace
 import numpy as np
@@ -14,6 +15,11 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 import tests.polybench
+
+# The polybench programs import their ``polybench`` harness as a top-level module, which only
+# resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
+sys.path.append(os.path.dirname(tests.polybench.__file__))
+
 from tests.polybench.correlation import correlation, init_array as _correlation_init_array
 from tests.polybench.covariance import covariance, init_array as _covariance_init_array
 
@@ -71,8 +77,7 @@ def _assert_no_copynd(sdfg: dace.SDFG) -> None:
     """Assert ``generate_code`` emits no ``dace::CopyND`` template instantiations."""
     sdfg.expand_library_nodes()
     for obj in sdfg.generate_code():
-        code = obj.code if isinstance(obj.code, str) else getattr(obj.code, 'code', str(obj.code))
-        assert 'CopyND<' not in code, f"unexpected CopyND in code object {obj.title}"
+        assert 'CopyND<' not in obj.code, f"unexpected CopyND in code object {obj.title}"
 
 
 def _build_copy_sdfg(name, arrays, edge_memlet):

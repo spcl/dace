@@ -888,8 +888,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # legacy ``_cuda_stream`` back-channel.
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
-        body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-        if (host_node_on_gpu_memory and gpu_stream_conn is not None and '__dace_current_stream' in str(body_str)):
+        body_str = node.code.as_string
+        if (host_node_on_gpu_memory and gpu_stream_conn is not None and '__dace_current_stream' in body_str):
             if gpu_stream_conn == '__dace_current_stream':
                 # The connector already exposes the symbol; skip the self-referential
                 # rebind that would redeclare it.
@@ -898,7 +898,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 callsite_stream.write(f'{common.get_gpu_backend()}Stream_t __dace_current_stream = {gpu_stream_conn};',
                                       cfg, state_id, node)
         elif host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
-            if max_streams >= 0:
+            if max_streams >= 0 and node._cuda_stream != 'nullptr':
                 callsite_stream.write(
                     '%sStream_t __dace_current_stream = %s;' %
                     (common.get_gpu_backend(), common.gpu_stream_expr(node._cuda_stream)),
@@ -1417,7 +1417,7 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
             )
 
 
-# TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
+
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))

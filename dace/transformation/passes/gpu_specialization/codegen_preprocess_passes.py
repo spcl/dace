@@ -73,15 +73,54 @@ class ReinferConnectorTypes(ppl.Pass):
     """
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Connectors | ppl.Modifies.Descriptors
+        # ``Modifies`` has no ``Connectors`` flag; connectors live on the code nodes that carry
+        # them. ``infer_connector_types`` retypes ANY dataflow node's connectors -- map entries
+        # and exits included -- so this must be ``Nodes``, not just tasklets and nested SDFGs;
+        # under-declaring would stop a downstream ``should_reapply(Modifies.Scopes)`` from firing.
+        # ``Descriptors`` is kept as a conservative over-declaration (the pass only reads them,
+        # but over-declaring costs re-runs, never correctness).
+        return ppl.Modifies.Nodes | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
+    @staticmethod
+    def _connector_types(sdfg: SDFG) -> Dict[Any, Any]:
+        """Snapshot every dataflow-node connector type, keyed by ``(node, direction, connector)``.
+
+        Re-inference is the only signal of change available -- neither
+        ``invalidate_array_connectors`` nor ``infer_connector_types`` reports what it touched --
+        so the pass diffs a before/after snapshot.
+        """
+        snapshot: Dict[Any, Any] = {}
+        for node, _ in sdfg.all_nodes_recursive():
+            if not isinstance(node, nodes.Node):
+                continue
+            for cname, ctype in node.in_connectors.items():
+                snapshot[(node, 'in', cname)] = ctype
+            for cname, ctype in node.out_connectors.items():
+                snapshot[(node, 'out', cname)] = ctype
+        return snapshot
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Re-derive NestedSDFG connector types from their inner descriptors.
+
+        :returns: Number of connectors whose type changed, or ``None`` if none did.
+        """
         from dace.sdfg import infer_types
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        before = self._connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():
             infer_types.infer_connector_types(nsdfg)
-        return None
+        after = self._connector_types(sdfg)
+
+        # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
+        # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``
+        # returns False -- so an ADDED connector would be silently counted as unchanged. Iterating
+        # ``after`` alone would likewise miss a REMOVED one.
+        missing = object()
+        changed = sum(1 for key in before.keys() | after.keys()
+                      if before.get(key, missing) is not after.get(key, missing)
+                      and before.get(key, missing) != after.get(key, missing))
+        return changed or None

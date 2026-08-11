@@ -6,8 +6,6 @@ import functools
 import itertools
 import warnings
 
-import numpy as np
-
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
@@ -246,14 +244,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
-
-        # Accumulator data-names whose map-exit WCR is folded by an enclosing GPU thread-block
-        # tree reduction. Maps ``data-name -> {'partial', 'credtype', 'ctype'}``: while a name is
-        # present, ``write_and_resolve_expr`` redirects the per-thread atomic into a register
-        # accumulate on the named partial (``partial = op(partial, value)``) instead, which the
-        # CUDA codegen then folds across the block with ``cub::BlockReduce`` (one atomic/block).
-        # The CUDA codegen adds/removes the entries around the thread-block body.
-        self._gpu_block_reduction_covered = {}
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
@@ -1167,22 +1157,6 @@ class CPUCodeGen(TargetCodeGenerator):
         """
 
         redtype = operations.detect_reduction_type(memlet.wcr)
-        # Enclosing GPU thread-block map folds this target via a tree reduction: accumulate the
-        # value into this thread's private register partial (no atomic) and let ``cub::BlockReduce``
-        # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here would
-        # both contend and, with the block fold, double-count. The partial is a register array whose
-        # index is the accumulator offset relative to the reduced range base, so a single scalar
-        # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
-        cover = self._gpu_block_reduction_covered.get(memlet.data)
-        if cover is not None:
-            slot = gpu_block_reduction_write_slot(memlet.subset, cover['base'], cover['m'])
-            if slot is not None:
-                lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
-                # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
-                if isinstance(dtype, dtypes.vector):
-                    return (f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::"
-                            f"vreduce<{dtype.veclen}>(&{lhs}, {inname})")
-                return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
@@ -1742,9 +1716,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # instrument attribute. The provider's hook can still filter by
         # node identity / label.
         instr_type = node.instrument
-        if (instr_type == dtypes.InstrumentationType.No_Instrumentation
-                and getattr(state_dfg, 'instrument', dtypes.InstrumentationType.No_Instrumentation)
-                != dtypes.InstrumentationType.No_Instrumentation):
+        if instr_type == dtypes.InstrumentationType.No_Instrumentation:
             instr_type = state_dfg.instrument
         instr = self._dispatcher.instrumentation.get(instr_type)
         if instr is not None:

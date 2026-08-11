@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
 import dace
+from ordered_set import OrderedSet
+
 from dace import data as dt, Memlet
 from dace import dtypes, registry, symbolic, subsets
 from dace.config import Config
@@ -91,7 +93,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager] = None
         self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
-        self._tb_inserted_kernels: Set[nodes.MapEntry] = set()
+        self._tb_inserted_kernels: Set[nodes.MapEntry] = OrderedSet()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
     def preprocess(self, sdfg: SDFG):
@@ -111,7 +113,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # tiled; both are consulted when emitting kernel launches.
         atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
         self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
-        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
+        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', OrderedSet())
 
         # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
@@ -163,8 +165,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+            pooled = OrderedSet(
+                aname for aname, arr in sdfg.arrays.items()
+                if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -185,7 +188,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.states():
-                last_state_arrays: Set[str] = set(
+                last_state_arrays: Set[str] = OrderedSet(
                     s for s in access_sets
                     if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
@@ -202,7 +205,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     # end of state (empty set); otherwise release at the common
                     # descendant following the ends of all memlet paths
                     # (e.g., (a)->...->[tasklet]-->...->(b)).
-                    terminators = set()
+                    terminators = OrderedSet()
                     if terminator is not None and state.entry_node(terminator) is None:
                         for e in state.out_edges(terminator):
                             if isinstance(e.dst, nodes.EntryNode):
@@ -213,7 +216,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
             # Release anything still live at SDFG sink.
-            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
             if unfreed:
                 sinks = sdfg.sink_nodes()
                 if len(sinks) == 1:
@@ -226,7 +229,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     raise ValueError('End state not found when trying to free pooled memory')
 
                 for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+                    self.pool_release[(sdfg, arr)] = (sink, OrderedSet())
 
     @property
     def has_initializer(self) -> bool:
@@ -463,7 +466,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         Claimed nodes are those carrying a GPU schedule served by this backend, plus every
         node encountered while already emitting device code.
         """
-        schedule = getattr(node, 'schedule', None)
+        schedule = node.schedule if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) else None
         if schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             return True
         if self._in_device_code:
@@ -483,7 +486,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Emit cudaFree for pooled transients whose lifetime ends in this state.
         if not self._in_device_code:
 
-            handled_keys = set()
+            handled_keys = OrderedSet()
             backend = self.backend
             for (pool_sdfg, name), (pool_state, _) in self.pool_release.items():
 
@@ -512,11 +515,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        gen = getattr(self, '_generate_' + type(node).__name__, False)
-
-        if gen is not False:
-            gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node).__name__ == 'MapExit' and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+        # Exact type, not isinstance: subclasses (e.g. RTLTasklet) belong to the CPU codegen.
+        if type(node) is nodes.NestedSDFG:
+            self._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.Tasklet:
+            self._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.MapExit and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             # A GPU MapExit is closed by the kernel's scope manager; suppress the CPU fallback.
             return
         else:
@@ -677,9 +681,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.dtype == dtypes.gpuStream_t:
             return
 
-        gen = getattr(self, f'_prepare_{nodedesc.storage.name}_array', None)
-        if gen:
-            gen(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            self._prepare_GPU_Global_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            self._prepare_CPU_Pinned_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
+            self._prepare_GPU_Shared_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
         else:
             raise NotImplementedError(f'CUDA: Unimplemented storage type {nodedesc.storage}')
 
@@ -1041,9 +1051,12 @@ class KernelSpec:
         # The kernel wrapper function runs on the host; its signature receives __state,
         # every kernel argument, and exactly one gpuStream_t handle.
         gpustream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        # Resolve the descriptor from the memlet, not from ``e.src``: when the kernel map sits
+        # inside a host-scheduled map the stream edge is routed through the enclosing MapEntry,
+        # so ``e.src`` is that MapEntry rather than the gpu_streams AccessNode.
         gpustream_input = [
             e for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry)
-            if e.src.desc(sdfg).dtype == dtypes.gpuStream_t
+            if e.data.data is not None and sdfg.arrays[e.data.data].dtype == dtypes.gpuStream_t
         ]
         if len(gpustream_input) > 1:
             raise ValueError(
@@ -1080,7 +1093,8 @@ class KernelSpec:
         ``compiler.cuda.<config_key>``. Raises if the name does not resolve
         to a DaCe ``typeclass``."""
         type_name = Config.get('compiler', 'cuda', config_key)
-        dtype = getattr(dtypes, type_name, None)
+        # Resolve against the typeclass registry ("dace::int32" -> int32) rather than the module namespace.
+        dtype = next((t for t, s in dtypes.TYPECLASS_TO_STRING.items() if s.rsplit('::', 1)[-1] == type_name), None)
         if not isinstance(dtype, dtypes.typeclass):
             raise ValueError(
                 f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '
