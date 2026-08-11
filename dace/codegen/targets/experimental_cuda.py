@@ -27,8 +27,10 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
+from dace.codegen.targets.experimental_cpu import format_index_access
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (generate_sync_debug_call, host_read_device_copies)
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
 from dace.codegen.targets import cpp
 
@@ -528,9 +530,31 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if key in self._synchronized_d2h:
                 continue
             self._synchronized_d2h.add(key)
-            gpu_stream = self._gpu_stream_manager.get_stream_node(producer)
+            gpu_stream = self._issued_stream_expression(state, producer)
             callsite_stream.write(f'DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n', cfg, state_id,
                                   consumer)
+
+    def _issued_stream_expression(self, state: SDFGState, producer: nodes.Node) -> str:
+        """The stream ``producer`` issued its work on, spelled exactly as at the issue site.
+
+        A lifted copy names its stream through its ``__dace_current_stream`` connector, so the wait
+        has to render that connector's memlet: the stream manager's context-array template is a
+        different expression than the ``gpu_streams`` array the copy read, and a wait on any other
+        stream object orders nothing. Producers without a wired stream connector fall back to the
+        stream manager's expression.
+        """
+        for edge in state.in_edges(producer):
+            if edge.dst_conn != CURRENT_STREAM_NAME or edge.data is None or edge.data.data is None:
+                continue
+            desc = state.sdfg.arrays[edge.data.data]
+            access = getattr(self._cpu_codegen, 'array_index_access', None)
+            parts = access(state.sdfg, desc, edge.data.data) if access is not None else None
+            if parts is None:
+                return cpp.cpp_array_expr(state.sdfg, edge.data, framecode=self._frame)
+            ptrname, fnname, _, extra_syms = parts
+            indices = [str(index) for index in edge.data.subset.min_element()]
+            return format_index_access(ptrname, fnname, indices, extra_syms)
+        return self._gpu_stream_manager.get_stream_node(producer)
 
     def _reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
         """Whether ``node`` is a host node whose first read of a device-to-host copy is still unsynced."""
