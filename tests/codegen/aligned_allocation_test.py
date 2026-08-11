@@ -3,8 +3,9 @@
 
 An alignment attribute on the element type of a ``new`` expression never
 affected the allocation and newer GCC rejects it outright for constant array
-bounds, so heap arrays are allocated with C++17 aligned ``operator new`` (when
-``compiler.cpp_standard`` >= 17) or with no annotation at all (below 17).
+bounds, so heap arrays are allocated with aligned ``operator new`` whenever the
+descriptor requests alignment (``alignment`` >= 0), and with no annotation at
+all when it opts out (a negative ``alignment``).
 """
 import numpy as np
 import re
@@ -50,8 +51,8 @@ def test_aligned_allocation_property():
             assert re.search(del_code.format(alignment=alignment), code)
 
 
-def test_heap_allocation_aligned_new_cpp17():
-    """With cpp_standard >= 17 (the default), heap arrays use aligned operator new/delete."""
+def test_heap_allocation_aligned_new():
+    """Heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg('aligned_new_probe').generate_code()[0].clean_code
     assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*\[2\]', code)
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
@@ -62,14 +63,23 @@ def test_heap_allocation_aligned_new_cpp17():
     assert 'static_assert(std::is_trivially_destructible<double>::value' in code
 
 
-def test_heap_allocation_plain_new_below_cpp17():
-    """Below C++17 there is no aligned operator new; emit no annotation at all."""
-    with set_temporary('compiler', 'cpp_standard', value='14'):
-        code = _heap_transient_sdfg('plain_new_probe').generate_code()[0].clean_code
+def test_heap_allocation_plain_new_without_alignment():
+    """A negative alignment opts out: emit no annotation at all."""
+    sdfg = _heap_transient_sdfg('plain_new_probe')
+    sdfg.arrays['tmp'].alignment = -1
+    code = sdfg.generate_code()[0].clean_code
     assert re.search(r'new\s+double\s*\[2\]', code)
     assert 'delete[] tmp' in code
     assert 'align_val_t' not in code
     assert 'DACE_ALIGN(64)[' not in code
+
+
+def test_aligned_new_does_not_depend_on_cpp_standard():
+    """The emitted form follows the descriptor alone; the standard is assumed recent."""
+    with set_temporary('compiler', 'cpp_standard', value='14'):
+        code = _heap_transient_sdfg('standard_probe').generate_code()[0].clean_code
+    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*\[2\]', code)
+    assert '::operator delete[](tmp, std::align_val_t(64));' in code
 
 
 def test_heap_transient_end_to_end():
@@ -91,6 +101,8 @@ def test_heap_transient_end_to_end():
 
 
 if __name__ == '__main__':
-    test_heap_allocation_aligned_new_cpp17()
-    test_heap_allocation_plain_new_below_cpp17()
+    test_aligned_allocation_property()
+    test_heap_allocation_aligned_new()
+    test_heap_allocation_plain_new_without_alignment()
+    test_aligned_new_does_not_depend_on_cpp_standard()
     test_heap_transient_end_to_end()
