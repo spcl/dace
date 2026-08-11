@@ -334,9 +334,11 @@ def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
 
 
 def _merge_debuginfo(a: Optional[dace.DebugInfo], b: Optional[dace.DebugInfo]):
-    if a is None and b is not None:
+    # Either may be absent -- tasklets built by the nextgen frontend carry no
+    # debug info at all, so both being None is reachable and merges to None.
+    if a is None:
         return b
-    if b is None and a is not None:
+    if b is None:
         return a
 
     if a.filename != b.filename:
