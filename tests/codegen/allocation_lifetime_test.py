@@ -6,20 +6,14 @@ import pytest
 
 import dace
 from dace.codegen.targets import framecode
-from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.sdfg import infer_types
 import numpy as np
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
-    # The transients in these tests use the default alignment; consult the active
-    # cpp_standard: C++ >= 17 emits the aligned form
-    # ``new (std::align_val_t(64)) <type>``, earlier standards the plain form.
-    # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
-    probe = dace.data.Array(dace.float64, [1])
-    if _use_aligned_operator_new(probe):
-        return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
-    return len(re.findall(rf'new\s+{ctype}\b', code))
+    # The transients in these tests use the default alignment (0), which emits the
+    # aligned form ``new (std::align_val_t(64)) <type>``.
+    return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
 
 
 N = dace.symbol('N')

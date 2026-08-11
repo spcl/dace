@@ -11,6 +11,7 @@ from hashlib import md5, sha256
 import random
 import shutil
 import sys
+import time
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
@@ -48,6 +49,9 @@ LAUNCHER_RANK_VARS = (
     'ALPS_APP_PE',  # Cray ALPS
     'SLURM_PROCID',  # srun with no MPI
 )
+
+# Identifies this process for the 'unique' cache mode; the timestamp separates processes with a recycled pid.
+PROCESS_CACHE_TOKEN = f'{os.getpid()}_{time.time_ns()}'
 
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
@@ -1257,9 +1261,9 @@ class SDFG(ControlFlowRegion):
             md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
             return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'unique':
-            # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invocations
-            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+            # Base the name on a token that is fixed within this process but never repeats across processes, so no
+            # caching is possible between processes or subsequent invocations
+            md5_hash = md5(PROCESS_CACHE_TOKEN.encode('utf-8')).hexdigest()
             return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'name':
             # Overwrites previous invocations, and can clash with other programs
@@ -1469,20 +1473,17 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand array-descriptor stride/shape/offset symbols into the free
-        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
-        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
-        # out of the computed free-symbol set, causing
-        # ``generate_nsdfg_header`` to emit a nested function signature
-        # missing those symbols, ceating an invalid SDFG.
+        # A used array needs its stride/shape/offset symbols in the free set, but a
+        # merely-declared one must not leak its shape symbol into the signature
+        # (issue #2382). ``read_and_write_sets`` already reports exactly the arrays
+        # that are used -- read or written, including those referenced only by a
+        # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            for desc in self.arrays.values():
-                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            read_set, write_set = self.read_and_write_sets()
+            for name in (read_set | write_set) & self.arrays.keys():
+                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
@@ -2178,17 +2179,33 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    # Names reserved by framework pipelines (currently just ``gpu_streams``
+    # for the gpu_specialization pipeline). User SDFG code can't add these;
+    # only the owning pipeline can, via ``_internal_use=True`` below.
+    RESERVED_NAMES = frozenset({"gpu_streams"})
+
+    def add_datadesc(self,
+                     name: str,
+                     datadesc: dt.Data,
+                     find_new_name: bool = False,
+                     _internal_use: bool = False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
             :param find_new_name: If True and data descriptor with this name
                                   exists, finds a new name to add.
+            :param _internal_use: Bypass for framework pipelines that own
+                                  reserved descriptor names (see
+                                  :attr:`RESERVED_NAMES`). Not for user code.
             :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if name in self.RESERVED_NAMES and not _internal_use:
+            raise NameError(f'Data descriptor name "{name}" is reserved for framework pipeline use. '
+                            f'Pick a different name.')
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members

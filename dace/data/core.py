@@ -274,6 +274,13 @@ class Scalar(Data):
     def __repr__(self):
         return 'Scalar (dtype=%s)' % self.dtype
 
+    def is_packed_fortran_strides(self) -> bool:
+        # A scalar is a single element; any layout question is trivially yes.
+        return True
+
+    def is_packed_c_strides(self) -> bool:
+        return True
+
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
                       self.debuginfo)
@@ -376,7 +383,7 @@ class Array(Data):
          selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
          no alignment requirements.
          The GPU backend ignores the alignment hint entirely. The CPU backend will use aligned ``new`` allocations if
-         requested and C++17 and later is used, otherwise normal ``new`` expressions are used.
+         requested, otherwise normal ``new`` expressions are used.
        * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
          element's index after padding and alignment. This mimics a language feature prominent in scientific languages
          such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
