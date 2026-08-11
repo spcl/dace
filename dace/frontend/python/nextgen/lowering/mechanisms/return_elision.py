@@ -22,7 +22,9 @@ stays.
 import re
 from typing import List, Optional, Set, Tuple
 
-from dace import data
+import sympy
+
+from dace import data, symbolic
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
@@ -141,12 +143,36 @@ def _interchangeable(source: data.Data, target: data.Data) -> bool:
 
 
 def _copies_whole(memlet: Memlet, source: data.Data, target: data.Data) -> bool:
-    """Whether a copy moves all of ``source`` into all of ``target``."""
-    if memlet.subset is None or memlet.subset.num_elements() != source.total_size:
+    """
+    Whether a copy moves all of ``source`` into all of ``target``.
+
+    The two sides are compared symbolically: a subset covering a whole array
+    counts its elements as the product of the shape, while ``total_size`` is
+    derived from the strides, so for a symbolic shape the two are equal but not
+    identical (``C_out*N*(H - K + 1)*(W - K + 1)`` against a sum of stride
+    terms). Structural comparison called those different and declined every
+    elision on a symbolically shaped array.
+    """
+    if memlet.subset is None or not _same_size(memlet.subset.num_elements(), source.total_size):
         return False
-    if memlet.other_subset is not None and memlet.other_subset.num_elements() != target.total_size:
+    if memlet.other_subset is not None and not _same_size(memlet.other_subset.num_elements(), target.total_size):
         return False
     return True
+
+
+def _same_size(a, b) -> bool:
+    """
+    Whether two element counts are provably the same. ``symbolic.equal`` answers
+    for the easy cases and returns None when its assumption solver cannot decide;
+    a product of shape terms against a sum of stride terms lands there, so fall
+    back to simplifying the difference. Anything still undecided is a no.
+    """
+    if symbolic.equal(a, b) is True:
+        return True
+    try:
+        return sympy.simplify(sympy.sympify(a) - sympy.sympify(b)) == 0
+    except Exception:
+        return False
 
 
 def _references(node: tn.ScheduleTreeNode, name: str) -> bool:
