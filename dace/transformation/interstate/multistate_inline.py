@@ -17,6 +17,17 @@ from dace import data
 from dace.sdfg.state import LoopRegion, ReturnBlock
 
 
+def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
+    """Whether two descriptors carry the same shape and the same strides.
+
+    ``Scalar`` reports strides as a list and ``Array`` as a tuple, and ``same_value`` counts the
+    sequence type -- so a ``Scalar`` facing a length-1 ``Array``, the ordinary nested-SDFG boundary,
+    would refuse the inline over a container type. Compare by value.
+    """
+    return (symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
+            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides)))
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
@@ -105,8 +116,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
-                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
+            if not _same_layout(outer_desc, inner_desc):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -125,8 +135,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
-                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
+            if not _same_layout(outer_desc, inner_desc):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
