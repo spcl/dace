@@ -47,6 +47,19 @@ def symbol_use_sites(sdfg: 'SDFG') -> Tuple[Dict[str, Set[int]], Set[str]]:
     return uses, descriptor_symbols
 
 
+def symbol_used_outside(name: str, inside_sites: Set[int], use_sites: Dict[str, Set[int]],
+                        descriptor_symbols: Set[str]) -> bool:
+    """Whether ``name`` is read or written at any site not in ``inside_sites``.
+
+    ``inside_sites`` holds the ``id()`` of every block and inter-state edge that counts as "inside";
+    ``use_sites`` / ``descriptor_symbols`` come from :func:`symbol_use_sites`. A name a data descriptor
+    mentions is used outside by definition -- the descriptor is materialised wherever the array is.
+    """
+    if name in descriptor_symbols:
+        return True
+    return any(site not in inside_sites for site in use_sites.get(name, ()))
+
+
 def counter_used_outside_loop(name: str,
                               loop: LoopRegion,
                               sdfg: 'SDFG',
@@ -65,12 +78,10 @@ def counter_used_outside_loop(name: str,
     """
     if use_sites is None or descriptor_symbols is None:
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
-    if name in descriptor_symbols:
-        return True
     inside = {id(loop)}
     inside.update(id(block) for block in loop.all_control_flow_blocks())
     inside.update(id(edge) for edge in loop.all_interstate_edges())
-    return any(site not in inside for site in use_sites.get(name, ()))
+    return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
 
 
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

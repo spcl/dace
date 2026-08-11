@@ -151,22 +151,38 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
 
         # Find defined subgraph symbols
+        use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
+        inside_sites: Set[int] = {id(b) for b in all_blocks}
+        inside_sites.update(id(e) for e in is_edges)
+        # Read before anything assigns them, so the value comes from this SDFG's caller.
+        incoming_symbols = sdfg.free_symbols
+
         defined_symbols = set()
         strictly_defined_symbols = set()
+        internal_symbols: Set[str] = set()
         for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
-                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
-                        strictly_defined_symbols.add(k)
+                    self_referencing = k in {str(a) for a in symbolic.pystr_to_symbolic(v).args}
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
-                    pass
+                    continue
+                if self_referencing:
+                    continue
+                # ``sdfg.symbols`` does not answer where the value comes from -- the Python frontend
+                # declares its indirection indices there too. Mapping a symbol the subgraph owns makes
+                # it free at the PARENT boundary, surfacing as a required root-SDFG argument.
+                if (k not in incoming_symbols
+                        and not loop_analysis.symbol_used_outside(k, inside_sites, use_sites, descriptor_symbols)):
+                    internal_symbols.add(k)
+                    strictly_defined_symbols.add(k)
+                elif k not in sdfg.symbols:
+                    strictly_defined_symbols.add(k)
         # A counter is internal iff its init binds it outright (``i = 0``, not ``i = i + 1``) AND nothing
         # outside the loop observes it. Declaration in ``sdfg.symbols`` answers neither question: DaCe
         # declares every counter there, and this function deletes the declaration again.
         loop_regions: List[LoopRegion] = [b for b in all_blocks if isinstance(b, LoopRegion) and b.loop_variable]
-        use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all loops
         internal_counters: Set[str] = set()
         external_counters: Set[str] = set()
         for b in loop_regions:
@@ -251,6 +267,8 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         out_state = None
         for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
+        # Nothing outside reads these, so the scalar and the extra state would be dead weight.
+        ndefined_symbols -= internal_symbols
         # Export a counter only if something outside the loop observes it. Exporting unconditionally
         # costs a ``symbolic_output`` state, and that state is a second component -- which defeated
         # MapFission's single-component termination guard and let it renest forever (TSVC s1119).
