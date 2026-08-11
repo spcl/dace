@@ -35,6 +35,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.memlet_parser import parse_memlet
 from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
@@ -88,6 +89,7 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 in_memlets[connector] = _to_repository(memlet, state, body_statement)
             else:  # local >> A[...]
+                _reject_symbol_memlet_target(source, state, body_statement)
                 if indirect:
                     _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
                                            epilogue, False, state, body_statement)
@@ -116,6 +118,7 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
         code = intrinsic_code
     else:
         code_statements = [_restore_tasklet_callbacks(s, in_memlets, out_memlets, state) for s in code_statements]
+        _validate_tasklet_body(code_statements, in_memlets, out_memlets, state)
         code = '\n'.join(prelude + [astutils.unparse(s) for s in code_statements] + epilogue)
 
     tasklet = nodes.Tasklet(statement.label,
@@ -313,6 +316,89 @@ def _parse_tasklet_memlet(memlet_expression: ast.expr, connector_expression: ast
                                       state.context.filename,
                                       statement,
                                       category='memlet-parse')
+
+
+def _names_a_symbol(name: str, state: LoweringState) -> bool:
+    """
+    Whether a source-level name denotes a symbol rather than storage.
+
+    A map parameter and a name rebound to a symbol carry a binding, but a
+    PROGRAM symbol (the ``N`` of ``A: dace.int64[N]``) is registered straight
+    into the symbol repository when the container's free symbols are collected
+    and never gets one -- so the binding table alone misses exactly the case
+    the tasklet rules need to reject.
+    """
+    binding = state.context.resolve(name)
+    if binding is not None:
+        return binding.kind == 'symbol'
+    return name in state.context.symbols or name in state.context.symbol_aliases
+
+
+def _reject_symbol_memlet_target(target: ast.expr, state: LoweringState, statement: ast.stmt) -> None:
+    """
+    Reject ``local >> N`` where ``N`` is a symbol rather than a container.
+
+    A symbol is a compile-time quantity with no storage behind it, so there is
+    nowhere for the memlet to write. The stable frontend refuses this in
+    ``TaskletTransformer`` with the same wording.
+    """
+    name = target
+    while isinstance(name, ast.Subscript):
+        name = name.value
+    if not isinstance(name, ast.Name):
+        return
+    if _names_a_symbol(name.id, state):
+        raise DaceSyntaxError(None, statement, 'Symbolic variables cannot be used as memlet targets')
+
+
+def _validate_tasklet_body(code_statements: List[ast.stmt], in_memlets: Dict[str, Memlet],
+                           out_memlets: Dict[str, Memlet], state: LoweringState) -> None:
+    """
+    Reject a tasklet body that names a data container directly, or that assigns
+    to a symbol.
+
+    Inside an explicit tasklet every data access must arrive through a memlet
+    (``local << A[i]``). A bare container name has no connector behind it, so
+    the emitted tasklet reads a name nothing defines: the container becomes a
+    free symbol of the tasklet and the generated code either fails to compile
+    or reads a raw pointer where an element is expected. Assigning to a symbol
+    is refused for the same reason :func:`_reject_symbol_memlet_target` refuses
+    it as a memlet target -- a symbol has no storage.
+
+    Reading a symbol is fine and stays legal: map parameters and program symbols
+    are exactly what a tasklet body is expected to compute with.
+
+    Both rules come from the stable frontend's ``TaskletTransformer``
+    (``newast.py``), which nextgen otherwise ports in full.
+    """
+    connectors = set(in_memlets) | set(out_memlets)
+
+    for statement in code_statements:
+        for node in ast.walk(statement):
+            targets: List[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            for target in targets:
+                for name in ast.walk(target):
+                    if not isinstance(name, ast.Name) or name.id in connectors:
+                        continue
+                    if _names_a_symbol(name.id, state):
+                        raise DaceSyntaxError(
+                            None, statement, f'Cannot store into symbol "{name.id}" from a tasklet: a symbol is a '
+                            'compile-time value and has no storage to write to')
+
+    for statement in code_statements:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Name) or node.id in connectors:
+                continue
+            binding = state.context.resolve(node.id)
+            if binding is not None and binding.kind == 'container':
+                raise DaceSyntaxError(
+                    None, statement, f'"{node.id}" is a data container and cannot be accessed directly in tasklet '
+                    f'code: route it through a memlet ("{node.id}_local << {node.id}[...]") and use the '
+                    'connector name instead')
 
 
 def _memlet_binop(statement: ast.stmt) -> Optional[ast.BinOp]:
