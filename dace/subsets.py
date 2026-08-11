@@ -998,12 +998,9 @@ class Range(Subset):
             array: array descriptor to check against
 
         Returns:
-            True if the subset is contiguous, False otherwise.
-            A subset is contiguous if it addresses one uninterrupted run of memory.
-            This holds when the whole array has a packed layout, or -- even on a
-            non-packed (padded) descriptor -- when the subset is a 1D slice: at most
-            one dimension has size > 1 and that dimension has stride 1 (all other
-            dimensions are extent-1 and never stepped).
+            True if the subset addresses one uninterrupted run of memory: the whole array has a
+            packed layout, or -- even on a non-packed (padded) descriptor -- the subset is a 1D
+            slice (at most one dimension has size > 1, and that dimension has stride 1).
         """
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):

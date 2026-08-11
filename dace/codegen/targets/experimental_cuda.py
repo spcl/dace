@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import graphlib as nx
+from ordered_set import OrderedSet
+
 from dace import data as dt, Memlet
 from dace import dtypes, registry, symbolic, subsets
 from dace.config import Config
@@ -26,7 +28,7 @@ from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline i
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (generate_sync_debug_call, host_read_device_copies)
 
 from dace.codegen.targets import cpp
 
@@ -91,8 +93,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager] = None
         self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
-        self._tb_inserted_kernels: Set[nodes.MapEntry] = set()
+        self._tb_inserted_kernels: Set[nodes.MapEntry] = OrderedSet()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
+
+        # Device-to-host copies already synchronized, keyed by (cfg id, state id, destination node).
+        self._synchronized_d2h: Set[Tuple[int, int, nodes.AccessNode]] = OrderedSet()
 
     def preprocess(self, sdfg: SDFG):
         """Prepare the SDFG for GPU code generation.
@@ -111,7 +116,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # tiled; both are consulted when emitting kernel launches.
         atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
         self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
-        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
+        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', OrderedSet())
 
         # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
@@ -202,8 +207,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+            pooled = OrderedSet(
+                aname for aname, arr in sdfg.arrays.items()
+                if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -224,7 +230,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.states():
-                last_state_arrays: Set[str] = set(
+                last_state_arrays: Set[str] = OrderedSet(
                     s for s in access_sets
                     if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
@@ -241,7 +247,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     # end of state (empty set); otherwise release at the common
                     # descendant following the ends of all memlet paths
                     # (e.g., (a)->...->[tasklet]-->...->(b)).
-                    terminators = set()
+                    terminators = OrderedSet()
                     if terminator is not None and state.entry_node(terminator) is None:
                         for e in state.out_edges(terminator):
                             if isinstance(e.dst, nodes.EntryNode):
@@ -252,7 +258,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
             # Release anything still live at SDFG sink.
-            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
             if unfreed:
                 sinks = sdfg.sink_nodes()
                 if len(sinks) == 1:
@@ -265,7 +271,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     raise ValueError('End state not found when trying to free pooled memory')
 
                 for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+                    self.pool_release[(sdfg, arr)] = (sink, OrderedSet())
 
     @property
     def has_initializer(self) -> bool:
@@ -304,6 +310,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._current_kernel_spec = kernel_spec
 
             self._define_variables_in_kernel_scope(sdfg, self._dispatcher)
+            self._synchronize_host_reads(cfg, state_id, scope_entry, callsite_stream, launch_arguments=True)
             self._declare_and_invoke_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
             kernel_stream = CodeIOStream()
@@ -496,6 +503,48 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # is a register / scope-local CPU copy -- delegate to CPU codegen.
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
+    def _synchronize_host_reads(self,
+                                cfg: ControlFlowRegion,
+                                state_id: int,
+                                consumer: nodes.Node,
+                                callsite_stream: CodeIOStream,
+                                launch_arguments: bool = False) -> None:
+        """Block the host on the copy stream before ``consumer`` reads a device-to-host copy.
+
+        Emitted lazily at the first host consumer instead of at the copy, and only once per
+        destination: the copy is asynchronous, so the first host read of its destination has to wait
+        for it, and everything after that read is ordered by the host's own program order.
+        ``launch_arguments`` marks a kernel launch, which reads scalars on the host to pack them into
+        the argument list by value; its pointer arguments stay on the stream and need no sync.
+        """
+        state = cfg.state(state_id)
+        for destination, producer in host_read_device_copies(state, consumer):
+            if launch_arguments:
+                if not isinstance(state.sdfg.arrays[destination.data], dt.Scalar):
+                    continue
+            elif consumer.gpu_stream_id is not None and consumer.gpu_stream_id == producer.gpu_stream_id:
+                continue  # Consumer issues on the copy's stream, which already orders the two.
+            key = (cfg.cfg_id, state_id, destination)
+            if key in self._synchronized_d2h:
+                continue
+            self._synchronized_d2h.add(key)
+            gpu_stream = self._gpu_stream_manager.get_stream_node(producer)
+            callsite_stream.write(f'DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n', cfg, state_id,
+                                  consumer)
+
+    def _reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
+        """Whether ``node`` is a host node whose first read of a device-to-host copy is still unsynced."""
+        if not isinstance(node, (nodes.Tasklet, nodes.NestedSDFG)):
+            return False
+        cfg_id = state.parent_graph.cfg_id
+        state_id = state.parent_graph.node_id(state)
+        for destination, producer in host_read_device_copies(state, node):
+            if node.gpu_stream_id is not None and node.gpu_stream_id == producer.gpu_stream_id:
+                continue
+            if (cfg_id, state_id, destination) not in self._synchronized_d2h:
+                return True
+        return False
+
     def state_dispatch_predicate(self, sdfg, state):
         """Return True iff this codegen should drive code emission for ``state``.
 
@@ -510,12 +559,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         Claimed nodes are those carrying a GPU schedule served by this backend, plus every
         node encountered while already emitting device code.
         """
-        schedule = getattr(node, 'schedule', None)
+        schedule = node.schedule if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) else None
         if schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             return True
         if self._in_device_code:
             return True
-        return False
+        # Host node reading a device-to-host copy: claimed to place the copy's synchronization
+        # right before it, then generated by the CPU codegen as usual.
+        return self._reads_unsynchronized_device_copy(state, node)
 
     def generate_state(self,
                        sdfg: SDFG,
@@ -530,7 +581,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Emit cudaFree for pooled transients whose lifetime ends in this state.
         if not self._in_device_code:
 
-            handled_keys = set()
+            handled_keys = OrderedSet()
             backend = self.backend
             for (pool_sdfg, name), (pool_state, _) in self.pool_release.items():
 
@@ -559,11 +610,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        gen = getattr(self, '_generate_' + type(node).__name__, False)
+        if not self._in_device_code:
+            self._synchronize_host_reads(cfg, state_id, node, callsite_stream)
 
-        if gen is not False:
-            gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node).__name__ == 'MapExit' and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+        # Exact type, not isinstance: subclasses (e.g. RTLTasklet) belong to the CPU codegen. Host
+        # nodes reach this dispatch only for their synchronization and are generated by the CPU one.
+        if type(node) is nodes.NestedSDFG and self._in_device_code:
+            self._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.Tasklet and self._in_device_code:
+            self._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.MapExit and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             # A GPU MapExit is closed by the kernel's scope manager; suppress the CPU fallback.
             return
         else:
@@ -732,9 +788,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.dtype == dtypes.gpuStream_t:
             return
 
-        gen = getattr(self, f'_prepare_{nodedesc.storage.name}_array', None)
-        if gen:
-            gen(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            self._prepare_GPU_Global_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            self._prepare_CPU_Pinned_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
+            self._prepare_GPU_Shared_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
         else:
             raise NotImplementedError(f'CUDA: Unimplemented storage type {nodedesc.storage}')
 
@@ -1196,7 +1258,8 @@ class KernelSpec:
         ``compiler.cuda.<config_key>``. Raises if the name does not resolve
         to a DaCe ``typeclass``."""
         type_name = Config.get('compiler', 'cuda', config_key)
-        dtype = getattr(dtypes, type_name, None)
+        # Resolve against the typeclass registry ("dace::int32" -> int32) rather than the module namespace.
+        dtype = next((t for t, s in dtypes.TYPECLASS_TO_STRING.items() if s.rsplit('::', 1)[-1] == type_name), None)
         if not isinstance(dtype, dtypes.typeclass):
             raise ValueError(
                 f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '
