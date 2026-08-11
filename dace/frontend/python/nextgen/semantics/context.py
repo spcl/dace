@@ -336,21 +336,35 @@ class ProgramContext:
 
     def register_closure_array(self, name: str, qualified_name: str, descriptor: data.Data) -> str:
         """
-        Register an external (closure) array as a non-transient container,
-        deduplicated by its source qualified name so every reference to the
-        same external array — including from inlined callees — shares one
-        repository container.
+        Register an external (closure) array, deduplicated by its source
+        qualified name so every reference to the same external array — including
+        from inlined callees — shares one repository container.
+
+        .. note::
+           The qualified name does not always identify an array uniquely: two
+           different objects reached through the same field expression share it
+           (``self.q`` in both ``ObjA`` and ``ObjB``) and, once inlined, also
+           share the mangled reference name ``__g_self_q``, so the two collapse
+           onto one container. See ``test_nested_objects`` and
+           ``preparse_test::test_nested_objects_same_name``.
 
         Preprocessing injects top-level closure arrays into the argument
         types, so the container may already exist under this exact
         descriptor; in that case it is adopted rather than re-registered.
 
+        A closure array is normally non-transient: it is storage the caller owns
+        and passes in. An object may nevertheless declare its field transient
+        through ``__descriptor__``, meaning the array is the program's own
+        scratch space and must not become a program argument, so the
+        descriptor's own flag is honoured rather than overwritten.
+
         :return: The repository container name.
         """
+        transient = bool(getattr(descriptor, 'transient', False))
+
         if qualified_name in self.closure_containers:
             return self.closure_containers[qualified_name]
         if self.containers.get(name) is descriptor:
-            descriptor.transient = False
             self.closure_containers[qualified_name] = name
             return name
         if name in self.closure_containers.values():
@@ -359,7 +373,7 @@ class ProgramContext:
             # expression and is stable across closures.
             self.closure_containers[qualified_name] = name
             return name
-        actual_name = self.add_container(name, descriptor, transient=False)
+        actual_name = self.add_container(name, descriptor, transient=transient)
         self.closure_containers[qualified_name] = actual_name
         return actual_name
 
