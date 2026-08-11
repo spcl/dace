@@ -45,6 +45,16 @@ def _is_cross_cpu_gpu(src_storage: dtypes.StorageType, dst_storage: dtypes.Stora
     return (src_cpu and dst_gpu) or (src_gpu and dst_cpu)
 
 
+def _copy_waives_volume_check(copy_node: "CopyLibraryNode", parent_state: dace.SDFGState) -> bool:
+    """True if a wired memlet carries ``allow_oob``, i.e. the author waived the src/dst volume check.
+
+    ``SDFGState.validate`` (``validation.py``) skips its own equal-volume check on such an edge, and
+    plain copy-edge codegen sizes the transfer from the source subset. A lifted ``CopyLibraryNode``
+    must honour the same waiver, else an SDFG that is legal as a direct copy edge stops expanding.
+    """
+    return any(e.data.allow_oob for e in parent_state.all_edges(copy_node) if not e.data.is_empty())
+
+
 def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     """True if both descriptors share packed major order (both C or both Fortran)."""
     return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
@@ -337,7 +347,8 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         # symbols with differing assumption sets first, so a mismatch found here is real, not a
         # symbol-identity artifact. A zero-volume copy never reaches here -- ``CopyLibraryNode.expand``
         # removes the node outright before any implementation is dispatched.
-        if any(symbolic.inequal_symbols(a, b) for a, b in zip(in_shape, out_shape)):
+        if not _copy_waives_volume_check(node, parent_state) and any(
+                symbolic.inequal_symbols(a, b) for a, b in zip(in_shape, out_shape)):
             raise ValueError(f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
                              f"supported -- use a Transpose libnode. Reshapes must change rank.")
