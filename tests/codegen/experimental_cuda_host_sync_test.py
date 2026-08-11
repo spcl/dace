@@ -98,8 +98,12 @@ def _host_consumer_sdfg(name: str) -> dace.SDFG:
 
 
 def _launch_call(label: str) -> str:
-    """The wrapper's call site. Its forward declaration takes the state struct by type, not ``__state``."""
-    return rf'__dace_runkernel_{label}\w*\(__state'
+    """The wrapper's call site. Its forward declaration takes the state struct by type, not ``__state``.
+
+    The experimental target prefixes the wrapper name with the SDFG name, so the label is matched
+    after an arbitrary ``\\w*`` prefix; the trailing ``[\\d_]+`` pins it to the id-suffixed wrapper.
+    """
+    return rf'__dace_runkernel_\w*{label}_[\d_]+\(__state'
 
 
 def _position(code: str, pattern: str) -> int:
@@ -138,7 +142,7 @@ def test_a_host_tasklet_consumer_is_synchronized():
     """A plain host tasklet reading the destination is a host consumer like any other."""
     code = _generated_code(_host_consumer_sdfg('d2h_host_tasklet'))
     copy = _position(code, r'MemcpyAsync\([^;]*DeviceToHost')
-    read = _position(code, r'Tasklet code \(scale_on_host\)')
+    read = _position(code, r'copied \* 3\.0')
     sync = _position(code, r'StreamSynchronize')
     assert copy < sync < read, 'the host tasklet reads the destination of an unsynchronized copy'
 

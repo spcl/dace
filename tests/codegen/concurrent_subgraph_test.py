@@ -159,9 +159,11 @@ def test_vectorize_opts_out_of_omp_sections():
 
         assert not any(sd.openmp_sections for sd in sdfg.all_sdfgs_recursive())
         assert 'omp parallel sections' not in generated_code(sdfg)
-        # Not vacuous: the vectorized SDFG still has a state with concurrent components, so
-        # forcing the knob back on over it does emit the construct.
-        assert [st for st in sdfg.states() if len(concurrent_subgraphs(st)) > 1]
+        # Not vacuous: the vectorizer moves the concurrent components into the nested map-body
+        # SDFGs (top level keeps one tile-main and one remainder scope), so the state with
+        # components to wrap is found recursively -- forcing the knob back on over the whole
+        # tree does emit the construct.
+        assert [st for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if len(concurrent_subgraphs(st)) > 1]
         assert '#pragma omp parallel sections' in generated_code(with_sections_requested(sdfg))
 
         rng = np.random.default_rng(1234)
