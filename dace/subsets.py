@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -299,30 +298,19 @@ def _approx(val):
 
 
 def tuple_to_symexpr(val):
-    """Coerce one range bound to a symbolic expression.
+    """Coerce one range bound to a BARE symbolic expression.
 
     A ``(main, approx)`` tuple becomes a ``SymExpr``; anything else -- a Python ``int``, a
     string, an already-symbolic value -- goes through ``pystr_to_symbolic``.
+
+    Every bound of every ``Range`` and ``Indices`` is written through here, so this is where the
+    always-bare invariant holds: a caller minting ``dace.symbol('N', positive=True)`` into a
+    subset must not split the name. Assumptions belong in ``SDFG.symbol_assumptions``, not in an
+    object stored in a graph, where a second spelling of one name stops index arithmetic from
+    cancelling.
     """
-    return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
-
-
-def bare_range(rng: 'Range') -> 'Range':
-    """``rng`` with every bound spelled bare, or ``rng`` itself when it already is.
-
-    :param rng: The range to normalize; it is never mutated.
-    :return: A range free of assumed symbols. Assumptions belong in ``SDFG.symbol_assumptions``,
-             not in an object stored in a graph, where a second spelling of one name stops index
-             arithmetic from cancelling.
-    :rtype: Range
-    """
-    bared = [tuple(symbolic.bare_symbols(bound) for bound in r) for r in rng.ranges]
-    if all(new is old for new_r, old_r in zip(bared, rng.ranges) for new, old in zip(new_r, old_r)):
-        return rng
-    out = copy.copy(rng)
-    out.ranges = bared
-    out.tile_sizes = [symbolic.bare_symbols(tile) for tile in rng.tile_sizes]
-    return out
+    parsed = symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val)
+    return symbolic.bare_symbols(parsed)
 
 
 def symbolic_range_tuple(value):
@@ -351,10 +339,7 @@ class Range(Subset):
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
             parsed_ranges.append((tuple_to_symexpr(r[0]), tuple_to_symexpr(r[1]), tuple_to_symexpr(r[2])))
-            if len(r) == 3:
-                parsed_tiles.append(symbolic.pystr_to_symbolic(1))
-            else:
-                parsed_tiles.append(symbolic.pystr_to_symbolic(r[3]))
+            parsed_tiles.append(symbolic.pystr_to_symbolic(1) if len(r) == 3 else tuple_to_symexpr(r[3]))
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
@@ -935,6 +920,9 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
+        # The other write seam: substitution puts caller-supplied expressions into stored bounds,
+        # so what is substituted IN is bared exactly like what is constructed in.
+        repl_dict = {old: symbolic.bare_symbols(new) for old, new in repl_dict.items()}
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
                               re.subs(repl_dict) if symbolic.issymbolic(re) else re,

@@ -567,6 +567,22 @@ def _bare_spelling(sym: symbol) -> Optional[symbol]:
     return None if bare.assumptions0 == sym.assumptions0 else bare
 
 
+@lru_cache(maxsize=2048, typed=True)
+def assumed_symbol(name: str, dtype: Optional[dtypes.typeclass], facts: Tuple[Tuple[str, Any], ...]) -> symbol:
+    """The same-named symbol carrying ``facts``; the inverse of :func:`bare_symbols`.
+
+    ``symbol`` deliberately bypasses SymPy's own symbol cache, so re-minting an assumed spelling
+    per query would rebuild the assumption closure every time; that is what this cache holds.
+
+    :param name: Symbol name.
+    :param dtype: Symbol type, or ``None`` for the default.
+    :param facts: Sorted ``(fact, value)`` pairs, as :attr:`SDFG.symbol_assumptions` records them.
+    :return: The assumed symbol. It is for reasoning only and must never be stored in a graph.
+    :rtype: symbol
+    """
+    return symbol(name, dtype, **dict(facts))
+
+
 def bare_symbols(expr):
     """``expr`` with every assumed symbol swapped for the bare same-named one.
 
@@ -574,12 +590,21 @@ def bare_symbols(expr):
     object stored in a graph, where a second spelling of the same name stops index arithmetic from
     cancelling. Plain SymPy symbols and :class:`UndefinedSymbol` are left alone.
 
+    ``expr`` itself is returned when it is already bare, so callers can compare by identity.
+
     :param expr: A symbolic expression, or any value, which is returned unchanged.
     :return: ``expr`` spelled bare.
     :rtype: Any
     """
+    # Numbers carry no symbol and are what most stored bounds are; that check is a bare isinstance,
+    # while `free_symbols` below builds a set.
+    if isinstance(expr, sympy.Number):
+        return expr
     if isinstance(expr, SymExpr):
-        return SymExpr(bare_symbols(expr.expr), bare_symbols(expr.approx))
+        main, approx = bare_symbols(expr.expr), bare_symbols(expr.approx)
+        if main is expr.expr and approx is expr.approx:
+            return expr
+        return SymExpr(main, approx)
     if not isinstance(expr, sympy.Basic):
         return expr
     replacements = {}
