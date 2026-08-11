@@ -79,9 +79,37 @@ def test_wcr_output_not_inlined():
                         assert e.src_conn in n.code.as_string
 
 
+def test_shadowed_connector_not_inlined():
+
+    # A lambda parameter sharing a connector's name denotes the parameter inside the lambda,
+    # so that connector must keep its classic copy-in/out lowering.
+    @dace.program
+    def lamb(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a >> A[i]
+                b << B[i]
+                c << C[i]
+                f = lambda a, b: a + b
+                a = f(b, c)
+
+    sdfg = lamb.to_sdfg(simplify=True)
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    tk = _tasklets(sdfg)[0]
+    body = tk.code.as_string
+    assert 'A[' not in body and 'B[' not in body
+    assert 'a' in body and 'b' in body
+    # The unshadowed connector is still inlined.
+    assert 'C[' in body and 'c' not in body
+    assert not ({'A', 'B'} & set(tk.ignored_symbols))
+    assert 'C' in set(tk.ignored_symbols)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_elementwise_inlined_and_valid()
     test_stencil_offsets()
     test_idempotent()
     test_wcr_output_not_inlined()
+    test_shadowed_connector_not_inlined()
     print('ok')

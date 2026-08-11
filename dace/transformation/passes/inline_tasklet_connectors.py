@@ -160,6 +160,15 @@ class InlineTaskletConnectors(ppl.Pass):
         # ``as_string`` unparses the tasklet's already-parsed AST, so it is always valid Python;
         # any unexpected failure is still caught by apply_pass and the tasklet left classic.
         tree = ast.parse(node.code.as_string)
+        # A name a nested scope rebinds (lambda / def parameter, comprehension target) denotes that
+        # binding inside the scope, not the connector. The generator tells inlined connectors apart
+        # from live ones by whether the name still occurs in the body, so such a name can be neither
+        # rewritten (wrong value) nor left alone (the write-back of an uninitialized copy). Keep the
+        # whole connector classic instead.
+        rebound = _rebound_names(tree)
+        accesses = {conn: acc for conn, acc in accesses.items() if conn not in rebound}
+        if not accesses:
+            return node.code.as_string, set()
         inliner = _ConnectorInliner(accesses)
         new_tree = inliner.visit(tree)
         ast.fix_missing_locations(new_tree)
@@ -182,6 +191,9 @@ def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
         return False
     if set(tasklet.in_connectors) & set(tasklet.out_connectors):  # inout -> may stay classic
         return False
+    # A connector a nested scope rebinds stays classic (see _rewrite_python).
+    if _rebound_names(ast.parse(tasklet.code.as_string)) & (set(tasklet.in_connectors) | set(tasklet.out_connectors)):
+        return False
     checker = InlineTaskletConnectors()
     for edge in state.in_edges(tasklet):
         if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=False) is None:
@@ -190,6 +202,23 @@ def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
         if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=True) is None:
             return False
     return True
+
+
+def _rebound_names(tree: ast.AST) -> Set[str]:
+    """Names bound by a nested scope inside a tasklet body: lambda / function parameters, the
+    function's own name, and comprehension targets."""
+    names: Set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = n.args
+            names.update(a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs))
+            names.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+            if not isinstance(n, ast.Lambda):
+                names.add(n.name)
+        elif isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for gen in n.generators:
+                names.update(t.id for t in ast.walk(gen.target) if isinstance(t, ast.Name))
+    return names
 
 
 class _ConnectorInliner(ast.NodeTransformer):
