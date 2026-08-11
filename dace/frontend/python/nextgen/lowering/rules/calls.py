@@ -12,7 +12,7 @@ any other opaque statement.
 import ast
 import copy
 import types
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import data, subsets, symbolic
 from dace.memlet import Memlet
@@ -83,7 +83,7 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
                                  'SDFG-convertible callee could not produce an SDFG',
                                  category='inline-fallback:no-sdfg')
             return
-        _lower_sdfg_call(target, call, sdfg, statement, state)
+        _lower_sdfg_call(target, call, sdfg, statement, state, callee)
         return
 
     if callee.f in state.context.inline_stack:
@@ -744,19 +744,30 @@ def _convertible_to_sdfg(callee: Any, call: ast.Call, state: LoweringState) -> O
     (constants/symbols), mirroring the classic frontend's convention.
     """
     from dace.sdfg import SDFG
+    if not hasattr(callee, '__sdfg__'):
+        return None
+
+    # Failing to resolve the arguments means this call site cannot describe the
+    # callee, not that the callee is broken: stay silent and let the caller fall
+    # back to a callback.
     try:
-        arguments = [_sdfg_call_argument(argument, state) for argument in call.args]
+        arguments = [_sdfg_convertible_argument(argument, state) for argument in call.args]
         keywords = {
-            keyword.arg: _sdfg_call_argument(keyword.value, state)
+            keyword.arg: _sdfg_convertible_argument(keyword.value, state)
             for keyword in call.keywords if keyword.arg is not None
         }
-        sdfg = callee.__sdfg__(*arguments, **keywords)
     except Exception:
         return None
+
+    # An error raised by ``__sdfg__`` itself is the user's, and propagates the
+    # way the classic frontend propagates it (see ``newast.py``'s handling of
+    # ``raise_nested_parsing_errors``). Swallowing it here would silently
+    # downgrade the call to a Python callback and hide the real failure.
+    sdfg = callee.__sdfg__(*arguments, **keywords)
     return sdfg if isinstance(sdfg, SDFG) else None
 
 
-def _sdfg_call_argument(argument: ast.expr, state: LoweringState) -> Any:
+def _sdfg_convertible_argument(argument: ast.expr, state: LoweringState) -> Any:
     """The data descriptor (data arguments) or compile-time value
     (constant/symbolic arguments) an SDFG-convertible's ``__sdfg__`` sees."""
     inferred = state.inference.infer(argument)
@@ -787,8 +798,42 @@ def _sdfg_call_argument(argument: ast.expr, state: LoweringState) -> str:
     return astutils.unparse(argument)
 
 
-def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, statement: ast.stmt,
-                     state: LoweringState) -> None:
+def _sdfg_positional_parameters(callee: Any, sdfg: Any) -> Tuple[List[Optional[str]], Set[str]]:
+    """
+    The parameter names an SDFG callee's positional arguments bind to, in call
+    order, together with the names that are compile-time constants.
+
+    An SDFG-convertible may declare constant parameters through
+    ``__sdfg_signature__``. Those are baked into the SDFG it returns and so do
+    not appear in ``arg_names``, yet they still occupy a position in the call.
+    Zipping ``arg_names`` against the call's arguments directly would shift
+    every later argument left by one -- binding a data argument to the name of
+    a constant one, which then reaches
+    :meth:`~dace.sdfg.analysis.schedule_tree.tree_to_sdfg.ScheduleTreeToSDFG.
+    visit_SDFGCallNode` as a symbolic argument and is added as a symbol of an
+    SDFG that already holds a data descriptor under that name.
+
+    Constant positions are returned as ``None`` so that alignment is preserved.
+    """
+    constants: Set[str] = set()
+    signature = getattr(callee, '__sdfg_signature__', None)
+    if signature is not None:
+        try:
+            names, constant_names = signature()
+        except Exception:
+            names, constant_names = None, None
+        if names is not None:
+            constants = set(constant_names or ())
+            return [None if name in constants else name for name in names], constants
+    return list(getattr(sdfg, 'arg_names', None) or []), constants
+
+
+def _lower_sdfg_call(target: Optional[ast.expr],
+                     call: ast.Call,
+                     sdfg: Any,
+                     statement: ast.stmt,
+                     state: LoweringState,
+                     callee: Any = None) -> None:
     """
     Emit an explicit :class:`SDFGCallNode` for an SDFG-valued callee. The SDFG
     stays a black box; only its return containers are registered (as copies)
@@ -797,11 +842,13 @@ def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, stat
     from dace.frontend.python.nextgen.lowering.dispatch import fallback_to_callback
 
     arguments: Dict[str, str] = {}
-    argument_names = list(getattr(sdfg, 'arg_names', None) or [])
+    argument_names, constant_names = _sdfg_positional_parameters(callee, sdfg)
     for name, argument in zip(argument_names, call.args):
+        if name is None:  # A compile-time argument, already baked into the SDFG
+            continue
         arguments[name] = _sdfg_call_argument(argument, state)
     for keyword in call.keywords:
-        if keyword.arg is not None:
+        if keyword.arg is not None and keyword.arg not in constant_names:
             arguments[keyword.arg] = _sdfg_call_argument(keyword.value, state)
 
     return_targets: List[str] = []
