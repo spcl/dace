@@ -326,6 +326,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                 continue
             if s in sdfg.symbols:
                 nsdfg.symbol_mapping[s] = s
+                if s not in nsdfg.sdfg.symbols:
+                    nsdfg.sdfg.add_symbol(s, sdfg.symbols[s])
             elif s in sdfg.arrays:
                 desc = sdfg.arrays[s]
                 access = body.add_access(s)
