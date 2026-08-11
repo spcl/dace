@@ -239,7 +239,14 @@ def _loop_instability(before: BindingSnapshot, state: LoweringState, owned_names
 
 def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
     source_name = statement.target.id
-    start, stop, step = (astutils.unparse(resolve_symbol_names(argument, state)) for argument in statement.iter.args)
+    # Canonicalization hoists a compound range argument (``range(2 * N)`` becomes
+    # ``__anf0 = 2 * N; range(__anf0)``), so fold such temporaries back to their
+    # symbolic value before the bound is unparsed -- otherwise the loop condition
+    # names a container, and every analysis that reads the bound (work/depth,
+    # scalar promotion) sees an opaque free symbol instead of ``2 * N``. A bound
+    # the program computes at run time does not fold and keeps its data read.
+    start, stop, step = (astutils.unparse(resolve_symbol_names(_fold_symbolic_temporaries(argument, state), state))
+                         for argument in statement.iter.args)
     comparator = '<'
     try:
         if (symbolic.pystr_to_symbolic(step) < 0) == True:
