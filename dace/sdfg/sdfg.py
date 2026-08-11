@@ -11,7 +11,6 @@ from hashlib import md5, sha256
 import random
 import shutil
 import sys
-import time
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
@@ -1258,9 +1257,9 @@ class SDFG(ControlFlowRegion):
             md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
             return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'unique':
-            # Base the name on a token that is fixed within this process but never repeats across processes, so no
-            # caching is possible between processes or subsequent invocations
-            md5_hash = md5(PROCESS_CACHE_TOKEN.encode('utf-8')).hexdigest()
+            # Base name on location in memory, so no caching is possible between
+            # processes or subsequent invocations
+            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
             return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'name':
             # Overwrites previous invocations, and can clash with other programs

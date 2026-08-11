@@ -3,10 +3,6 @@ import dace
 import os
 import pytest
 import tempfile
-from hashlib import md5
-
-from dace.sdfg import sdfg as sdfg_module
-from dace.sdfg import utils as sdfg_utils
 
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdfg_utils
@@ -158,4 +154,3 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
 
 if __name__ == '__main__':
     test_custom_build_folder()
-    test_process_cache_token_contains_pid()
