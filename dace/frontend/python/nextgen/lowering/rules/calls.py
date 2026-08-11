@@ -775,7 +775,17 @@ def _convertible_to_sdfg(callee: Any, call: ast.Call, state: LoweringState) -> O
     # way the classic frontend propagates it (see ``newast.py``'s handling of
     # ``raise_nested_parsing_errors``). Swallowing it here would silently
     # downgrade the call to a Python callback and hide the real failure.
-    sdfg = callee.__sdfg__(*arguments, **keywords)
+    from dace.frontend.python.parser import DaceProgram  # Deferred to avoid an import cycle
+    if isinstance(callee, DaceProgram):
+        # ``__sdfg__`` parses with ``simplify=None``, i.e. the config default,
+        # which would simplify the callee on its own and inline away any nesting
+        # INSIDE it before the caller ever sees it. Parse it unsimplified and
+        # let the caller's own simplification decide, the way the classic
+        # frontend propagates its ``simplify`` to nested programs
+        # (``newast.py:4141``).
+        sdfg = callee.to_sdfg(*arguments, simplify=False, save=False, **keywords)
+    else:
+        sdfg = callee.__sdfg__(*arguments, **keywords)
     return sdfg if isinstance(sdfg, SDFG) else None
 
 
