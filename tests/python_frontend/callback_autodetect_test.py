@@ -460,7 +460,7 @@ def test_inout_same_name():
 
 
 def test_inhibit_state_fusion():
-    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    """ Tests that state fusion never merges states carrying side-effect callbacks. """
 
     @dace_inhibitor
     def add(a, b):
@@ -471,15 +471,12 @@ def test_inhibit_state_fusion():
         A[:] = add(B, C)
         D[:] = add(A, C)
 
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 5
-
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 1
+    # A side-effect node pins state order regardless of the callback-fusion config.
+    for dont_fuse in (True, False):
+        with config.set_temporary('frontend', 'dont_fuse_callbacks', value=dont_fuse):
+            with pytest.warns(match="Automatically creating callback"):
+                sdfg = calladd.to_sdfg(simplify=True)
+            assert sdfg.number_of_nodes() == 5
 
 
 def test_two_callbacks():
