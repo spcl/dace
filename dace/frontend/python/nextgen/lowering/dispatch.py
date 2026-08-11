@@ -64,28 +64,10 @@ from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normal
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, nondegenerate_shape, resolve_access,
                                                           scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
-from dace.frontend.python.nextgen.lowering.mechanisms import (creation, elementwise, opaque_values, reduction,
-                                                              static_values, streams)
+from dace.frontend.python.nextgen.lowering.mechanisms import (creation, elementwise, opaque_values, static_values,
+                                                              streams)
 from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, index_slots, substitute_slots
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
-
-#: Full-reduction calls by registry-qualified name, mapped to their WCR ufunc.
-_REDUCTION_CALLS = {
-    'numpy.sum': 'add',
-    'numpy.prod': 'multiply',
-    'numpy.max': 'maximum',
-    'numpy.amax': 'maximum',
-    'numpy.min': 'minimum',
-    'numpy.amin': 'minimum',
-}
-
-#: Array-method reductions (``a.sum()``), mapped to their WCR ufunc.
-_REDUCTION_METHODS = {
-    'sum': 'add',
-    'prod': 'multiply',
-    'max': 'maximum',
-    'min': 'minimum',
-}
 
 #: Builtin functions over SCALAR operands that are elementwise ufuncs, mapped
 #: to the ufunc implementing them, with the argument count that form takes.
@@ -1685,23 +1667,13 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         creation.lower_creation(creation_name, target_access, call, statement, state)
         return True
 
-    # Reductions (full or per-axis with a compile-time scalar axis). Forms the
-    # WCR-map mechanism does not cover (e.g. tuple axes) fall through to the
-    # deferred replacement expansion below.
-    matched = _match_reduction(call, qualname)
-    if matched is not None:
-        reduction_ufunc, source_expr, axis_expr = matched
-        axis: Optional[int] = None
-        supported = True
-        if axis_expr is not None and not (isinstance(axis_expr, ast.Constant) and axis_expr.value is None):
-            axis = state.inference.constant_int(axis_expr)
-            supported = axis is not None
-        source = resolve_access(source_expr, state) if supported else None
-        if supported and source is not None:
-            target_access = _call_target_access(target, inferred, statement, state)
-            reduction.emit_reduction(target_access, reduction_ufunc, source, statement, state, axis=axis)
-            return True
-
+    # Reductions (``numpy.sum``, ``A.max()``, ...) are NOT intercepted here.
+    # They go to the deferred replacement expansion below, which produces a
+    # ``Reduce`` library node -- the form every reduction expansion, GPU block
+    # reduction and auto-tiling heuristic is written against. A WCR map used to
+    # be emitted instead, which was correct but opaque: it left nothing for
+    # those consumers to recognize.
+    #
     # Stream pushes inside a dataflow scope, which the deferred replacement
     # expansion below cannot reach (it adds state machinery).
     if streams.lower_stream_push(call, statement, state):
@@ -1749,36 +1721,6 @@ def _out_keyword_access(call: ast.Call, state: LoweringState) -> Optional[DataAc
         if ufunc_method is None and len(call.args) > ufunc.nin:
             return resolve_access(call.args[ufunc.nin], state)
     return None
-
-
-def _match_reduction(call: ast.Call, qualname: str) -> Optional[Tuple[str, ast.expr, Optional[ast.expr]]]:
-    """
-    Match a reduction call form (``np.sum(A[, axis])`` or ``A.sum([axis])``,
-    ``axis=`` keyword allowed).
-
-    :return: (WCR ufunc name, source expression, axis expression or None), or
-             None if the call is not a lowerable reduction form (extra
-             arguments like ``out=``/``initial=`` change semantics).
-    """
-    if qualname in _REDUCTION_CALLS:
-        if not call.args or len(call.args) > 2:
-            return None
-        ufunc_name = _REDUCTION_CALLS[qualname]
-        source_expr = call.args[0]
-        axis_expr = call.args[1] if len(call.args) == 2 else None
-    elif isinstance(call.func, ast.Attribute) and call.func.attr in _REDUCTION_METHODS:
-        if len(call.args) > 1:
-            return None
-        ufunc_name = _REDUCTION_METHODS[call.func.attr]
-        source_expr = call.func.value
-        axis_expr = call.args[0] if call.args else None
-    else:
-        return None
-    for keyword in call.keywords:
-        if keyword.arg != 'axis' or axis_expr is not None:
-            return None
-        axis_expr = keyword.value
-    return ufunc_name, source_expr, axis_expr
 
 
 def _method_call_receiver(call: ast.Call, state: LoweringState) -> Optional[DataAccess]:
