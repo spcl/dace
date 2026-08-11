@@ -79,7 +79,7 @@ def test_optional_dead_state(isnone):
 
 def test_optional_array_inference():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(b):
         if b is not None:
             tmp = np.zeros_like(b)
