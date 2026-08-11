@@ -1643,8 +1643,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             state.add_edge(nested, inner_name, state.add_write(target), None,
                            Memlet.from_array(target, sdfg.arrays[target]))
 
-        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
-                                                     self._pending_interstate_assignments())
+        # A nested SDFG is one dataflow node: what follows it is ordered by the
+        # access nodes its writes land on, the same way it would be after a
+        # tasklet, and ``_insert_memory_dependency_state_boundaries`` has
+        # already placed a boundary wherever that is not enough. So only break
+        # the state when there are interstate assignments that need an edge to
+        # live on -- an unconditional break left every call site in a state of
+        # its own, which no later pass could fuse away.
+        pending = self._pending_interstate_assignments()
+        if pending:
+            self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, pending)
 
     def _pending_interstate_assignments(self) -> dict[str, str]:
         """
