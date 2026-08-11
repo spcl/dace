@@ -521,6 +521,7 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
 
     created = _create_pythonclass_member(target, inferred, state)
     if created is None:
+        _reject_new_object_field(target, label, statement, state)
         raise UnsupportedFeatureError(f'Assignment to unsupported attribute "{label}"',
                                       state.context.filename,
                                       statement,
@@ -531,6 +532,36 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
         return
     dispatch.lower_computation(DataAccess(path, subsets.Range.from_array(member_descriptor), member_descriptor), value,
                                statement, state)
+
+
+def _reject_new_object_field(target: ast.Attribute, label: str, statement: ast.stmt, state: LoweringState) -> None:
+    """
+    Refuse to create a NEW attribute on a live Python object.
+
+    ``self.my_newfield = B`` inside a ``@dace.method`` is an invalid program
+    rather than a frontend gap: an object's fields are captured when the program
+    is parsed, so a field that does not exist by then has no storage to be
+    written back to, and the caller would never observe the assignment. The
+    stable frontend rejects this outright. Letting it fall back to a Python
+    callback would silently accept a program whose effect is invisible.
+
+    An attribute that DOES already exist on the object is a different matter --
+    the frontend simply could not lower it -- so that stays a feature gap and
+    the caller's ``UnsupportedFeatureError`` still applies.
+    """
+    base = target.value
+    if not isinstance(base, ast.Name):
+        return
+    if state.context.resolve(base.id) is not None:
+        return  # A repository binding: the ordinary attribute paths own this
+    obj = state.context.globals.get(base.id)
+    if obj is None or hasattr(obj, target.attr):
+        return
+    raise DaceSyntaxError(
+        None, statement, f'Cannot create the new field "{label}" on object "{base.id}" from inside a dace program: '
+        f'an object\'s fields are captured when the program is parsed, so "{target.attr}" has no '
+        f'storage and the assignment would not be visible to the caller. Initialize the field '
+        f'before calling (e.g. in __init__).')
 
 
 def _create_pythonclass_member(target: ast.Attribute, inferred: Inferred,
