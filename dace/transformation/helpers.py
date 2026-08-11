@@ -573,6 +573,10 @@ def nest_state_subgraph(sdfg: SDFG,
     # Offset memlet paths inside nested SDFG according to subsets
     for original_edge, new_edge in edges_to_offset:
         for edge in nstate.memlet_tree(new_edge):
+            # An empty memlet on the same scope connector is a happens-before ordering edge;
+            # stamping ``data`` on it makes a connector-less fake data edge later passes drop.
+            if edge.data.is_empty():
+                continue
             edge.data.data = new_edge.data.data
             # A whole-array / scalar access carries ``subset is None`` (a legal memlet
             # representation, e.g. a bare scalar accumulator ``Memlet('delta')``). There is
