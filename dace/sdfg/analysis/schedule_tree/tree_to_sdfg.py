@@ -758,7 +758,19 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                     Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]), outer_map_entry,
                                     outer_to_connect, access_cache, sdfg)
 
-        if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
+        # Add an empty (control-only) memlet from the enclosing map entry if this
+        # inner map has no data inputs of its own. Without it the inner map entry
+        # has in-degree zero and, despite being nested, is misclassified as a
+        # graph-level source node -- so scope_dict() never pairs its exit with an
+        # entry and memlet propagation dereferences None (propagation.py, where
+        # ``dfg_state.entry_node(exit)`` returns None).
+        #
+        # This must key off THIS map's in-degree, not the enclosing entry's
+        # out-degree: two sibling maps in the same scope (``for j: (for i: ...);
+        # (for i: ...)``) both need the edge, but keying off the outer entry
+        # connects only whichever sibling is built first and orphans the rest.
+        # Same rule, and same reasoning, as the tasklet path below.
+        if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.in_degree(map_entry) < 1:
             self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
 
         # map_exit
