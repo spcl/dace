@@ -316,7 +316,7 @@ def test_explicit_type_hints_in_nested_call(decorated):
 
     if decorated:
 
-        @dace
+        @dace.program(inline=False)
         def nested(a: dace.float64[20], b: dace.float64[16]):
             b += a
     else:
@@ -332,7 +332,11 @@ def test_explicit_type_hints_in_nested_call(decorated):
     a_ref = A * 2
 
     if decorated:
-        with pytest.raises(IndexError):
+        # The declared shapes conflict (b is float64[16], the caller passes a
+        # float64[20]), so parsing must fail. Which exception depends on where
+        # the conflict is noticed: broadcasting the assignment (DaceSyntaxError)
+        # or indexing past the end of the shorter shape (IndexError).
+        with pytest.raises((IndexError, DaceSyntaxError)):
             outer(A)
     else:
         outer(A)

@@ -345,7 +345,7 @@ def test_multistate_inline_samename():
 
 def test_multistate_inline_outer_dependencies():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(A: dace.float64[20]):
         for i in range(1, 20):
             A[i] += A[i - 1]
@@ -392,7 +392,7 @@ def test_multistate_inline_outer_dependencies():
 
 def test_multistate_inline_concurrent_subgraphs():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(A: dace.float64[10], B: dace.float64[10]):
         for i in range(1, 10):
             B[i] = A[i]

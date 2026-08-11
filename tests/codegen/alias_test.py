@@ -24,11 +24,11 @@ def test_simple_program(may_alias):
 
 def test_multi_nested():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(a: dace.float64[20], b: dace.float64[20]):
         b[:] = a + 1
 
-    @dace.program
+    @dace.program(inline=False)
     def interim(a: dace.float64[20], b: dace.float64[20]):
         nested(a, b)
 
@@ -44,11 +44,11 @@ def test_multi_nested():
 
 def test_inference():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(a: dace.float64[2, 20], b: dace.float64[2, 20]):
         b[:] = a + 1
 
-    @dace.program
+    @dace.program(inline=False)
     def interim(a: dace.float64[3, 20]):
         nested(a[:2], a[1:])
 
