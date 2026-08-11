@@ -60,8 +60,6 @@ def build_folder_root() -> str:
     """The build cache root, one per rank if ``cache_distaware`` is on and a launcher set a rank.
 
     Ranks that each compile otherwise share a folder and can load each other's half-written library.
-    A process no launcher started has no rank variable and keeps the unsuffixed root, so ordinary
-    single-process runs name their cache exactly as they always did.
     """
     base = Config.get('default_build_folder')
     if not Config.get_bool('cache_distaware'):

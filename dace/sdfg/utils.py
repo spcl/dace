@@ -1675,48 +1675,32 @@ def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
-def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: Optional[SDFG], comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
-    :param sdfg: SDFG to be compiled.
+    :param sdfg: SDFG to be compiled. Ranks other than 0 only load, and may pass ``None``.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
-    :note: If rank 0's compilation raises, the error is broadcast and re-raised
-           on *every* rank, so a build failure fails the whole job fast instead
-           of deadlocking the other ranks at the build-folder broadcast below
-           (rank 0 would never reach the broadcast, leaving the rest blocked).
-    :note: Only rank 0 builds, so every rank is pinned to its folder, whatever ``cache`` or
-           ``cache_distaware`` would otherwise name.
+    :note: Only rank 0 builds, so a rank holding the SDFG is pinned to rank 0's folder.
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
     func = None
     folder = None
-    error = None
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        try:
-            func = sdfg.compile(validate=validate)
-            folder = sdfg.build_folder
-        except BaseException as exc:  # noqa: BLE001 -- re-raised on every rank
-            import traceback
-            error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+        func = sdfg.compile(validate=validate)
+        folder = sdfg.build_folder
 
-    # Broadcast the build folder (or rank 0's compile error).  Sending both in
-    # one bcast keeps the collective sequence identical on every rank.
-    error, folder = comm.bcast((error, folder), root=0)
-    if error is not None:
-        raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
-                           f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
-
-    # Pin every rank to the one folder rank 0 built in. Under ``cache_distaware`` each rank would
-    # otherwise name a folder of its own and find nothing there.
-    sdfg.build_folder = folder
+    # Broadcasts build folder.
+    folder = comm.bcast(folder, root=0)
+    if sdfg is not None:
+        sdfg.build_folder = folder
 
     # Loads compiled SDFG.
     if rank > 0:
