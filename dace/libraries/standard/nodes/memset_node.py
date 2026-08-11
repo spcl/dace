@@ -29,8 +29,7 @@ def _make_memset_skeleton(node: "MemsetLibraryNode",
     sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
     state = sdfg.add_state(f"{node.label}_state")
-    # Reuse the array descriptor's collapsed shape as the map bounds, so rank/extents can't
-    # diverge from the array.
+    # Reuse the array descriptor's collapsed shape as map bounds so extents can't diverge.
     map_lengths = out_shape_collapsed
 
     return sdfg, state, out_name, out, map_lengths
@@ -43,8 +42,8 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
     :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
     :returns: The memset tasklet.
-    :raises ValueError: if the output subset is non-contiguous (single-call memset
-        would zero outside the subset); use the ``pure`` expansion instead.
+    :raises ValueError: if the output subset is non-contiguous (single-call memset would zero
+        outside the subset); use the ``pure`` expansion instead.
     """
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     if not out_subset.is_contiguous_subset(out):
@@ -67,12 +66,12 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 
 
 def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
-    """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
+    """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to ``'pure'``, ``'CUDA'``, or
+    ``'CPU'``.
 
     ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, or a
-    statically-large contiguous CPU zero (element map parallelizes across OpenMP at top level).
-    ``'CUDA'``: host-issued GPU-destination contiguous memset. Else ``'CPU'`` (single
-    ``std::memset``), including small/symbolic-size contiguous CPU zero.
+    large-or-symbolic-size contiguous CPU zero. ``'CUDA'``: host-issued GPU-destination contiguous
+    memset. Else ``'CPU'`` (single ``std::memset``).
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
@@ -95,10 +94,9 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     if out.storage == dace.dtypes.StorageType.GPU_Global:
         return 'CUDA'
 
-    # CPU main-memory contiguous zero: only a size KNOWN at compile time to be large (static
-    # count >= parallel_transfer_min_elements) takes the element map ('pure', OpenMP-parallel at
-    # top level); small/symbolic size keeps a single memset ('CPU') -- no forking for a size that
-    # may be tiny at runtime. Register / non-main-memory storages also stay serial.
+    # CPU main-memory zero: size >= parallel_transfer_min_elements (or symbolic) takes the element
+    # map; a known-small constant stays a single memset. Register / non-main-memory storages
+    # stay serial.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
     if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements()):
         return 'pure'
@@ -123,8 +121,7 @@ class ExpandPure(ExpandTransformation):
     def expansion(node: "MemsetLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         sdfg, state, out_name, out, map_lengths = _make_memset_skeleton(node, parent_state)
 
-        # Inner-tasklet connector -- must not collide with the wrapper SDFG's parameter array
-        # (named after the libnode's outer connector).
+        # Must not collide with the wrapper SDFG's parameter array (named after outer connector).
         inner_out = "_out"
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
@@ -174,8 +171,7 @@ class ExpandTasklet(ExpandTransformation):
                              f"(got output volume {out_volume}). "
                              f"Use MappedTasklet for multi-element copies.")
 
-        # ``_out = 0`` is a valid device-side store inside a GPU kernel; from host scope a scalar
-        # assignment can't write device memory -- route that case to the ``CUDA`` expansion.
+        # Host scope can't write device memory directly; route that case to 'CUDA' instead.
         if (not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES):
             raise ValueError(f"Tasklet expansion cannot zero GPU-resident storage ({out.storage}) for "
                              f"'{out_name}' from host scope; use the 'CUDA' Memset expansion instead.")

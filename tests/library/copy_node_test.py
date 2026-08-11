@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``CopyLibraryNode`` and its pure, CPU, CUDA, cross-storage, register, and shared-memory expansions."""
+import contextlib
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
@@ -1661,6 +1662,71 @@ def test_cuda2d_pitch_params_branches():
     assert cuda2d_pitch_params([4, 2], [4, 2], [6, 3]) == (3, 2, 1, 8)
     # No single cudaMemcpy2DAsync expresses this pattern.
     assert cuda2d_pitch_params([4, 3], [5, 2], [5, 2]) is None
+
+
+@contextlib.contextmanager
+def _pinned_transfer_threshold(value):
+    """Pin ``compiler.cpu.parallel_transfer_min_elements`` so Auto selection is deterministic."""
+    orig = dace.config.Config.get("compiler", "cpu", "parallel_transfer_min_elements")
+    dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=value)
+    try:
+        yield
+    finally:
+        dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=orig)
+
+
+def _cpu_copy_sdfg(extent, name):
+    """Single-state CPU_Heap -> CPU_Heap ``CopyLibraryNode`` copy over ``0:extent``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("src", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("dst", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
+    state = sdfg.add_state("s")
+    libnode = CopyLibraryNode(name="cp")
+    state.add_edge(state.add_access("src"), None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.Memlet(f"src[0:{extent}]"))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
+                   dace.Memlet(f"dst[0:{extent}]"))
+    sdfg.validate()
+    return sdfg, libnode
+
+
+def _generated_code(sdfg):
+    return "\n".join(obj.code for obj in sdfg.generate_code())
+
+
+def test_copy_below_threshold_emits_memcpy():
+    """A constant-size CPU copy below the threshold lowers to a single ``memcpy``, not an OpenMP loop."""
+    with _pinned_transfer_threshold(1024):
+        sdfg, libnode = _cpu_copy_sdfg(100, "copy_below_threshold")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'MemcpyCPU'
+        code = _generated_code(sdfg)
+        assert 'memcpy(' in code
+        assert '#pragma omp parallel for' not in code
+
+
+def test_copy_at_threshold_emits_omp_parallel_for():
+    """A constant-size CPU copy at/above the threshold lowers to an OpenMP element map, not ``memcpy``."""
+    with _pinned_transfer_threshold(1024):
+        sdfg, libnode = _cpu_copy_sdfg(4096, "copy_at_threshold")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'MappedTasklet'
+        code = _generated_code(sdfg)
+        assert '#pragma omp parallel for' in code
+        assert 'memcpy(' not in code
+
+
+def test_copy_symbolic_size_emits_omp_parallel_for():
+    """A symbolic (compile-time-unknown) CPU copy size is assumed large, so it takes the same
+    OpenMP-parallel path as a large constant, never the single-call ``memcpy``."""
+    with _pinned_transfer_threshold(1024):
+        n = dace.symbol('N_copy_symbolic')
+        sdfg, libnode = _cpu_copy_sdfg(n, "copy_symbolic_size")
+        sdfg.expand_library_nodes(recursive=True)
+        assert libnode.implementation == 'MappedTasklet'
+        code = _generated_code(sdfg)
+        assert '#pragma omp parallel for' in code
+        assert 'memcpy(' not in code
 
 
 if __name__ == "__main__":
