@@ -2806,8 +2806,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             to_connect: Set[ControlFlowBlock] = set()
             ends_context: Set[ControlFlowBlock] = set()
             block_to_state_map: Dict[ControlFlowBlock, SDFGState] = dict()
+            # A region's own label may be free-form user text (a NamedRegion is
+            # labeled by whatever the program passed to ``dace.named``), but the
+            # names built from it here are validated as identifiers.
+            prefix = dtypes.sanitize_name(self.label, fallback='region')
             for node in self.nodes():
-                node.label = self.label + '_' + node.label
+                node.label = prefix + '_' + node.label
                 if isinstance(node, ReturnBlock) and lower_returns and isinstance(parent, dace.SDFG):
                     # If a return block is being inlined into an SDFG, convert it into a regular state. Otherwise it
                     # remains as-is.
@@ -2836,7 +2840,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
             end_state = None
             if len(to_connect) > 0:
-                end_state = parent.add_state(self.label + '_end')
+                end_state = parent.add_state(prefix + '_end')
                 # Redirect all edges exiting the region to instead exit the end state.
                 for a_edge in parent.out_edges(self):
                     parent.add_edge(end_state, a_edge.dst, a_edge.data)

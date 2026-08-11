@@ -206,6 +206,17 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 }
 
 
+def _canonical_exec_counts(pair):
+    """
+    Renumber ``num_execs_*`` symbols by order of name, so two results that differ
+    only in which state produced each unbounded-loop counter compare equal. Two
+    different counters still map to two different symbols.
+    """
+    names = sorted({s.name for expr in pair for s in sp.sympify(expr).free_symbols if s.name.startswith('num_execs_')})
+    reps = {sp.Symbol(name): sp.Symbol(f'__exec{index}') for index, name in enumerate(names)}
+    return tuple(sp.sympify(expr).subs(reps) for expr in pair)
+
+
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
     if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
@@ -232,6 +243,12 @@ def test_work_depth(test_name):
     res = (res[0].subs(reps), res[1].subs(reps))
     reps = {s: sp.Symbol(s.name) for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)}
     correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
+    # An unbounded loop contributes an opaque "number of executions" symbol whose
+    # numeric suffix indexes the state that produced it. That index depends on how
+    # many states the frontend emitted, not on the work/depth analysis, so compare
+    # modulo the numbering -- distinct unknowns stay distinct.
+    res = _canonical_exec_counts(res)
+    correct = _canonical_exec_counts(correct)
     # check result
     assert correct == res
 

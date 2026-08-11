@@ -140,7 +140,6 @@ def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 def test_cpu():
     run_mandelbrot2(dace.dtypes.DeviceType.CPU)
 

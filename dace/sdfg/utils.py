@@ -1109,6 +1109,13 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     # If there is one edge (in/out) that leads (via memlet path) to an access
     # node, and the other side (out/in) has a different number of edges.
     if len(in_edges) == 1 and len(out_edges) != 1:
+        # The 'views' connector marks which endpoint is the view. On the OTHER
+        # endpoint, this edge says the neighbor views `view` -- not the reverse
+        # -- so it is not a viewing edge of `view` at all. Reading it as one
+        # inverts the relation, and two views of each other then send the
+        # chain-following helpers (get_last_view_node) round forever.
+        if in_edges[0].src_conn == 'views':
+            return None
         # If the edge is not leading to an access node, fail
         mpath = state.memlet_path(in_edges[0])
         if not isinstance(mpath[0].src, nd.AccessNode):
@@ -1116,6 +1123,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
 
         return in_edges[0]
     if len(out_edges) == 1 and len(in_edges) != 1:
+        if out_edges[0].dst_conn == 'views':
+            return None
         # If the edge is not leading to an access node, fail
         mpath = state.memlet_path(out_edges[0])
         if not isinstance(mpath[-1].dst, nd.AccessNode):

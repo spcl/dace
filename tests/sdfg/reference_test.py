@@ -446,6 +446,65 @@ def test_reference_tasklet_assignment_analysis():
     }
 
 
+def _create_reference_chain_sdfg(length: int) -> dace.SDFG:
+    """
+    An SDFG in which a chain of references is set from one another, the first
+    one from an array: ``ref0 = A``, ``ref1 = ref0``, ... Each set happens in
+    its own state, so the chain is only visible by following sources.
+    """
+    sdfg = dace.SDFG('refchain')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('out', [20], dace.float64)
+    for index in range(length):
+        sdfg.add_reference(f'ref{index}', [20], dace.float64)
+
+    state = sdfg.add_state('set0', is_start_block=True)
+    state.add_edge(state.add_read('A'), None, state.add_write('ref0'), 'set', dace.Memlet('A'))
+    for index in range(1, length):
+        state = sdfg.add_state_after(state, f'set{index}')
+        state.add_edge(state.add_read(f'ref{index - 1}'), None, state.add_write(f'ref{index}'), 'set',
+                       dace.Memlet(f'ref{index - 1}'))
+
+    finish = sdfg.add_state_after(state, 'finish')
+    finish.add_nedge(finish.add_read(f'ref{length - 1}'), finish.add_write('out'), dace.Memlet(f'ref{length - 1}'))
+    return sdfg
+
+
+def test_reference_sources_recursive_chain():
+    """
+    ``recursive`` must follow a chain of reference-to-reference sets all the
+    way down to the array that owns the memory, not one link of it.
+    """
+    length = 4
+    sdfg = _create_reference_chain_sdfg(length)
+
+    shallow = FindReferenceSources().apply_pass(sdfg, {})[0]
+    assert shallow[f'ref{length - 1}'] == {dace.Memlet(f'ref{length - 2}[0:20]', volume=1)}
+
+    recursive_pass = FindReferenceSources()
+    recursive_pass.recursive = True
+    deep = recursive_pass.apply_pass(sdfg, {})[0]
+    # Every intermediate reference AND the array at the end of the chain.
+    assert deep[f'ref{length - 1}'] == {dace.Memlet('A[0:20]', volume=1)
+                                        } | {dace.Memlet(f'ref{index}[0:20]', volume=1)
+                                             for index in range(length - 1)}
+
+
+def test_reference_sources_recursive_with_tasklet_source():
+    """
+    ``recursive`` must tolerate a reference set by a tasklet. Such a source is
+    a code node, which names no container to follow -- and has no ``data`` to
+    read in the first place.
+    """
+    sdfg = _create_tasklet_assignment_sdfg()
+    recursive_pass = FindReferenceSources()
+    recursive_pass.recursive = True
+    sources = recursive_pass.apply_pass(sdfg, {})[0]
+    assert sources['ref'] == {
+        next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == 'ptrset')
+    }
+
+
 def test_reference_tasklet_assignment_stree():
     from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
     sdfg = _create_tasklet_assignment_sdfg()
@@ -796,6 +855,8 @@ if __name__ == '__main__':
     test_reference_sources_pass()
     test_reference_tasklet_assignment()
     test_reference_tasklet_assignment_analysis()
+    test_reference_sources_recursive_chain()
+    test_reference_sources_recursive_with_tasklet_source()
     test_reference_tasklet_assignment_stree()
     test_reference_tasklet_assignment_reftoview()
     test_twostate(False)

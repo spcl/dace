@@ -512,6 +512,13 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    callback_sources = DictProperty(str,
+                                    str,
+                                    desc='Python source of each callback a frontend SYNTHESIZED (rather than '
+                                    'detected in the calling program), keyed by callback symbol name. Unlike the '
+                                    'live objects in "callback_objects" this is serializable, so an SDFG read back '
+                                    'from a file can rebuild the callables it needs')
+
     using_explicit_control_flow = Property(dtype=bool,
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
@@ -560,6 +567,8 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
+        self.callback_sources = {}
+        self._callback_objects: Dict[str, Any] = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -580,9 +589,13 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist', 'guid'):
+                     '_cfg_list', '_transformation_hist', 'guid', '_callback_objects'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
+        # Callbacks are live Python objects (functions, bound methods, modules):
+        # they are shared with the copy, not duplicated -- some are not even
+        # deep-copyable, and a copied SDFG calls the same Python code.
+        result._callback_objects = dict(self._callback_objects)
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
@@ -613,6 +626,34 @@ class SDFG(ControlFlowRegion):
         :note: ``sdfg_id`` is deprecated, please use ``cfg_id`` instead.
         """
         return self.cfg_id
+
+    @property
+    def callback_objects(self) -> Dict[str, Any]:
+        """
+        Live Python objects implementing this SDFG's callbacks, keyed by
+        callback symbol name (the same names as in ``callback_mapping``).
+
+        Each entry is the default value of the corresponding call argument, so
+        an SDFG whose callbacks were *synthesized* by a frontend -- rather than
+        detected in the calling program's closure, where the caller supplies
+        them -- is directly callable. An argument passed explicitly at call time
+        still takes precedence.
+
+        :note: These are runtime objects and deliberately not a serialized
+               property. An SDFG read back from a file has none; its
+               synthesized callbacks are rebuilt from :attr:`callback_sources`
+               at call time (see
+               :meth:`~dace.frontend.python.parser.DaceProgram._create_sdfg_args`),
+               where the calling program's closure is available to supply the
+               live objects those sources reference.
+        """
+        if not hasattr(self, '_callback_objects'):  # An SDFG restored without running __init__
+            self._callback_objects: Dict[str, Any] = {}
+        return self._callback_objects
+
+    @callback_objects.setter
+    def callback_objects(self, value: Dict[str, Any]) -> None:
+        self._callback_objects = dict(value)
 
     def compute_debuginfo_files(self) -> list[str]:
         """

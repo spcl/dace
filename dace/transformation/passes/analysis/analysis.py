@@ -861,12 +861,27 @@ class FindReferenceSources(ppl.Pass):
                                     else:
                                         result[name].add(e.data)
 
-            # Recursively add dependencies of reference dependencies
+            # Recursively add dependencies of reference dependencies, to a
+            # fixed point: a reference set from a reference set from an array
+            # has to reach the array, however long the chain. Sets only grow
+            # and the number of references is finite, so this terminates.
             if self.recursive:
-                for k, v in result.items():
-                    for src in list(v):
-                        if not isinstance(v, nd.CodeNode) and src.data in result:
-                            v.update(result[src.data])
+                changed = True
+                while changed:
+                    changed = False
+                    for name in list(result.keys()):
+                        sources = result[name]
+                        extended = set(sources)
+                        for src in sources:
+                            # Only a memlet names a container to follow; a
+                            # reference set by a tasklet points at memory no
+                            # descriptor describes, and has no ``data``.
+                            if isinstance(src, nd.CodeNode):
+                                continue
+                            extended |= result.get(src.data, set())
+                        if extended != sources:
+                            result[name] = extended
+                            changed = True
 
             top_result[sdfg.cfg_id] = result
         return top_result

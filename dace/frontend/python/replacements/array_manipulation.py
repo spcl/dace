@@ -4,7 +4,7 @@ Contains replacements for N-dimensional array transformations.
 """
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import InvalidArgumentValues, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
@@ -83,13 +83,13 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
     ndim = len(desc.shape)
     axes = tuple(axes)
     if len(axes) != 2:
-        raise ValueError("len(axes) must be 2.")
+        raise InvalidArgumentValues("len(axes) must be 2.")
 
     if axes[0] == axes[1] or abs(axes[0] - axes[1]) == ndim:
-        raise ValueError("Axes must be different.")
+        raise InvalidArgumentValues("Axes must be different.")
 
     if (axes[0] >= ndim or axes[0] < -ndim or axes[1] >= ndim or axes[1] < -ndim):
-        raise ValueError("Axes={} out of range for array of ndim={}.".format(axes, ndim))
+        raise InvalidArgumentValues("Axes={} out of range for array of ndim={}.".format(axes, ndim))
 
     k %= 4
 
@@ -158,7 +158,7 @@ def _transpose(pv: ProgramVisitor,
         axes = tuple(range(len(arr1.shape) - 1, -1, -1))
     else:
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
-            raise ValueError("axes don't match array")
+            raise InvalidArgumentValues("axes don't match array")
         axes = tuple(axes)
 
     if axes == (0, ):  # Special (degenerate) case for 1D "transposition"
@@ -282,8 +282,11 @@ def _ndarray_flatten(pv: ProgramVisitor,
                      arr: str,
                      order: StringLiteral = StringLiteral('C')) -> str:
     new_arr = flat(pv, sdfg, state, arr, order)
-    # `flatten` always returns a copy
-    if isinstance(new_arr, data.View):
+    # `flatten` always returns a copy. ``flat`` returns a NAME, so the
+    # view-ness test has to go through the descriptor: testing the name itself
+    # against ``data.View`` never matched, which made ``flatten()`` alias its
+    # source whenever ``flat`` took its view branch (a contiguous input).
+    if isinstance(sdfg.arrays[new_arr], data.View):
         from dace.frontend.python.replacements.array_creation import _ndarray_copy  # Avoid circular import
         return _ndarray_copy(pv, sdfg, state, new_arr)
     return new_arr
@@ -314,8 +317,8 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     view_bytes = dtype.bytes
 
     if view_bytes < orig_bytes and orig_bytes % view_bytes != 0:
-        raise ValueError("When changing to a smaller dtype, its size must be a divisor of "
-                         "the size of original dtype")
+        raise InvalidArgumentValues("When changing to a smaller dtype, its size must be a divisor of "
+                                    "the size of original dtype")
 
     contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
 
@@ -323,8 +326,8 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     # raise an exception similar to numpy
     if (not symbolic.issymbolic(desc.shape[contigdim], sdfg.constants) and orig_bytes < view_bytes
             and desc.shape[contigdim] * orig_bytes % view_bytes != 0):
-        raise ValueError('When changing to a larger dtype, its size must be a divisor of '
-                         'the total size in bytes of the last axis of the array.')
+        raise InvalidArgumentValues('When changing to a larger dtype, its size must be a divisor of '
+                                    'the total size in bytes of the last axis of the array.')
 
     # Create new shape and strides for view
     # NOTE: we change sizes by using `(old_size * orig_bytes) // view_bytes`
@@ -430,15 +433,18 @@ def _ndarray_T(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> st
 ###############################################################################
 
 
+def _resolve_converter_dtype(typeclass: str) -> dtypes.typeclass:
+    if typeclass == 'bool':
+        return dtypes.bool
+    if typeclass in {'int', 'float', 'complex'}:
+        return dtypes.dtype_to_typeclass(eval(typeclass))
+    # np.dtype resolves numpy names and the ml_dtypes-registered low-precision
+    # names (bfloat16 / float8_e4m3fn / float8_e5m2) alike.
+    return dtypes.dtype_to_typeclass(np.dtype(typeclass).type)
+
+
 def _make_datatype_converter(typeclass: str):
-    if typeclass == "bool":
-        dtype = dtypes.bool
-    elif typeclass in {"int", "float", "complex"}:
-        dtype = dtypes.dtype_to_typeclass(eval(typeclass))
-    else:
-        # np.dtype resolves numpy names and the ml_dtypes-registered low-precision
-        # names (bfloat16 / float8_e4m3fn / float8_e5m2) alike.
-        dtype = dtypes.dtype_to_typeclass(np.dtype(typeclass).type)
+    dtype = _resolve_converter_dtype(typeclass)
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
@@ -521,7 +527,7 @@ def _concat(visitor: ProgramVisitor,
             dtype=None,
             casting: str = 'same_kind'):
     if dtype is not None and out is not None:
-        raise ValueError('Arguments dtype and out cannot be given together')
+        raise InvalidArgumentValues('Arguments dtype and out cannot be given together')
     if casting != 'same_kind':
         raise NotImplementedError('The casting argument is currently unsupported')
     if not isinstance(arrays, (tuple, list)):
@@ -554,7 +560,7 @@ def _concat(visitor: ProgramVisitor,
             other_shape = list(d.shape)
             other_shape[axis] = 0
             if other_shape != first_shape:
-                raise ValueError(f'Array shapes do not match at index {i}')
+                raise InvalidArgumentValues(f'Array shapes do not match at index {i}')
 
     shape[axis] = sum(desc.shape[axis] for desc in descs)
     if out is None:
@@ -595,7 +601,7 @@ def _stack(visitor: ProgramVisitor,
            dtype=None,
            casting: str = 'same_kind'):
     if dtype is not None and out is not None:
-        raise ValueError('Arguments dtype and out cannot be given together')
+        raise InvalidArgumentValues('Arguments dtype and out cannot be given together')
     if casting != 'same_kind':
         raise NotImplementedError('The casting argument is currently unsupported')
     if not isinstance(arrays, (tuple, list)):
@@ -611,14 +617,14 @@ def _stack(visitor: ProgramVisitor,
     shape = descs[0].shape
     for i, d in enumerate(descs[1:]):
         if d.shape != shape:
-            raise ValueError(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
+            raise InvalidArgumentValues(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
 
     if axis > len(shape):
-        raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+        raise InvalidArgumentValues(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
     if axis < 0:
         naxis = len(shape) + 1 + axis
         if naxis < 0 or naxis > len(shape):
-            raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+            raise InvalidArgumentValues(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
         axis = naxis
 
     # Stacking is implemented as a reshape followed by concatenation
@@ -719,7 +725,7 @@ def _split_core(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
     if axis < 0:
         axis = len(desc.shape) + axis
     if axis < 0 or axis >= len(desc.shape):
-        raise ValueError(f'axis {orig_axis} is out of bounds for array of dimension {len(desc.shape)}')
+        raise InvalidArgumentValues(f'axis {orig_axis} is out of bounds for array of dimension {len(desc.shape)}')
 
     # indices_or_sections may only be an integer (not symbolic), list of integers, list of symbols, or an array
     if isinstance(indices_or_sections, str):
@@ -846,3 +852,484 @@ def _hsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
 def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
             indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str]):
     return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=0, allow_uneven=False)
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for array manipulation (schedule-tree frontend)  #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import (infers_descriptor, infers_method_descriptor,
+                                                infers_attribute_descriptor)
+from dace.frontend.python.replacements.type_inference import _get_desc, _to_int, scalar_operand_descriptor
+from dace.frontend.python.replacements.utils import normalize_axes
+
+# -- Free functions ---------------------------------------------------- #
+
+
+@infers_descriptor('numpy.reshape')
+def _infer_reshape(input_descs, arr, newshape, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    if not isinstance(newshape, (tuple, list)):
+        return None
+    shape = []
+    for s in newshape:
+        v = _to_int(s)
+        if v is not None:
+            shape.append(v)
+        elif symbolic.issymbolic(s):
+            shape.append(s)
+        else:
+            return None
+    if not shape:
+        return None
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('transpose')
+@infers_descriptor('dace.transpose')
+@infers_descriptor('numpy.transpose')
+def _infer_transpose(input_descs, arr, axes=None, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if axes is None:
+        shape = list(reversed(shape))
+    else:
+        if not isinstance(axes, (tuple, list)):
+            return None
+        shape = [shape[i] for i in axes]
+    if len(shape) == 0:
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.flip')
+def _infer_flip(input_descs, arr, axis=None, **_kw):
+    """flip preserves shape and dtype."""
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, list(desc.shape), transient=True)
+
+
+@infers_descriptor('numpy.rot90')
+def _infer_rot90(input_descs, arr, k=1, axes=(0, 1), **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None or not isinstance(desc, (data.Array, data.View)):
+        return None
+
+    ndim = len(desc.shape)
+    if not isinstance(axes, (tuple, list)) or len(axes) != 2:
+        return None
+    try:
+        axis0 = int(axes[0])
+        axis1 = int(axes[1])
+        k = int(k) % 4
+    except Exception:
+        return None
+
+    if axis0 < 0:
+        axis0 += ndim
+    if axis1 < 0:
+        axis1 += ndim
+    if axis0 == axis1 or abs(axis0 - axis1) == ndim:
+        return None
+    if axis0 >= ndim or axis0 < 0 or axis1 >= ndim or axis1 < 0:
+        return None
+
+    shape = list(desc.shape)
+    if k % 2 == 1:
+        shape[axis0], shape[axis1] = shape[axis1], shape[axis0]
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.squeeze')
+def _infer_squeeze(input_descs, arr, axis=None, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if axis is None:
+        shape = [s for s in shape if s != 1]
+    else:
+        if not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+        axis = tuple(_to_int(a) for a in axis)
+        if any(a is None for a in axis):
+            return None
+        axis = tuple(normalize_axes(axis, len(shape)))
+        shape = [s for i, s in enumerate(shape) if i not in axis]
+    if not shape:
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.expand_dims')
+def _infer_expand_dims(input_descs, arr, axis, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if not isinstance(axis, (tuple, list)):
+        axis = (axis, )
+    axis = tuple(_to_int(a) for a in axis)
+    if any(a is None for a in axis):
+        return None
+    ndim_out = len(shape) + len(axis)
+    axis = tuple(a if a >= 0 else a + ndim_out for a in axis)
+    out_shape = [None] * ndim_out
+    for a in sorted(axis):
+        out_shape[a] = 1
+    si = 0
+    for i in range(ndim_out):
+        if out_shape[i] is None:
+            out_shape[i] = shape[si]
+            si += 1
+    return data.Array(desc.dtype, out_shape, transient=True)
+
+
+@infers_descriptor('numpy.concatenate')
+def _infer_concatenate(input_descs, arrays, axis=0, **_kw):
+    if not isinstance(arrays, (tuple, list)) or len(arrays) == 0:
+        return None
+    descs = [_get_desc(input_descs, a) for a in arrays]
+    if any(d is None for d in descs):
+        return None
+    shape = list(descs[0].shape)
+    if axis is None:
+        # Flatten all, then concatenate
+        total = sum(data._prod(d.shape) for d in descs)
+        return data.Array(descs[0].dtype, [total], transient=True)
+    ax = _to_int(axis)
+    if ax is None:
+        return None
+    if ax < 0:
+        ax += len(shape)
+    shape[ax] = sum(d.shape[ax] for d in descs)
+    return data.Array(descs[0].dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.stack')
+def _infer_stack(input_descs, arrays, axis=0, **_kw):
+    if not isinstance(arrays, (tuple, list)) or len(arrays) == 0:
+        return None
+    descs = [_get_desc(input_descs, a) for a in arrays]
+    if any(d is None for d in descs):
+        return None
+    shape = list(descs[0].shape)
+    ax = _to_int(axis)
+    if ax is None:
+        return None
+    if ax < 0:
+        ax += len(shape) + 1
+    shape.insert(ax, len(arrays))
+    return data.Array(descs[0].dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.vstack')
+@infers_descriptor('numpy.row_stack')
+def _infer_vstack(input_descs, tup, **kwargs):
+    if not isinstance(tup, (tuple, list)) or len(tup) == 0:
+        return None
+    first = _get_desc(input_descs, tup[0])
+    if first is None:
+        return None
+    if len(first.shape) == 1:
+        return _infer_stack(input_descs, tup, axis=0, **kwargs)
+    return _infer_concatenate(input_descs, tup, axis=0, **kwargs)
+
+
+@infers_descriptor('numpy.hstack')
+@infers_descriptor('numpy.column_stack')
+def _infer_hstack(input_descs, tup, **kwargs):
+    if not isinstance(tup, (tuple, list)) or len(tup) == 0:
+        return None
+    first = _get_desc(input_descs, tup[0])
+    if first is None:
+        return None
+    axis = 0 if len(first.shape) == 1 else 1
+    return _infer_concatenate(input_descs, tup, axis=axis, **kwargs)
+
+
+@infers_descriptor('numpy.dstack')
+def _infer_dstack(input_descs, tup, **kwargs):
+    if not isinstance(tup, (tuple, list)) or len(tup) == 0:
+        return None
+    first = _get_desc(input_descs, tup[0])
+    if first is None or len(first.shape) < 3:
+        return None
+    return _infer_concatenate(input_descs, tup, axis=2, **kwargs)
+
+
+def _split_descriptors(desc: data.Data, axis: int, sections: Sequence[symbolic.SymbolicType]):
+    result = []
+    offset = 0
+    for section in sections:
+        shape = list(desc.shape)
+        shape[axis] = section - offset
+        result.append(data.Array(desc.dtype, shape, transient=True))
+        offset = section
+
+    shape = list(desc.shape)
+    shape[axis] = desc.shape[axis] - offset
+    result.append(data.Array(desc.dtype, shape, transient=True))
+    return result
+
+
+def _infer_split_core(input_descs, ary, indices_or_sections, axis, allow_uneven):
+    desc = _get_desc(input_descs, ary)
+    if desc is None:
+        return None
+
+    ax = _to_int(axis)
+    if ax is None:
+        return None
+    if ax < 0:
+        ax += len(desc.shape)
+    if ax < 0 or ax >= len(desc.shape):
+        return None
+
+    dim_size = desc.shape[ax]
+    if isinstance(indices_or_sections, (list, tuple)):
+        sections = []
+        for section in indices_or_sections:
+            value = _to_int(section)
+            if value is not None:
+                sections.append(value)
+            elif symbolic.issymbolic(section):
+                sections.append(section)
+            else:
+                return None
+        return _split_descriptors(desc, ax, sections)
+
+    nsections = _to_int(indices_or_sections)
+    if nsections is None:
+        # A split count that is not a compile-time number gives the result
+        # tuple no size, so no lowering path can produce it -- not even a
+        # Python callback, whose outputs still have to be containers the
+        # caller allocated. Reported rather than left untyped, which would
+        # silently hand the statement to that callback.
+        if symbolic.issymbolic(indices_or_sections) or _get_desc(input_descs, indices_or_sections) is not None:
+            raise InvalidArgumentValues(
+                f'Cannot split into {indices_or_sections} sections: the number of sections must be known at compile '
+                'time, since it decides how many arrays the call returns.')
+        return None
+    if nsections <= 0:
+        raise InvalidArgumentValues('Number of sections must be larger than zero.')
+    if symbolic.issymbolic(dim_size):
+        return None
+
+    section_size = dim_size // nsections
+    remainder = dim_size % nsections
+    if not allow_uneven and remainder != 0:
+        raise InvalidArgumentValues(f'Array split does not result in an equal division: {dim_size} elements along '
+                                    f'axis {ax} into {nsections} sections. Consider using numpy.array_split instead.')
+
+    result = []
+    for index in range(nsections):
+        shape = list(desc.shape)
+        size = section_size
+        if allow_uneven and index < remainder:
+            size += 1
+        shape[ax] = size
+        result.append(data.Array(desc.dtype, shape, transient=True))
+    return result
+
+
+@infers_descriptor('numpy.split')
+def _infer_split(input_descs, ary, indices_or_sections, axis=0, **_kw):
+    return _infer_split_core(input_descs, ary, indices_or_sections, axis, allow_uneven=False)
+
+
+@infers_descriptor('numpy.array_split')
+def _infer_array_split(input_descs, ary, indices_or_sections, axis=0, **_kw):
+    return _infer_split_core(input_descs, ary, indices_or_sections, axis, allow_uneven=True)
+
+
+@infers_descriptor('numpy.dsplit')
+def _infer_dsplit(input_descs, ary, indices_or_sections, **_kw):
+    desc = _get_desc(input_descs, ary)
+    if desc is None or len(desc.shape) < 3:
+        return None
+    return _infer_split_core(input_descs, ary, indices_or_sections, axis=2, allow_uneven=False)
+
+
+@infers_descriptor('numpy.hsplit')
+def _infer_hsplit(input_descs, ary, indices_or_sections, **_kw):
+    desc = _get_desc(input_descs, ary)
+    if desc is None:
+        return None
+    axis = 0 if len(desc.shape) <= 1 else 1
+    return _infer_split_core(input_descs, ary, indices_or_sections, axis=axis, allow_uneven=False)
+
+
+@infers_descriptor('numpy.vsplit')
+def _infer_vsplit(input_descs, ary, indices_or_sections, **_kw):
+    return _infer_split_core(input_descs, ary, indices_or_sections, axis=0, allow_uneven=False)
+
+
+# -- Method inference -------------------------------------------------- #
+
+
+def _infer_method_reshape(self_desc, *newshape, **_kw):
+    if len(newshape) == 1 and isinstance(newshape[0], (tuple, list)):
+        newshape = newshape[0]
+    shape = []
+    for s in newshape:
+        v = _to_int(s)
+        if v is not None:
+            shape.append(v)
+        elif symbolic.issymbolic(s):
+            shape.append(s)
+        else:
+            return None
+    if not shape:
+        return None
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_method_descriptor(_cls, 'reshape')(_infer_method_reshape)
+
+
+def _infer_method_flatten(self_desc, **_kw):
+    total = data._prod(self_desc.shape)
+    return data.Array(self_desc.dtype, [total], transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'flatten')(_infer_method_flatten)
+    infers_method_descriptor(_cls, 'ravel')(_infer_method_flatten)
+
+
+def _infer_method_transpose(self_desc, *axes, **_kw):
+    shape = list(self_desc.shape)
+    if len(axes) == 0 or axes[0] is None:
+        shape = list(reversed(shape))
+    else:
+        if len(axes) == 1 and isinstance(axes[0], (tuple, list)):
+            axes = axes[0]
+        shape = [shape[i] for i in axes]
+    if len(shape) == 0:
+        return data.Scalar(self_desc.dtype)
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_method_descriptor(_cls, 'transpose')(_infer_method_transpose)
+
+
+def _normalize_view_dtype(dtype) -> Optional[dtypes.typeclass]:
+    if dtype is None:
+        return None
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    try:
+        return dtypes.dtype_to_typeclass(np.dtype(dtype).type)
+    except (TypeError, ValueError):
+        return None
+
+
+def _infer_method_view(self_desc, dtype, type=None, **_kw):
+    if type is not None:
+        return None
+
+    dtype = _normalize_view_dtype(dtype)
+    if dtype is None:
+        return None
+
+    result = data.View.view(self_desc)
+    result.dtype = dtype
+
+    if isinstance(self_desc, data.Scalar):
+        return result
+
+    orig_bytes = self_desc.dtype.bytes
+    view_bytes = dtype.bytes
+    if view_bytes < orig_bytes and orig_bytes % view_bytes != 0:
+        return None
+
+    contigdim = next((i for i, stride in enumerate(self_desc.strides) if stride == 1), None)
+    if contigdim is None:
+        return None
+
+    if (not symbolic.issymbolic(self_desc.shape[contigdim]) and orig_bytes < view_bytes
+            and self_desc.shape[contigdim] * orig_bytes % view_bytes != 0):
+        return None
+
+    newshape = list(self_desc.shape)
+    newstrides = [(stride * orig_bytes) // view_bytes if i != contigdim else stride
+                  for i, stride in enumerate(self_desc.strides)]
+    newshape[contigdim] = (newshape[contigdim] * orig_bytes) // view_bytes
+
+    result.shape = newshape
+    result.strides = newstrides
+    result.total_size = (self_desc.total_size * orig_bytes) // view_bytes
+    return result
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'view')(_infer_method_view)
+
+
+def _infer_method_astype(self_desc, dtype, **_kw):
+    if dtype is None:
+        return None
+    if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+        dtype = dtypes.typeclass(dtype)
+    if not isinstance(dtype, dtypes.typeclass):
+        return None
+    if isinstance(self_desc, data.Scalar):
+        return data.Scalar(dtype)
+    return data.Array(dtype, list(self_desc.shape), transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'astype')(_infer_method_astype)
+
+
+def _make_datatype_converter_inference(typeclass: str) -> None:
+    dtype = _resolve_converter_dtype(typeclass)
+
+    @infers_descriptor(typeclass)
+    @infers_descriptor(f'dace.{typeclass}')
+    @infers_descriptor(f'numpy.{typeclass}')
+    def _infer(input_descs, arg, **_kw):
+        desc = _get_desc(input_descs, arg)
+        if desc is None:
+            # A compile-time constant or symbolic argument (``dace.float64(3)``,
+            # ``dace.int64(N)``): the converter accepts these and produces a
+            # scalar of the target type.
+            desc = scalar_operand_descriptor(arg)
+        if desc is None:
+            return None
+        return _infer_method_astype(desc, dtype)
+
+
+for _typeclass in dtypes.TYPECLASS_STRINGS:
+    _make_datatype_converter_inference(_typeclass)
+
+# -- Attribute inference ----------------------------------------------- #
+
+
+def _infer_attr_T(self_desc):
+    shape = list(reversed(self_desc.shape))
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_attribute_descriptor(_cls, 'T')(_infer_attr_T)
+
+
+def _infer_attr_flat(self_desc):
+    total = data._prod(self_desc.shape)
+    return data.Array(self_desc.dtype, [total], transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_attribute_descriptor(_cls, 'flat')(_infer_attr_flat)

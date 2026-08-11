@@ -63,10 +63,12 @@ def copy_expr(
     name_override=None,
 ):
     data_desc = sdfg.arrays[data_name]
+
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
     tokens = data_name.split('.')
-    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+    if (len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure)
+            and not isinstance(sdfg.arrays[tokens[0]], data.PythonClass)):
         name = data_name.replace('.', '->')
     else:
         name = data_name
@@ -245,6 +247,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
 
     if '.' in name:
         root = name.split('.')[0]
+        if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.PythonClass):
+            return pyobject_member_expr(root, name.split('.', 1)[1], desc)
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
 
@@ -272,6 +276,14 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         return f'__{sdfg.cfg_id}_{name}'
 
     return name
+
+
+def pyobject_member_expr(root_name: str, attr_path: str, desc: data.Data) -> str:
+    if isinstance(desc, data.Array):
+        return f'dace_get_pyobject_attr_ptr<{desc.dtype.ctype}>({root_name}, "{attr_path}")'
+    if isinstance(desc, data.Scalar):
+        return f'dace_get_pyobject_attr<{desc.dtype.ctype}>({root_name}, "{attr_path}")'
+    raise TypeError(f'Unsupported PythonClass member descriptor: {type(desc).__name__}')
 
 
 def emit_memlet_reference(dispatcher: 'TargetDispatcher',
@@ -374,7 +386,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     # implemented as pointers, so it becomes an arrow. Only a dot BETWEEN NAMES qualifies: `expr`
     # ends in an index expression, so a decimal literal there was rewritten too, e.g.
     # `&A[(0.5 * j)]` -> `&A[(0->5 * j)]`, which does not compile.
-    expr = re.sub(r'\.(?=[A-Za-z_])', '->', expr)
+    if 'dace_get_pyobject_attr' not in expr:
+        expr = re.sub(r'\.(?=[A-Za-z_])', '->', expr)
 
     return (typedef + ref, pointer_name, expr)
 
@@ -545,7 +558,8 @@ def cpp_array_expr(sdfg,
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
     tokens = memlet.data.split('.')
-    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+    if (len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure)
+            and not isinstance(sdfg.arrays[tokens[0]], data.PythonClass)):
         name = memlet.data.replace('.', '->')
     else:
         name = memlet.data

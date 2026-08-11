@@ -2,10 +2,13 @@
 import ast
 import collections
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TYPE_CHECKING, Union
 
 from dace import data
 from dace.sdfg.sdfg import SDFG
+
+if TYPE_CHECKING:
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
 class DaceSyntaxError(Exception):
@@ -32,6 +35,86 @@ class DaceSyntaxError(Exception):
             return self.message + f'\n  encountered in line {line}{col_suffix}'
 
 
+class InvalidProgram(Exception):
+    """
+    Marker base for failures no other lowering path could avoid: the program is
+    invalid outright (``numpy.fabs`` of a complex array, which NumPy rejects
+    too), or its result cannot be materialized at all (``numpy.split`` into a
+    symbolic number of parts, whose containers a compiled program's caller
+    could not allocate).
+
+    Distinct from a replacement declining a *form* it does not implement, where
+    falling back to another path -- a Python callback -- is the right answer.
+    Falling back here only moves the failure to run time, across the C callback
+    boundary where an exception cannot propagate and the program carries on
+    with an unwritten result.
+    """
+
+
+class InvalidOperandTypes(InvalidProgram, TypeError):
+    """
+    The operand types of an operation are invalid, and no other spelling of the
+    call could make them valid -- NumPy rejects the same call (``np.fabs`` of a
+    complex array, ``&`` between floats).
+    """
+
+
+class InvalidSubscript(InvalidProgram, DaceSyntaxError):
+    """
+    A subscript that cannot be lowered correctly however it is spelled -- a
+    negative-step slice whose element count is not a compile-time value, whose
+    reversed indices there is consequently no way to form.
+
+    Both a :class:`DaceSyntaxError` (what a caller catching frontend refusals
+    already expects) and an :class:`InvalidProgram` (so the access-resolution
+    seam re-raises it instead of downgrading it to "unsupported", which would
+    send the subscript to a Python callback that computes a DIFFERENT answer).
+    The shared memlet parser raises plain ``DaceSyntaxError`` for spellings the
+    frontend does go on to handle another way, so the marker -- not the class
+    alone -- is what distinguishes a deliberate refusal.
+    """
+
+
+class InvalidArgumentValues(InvalidProgram, ValueError):
+    """
+    The argument VALUES of a call rule it out, whatever the operand types --
+    a ``numpy.split`` whose sections do not divide the array evenly, or whose
+    count is not a compile-time number so the result tuple has no size.
+    """
+
+
+def closure_constant_descriptor(value: Any) -> Optional[data.Data]:
+    """
+    The descriptor a closure constant is registered under, or None when the
+    value cannot be described at all.
+
+    A scalar value :attr:`SDFG.constants` could not materialize under the
+    descriptor gets an opaque one instead. ``create_datadescriptor`` answers
+    what a value DENOTES as a type specification, which for anything that is
+    one -- ``a_type = dace.int8`` passed through a parametrized test's closure
+    and used only in annotations -- is not what it holds: the pair then makes
+    ``SDFG.constants`` cast the typeclass object itself to int8. ``None`` fails
+    the same way, through a ``void`` descriptor whose type is not callable.
+    Such names are compile-time objects, so they belong with the others that
+    have no dataflow representation and never reach generated code. Their
+    values stay available to the frontend either way -- the descriptor decides
+    only what is code-generatable.
+
+    :param value: The closure constant's value.
+    """
+    try:
+        descriptor = data.create_datadescriptor(value)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(descriptor, data.Scalar):
+        from dace import dtypes
+        try:
+            descriptor.dtype.type(value)
+        except Exception:
+            return data.Scalar(dtypes.pyobject())
+    return descriptor
+
+
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
     """ Finds the first key in a dictionary with the input value. """
     for k, v in dict.items():
@@ -56,6 +139,18 @@ class StringLiteral:
 
     def __gt__(self, other) -> bool:
         return self.value > str(other)
+
+
+@dataclass(frozen=True)
+class ListLiteral:
+    """A list literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class TupleLiteral:
+    """A tuple literal found in a parsed DaCe program."""
+    value: Tuple[Any, ...]
 
 
 class SDFGConvertible(object):
@@ -117,6 +212,36 @@ class SDFGConvertible(object):
         :return: New SDFG closure object representing the convertible object.
         """
         return SDFGClosure()
+
+
+class ScheduleTreeConvertible:
+    """
+    A mixin that defines the interface to annotate schedule-tree-convertible
+    objects.
+    """
+
+    def __schedule_tree__(self, *args, **kwargs) -> 'ScheduleTreeRoot':
+        """
+        Returns a schedule-tree representation of this object.
+
+        :param args: Arguments or argument types that can be used for
+                     specialization.
+        :param kwargs: Keyword arguments or argument types that can be used for
+                       specialization.
+        :return: A schedule-tree root representing this object.
+        """
+        raise NotImplementedError
+
+    def __schedule_tree_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        """
+        Returns the schedule-tree call signature represented by this object as
+        a sequence of all argument names that will be found in a call to this
+        object and a sequence of the constant argument names from the first
+        sequence.
+
+        :return: A 2-tuple of (all arguments, constant arguments).
+        """
+        raise NotImplementedError
 
 
 @dataclass
@@ -198,3 +323,27 @@ class SDFGClosure:
                 new_name = data.find_new_name(cbname, self.callbacks.keys())
                 self.callbacks[new_name] = (cbname, cb, True)
                 self.array_mapping[id(cb)] = new_name
+
+
+def interpreter_callable(function: Any) -> Any:
+    """
+    The callable to bind for a preprocessing-detected callback.
+
+    Preprocessing hands frontends a *flattened* wrapper: keyword arguments and
+    Python literal structures are unpacked into a flat positional list, because
+    the stable frontend marshals callback arguments one at a time across the C
+    ABI. The nextgen frontend does not -- it outlines the original call SOURCE
+    and runs it in the interpreter, keywords and all -- so the flattened
+    wrapper, whose signature is ``(*all_args)``, rejects exactly the calls it is
+    handed (``cb_func() got an unexpected keyword argument 'd'``). Worse, that
+    ``TypeError`` is raised inside the callback, where it cannot cross back.
+
+    ``__dace_unflattened__`` is the same function without the argument
+    repacking, with async wrapping preserved (that is about awaiting the
+    result, not about argument shape). It is absent for callbacks that needed
+    no flattening, where the wrapper already IS the original.
+
+    :param function: The callable preprocessing recorded for the callback.
+    :return: The callable to invoke from interpreter-executed source.
+    """
+    return getattr(function, '__dace_unflattened__', function)

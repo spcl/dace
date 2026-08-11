@@ -1,9 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
+from numbers import Number
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+
+import numpy as np
+
+from dace import symbolic
 from dace.dtypes import paramdec
 
 MethodType = Callable[..., Tuple[str]]
+_INFERENCE_MISSING = object()
 
 
 def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
@@ -33,6 +39,12 @@ class Replacements(object):
     _ufunc_rep: Dict[str, MethodType] = {}
     _method_rep: Dict[Tuple[str, str], MethodType] = {}
     _attr_rep: Dict[Tuple[str, str], MethodType] = {}
+    _dtype_rep: Dict[str, Callable] = {}  # Lightweight descriptor inference (free functions)
+    _dtype_method_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, method) -> fn(self_desc, *a, **kw)
+    _dtype_method_self_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, method) -> fn(self_desc, *a, **kw)
+    _dtype_attr_rep: Dict[Tuple[str, str], Callable] = {}  # (classname, attr) -> fn(self_desc)
+    _dtype_ufunc_rep: Dict[str, Callable] = {}  # ufunc method -> fn(input_descs, ufunc_name, *a, **kw)
+    _dtype_op_rep: Dict[Tuple[Optional[str], Optional[str], str], Callable] = {}
 
     @staticmethod
     def get(name: str):
@@ -82,6 +94,220 @@ class Replacements(object):
             if (classname, attr_name) in Replacements._attr_rep:
                 return Replacements._attr_rep[(classname, attr_name)]
         return None
+
+    @staticmethod
+    def program_dependent_attributes() -> frozenset:
+        """
+        The ATTRIBUTE-family attribute names whose implementation is marked
+        PROGRAM-DEPENDENT (see :data:`PROGRAM_DEPENDENT_ATTRIBUTE`), across
+        every registered descriptor class.
+
+        Names only: a frontend gating attribute reads by name (rather than by
+        the base's descriptor class, which it may not have resolved yet) asks
+        this, then lets the class-keyed :meth:`get_attribute` lookup turn down
+        the ones that do not apply.
+        """
+        return frozenset(attr_name for (_, attr_name), function in Replacements._attr_rep.items()
+                         if is_program_dependent(function))
+
+    @staticmethod
+    def get_descriptor_inference(name: str):
+        """Returns a lightweight descriptor-inference function for a named call, or None."""
+        return Replacements._dtype_rep.get(name, None)
+
+    @staticmethod
+    def get_method_descriptor_inference(class_or_name: Union[str, Type], method_name: str):
+        """Returns a descriptor-inference function for a method call, or None."""
+        for classname in _get_all_bases(class_or_name):
+            if (classname, method_name) in Replacements._dtype_method_rep:
+                return Replacements._dtype_method_rep[(classname, method_name)]
+        return None
+
+    @staticmethod
+    def get_method_self_descriptor_inference(class_or_name: Union[str, Type], method_name: str):
+        """Returns a self-mutating inference function for a method call, or None."""
+        for classname in _get_all_bases(class_or_name):
+            if (classname, method_name) in Replacements._dtype_method_self_rep:
+                return Replacements._dtype_method_self_rep[(classname, method_name)]
+        return None
+
+    @staticmethod
+    def get_attribute_descriptor_inference(class_or_name: Union[str, Type], attr_name: str):
+        """Returns a descriptor-inference function for an attribute access, or None."""
+        for classname in _get_all_bases(class_or_name):
+            if (classname, attr_name) in Replacements._dtype_attr_rep:
+                return Replacements._dtype_attr_rep[(classname, attr_name)]
+        return None
+
+    def get_ufunc_descriptor_inference(ufunc_method: Optional[str] = None):
+        """Returns a descriptor-inference function for a NumPy ufunc call or method, or None."""
+        key = ufunc_method or 'ufunc'
+        return Replacements._dtype_ufunc_rep.get(key, None)
+
+    @staticmethod
+    def get_operator_descriptor_inference(optype: str,
+                                          left_operand: Any = _INFERENCE_MISSING,
+                                          right_operand: Any = _INFERENCE_MISSING):
+        """Returns a descriptor-inference function for an operator, or None."""
+        if left_operand is _INFERENCE_MISSING and right_operand is _INFERENCE_MISSING:
+            return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+        left_types = _get_inference_operand_types(left_operand)
+        if right_operand is _INFERENCE_MISSING:
+            for left_type in left_types:
+                if (left_type, None, optype) in Replacements._dtype_op_rep:
+                    return Replacements._dtype_op_rep[(left_type, None, optype)]
+            return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+        right_types = _get_inference_operand_types(right_operand)
+        for left_type, right_type in itertools.product(left_types, right_types):
+            if (left_type, right_type, optype) in Replacements._dtype_op_rep:
+                return Replacements._dtype_op_rep[(left_type, right_type, optype)]
+
+        return Replacements._dtype_op_rep.get((None, None, optype), None)
+
+
+#: Marker separating a data-descriptor classname from an attribute name in a
+#: :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+#: qualname when the deferred call targets the ATTRIBUTE family
+#: (:meth:`Replacements.get_attribute`) rather than the free-function family
+#: (:meth:`Replacements.get`). Chosen to be unambiguous against real
+#: qualnames, which are dotted Python identifiers and never contain ``@``.
+ATTRIBUTE_QUALNAME_MARKER = '.@'
+
+
+def attribute_qualname(classname: str, attr_name: str) -> str:
+    """
+    The :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+    qualname encoding an ATTRIBUTE-family replacement (e.g. ``Array.@T``),
+    decoded back by ``tree_to_sdfg.visit_ReplacementCallNode``.
+    """
+    return f'{classname}{ATTRIBUTE_QUALNAME_MARKER}{attr_name}'
+
+
+#: Marker introducing an OPERATOR-family deferred call
+#: (:meth:`Replacements.getop`) in a
+#: :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+#: qualname, e.g. ``@op:MatMult``. Like :data:`ATTRIBUTE_QUALNAME_MARKER`,
+#: chosen to be unambiguous against real qualnames, which are dotted Python
+#: identifiers and never contain ``@``.
+#:
+#: Only the AST operator name is encoded: the operand classes are read off the
+#: operands themselves at expansion time (:func:`operand_lookup_key`), so the
+#: lookup keeps the class-hierarchy resolution :meth:`Replacements.getop`
+#: performs instead of freezing one class name into the tree.
+OPERATOR_QUALNAME_MARKER = '@op:'
+
+
+def operator_qualname(optype: str) -> str:
+    """
+    The :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+    qualname encoding an OPERATOR-family replacement (e.g. ``A @ B``), decoded
+    back by ``tree_to_sdfg.visit_ReplacementCallNode``.
+    """
+    return f'{OPERATOR_QUALNAME_MARKER}{optype}'
+
+
+def decode_operator_qualname(qualname: str) -> str:
+    """The AST operator name an OPERATOR-family qualname encodes."""
+    return qualname[len(OPERATOR_QUALNAME_MARKER):]
+
+
+#: Attribute marking an operator implementation as the plain ELEMENTWISE one:
+#: a result of the broadcast shape, computed per element. Set by
+#: :func:`elementwise_operator` on the implementations generated in
+#: ``replacements/operators.py``, and read by frontends that have their own
+#: (cheaper) elementwise lowering and need to know when it applies.
+#:
+#: Unmarked is the conservative answer. An operator registered for a type
+#: without this marker is an OVERRIDE with its own semantics — it may contract
+#: (``@``), change the storage (``A @ StorageType.GPU_Global``), or do anything
+#: else a dunder method can — so its result must be typed by the registry's own
+#: inference and computed by the registry's own implementation.
+ELEMENTWISE_OPERATOR_ATTRIBUTE = '__dace_elementwise_operator__'
+
+
+def elementwise_operator(func: Callable) -> Callable:
+    """Mark an operator implementation as plain elementwise (see
+    :data:`ELEMENTWISE_OPERATOR_ATTRIBUTE`)."""
+    setattr(func, ELEMENTWISE_OPERATOR_ATTRIBUTE, True)
+    return func
+
+
+def is_elementwise_operator(implementation: Optional[Callable]) -> bool:
+    """Whether an operator implementation is the plain elementwise one. False
+    for anything unregistered or unmarked — see
+    :data:`ELEMENTWISE_OPERATOR_ATTRIBUTE` for why that is the safe default."""
+    return bool(getattr(implementation, ELEMENTWISE_OPERATOR_ATTRIBUTE, False))
+
+
+#: Attribute marking a replacement implementation as PROGRAM-DEPENDENT: it
+#: reads or rewrites the SDFG built so far, rather than only the containers
+#: named in its own call. The autodiff replacements are the motivating case —
+#: ``torch.autograd.backward`` runs a dependency analysis over everything
+#: parsed up to that point, and ``ParameterArray.grad`` names a buffer an
+#: earlier ``backward`` created.
+#:
+#: Frontends that decide whether a replacement can be deferred by TRIAL-RUNNING
+#: it on a scratch SDFG (see
+#: ``dace.frontend.python.nextgen.lowering.dispatch._expansion_viable``) must
+#: skip that trial for these: a scratch SDFG carries none of the program's
+#: history, so the trial answers a question the implementation was never asked.
+#: The registry's descriptor inference is the authority on their result instead.
+#:
+#: Unmarked is the conservative answer: an ordinary replacement stays subject
+#: to the trial, which is what keeps a build-time fallback (a callback) from
+#: becoming a hard error at SDFG-construction time.
+PROGRAM_DEPENDENT_ATTRIBUTE = '__dace_program_dependent__'
+
+
+def program_dependent(func: Callable) -> Callable:
+    """Mark a replacement implementation as program-dependent (see
+    :data:`PROGRAM_DEPENDENT_ATTRIBUTE`)."""
+    setattr(func, PROGRAM_DEPENDENT_ATTRIBUTE, True)
+    return func
+
+
+def is_program_dependent(implementation: Optional[Callable]) -> bool:
+    """Whether a replacement implementation depends on the surrounding program.
+    False for anything unregistered or unmarked — see
+    :data:`PROGRAM_DEPENDENT_ATTRIBUTE` for why that is the safe default."""
+    return bool(getattr(implementation, PROGRAM_DEPENDENT_ATTRIBUTE, False))
+
+
+def operand_lookup_key(operand: Any) -> Union[str, Type]:
+    """
+    The key to look an operator implementation up with
+    (:meth:`Replacements.getop`) for one operand.
+
+    Compile-time values (numbers, booleans, symbols, sequence and string
+    literals) have synthetic class names in the registry and answer with those.
+    Everything else — a data descriptor, a ``StorageType``, an MPI
+    communicator — answers with its TYPE, so the lookup walks the class
+    hierarchy and an ``ArrayView`` still matches a rule registered for
+    ``View``.
+    """
+    if (isinstance(operand, (bool, np.bool_, Number, list, tuple, str)) or symbolic.issymbolic(operand)):
+        return _get_inference_operand_types(operand)[0]
+    return type(operand)
+
+
+def _get_inference_operand_types(operand: Any) -> List[Optional[str]]:
+    if operand is _INFERENCE_MISSING:
+        return [None]
+    if isinstance(operand, (bool, np.bool_)):
+        return ['BoolConstant']
+    if isinstance(operand, Number):
+        return ['NumConstant']
+    if symbolic.issymbolic(operand):
+        return ['symbol']
+    if isinstance(operand, list):
+        return ['ListLiteral']
+    if isinstance(operand, tuple):
+        return ['TupleLiteral']
+    if isinstance(operand, str):
+        return ['StringLiteral']
+    return _get_all_bases(type(operand))
 
 
 @paramdec
@@ -161,4 +387,117 @@ def replaces_attribute(func: Callable[..., Tuple[str]], classname: str, attr_nam
     :param attr_name: Name of the attribute.
     """
     Replacements._attr_rep[(classname, attr_name)] = func
+    return func
+
+
+@paramdec
+def infers_descriptor(func: Callable, name: str):
+    """
+    Registers a lightweight descriptor-inference function for a named call.
+
+    The function receives ``(input_descriptors, *args, **kwargs)`` where
+    *input_descriptors* maps array-argument names to their
+    :class:`dace.data.Data` descriptors and the remaining arguments are
+    compile-time values (numbers, symbolic expressions, strings, or
+    ``None`` when static evaluation failed).  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors
+    for structured multi-result calls, or ``None`` if inference is not
+    possible. Empty tuples or lists denote a successful zero-output
+    inference.
+
+    :param func: The inference function.
+    :param name: Fully-qualified function name (e.g. ``'numpy.sum'``).
+    """
+    Replacements._dtype_rep[name] = func
+    return func
+
+
+@paramdec
+def infers_method_descriptor(func: Callable, classname: str, method_name: str):
+    """
+    Registers descriptor inference for a method call (e.g. ``a.sum()``).
+
+    The function receives ``(self_descriptor, *args, **kwargs)`` where
+    *self_descriptor* is the :class:`dace.data.Data` descriptor of the
+    object the method is called on.  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors,
+    or ``None``.
+
+    :param func: The inference function.
+    :param classname: Data-descriptor class name (e.g. ``'Array'``).
+    :param method_name: Method name (e.g. ``'sum'``).
+    """
+    Replacements._dtype_method_rep[(classname, method_name)] = func
+    return func
+
+
+@paramdec
+def infers_method_self_descriptor(func: Callable, classname: str, method_name: str):
+    """
+    Registers descriptor inference for a method call that mutates ``self``.
+
+    The function receives ``(self_descriptor, *args, **kwargs)`` where
+    *self_descriptor* is the :class:`dace.data.Data` descriptor of the
+    object the method is called on.  It may return a single
+    :class:`dace.data.Data` descriptor, a tuple or list of descriptors,
+    or ``None``.
+
+    :param func: The inference function.
+    :param classname: Data-descriptor class name (e.g. ``'Array'``).
+    :param method_name: Method name (e.g. ``'sum'``).
+    """
+    Replacements._dtype_method_self_rep[(classname, method_name)] = func
+    return func
+
+
+@paramdec
+def infers_attribute_descriptor(func: Callable, classname: str, attr_name: str):
+    """
+    Registers descriptor inference for an attribute access (e.g. ``a.T``).
+
+    The function receives ``(self_descriptor,)`` and returns either a
+    single :class:`dace.data.Data` descriptor, a tuple or list of
+    descriptors, or ``None``.
+
+    :param func: The inference function.
+    :param classname: Data-descriptor class name (e.g. ``'Array'``).
+    :param attr_name: Attribute name (e.g. ``'T'``).
+    """
+    Replacements._dtype_attr_rep[(classname, attr_name)] = func
+    return func
+
+
+@paramdec
+def infers_ufunc_descriptor(func: Callable, name: str):
+    """
+    Registers lightweight descriptor inference for a NumPy ufunc call or ufunc method.
+
+    The function receives ``(input_descriptors, ufunc_name, *args, **kwargs)`` and may return a
+    single :class:`dace.data.Data` descriptor, a tuple or list of descriptors, or ``None``.
+
+    :param func: The inference function.
+    :param name: ``'ufunc'`` for a direct ufunc call or the ufunc method name, such as ``'reduce'``.
+    """
+    Replacements._dtype_ufunc_rep[name] = func
+    return func
+
+
+@paramdec
+def infers_operator_descriptor(func: Callable,
+                               optype: str,
+                               classname: Optional[str] = None,
+                               otherclass: Optional[str] = None):
+    """
+    Registers descriptor inference for an operator (e.g. ``A @ B`` or ``-A``).
+
+    The function receives one or more operand descriptors, depending on
+    the AST operator form being inferred, and returns a
+    :class:`dace.data.Data` descriptor for the result, or ``None``.
+
+    :param func: The inference function.
+    :param optype: AST operator name (e.g. ``'MatMult'``).
+    :param classname: Optional left operand category name.
+    :param otherclass: Optional right operand category name.
+    """
+    Replacements._dtype_op_rep[(classname, otherclass, optype)] = func
     return func

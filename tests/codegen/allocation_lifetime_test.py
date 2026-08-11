@@ -418,7 +418,7 @@ def test_persistent_loop_bound():
     Code originates from Issue #1550.
     Tests both ``for`` and OpenMP parallel ``for`` loop bounds with persistent storage.
     """
-    N = dace.symbol('N')
+    N = dace.symbol('N', dace.int64)
 
     @dace.program(auto_optimize=True)
     def tester(L: dace.float64[N, N], index: dace.uint64, active_size: dace.uint64):
@@ -605,6 +605,160 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
+def test_dynamic_write_to_separately_declared_array():
+    """
+    A transient sized by a symbol the program itself assigns has its
+    declaration separated from its allocation: declared at SDFG scope,
+    allocated in the state that first uses it. A DYNAMIC output memlet in a
+    LATER state therefore finds only the declaration, and looking the array up
+    among the allocated variables alone used to fail outright.
+    """
+    sdfg = dace.SDFG('dynamic_write_to_separately_declared_array')
+    sdfg.add_array('counts', [2], dace.int64)
+    sdfg.add_array('__return', [1], dace.float64)
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_transient('A', ['n'], dace.float64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    first = sdfg.add_state('first')
+    later = sdfg.add_state('later')
+    sdfg.add_edge(init, first, dace.InterstateEdge(assignments=dict(n='counts[0]')))
+    sdfg.add_edge(first, later, dace.InterstateEdge())
+
+    # First use of ``A``, so this is where it gets allocated.
+    t = first.add_tasklet('zero', {}, {'o'}, 'o = 0.0')
+    first.add_edge(t, 'o', first.add_write('A'), None, dace.Memlet('A[0]'))
+
+    # A later state writing an element chosen at runtime: the whole array is
+    # the destination, with the position coming from data.
+    indirect = dace.Memlet('A[0:n]')
+    indirect.dynamic = True
+    scattered = later.add_access('A')
+    t = later.add_tasklet('scatter', {'idx'}, {'o'}, 'o[idx] = 7.0')
+    later.add_edge(later.add_read('counts'), None, t, 'idx', dace.Memlet('counts[1]'))
+    later.add_edge(t, 'o', scattered, None, indirect)
+
+    out = later.add_tasklet('writeout', {'a'}, {'b'}, 'b = a')
+    later.add_edge(scattered, None, out, 'a', dace.Memlet('A[1]'))
+    later.add_edge(out, 'b', later.add_write('__return'), None, dace.Memlet('__return[0]'))
+
+    sdfg.validate()
+    assert np.allclose(sdfg(counts=np.array([4, 1], dtype=np.int64)), 7.0)
+
+
+def _add_reference_branch_body(sdfg: dace.SDFG, state: dace.SDFGState, source: str, value: float) -> None:
+    """Fill ``source`` with ``value`` and point the reference ``ref`` at it."""
+    tasklet = state.add_tasklet(f'write_{source}', {}, {'out'}, f'out = {value}')
+    written = state.add_write(source)
+    state.add_edge(tasklet, 'out', written, None, dace.Memlet(f'{source}[0]'))
+    reference = state.add_access('ref')
+    reference.add_in_connector('set')
+    state.add_edge(written, None, reference, 'set', dace.Memlet(f'{source}[0]'))
+
+
+def _assert_reference_sources_outlive_their_branch(sdfg: dace.SDFG) -> None:
+    """
+    Both branch-local transients must be allocated and freed exactly once, and
+    not inside the branch that writes them.
+
+    A reference keeps pointing at whichever one the taken branch set it to, and
+    that memory is read after the branches rejoin. Freeing it at the end of the
+    branch leaves the read dangling -- which shows up as garbage rather than as
+    a crash, so the generated code is checked directly as well as the result.
+    """
+    code = sdfg.generate_code()[0].clean_code
+    assert _count_heap_allocs(code, 'double') == 2
+    assert code.count('delete[]') == 2
+
+    # Restrict the position checks to the program body, so the state struct's
+    # own new/delete in the init and exit functions cannot match.
+    body = code[code.index('void __program_'):code.index('DACE_EXPORTED void __program_')]
+
+    allocations = [match.start() for match in re.finditer(r'\bnew\b', body)]
+    deallocations = [match.start() for match in re.finditer(r'delete\[\]', body)]
+    assert len(allocations) == 2 and len(deallocations) == 2
+
+    # Both transients are allocated before the branch is entered: neither
+    # branch may own the allocation, because the reference outlives both.
+    assert max(allocations) < body.index('if (')
+    # ...and both are freed only after the reference has been read, which
+    # happens at the join. The buggy form frees each transient at the end of
+    # the branch that writes it, i.e. before this copy.
+    assert min(deallocations) > body.index('CopyND')
+
+
+def test_reference_source_outlives_branch_state_machine():
+    """A reference set from a different transient on each side of a branching
+    state machine, and read after the two paths rejoin."""
+    sdfg = dace.SDFG('reference_branch_state_machine')
+    sdfg.add_symbol('cnd', dace.int32)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_array('first', [1], dace.float64, transient=True)
+    sdfg.add_array('second', [1], dace.float64, transient=True)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    start = sdfg.add_state('start', is_start_block=True)
+    branch1 = sdfg.add_state('branch1')
+    branch2 = sdfg.add_state('branch2')
+    merge = sdfg.add_state('merge')
+
+    sdfg.add_edge(start, branch1, dace.InterstateEdge('cnd != 0'))
+    sdfg.add_edge(start, branch2, dace.InterstateEdge('cnd == 0'))
+    sdfg.add_edge(branch1, merge, dace.InterstateEdge())
+    sdfg.add_edge(branch2, merge, dace.InterstateEdge())
+
+    _add_reference_branch_body(sdfg, branch1, 'first', 1.0)
+    _add_reference_branch_body(sdfg, branch2, 'second', 2.0)
+    merge.add_edge(merge.add_read('ref'), None, merge.add_write('B'), None, dace.Memlet('ref[0]'))
+
+    sdfg.validate()
+    _assert_reference_sources_outlive_their_branch(sdfg)
+
+    compiled = sdfg.compile()
+    B = np.zeros(1, dtype=np.float64)
+    compiled(B=B, cnd=1)
+    assert np.allclose(B, 1.0)
+    compiled(B=B, cnd=0)
+    assert np.allclose(B, 2.0)
+
+
+def test_reference_source_outlives_conditional_block():
+    """The same program expressed with a conditional block rather than a
+    branching state machine, so the transients are nested in control-flow
+    regions instead of sitting directly in the SDFG."""
+    sdfg = dace.SDFG('reference_conditional_block')
+    sdfg.add_symbol('cnd', dace.int32)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_array('first', [1], dace.float64, transient=True)
+    sdfg.add_array('second', [1], dace.float64, transient=True)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    conditional = dace.sdfg.state.ConditionalBlock('branches', sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(conditional, is_start_block=True)
+
+    if_body = dace.sdfg.state.ControlFlowRegion('if_body', sdfg=sdfg)
+    _add_reference_branch_body(sdfg, if_body.add_state('write_first', is_start_block=True), 'first', 1.0)
+    conditional.add_branch(dace.properties.CodeBlock('cnd != 0'), if_body)
+
+    else_body = dace.sdfg.state.ControlFlowRegion('else_body', sdfg=sdfg)
+    _add_reference_branch_body(sdfg, else_body.add_state('write_second', is_start_block=True), 'second', 2.0)
+    conditional.add_branch(None, else_body)
+
+    merge = sdfg.add_state('merge')
+    sdfg.add_edge(conditional, merge, dace.InterstateEdge())
+    merge.add_edge(merge.add_read('ref'), None, merge.add_write('B'), None, dace.Memlet('ref[0]'))
+
+    sdfg.validate()
+    _assert_reference_sources_outlive_their_branch(sdfg)
+
+    compiled = sdfg.compile()
+    B = np.zeros(1, dtype=np.float64)
+    compiled(B=B, cnd=1)
+    assert np.allclose(B, 1.0)
+    compiled(B=B, cnd=0)
+    assert np.allclose(B, 2.0)
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -629,3 +783,6 @@ if __name__ == '__main__':
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
+    test_dynamic_write_to_separately_declared_array()
+    test_reference_source_outlives_branch_state_machine()
+    test_reference_source_outlives_conditional_block()

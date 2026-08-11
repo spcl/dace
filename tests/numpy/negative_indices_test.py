@@ -15,6 +15,23 @@ def test_negative_index():
 
 
 @dace.program
+def runtime_negative_index(A: dace.int64[10], i: dace.int64):
+    return A[i]
+
+
+def test_runtime_negative_index():
+    A = np.random.randint(0, 100, size=10, dtype=np.int64)
+
+    with dace.config.set_temporary('frontend', 'runtime_negative_indices', value=True):
+        sdfg = runtime_negative_index.to_sdfg(A, np.int64(-2), simplify=False)
+        code = sdfg.generate_code()[0].clean_code
+        out = sdfg(A=A, i=np.int64(-2))
+
+    assert 'py_mod(__sym_i, 10)' in code
+    assert out[0] == A[-2]
+
+
+@dace.program
 def nested_negative_index(A: dace.int64[10]):
     out = np.ndarray([2], dtype=np.int64)
     for i in dace.map[0:2]:
@@ -53,6 +70,28 @@ def test_nested_negative_range():
     out = nested_negative_range(A)
     assert np.array_equal(out[:5], A[-6:-1])
     assert np.array_equal(out[5:], A[-6:-1])
+
+
+@dace.program
+def runtime_nested_negative_range(A: dace.int64[10], offset: dace.int64, offset2: dace.int64):
+    out = np.ndarray([10], dtype=np.int64)
+    for i in dace.map[0:2]:
+        out[i * 5:i * 5 + 5] = np.sum(A[offset:offset2])
+    return out
+
+
+def test_runtime_nested_negative_range():
+    A = np.random.randint(0, 100, size=10, dtype=np.int64)
+
+    with dace.config.set_temporary('frontend', 'runtime_negative_indices', value=True):
+        sdfg = runtime_nested_negative_range.to_sdfg(A, np.int64(-6), np.int64(-1), simplify=False)
+        runtime_code = sdfg.generate_code()[0].clean_code
+        out = sdfg(A=A, offset=np.int64(-6), offset2=np.int64(-1))
+
+    expected = np.full(5, np.sum(A[-6:-1]), dtype=np.int64)
+    assert 'py_mod(' not in runtime_code.split('reduce_1_1_6', 1)[-1]
+    assert np.array_equal(out[:5], expected)
+    assert np.array_equal(out[5:], expected)
 
 
 @dace.program

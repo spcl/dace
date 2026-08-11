@@ -997,6 +997,12 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
     memlets are left unpropagated so that the caller can later apply the
     appropriate control-flow semantics.
 
+    A viewing edge (the ``views`` connector) whose memlet describes the *other*
+    end of the aliasing -- the view's source rather than the view itself -- is
+    skipped. It carries no data movement of its own, and counting it would put
+    two containers under one connector, where a rank difference between them
+    makes the subsequent union fail.
+
     :param state: The state whose access-node edges should be inspected.
     :param border_memlets: A candidate memlet mapping, typically created with
                            ``_make_border_memlets(..., as_lists=True)``, which
@@ -1009,7 +1015,9 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
                 continue
 
             edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
-            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+            border_memlets[direction][node.label].extend(
+                edge.data for edge in edges
+                if not ((edge.src_conn == 'views' or edge.dst_conn == 'views') and edge.data.data != node.label))
 
 
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:

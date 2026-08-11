@@ -4,20 +4,46 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import InvalidOperandTypes, ListLiteral, StringLiteral, TupleLiteral
 from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_together, cast_str, np_result_type,
                                                      representative_num, sym_type)
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 from numbers import Number
-from typing import List, Sequence, Tuple, Union
+from typing import Any, List, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
 import sympy as sp
 import dace  # noqa: F401 (used during evaluation of data types, e.g. casting in replaced op)
 
+from dace.frontend.common.op_repository import infers_operator_descriptor
+
 numpy_version = np.lib.NumpyVersion(np.__version__)
+
+
+def _materialize_sequence_literal(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+                                  literal: Union[ListLiteral, TupleLiteral]) -> str:
+    from dace.frontend.python.replacements.array_creation_dace import (infer_dynamic_literal_descriptor,
+                                                                       populate_dynamic_literal_array)
+
+    value = literal.value
+    desc = infer_dynamic_literal_descriptor(value, sdfg.arrays, sdfg.symbols)
+    if desc is None:
+        raise SyntaxError('Operand cannot be materialized as an array literal')
+
+    name = sdfg.temp_data_name()
+    name = sdfg.add_datadesc(name, desc, find_new_name=True)
+    init_states = getattr(visitor, '_literal_init_states', None)
+    if init_states is None:
+        init_states = {}
+        setattr(visitor, '_literal_init_states', init_states)
+    init_state = init_states.get(state)
+    if init_state is None:
+        init_state = visitor.cfg_target.add_state_before(state)
+        init_states[state] = init_state
+    populate_dynamic_literal_array(init_state, sdfg, name, value)
+    return name
 
 
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
@@ -49,14 +75,17 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
 def _makeunop(op, opcode):
 
     @oprepo.replaces_operator('Array', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('View', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('Scalar', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
         restype, _ = result_type([scalar1], op)
@@ -70,18 +99,21 @@ def _makeunop(op, opcode):
         return op2
 
     @oprepo.replaces_operator('NumConstant', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('BoolConstant', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('symbol', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: symbolic.symbol, op2=None):
         if opcode in _pyop2symtype.keys():
             try:
@@ -171,7 +203,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             restype = eval('dtypes.float{}'.format(4 * datatypes[0].bytes))
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
-            raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+            raise InvalidOperandTypes("ufunc '{}' not supported for complex input".format(operator))
         elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
             restype = dtypes.float64
             casting[0] = cast_str(restype)
@@ -181,8 +213,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             casting[0] = cast_str(restype)
         elif operator in ('Frexp'):
             if coarse_types[0] == 3:
-                raise TypeError("ufunc '{}' not supported for complex "
-                                "input".format(operator))
+                raise InvalidOperandTypes("ufunc '{}' not supported for complex "
+                                          "input".format(operator))
             restype = [None, dtypes.int32]
             if coarse_types[0] < 2:
                 restype[0] = dtypes.float64
@@ -190,7 +222,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             else:
                 restype[0] = datatypes[0]
         elif _is_op_bitwise(operator) and coarse_types[0] > 1:
-            raise TypeError("unsupported operand type for {}: '{}'".format(operator, datatypes[0]))
+            raise InvalidOperandTypes("unsupported operand type for {}: '{}'".format(operator, datatypes[0]))
         elif _is_op_boolean(operator):
             restype = dtypes.bool_
             if operator == 'SignBit' and coarse_types[0] < 2:
@@ -251,7 +283,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 else:
                     restype = dtypes.complex128
             elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) == 3):
-                raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+                raise InvalidOperandTypes("ufunc '{}' not supported for complex input".format(operator))
             elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) < 2):
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
@@ -275,8 +307,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
             # Only integers may be arguments of bitwise and shifting operations
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -288,8 +320,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator in ('Gcd', 'Lcm'):
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -298,8 +330,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('CopySign', 'NextAfter'):
             if max(type1, type2) > 2:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             if max(type1, type2) < 2:
                 restype = dtypes.float64
             else:
@@ -311,8 +343,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('Ldexp'):
             if max(type1, type2) > 2 or type2 > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             if type1 < 2:
                 restype = dtypes.float64
                 left_cast = cast_str(restype)
@@ -752,146 +784,230 @@ def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 def _makebinop(op, opcode):
 
     @oprepo.replaces_operator('Array', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('Array', op, otherclass='ListLiteral')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('Array', op, otherclass='TupleLiteral')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
     @oprepo.replaces_operator('View', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('View', op, otherclass='ListLiteral')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='TupleLiteral')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
+        op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
+        return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
+
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_scalar_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='Array')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('ListLiteral', op, otherclass='View')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='Array')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
+    @oprepo.replaces_operator('TupleLiteral', op, otherclass='View')
+    @oprepo.elementwise_operator
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
+        op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
+        return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
@@ -899,6 +1015,7 @@ def _makebinop(op, opcode):
 def _makeboolop(op: str, method: str):
 
     @oprepo.replaces_operator('StringLiteral', op, otherclass='StringLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: StringLiteral, op2: StringLiteral):
         return getattr(op1, method)(op2)
 
@@ -926,3 +1043,69 @@ _boolop_to_method = {
 }
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+def _operand_shape(operand) -> List[Any]:
+    if isinstance(operand, data.Scalar):
+        return []
+    if isinstance(operand, data.Data):
+        return list(operand.shape)
+    return []
+
+
+def _elementwise_binary_descriptor(left_desc, right_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([left_desc, right_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    left_shape = _operand_shape(left_desc)
+    right_shape = _operand_shape(right_desc)
+
+    try:
+        out_shape, _ranges, _out_idx, _left_idx, _right_idx = broadcast_together(left_shape, right_shape)
+    except Exception:
+        return None
+
+    if len(out_shape) == 0:
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(out_shape), transient=True)
+
+
+def _elementwise_unary_descriptor(operand_desc, operator: str) -> Union[data.Data, None]:
+    try:
+        result_dtype, _casting = result_type([operand_desc], operator)
+    except Exception:
+        return None
+
+    if not isinstance(result_dtype, dtypes.typeclass):
+        return None
+
+    if not isinstance(operand_desc, data.Data) or isinstance(operand_desc, data.Scalar):
+        return data.Scalar(result_dtype, transient=True)
+    return data.Array(result_dtype, list(operand_desc.shape), transient=True)
+
+
+def _register_unary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(operand_desc):
+        return _elementwise_unary_descriptor(operand_desc, opname)
+
+
+def _register_binary_operator_descriptor(opname: str) -> None:
+
+    @infers_operator_descriptor(opname)
+    def _infer(left_desc, right_desc):
+        return _elementwise_binary_descriptor(left_desc, right_desc, opname)
+
+
+for _descriptor_op in ('Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Mod', 'Pow', 'LShift', 'RShift', 'BitOr', 'BitXor',
+                       'BitAnd', 'And', 'Or', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'Is', 'IsNot'):
+    _register_binary_operator_descriptor(_descriptor_op)
+
+for _descriptor_unary_op in ('UAdd', 'USub', 'Not', 'Invert'):
+    _register_unary_operator_descriptor(_descriptor_unary_op)

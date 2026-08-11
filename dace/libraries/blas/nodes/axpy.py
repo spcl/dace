@@ -157,3 +157,9 @@ def axpy_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, y, re
     state.add_edge(libnode, '_res', res, None, mm.Memlet(result))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.axpy')
+@oprepo.infers_descriptor('dace.libraries.blas.Axpy')
+def _infer_axpy_libnode(input_descs, a, x, y, result, **_kw):
+    return ()

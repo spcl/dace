@@ -5,8 +5,8 @@ from typing import Dict, List, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion,
+                             NamedRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
@@ -371,6 +371,27 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             nsdfg.replace_dict(replacements)
 
 
+def _viewed_container(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view: dace.nodes.AccessNode) -> str:
+    """
+    The name of the container a viewing edge aliases.
+
+    Usually the access node on the other end of the edge, but a view bound
+    inside a dataflow scope is fed through the scope's entry (or writes back
+    through its exit), and a scope node holds no container. The memlet names
+    the viewed container in that case -- it has to, since it is what the edge
+    carries across the scope boundary.
+
+    :param state: The state the view resides in.
+    :param edge: The viewing edge, as returned by ``sdutil.get_view_edge``.
+    :param view: The view access node.
+    :return: The viewed container's name.
+    """
+    viewed_node = sdutil.get_view_node(state, view)
+    if isinstance(viewed_node, dace.nodes.AccessNode):
+        return viewed_node.data
+    return edge.data.data
+
+
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
                     viewed_name: str) -> tn.ViewNode:
     """
@@ -450,8 +471,7 @@ def _prepare_schedule_tree_edges(
                 if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.src)
                     if e is vedge:
-                        viewed_node = sdutil.get_view_node(state, e.src)
-                        result[e] = _make_view_node(state, e, e.src.data, viewed_node.data)
+                        result[e] = _make_view_node(state, e, e.src.data, _viewed_container(state, e, e.src))
                         scope = state.entry_node(e.dst if mtree.downwards else e.src)
                         scope_to_edges[scope].append(e)
                         continue
@@ -460,8 +480,7 @@ def _prepare_schedule_tree_edges(
                 if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.dst)
                     if e is vedge:
-                        viewed_node = sdutil.get_view_node(state, e.dst)
-                        result[e] = _make_view_node(state, e, e.dst.data, viewed_node.data)
+                        result[e] = _make_view_node(state, e, e.dst.data, _viewed_container(state, e, e.dst))
                         scope = state.entry_node(e.dst if mtree.downwards else e.src)
                         scope_to_edges[scope].append(e)
                         continue
@@ -708,6 +727,15 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                     children.extend(_isedge_schedule_tree(oedges[0], emit_goto_for_successors=False))
                 else:
                     pivot = None
+
+        # NOTE: FunctionCallRegion derives from NamedRegion but is not one --
+        # it keeps flattening here, as it did before named regions were
+        # represented at all.
+        if isinstance(block, NamedRegion) and not isinstance(block, FunctionCallRegion):
+            # A labeled grouping: keep the label, which is the whole point of
+            # the region -- flattening it here would lose it on every
+            # round-trip through the schedule tree.
+            return [tn.NamedRegionScope(label=block.label, children=children)]
 
         if isinstance(block, LoopRegion):
             # If this is a loop region, wrap everything in a loop scope node.

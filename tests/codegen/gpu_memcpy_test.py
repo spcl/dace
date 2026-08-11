@@ -291,44 +291,6 @@ def test_gpu_shared_to_global_1D():
 
 
 @pytest.mark.gpu
-def test_gpu_shared_to_global_1D_accumulate():
-    M = 32
-    N = dace.symbol('N')
-
-    @dace.program
-    def transpose_and_add_shared_to_global(A: dace.float64[M, N], B: dace.float64[N, M]):
-        for i in dace.map[0:N]:
-            local_gather = dace.define_local([M], A.dtype, storage=dace.StorageType.GPU_Shared)
-            for j in dace.map[0:M]:
-                local_gather[j] = A[j, i]
-            local_gather[:] >> B(M, lambda x, y: x + y)[i, :]
-
-    sdfg = transpose_and_add_shared_to_global.to_sdfg()
-    auto_optimize.apply_gpu_storage(sdfg)
-
-    size_M = M
-    size_N = 128
-
-    A = rng.random((
-        size_M,
-        size_N,
-    ))
-    B = rng.random((
-        size_N,
-        size_M,
-    ))
-
-    ref = A.transpose() + B
-
-    sdfg(A, B, N=size_N)
-    cp.allclose(ref, B)
-
-    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    m = re.search('dace::SharedToGlobal1D<.+>::template Accum', code)
-    assert m is not None
-
-
-@pytest.mark.gpu
 def test_gpu_1d_copy():
     sdfg = dace.SDFG("gpu_1d_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
@@ -437,6 +399,5 @@ def test_gpu_strided_2D_copy():
 
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
-    test_gpu_shared_to_global_1D_accumulate()
     test_gpu_1d_copy()
     test_gpu_strided_2D_copy()

@@ -1,0 +1,421 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Tests for deferred replacement expansion: calls with both a registered
+replacement and a descriptor inference entry emit a
+:class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`,
+which ``tree_to_sdfg`` expands through the classic replacement implementation
+(reusing it instead of reimplementing each call as tree emission).
+"""
+import numpy as np
+
+import dace
+from dace.frontend.python import nextgen
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
+
+
+def _nodes_of_type(tree, node_type):
+    return [node for node in tree.preorder_traversal() if isinstance(node, node_type)]
+
+
+def test_sum_tuple_axis_structure():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        return np.sum(A, axis=(0, 2))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].qualname == 'numpy.sum'
+    assert calls[0].keyword_arguments == {'axis': (0, 2)}
+    assert calls[0].data_arguments == {'A'}
+
+
+def test_sum_tuple_axis_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        return np.sum(A, axis=(0, 2))
+
+    tree = nextgen.parse_program(prog)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5, 6)
+    assert np.allclose(func(A=A), A.sum(axis=(0, 2)))
+
+
+def test_max_tuple_axis_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        return np.max(A, axis=(1, 2))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5, 6)
+    assert np.allclose(func(A=A), A.max(axis=(1, 2)))
+
+
+def test_mean_execution():
+    """numpy.mean chains two replacements through NestedCall states."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        return np.mean(A, axis=(0, 1))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5, 6)
+    assert np.allclose(func(A=A), A.mean(axis=(0, 1)))
+
+
+def test_transpose_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        return np.transpose(A, (2, 0, 1))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5, 6)
+    assert np.allclose(func(A=A), np.transpose(A, (2, 0, 1)))
+
+
+def test_scalar_axis_keeps_wcr_mechanism():
+    """Single constant axes stay on the dedicated WCR-map mechanism (no
+    ReplacementCallNode)."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5]):
+        return np.sum(A, axis=1)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+
+
+def test_ufunc_reduce_method_structure():
+    """``numpy.add.reduce(...)`` -- an ast.Attribute call whose base resolves
+    to a numpy.ufunc -- routes through the ufunc registry keyspace
+    (get_ufunc('reduce')/get_ufunc_descriptor_inference('reduce')) via a
+    ReplacementCallNode tagged with ufunc_name/ufunc_method, rather than
+    going untyped as a plain "reduce" free-function call."""
+
+    @dace.program
+    def prog(A: dace.int32[10]):
+        return np.add.reduce(A)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].ufunc_name == 'add'
+    assert calls[0].ufunc_method == 'reduce'
+    assert calls[0].data_arguments == {'A'}
+
+
+def test_ufunc_reduce_axis_execution():
+
+    @dace.program
+    def prog(A: dace.int32[2, 3, 4]):
+        return np.add.reduce(A, axis=(0, 2))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(2, 3, 4)).astype(np.int32)
+    assert np.array_equal(func(A=A), np.add.reduce(A, axis=(0, 2)))
+
+
+def test_ufunc_accumulate_execution():
+    # A 2-D (not 1-D) array: implement_ufunc_accumulate's map over the
+    # non-accumulated dimensions degenerates to a zero-parameter map for a
+    # 1-D input, an unrelated pre-existing gap in the registry
+    # implementation itself (shared with classic, not a nextgen routing
+    # issue) -- matches the shapes ufunc_support_test.py's own accumulate
+    # coverage uses (never 1-D).
+
+    @dace.program
+    def prog(A: dace.int32[3, 4]):
+        return np.add.accumulate(A)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(3, 4)).astype(np.int32)
+    assert np.array_equal(func(A=A), np.add.accumulate(A))
+
+
+def test_ufunc_outer_execution():
+
+    @dace.program
+    def prog(A: dace.int32[3], B: dace.int32[3]):
+        return np.add.outer(A, B)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(3, )).astype(np.int32)
+    B = np.random.randint(1, 10, size=(3, )).astype(np.int32)
+    assert np.array_equal(func(A=A, B=B), np.add.outer(A, B))
+
+
+def test_ufunc_keyword_argument_execution():
+    """A direct ufunc call (no method) with a keyword argument, previously
+    rejected outright, now defers to the registry ufunc implementation
+    instead of the lightweight no-keyword elementwise mechanism. (A bare
+    `np.add(A, B, out=C)` statement, with no assignment, hits the separate
+    and unrelated `target is None` gap -- use a return instead, matching
+    ufunc_support_test.py::test_ufunc_add_where's pattern.)"""
+
+    @dace.program
+    def prog(A: dace.int32[10], B: dace.int32[10], W: dace.bool_[10]):
+        return np.add(A, B, where=W)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].ufunc_name == 'add'
+    assert calls[0].ufunc_method is None
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(10, )).astype(np.int32)
+    B = np.random.randint(1, 10, size=(10, )).astype(np.int32)
+    W = np.random.randint(2, size=(10, )).astype(np.bool_)
+    C = func(A=A, B=B, W=W)
+    assert np.array_equal((A + B)[W], C[W])
+
+
+def test_ufunc_unsupported_keyword_falls_back():
+    """A keyword the registry ufunc implementation does not understand stays
+    a callback rather than silently being dropped."""
+
+    @dace.program
+    def prog(A: dace.int32[10], B: dace.int32[10]):
+        return np.add(A, B, casting='unsafe', nonexistent_kwarg=1)
+
+    tree = nextgen.parse_program(prog)
+    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+
+
+def test_concatenate_sequence_of_containers_structure():
+    """A static sequence whose elements are data containers (e.g. the
+    ``(A, B)`` in ``numpy.concatenate((A, B))``) passes through as a list of
+    container names, rather than being rejected as an un-representable
+    by-value argument."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.concatenate((A, B))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].qualname == 'numpy.concatenate'
+    assert calls[0].arguments == [('A', 'B')]
+    assert calls[0].data_arguments == {'A', 'B'}
+
+
+def test_concatenate_sequence_of_containers_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.concatenate((A, B))
+
+    tree = nextgen.parse_program(prog)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5)
+    B = np.random.rand(4, 5)
+    assert np.allclose(func(A=A, B=B), np.concatenate((A, B)))
+
+
+def test_hstack_list_of_containers_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.hstack([A, B])
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5)
+    B = np.random.rand(4, 5)
+    assert np.allclose(func(A=A, B=B), np.hstack([A, B]))
+
+
+def test_nonviable_replacement_falls_back():
+    """A well-formed, statically-resolvable ``numpy.reshape`` now takes the
+    dedicated frontend view path (:func:`dispatch._lower_reshape_call`)
+    rather than deferred replacement expansion — see
+    ``test_reshape_view_execution`` below. An element-count mismatch isn't a
+    view the dedicated path can construct, so it falls through to the
+    general registry-call path: ``numpy.reshape`` has both registrations
+    there too, but the replacement records a view binding, which deferred
+    expansion cannot honor. The build-time viability trial rejects it and
+    the call stays a callback (never an expansion-time crash)."""
+
+    @dace.program
+    def prog(A: dace.float64[6]):
+        b = np.reshape(A, (2, 4))  # 8 != 6: not a valid reshape
+        return b + 1.0
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_reshape_view_execution():
+    """Both ``A.reshape(shape)`` and ``numpy.reshape(A, shape)`` resolve
+    through the dedicated frontend view path (no callback, no
+    ReplacementCallNode) and produce identical, correct results."""
+
+    @dace.program
+    def prog_method(A: dace.float64[6]):
+        b = A.reshape((2, 3))
+        return b + 1.0
+
+    @dace.program
+    def prog_function(A: dace.float64[6]):
+        b = np.reshape(A, (2, 3))
+        return b + 1.0
+
+    A = np.random.rand(6)
+    expected = np.reshape(A, (2, 3)) + 1.0
+
+    for prog in (prog_method, prog_function):
+        tree = nextgen.parse_program(prog)
+        assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+        assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+        assert _nodes_of_type(tree, tn.ViewNode)
+        func = tree.as_sdfg().compile()
+        assert np.allclose(func(A=A), expected)
+
+
+def test_fill_bare_statement_execution():
+    """A bare-statement, zero-output method call (``A.fill(value)``, no
+    assignment target) lowers through deferred replacement expansion instead
+    of falling back to a callback: the descriptor inference registry already
+    types it as zero-output (``()``), and dispatch now reaches that same
+    zero-output path when there's no assignment target to gate on."""
+
+    @dace.program
+    def prog(A: dace.float64[10]):
+        A.fill(2.0)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].qualname == 'fill'
+    assert calls[0].receiver == 'A'
+
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(10)
+    func(A=A)
+    assert np.allclose(A, np.full(10, 2.0))
+
+
+def test_call_with_target_still_requires_target():
+    """A call typed as ordinarily data-valued (not zero-output) still
+    requires a real assignment target -- the ``target is None`` relaxation
+    is scoped to the zero-output form only, so an unused, data-valued call
+    result keeps falling back to a callback rather than silently lowering
+    with a discarded result."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        np.sum(A, axis=(0, 2))  # result discarded, no assignment
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+# --- Expansion inside a dataflow scope (a map body becomes a nested SDFG)
+
+
+def _build(program, *arguments):
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import from_schedule_tree
+    tree = nextgen.parse_program(program, *arguments)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    sdfg = from_schedule_tree(tree)
+    sdfg.validate()
+    return sdfg
+
+
+def test_replacement_in_map_execution():
+    """A registry call inside a map expands in the nested SDFG the map body
+    becomes, instead of falling back to the interpreter."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 8], out: dace.float64[4]):
+        for i in dace.map[0:4]:
+            out[i] = np.mean(A[i])
+
+    A = np.random.rand(4, 8)
+    out = np.zeros(4)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out, A.mean(axis=1))
+
+
+def test_reduce_in_map_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 8], out: dace.float64[4]):
+        for i in dace.map[0:4]:
+            out[i] = dace.reduce(lambda a, b: a + b, A[i], identity=0)
+
+    A = np.random.rand(4, 8)
+    out = np.zeros(4)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out, A.sum(axis=1))
+
+
+def test_reduce_with_output_argument_in_map_execution():
+    """The replacement writes an ARGUMENT rather than its result, so the
+    nested SDFG's output connectors cannot be read off the call node."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def summed(X_in: dace.float32[N], X_out: dace.float32[1]):
+        dace.reduce(lambda a, b: a + b, X_in, X_out, identity=0)
+
+    @dace.program
+    def prog(A: dace.float32[4, 8], out: dace.float32[4, 1]):
+        for i in dace.map[0:4]:
+            summed(A[i], out[i])
+
+    A = np.random.rand(4, 8).astype(np.float32)
+    out = np.zeros((4, 1), np.float32)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out.squeeze(), A.sum(axis=1), rtol=1e-5)
+
+
+if __name__ == '__main__':
+    test_sum_tuple_axis_structure()
+    test_sum_tuple_axis_execution()
+    test_max_tuple_axis_execution()
+    test_mean_execution()
+    test_transpose_execution()
+    test_scalar_axis_keeps_wcr_mechanism()
+    test_ufunc_reduce_method_structure()
+    test_ufunc_reduce_axis_execution()
+    test_ufunc_accumulate_execution()
+    test_ufunc_outer_execution()
+    test_ufunc_keyword_argument_execution()
+    test_ufunc_unsupported_keyword_falls_back()
+    test_concatenate_sequence_of_containers_structure()
+    test_concatenate_sequence_of_containers_execution()
+    test_hstack_list_of_containers_execution()
+    test_nonviable_replacement_falls_back()
+    test_reshape_view_execution()
+    test_fill_bare_statement_execution()
+    test_call_with_target_still_requires_target()
+    test_replacement_in_map_execution()
+    test_reduce_in_map_execution()
+    test_reduce_with_output_argument_in_map_execution()
