@@ -2006,7 +2006,9 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
     return stree
 
 
-def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, views: Optional[Set[str]] = None):
+def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope,
+                                               views: Optional[Set[str]] = None,
+                                               in_dataflow: bool = False):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
 
@@ -2035,12 +2037,12 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
             writes.clear()
             parents.clear()
             if isinstance(n, tn.ControlFlowScope):  # Insert memory boundaries recursively
-                _insert_memory_dependency_state_boundaries(n, views)
+                _insert_memory_dependency_state_boundaries(n, views, in_dataflow=False)
             continue
 
         # If dataflow scope, insert state boundaries recursively and as a node
         if isinstance(n, tn.DataflowScope):
-            _insert_memory_dependency_state_boundaries(n, views)
+            _insert_memory_dependency_state_boundaries(n, views, in_dataflow=True)
 
         inputs = n.input_memlets()
         outputs = n.output_memlets()
@@ -2123,7 +2125,15 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
             dataflow is not analyzed here), so every argument would look like
             one. Treating them that way let an argument's copy-in and its
             copy-back share a state, which is a cycle.
+
+            The exemption also only holds while THIS node is the container's
+            only reader so far. Once something else in the same state region has
+            read it -- ``B[i] = A[i]`` before ``i += 1`` -- that earlier read
+            must not be reordered across this write, and the boundary is what
+            keeps it from being.
             """
+            if not in_dataflow:
+                return False
             if isinstance(n, tn.SDFGCallNode):
                 return False
             if out.data in views:
