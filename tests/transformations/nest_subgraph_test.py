@@ -6,7 +6,7 @@ from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import LoopRegion, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
 import numpy as np
 
 
@@ -269,6 +269,49 @@ def test_region_local_transient_read_by_an_outside_edge_stays_a_connector():
     sdfg.validate()
 
 
+def test_symbol_needing_an_incoming_value_stays_an_argument():
+    """A symbol the subgraph reassigns but READS FIRST takes its value from the caller.
+
+    "Nothing outside the subgraph reads it" is not enough to call a symbol subgraph-owned: here every
+    use of ``N`` sits inside the region, yet the first read precedes the assignment, so the value
+    comes in from the caller. Treating it as owned drops it from ``sdfg.symbols`` while it is still
+    free, and the SDFG can no longer build its own argument list.
+    """
+    sdfg = dace.SDFG('incoming_symbol')
+    sdfg.add_array('A', [4], dace.int32)
+    sdfg.add_symbol('N', dace.int32)
+    pre = sdfg.add_state('pre', is_start_block=True)
+    reg = ControlFlowRegion('reg', sdfg)
+    sdfg.add_node(reg)
+    sdfg.add_edge(pre, reg, dace.InterstateEdge())
+    # Read N, rebind it, read it again -- all inside the region, nothing outside touches it.
+    s0 = reg.add_state('s0', is_start_block=True)
+    t0 = s0.add_tasklet('use0', {}, {'o'}, 'o = N')
+    s0.add_edge(t0, 'o', s0.add_access('A'), None, dace.Memlet('A[0]'))
+    s1 = reg.add_state('s1')
+    reg.add_edge(s0, s1, dace.InterstateEdge(assignments={'N': '7'}))
+    t1 = s1.add_tasklet('use1', {}, {'o'}, 'o = N')
+    s1.add_edge(t1, 'o', s1.add_access('A'), None, dace.Memlet('A[1]'))
+    sdfg.add_edge(reg, sdfg.add_state('post'), dace.InterstateEdge())
+
+    reference = np.zeros(4, dtype=np.int32)
+    dace.SDFG.from_json(sdfg.to_json())(A=reference, N=3)
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [reg]))
+    sdfg.reset_cfg_list()
+    # Still free, so it must still be declared and still be a required argument.
+    assert 'N' in sdfg.free_symbols
+    assert 'N' in sdfg.symbols
+    assert 'N' in sdfg.arglist()
+    nested = next(n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert 'N' in nested.symbol_mapping
+    sdfg.validate()
+
+    A = np.zeros(4, dtype=np.int32)
+    sdfg(A=A, N=3)
+    assert np.array_equal(A, reference)
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -280,3 +323,4 @@ if __name__ == '__main__':
     test_nest_cf_simple_if_chain()
     test_region_local_transient_is_not_exported_as_a_connector()
     test_region_local_transient_read_by_an_outside_edge_stays_a_connector()
+    test_symbol_needing_an_incoming_value_stays_an_argument()
