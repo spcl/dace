@@ -1072,5 +1072,91 @@ def test_dynamic_range_connector_shadowing_a_data_descriptor():
     sdfg.validate()
 
 
+def _sdfg_with_a_sibling_ordering_edge(ordered: bool) -> dace.SDFG:
+    """A liftable memset that also sequences a sibling tasklet in the SAME map body.
+
+    ``ordered=False`` is the over-refusal control: byte-identical apart from the empty memlet,
+    and the pass must still lift it.
+    """
+    sdfg = dace.SDFG(f"sibling_ordering_{'dep' if ordered else 'free'}")
+    state = sdfg.add_state("body", is_start_block=True)
+    for name in ("A_OUT", "B_IN", "B_OUT"):
+        sdfg.add_array(name=name, shape=(DIM_SIZE, ), dtype=dace.float64, transient=False)
+
+    map_entry, map_exit = state.add_map(name="body_map", ndrange={"i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])})
+
+    fill = state.add_tasklet(name="fill", inputs={}, outputs={"_out": None}, code="_out = 0.0")
+    state.add_edge(map_entry, None, fill, None, dace.memlet.Memlet(None))
+    bump = state.add_tasklet(name="bump", inputs={"_in": None}, outputs={"_out": None}, code="_out = _in * 2.0")
+
+    # Added BEFORE the data edge, so a lift that picks the tasklet's output positionally reads THIS
+    # one -- an empty memlet whose ``subset`` is None -- rather than the write it means to measure.
+    if ordered:
+        state.add_edge(fill, None, bump, None, dace.memlet.Memlet())
+
+    map_entry.add_in_connector("IN_B")
+    map_entry.add_out_connector("OUT_B")
+    state.add_edge(state.add_access("B_IN"), None, map_entry, "IN_B", dace.memlet.Memlet(f"B_IN[0:{DIM_SIZE}]"))
+    state.add_edge(map_entry, "OUT_B", bump, "_in", dace.memlet.Memlet("B_IN[i]"))
+
+    for tasklet, out_name in ((fill, "A_OUT"), (bump, "B_OUT")):
+        map_exit.add_in_connector(f"IN_{out_name}")
+        map_exit.add_out_connector(f"OUT_{out_name}")
+        state.add_edge(tasklet, "_out", map_exit, f"IN_{out_name}", dace.memlet.Memlet(f"{out_name}[i]"))
+        state.add_edge(map_exit, f"OUT_{out_name}", state.add_access(out_name), None,
+                       dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}]"))
+    sdfg.validate()
+    return sdfg
+
+
+@temporarily_disable_autoopt_and_serialization
+def test_a_body_ordering_edge_blocks_the_lift():
+    """Regression: a body node's happens-before must block the lift, not be torn out with it.
+
+    The lift deletes the tasklet and keeps only the map's access nodes, so every edge the tasklet
+    carries besides the two on the matched path is dropped; ``carry_ordering_edges`` re-attaches
+    the SCOPE nodes' ordering only, never a body node's. This shape is reachable only on a SECOND
+    canonicalize -- the first run's map body has no such sibling ordering yet -- and npbench
+    ``cavity_flow`` hit it as ``TypeError: 'NoneType' object is not iterable``, the empty memlet
+    picked up positionally as the tasklet's write and carrying no subset to do arithmetic on.
+    """
+    sdfg = _sdfg_with_a_sibling_ordering_edge(ordered=True)
+    state = sdfg.states()[0]
+    fill = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "fill")
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+
+    assert _get_num_memset_library_nodes(sdfg) == 0, "a body ordering edge must block the lift"
+    assert [(e.src.label, e.dst.label) for e in state.edges()
+            if e.data.is_empty() and e.src is fill] == [("fill", "bump")]
+    sdfg.validate()
+
+    A_OUT = numpy.ones(DIM_SIZE)
+    B_IN = numpy.arange(DIM_SIZE, dtype=numpy.float64)
+    B_OUT = numpy.zeros(DIM_SIZE)
+    sdfg(A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT)
+    assert numpy.allclose(A_OUT, 0.0)
+    assert numpy.allclose(B_OUT, 2.0 * B_IN)
+
+
+@temporarily_disable_autoopt_and_serialization
+def test_the_same_body_without_the_ordering_edge_still_lifts():
+    """Over-refusal control for :func:`test_a_body_ordering_edge_blocks_the_lift`."""
+    sdfg = _sdfg_with_a_sibling_ordering_edge(ordered=False)
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+
+    assert _get_num_memset_library_nodes(sdfg) == 1, "only the ordering edge may block this lift"
+    sdfg.validate()
+
+    A_OUT = numpy.ones(DIM_SIZE)
+    B_IN = numpy.arange(DIM_SIZE, dtype=numpy.float64)
+    B_OUT = numpy.zeros(DIM_SIZE)
+    _expand_and_validate(sdfg, "pure")
+    sdfg(A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT)
+    assert numpy.allclose(A_OUT, 0.0)
+    assert numpy.allclose(B_OUT, 2.0 * B_IN)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

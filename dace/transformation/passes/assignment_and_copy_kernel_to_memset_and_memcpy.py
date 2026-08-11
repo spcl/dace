@@ -148,6 +148,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if len(tasklet.in_connectors) != expected_in_conns or len(tasklet.out_connectors) != 1:
                 continue
 
+            # The lift deletes the tasklet and keeps only the map's access nodes, so every edge the
+            # tasklet carries BESIDE the two on this path is dropped. Such an extra edge is an empty
+            # memlet -- an ORDERING edge sequencing this body node against a sibling in the same map
+            # body -- and ``carry_ordering_edges`` re-attaches only the SCOPE nodes' ordering, never a
+            # body node's. Refuse rather than lift and silently lose the happens-before: no match, no
+            # mutation. Only reachable on a SECOND canonicalize -- the first run's map body has no such
+            # sibling ordering yet (npbench cavity_flow, where the sibling edge was also picked up
+            # positionally by ``out_edges(tasklet)[0]`` and died as ``NoneType is not iterable`` in the
+            # subset arithmetic, an empty memlet carrying no subset).
+            if state.degree(tasklet) != 2:
+                continue
+
             oe = next(
                 state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
                                                                                                          "OUT_")))
