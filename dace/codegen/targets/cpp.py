@@ -1417,7 +1417,6 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
             )
 
 
-
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
