@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -28,6 +28,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.sdfg import absorb_symbol_assumptions
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
@@ -1210,6 +1211,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
                         self.sdfg.add_symbol(sym.name, sym.dtype)
+            absorb_symbol_assumptions(self.sdfg, list(self.sdfg.arrays.values()))
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
@@ -2507,10 +2509,10 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
-            # An assumption we cannot establish is OMITTED, never passed as None: sympy folds the
-            # explicit None into symbol identity, so `symbol('i', nonnegative=None)` is a different
-            # object from the plain `i` every reparse of a loop bound mints. The two then never
-            # cancel and `i in expr.free_symbols` is silently False.
+            # Mint the spelling a reparse produces. SymPy folds assumptions into symbol identity,
+            # so an iterator stamped `nonnegative=True` (or with an explicit `None`) is a DIFFERENT
+            # object from the `i` that every reparse of a loop bound or subset yields, and the two
+            # never cancel. Subset covering re-derives nonnegativity itself, via `subsets.nng`.
             assumptions = {'integer': True}
 
             start = self._replace_with_global_symbols(symbolic.pystr_to_symbolic(ranges[0][0]))
@@ -2519,15 +2521,6 @@ class ProgramVisitor(ExtNodeVisitor):
             eoff = -1
             if (step < 0) == True:
                 eoff = 1
-            try:
-                conditions = [s >= 0 for s in (start, stop, step)]
-                if (conditions == [True, True, True] or (start > stop and step < 0)):
-                    assumptions['nonnegative'] = True
-                    if start != 0:
-                        assumptions['positive'] = True
-            except:
-                pass
-
             sym_obj = symbolic.symbol(
                 indices[0],
                 dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),

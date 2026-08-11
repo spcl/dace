@@ -11,6 +11,7 @@ from hashlib import md5, sha256
 import random
 import shutil
 import sys
+import sympy
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
@@ -19,7 +20,7 @@ from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.validation import (InvalidSDFGError, check_symbol_assumption_collisions, validate_sdfg)
+from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
@@ -468,6 +469,36 @@ class InterstateEdge(object):
         return ret
 
 
+def absorb_symbol_assumptions(sdfg: 'SDFG', descs: List[dt.Data]):
+    """Move assumptions off the symbols stored in ``descs`` into ``sdfg``'s registry.
+
+    Symbols stored in an SDFG are BARE: identity is the name. :class:`~dace.symbolic.UndefinedSymbol`
+    is skipped: it is a runtime-deferred sentinel spelled "?", it holds no assumptions, and its name
+    is not a legal symbol name, so it never enters the registry.
+
+    :param sdfg: The SDFG whose registry receives the facts.
+    :param descs: Data descriptors to normalize, rewritten in place.
+    :return: ``None``.
+    :rtype: None
+    """
+    assumed = {}
+    for desc in descs:
+        for sym in desc.free_symbols:
+            if isinstance(sym, symbolic.UndefinedSymbol) or sym in assumed:
+                continue
+            bare = symbolic.symbol(sym.name, sym.dtype)
+            known = bare.assumptions0
+            facts = {k: v for k, v in sym.assumptions0.items() if known.get(k) != v}
+            if not facts:
+                continue
+            if sym.name in sdfg.symbols:
+                sdfg.update_symbol_assumptions(sym.name, **facts)
+            assumed[sym] = bare
+    if assumed:
+        for desc in descs:
+            replace_properties_dict(desc, {}, assumed)
+
+
 @make_properties
 class SDFG(ControlFlowRegion):
     """ The main intermediate representation of code in DaCe.
@@ -496,6 +527,11 @@ class SDFG(ControlFlowRegion):
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbol_assumptions = DictProperty(str,
+                                      dict,
+                                      default={},
+                                      desc="Per-symbol SymPy assumption facts. Symbols STORED in the SDFG are "
+                                      "always bare -- assumptions live here and are applied transiently.")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -568,6 +604,7 @@ class SDFG(ControlFlowRegion):
         self._propagate = propagate
         self._parent = parent
         self.symbols = {}
+        self.symbol_assumptions = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -917,6 +954,7 @@ class SDFG(ControlFlowRegion):
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
+                    _replace_dict_keys(self.symbol_assumptions, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
@@ -945,11 +983,54 @@ class SDFG(ControlFlowRegion):
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
-        # Catch a same-name/different-assumptions collision here, not at the next full validation.
-        if Config.get_bool('experimental.check_symbol_assumption_collisions'):
-            check_symbol_assumption_collisions(self, name)
         self.symbols[name] = stype
         return name
+
+    def update_symbol_assumptions(self, name: str, **facts):
+        """Refine what is assumed about ``name``; the ONLY way to write the registry.
+
+        :param name: A symbol already declared with :meth:`add_symbol`.
+        :param facts: SymPy assumption facts, e.g. ``positive=True``. ``None`` values are ignored.
+        :return: ``None``. No graph object is touched; stored symbols stay bare.
+        :rtype: None
+        :raises KeyError: If ``name`` is not a declared symbol.
+        :raises ValueError: If a fact contradicts a recorded one; refinement is monotone.
+        """
+        if name not in self.symbols:
+            raise KeyError(f'Cannot assume anything about "{name}", it is not a symbol of this SDFG')
+        known = self.symbol_assumptions.setdefault(name, {})
+        for fact, value in facts.items():
+            if value is None:
+                continue
+            if known.get(fact, value) != value:
+                raise ValueError(f'Assumption "{fact}={value}" for symbol "{name}" contradicts the recorded '
+                                 f'"{fact}={known[fact]}"')
+            known[fact] = value
+
+    def assume_symbols(self, expr):
+        """``expr`` with bare symbols re-minted from the registry, for REASONING only.
+
+        This is the inverse of :func:`~dace.symbolic.bare_symbols` and the seam every site that
+        asks SymPy a question about a stored expression has to go through: a bare symbol answers
+        ``is_positive`` with ``None``, so ``Max``, ``sqrt`` and inequality folding all take their
+        conservative branch until the recorded facts are put back on.
+
+        :param expr: A symbolic expression, or any value, which is returned unchanged.
+        :return: ``expr`` with each registered symbol carrying its recorded assumptions, or
+                 ``expr`` unchanged when it is not symbolic. The assumed objects are local to
+                 the result and must never be stored back.
+        :rtype: Any
+        """
+        if not self.symbol_assumptions or not isinstance(expr, sympy.Basic):
+            return expr
+        repl = {}
+        for sym in expr.free_symbols:
+            facts = self.symbol_assumptions.get(sym.name)
+            if facts:
+                repl[sym] = symbolic.assumed_symbol(sym.name, self.symbols.get(sym.name), tuple(sorted(facts.items())))
+        # `xreplace` and not `subs`: the keys ARE the stored objects, so no matching is needed and
+        # none of SymPy's rewriting on the way out is wanted.
+        return expr.xreplace(repl) if repl else expr
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
@@ -957,6 +1038,7 @@ class SDFG(ControlFlowRegion):
             :param name: Symbol name.
         """
         del self.symbols[name]
+        self.symbol_assumptions.pop(name, None)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
@@ -2291,6 +2373,7 @@ class SDFG(ControlFlowRegion):
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         _add_symbols(self, datadesc)
+        absorb_symbol_assumptions(self, [datadesc])
 
         return name
 

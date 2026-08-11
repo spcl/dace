@@ -58,7 +58,11 @@ def test_range_json_roundtrip_uses_symbolic_deserializer():
     restored_sym = next(iter(end.free_symbols))
     assert isinstance(restored_sym, symbolic.symbol)
     assert restored_sym.dtype == dace.uint64
-    assert restored_sym.is_nonnegative
+    # A Range stores symbols BARE, on the way in and back out: what survives a round trip is the
+    # name and the dtype. The declared assumption belongs to `SDFG.symbol_assumptions`, which is
+    # serialized with the SDFG, not with the subset.
+    assert restored_sym == symbolic.symbol('N', dtype=dace.uint64)
+    assert restored_sym.is_nonnegative is None
 
     assert isinstance(step, symbolic.TypedConstant)
     assert step.dtype == dace.int16
