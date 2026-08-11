@@ -170,9 +170,11 @@ class CublasHandle {
     return f->second;
   }
 
+  // A destructor that throws terminates the process. Teardown failures have nowhere left to go, so
+  // they are dropped rather than turned into a crash that hides whatever the program computed.
   ~CublasHandle() {
     for (auto& h : handles_) {
-      CheckCublasError(cublasDestroy(h.second));
+      static_cast<void>(cublasDestroy(h.second));
     }
   }
 

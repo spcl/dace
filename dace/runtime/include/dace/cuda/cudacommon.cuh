@@ -73,6 +73,7 @@ struct Context {
   }
   ~Context() {
     delete[] streams;
+    delete[] internal_streams;
     delete[] events;
   }
   // Keep the first error. One failure tends to produce more, and only the first names the call that
