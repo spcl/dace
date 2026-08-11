@@ -465,14 +465,53 @@ def symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG',
     }
 
 
+def scope_parameter_shadowings(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = None) -> Dict[str, List[str]]:
+    """Scope parameters whose name also carries SDFG-level assumptions. Diagnostic path.
+
+    A map or consume parameter is scope-local: what is known about it is its own range, not the
+    registry, and its facts are never hoisted there. So when its name is ALSO a registry symbol,
+    every site that reapplies the recorded facts stamps them onto the wrong symbol -- a parameter
+    running ``0:N`` is not the ``N`` the registry was told about.
+
+    Reusing one parameter name in disjoint scopes is not reported: that is what ``i`` and ``j``
+    are for, and a bare parameter carries no facts to disagree about.
+
+    :param sdfg: The SDFG to inspect, at this level only.
+    :param name: Only this parameter name; ``None`` reports every name.
+    :return: parameter name -> sorted locations shadowing a registry symbol.
+    :rtype: Dict[str, List[str]]
+    """
+    if not sdfg.symbol_assumptions:  # The overwhelmingly common case, and free to answer.
+        return {}
+    from dace.sdfg import nodes as nd
+    from dace.sdfg.state import SDFGState
+
+    shadowing: Dict[str, List[str]] = {}
+    for block in sdfg.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for node in block.nodes():
+            if not isinstance(node, (nd.MapEntry, nd.ConsumeEntry)):
+                continue
+            for param in node.map.params:
+                if param in sdfg.symbol_assumptions and (name is None or param == name):
+                    shadowing.setdefault(param, []).append(f'state "{block.label}" map "{node.map.label}" parameter')
+    return {param: sorted(set(where)) for param, where in sorted(shadowing.items())}
+
+
 def check_symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[str] = None):
-    """Raise when one symbol name in ``sdfg`` is spelled with two different assumption sets.
+    """Raise when one symbol name in ``sdfg`` is spelled two ways, or shadows the registry.
+
+    Two rules, one error: a name is spelled with exactly one assumption set everywhere it is
+    stored -- inside a scope as much as outside it -- and a scope parameter does not reuse the
+    name of a symbol the registry holds facts about.
 
     :param sdfg: The SDFG to check.
     :param name: Check only this symbol name; ``None`` checks every name.
-    :return: ``None`` when every checked name has a single spelling.
+    :return: ``None`` when every checked name has a single spelling and shadows nothing.
     :rtype: None
-    :raises InvalidSDFGError: If any checked name has more than one spelling.
+    :raises InvalidSDFGError: If any checked name has more than one spelling, or is a scope
+                              parameter shadowing an assumed SDFG symbol.
     """
     distinct: Dict[int, Any] = {}
     free_symbols: Dict[int, Tuple[Any, Any]] = {}
@@ -504,6 +543,14 @@ def check_symbol_assumption_collisions(sdfg: 'dace.sdfg.SDFG', name: Optional[st
             continue
         if tuple(sorted(first.assumptions0.items())) != tuple(sorted(sym.assumptions0.items())):
             _raise_symbol_assumption_collision(sdfg, name)
+
+    shadowing = scope_parameter_shadowings(sdfg, name)
+    if shadowing:
+        lines = [f'Scope parameter "{param}" shadows it, at {where}' for param, where in shadowing.items()]
+        raise InvalidSDFGError(
+            'A scope parameter reuses the name of a symbol this SDFG records assumptions for. The '
+            'parameter is scope-local -- its range is all that is known about it -- so reapplying '
+            'the recorded facts would assume them of the wrong symbol.\n' + '\n'.join(lines), sdfg, None)
 
 
 def _raise_symbol_assumption_collision(sdfg: 'dace.sdfg.SDFG', name: Optional[str]):
