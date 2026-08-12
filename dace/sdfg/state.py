@@ -2886,8 +2886,14 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-        if dst is self._cached_start_block:
-            self._cached_start_block = None
+        if self._cached_start_block is not None:
+            if dst is self._cached_start_block:
+                self._start_block = None
+                self._cached_start_block = None
+        elif self._start_block is not None:
+            if self.node_id(dst) == self._start_block:
+                self._start_block = None
+                self._cached_start_block = None
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
