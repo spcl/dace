@@ -1,0 +1,541 @@
+name: General Tests
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10','3.14']
+        simplify: [0,1,autoopt]
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+        # cBLAS / LAPACK / FFTW3 / PAPI.
+        # g++-aarch64-linux-gnu: aarch64 cross C++ toolchain (driver + libstdc++/glibc
+        # sysroot) for the NEON/SVE -fsyntax-only intrinsic-header tests in
+        # tests/passes/vectorization/intrinsics/test_horizontal_reduce_header.py. Without
+        # it those tests skip (the host is x86_64; clang alone can't supply an aarch64
+        # standard-library sysroot).
+        # gpg-agent/wget + libfftw3-dev + Intel oneAPI MKL (below): headers/link libs for
+        # the FFTW3 FFT lowering and the cBLAS/MKL BLAS extension library nodes from FaCe.
+        apt-packages: >-
+          libyaml-dev cmake gpg-agent wget
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libpapi-dev papi-tools g++-aarch64-linux-gnu
+        pip-packages: flake8 pytest-xdist coverage
+        codecov: 'true'
+
+    - name: Install Intel oneAPI MKL
+      # Add the official Intel apt repo, then install the dev meta-package so
+      # headers (``mkl.h``) and link libs are both available to the codegen
+      # path.  Pinned-key + signed-by to keep the install reproducible.
+      run: |
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
+
+    - name: Test dependencies
+      run: |
+        papi_avail
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not layout"
+        ./codecov
+
+    - name: Test OpenBLAS LAPACK
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ./codecov
+
+    - name: Test OpenBLAS BLAS extension nodes
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "openblas"
+        ./codecov
+
+    - name: Test cBLAS / MKL BLAS extension nodes
+      # Runs all ``mkl``-marked tests: the existing per-routine BLAS tests
+      # (Dot / Axpy / Gemm / etc.) that exercise the ``MKL`` backend
+      # explicitly, plus the new SCAL/NRM2/ASUM/IAMAX/COPY/SWAP +
+      # TRSV/TRMV/SYMV + TRSM/TRMM/SYMM/SYRK extension nodes that drive
+      # the ``OpenBLAS`` backend.  Both backends share the cBLAS C ABI;
+      # oneMKL provides ``libmkl_rt`` and ``mkl.h`` for the MKL path.
+      run: |
+        # Source Intel oneAPI environment so ``MKLROOT`` / link flags
+        # are populated for the MKL expansion's CMake env.
+        source /opt/intel/oneapi/setvars.sh || true
+        # setvars puts Intel's OpenMP runtime on the load path next to libgomp, which the
+        # generated kernels are built against. Two runtimes in one process partition a
+        # parallel loop against different team sizes and silently drop iterations; MKL on
+        # libgomp keeps one runtime.
+        export MKL_THREADING_LAYER=GNU
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        # ``not loop2x_libnodes``: the Syrk/Symm MKL parametrizations moved to the loop2x-libnodes
+        # runner, which now installs oneAPI MKL itself. Running them here too would double the
+        # 104 compile-heavy cases.
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl and not loop2x_libnodes"
+        ./codecov
+
+    - name: Test FFTW3 FFT lowering
+      # ``libfftw3-dev`` is already installed in the "Install dependencies"
+      # step; this step runs the ``fftw``-marked tests for the FFT library's
+      # CPU backend.
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
+        ./codecov
+
+    - name: Test TBLIS CPU tensor contraction
+      # TBLIS has no apt package, so build the shared library from source (the
+      # same CMake recipe as a local install) and point ``TBLIS_ROOT`` at it.
+      # Runs the ``tblis``-marked TensorDot tests (compile + run vs numpy).
+      run: |
+        sudo apt-get install -y libhwloc-dev
+        git clone --depth 1 --recursive https://github.com/MatthewsResearchGroup/tblis.git /tmp/tblis
+        cmake -S /tmp/tblis -B /tmp/tblis/build -DCMAKE_INSTALL_PREFIX=/usr/local
+        cmake --build /tmp/tblis/build -j"$(nproc)"
+        sudo cmake --install /tmp/tblis/build
+        sudo ldconfig
+        export TBLIS_ROOT=/usr/local
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "tblis"
+        ./codecov
+
+    - name: Run sequential tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        ./codecov
+
+    - name: Run other tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=0
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=single
+        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
+        coverage combine .; coverage report; coverage xml
+
+    - uses: codecov/codecov-action@v6
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        verbose: true
+
+  # --- Canonicalization (was canonicalization-ci.yml) ---
+  canonicalization:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        pip-packages: pytest-xdist
+        # islpy: without it WavefrontSkew is a no-op and its tests skip.
+        extras: testing,polyhedral
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # New codegens only; no autoopt, no serialization round-trip.
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_optimizer_automatic_simplification=1
+        # Pinned, not left to the defaults: build caching is most of the wall time here.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
+        # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
+        # ``not integration``: tests/canonicalize also holds two whole-application harnesses that take
+        # far longer than the 600s per-test cap here (the staged CloudSC walk builds and verifies the
+        # kernel once per phase; the determinism probe spawns a 1800s subprocess). They are marked
+        # ``integration`` and run in the dedicated integration workflow, which budgets 7200s per test.
+        # ``not idempotence``: the fixed-point suites assert a second canonicalize moves nothing,
+        # which the pipeline does not hold yet. Deselected until it does, so this gate tracks
+        # correctness rather than a known-open property.
+        pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
+          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration and not idempotence"
+
+  # --- Vectorization (was vectorization-ci.yml) ---
+  vectorization:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: c1-npbench-polybench
+            # Everything except the two TSVC corpora, which are cell 2.
+            paths: >-
+              tests/passes/vectorization
+              --ignore=tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
+              --ignore=tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
+          - cell: c2-tsvc
+            paths: >-
+              tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
+              tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
+
+    name: ${{ matrix.cell }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+          g++-aarch64-linux-gnu
+        pip-packages: pytest-xdist
+        extras: testing
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # New codegens only; no autoopt, no serialization round-trip.
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_optimizer_automatic_simplification=1
+        # Pinned, not left to the defaults: build caching is most of the wall time here.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
+        # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
+        pytest ${{ matrix.paths }} \
+          -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
+          -m "vectorization and not gpu and not long and not sequential and not perf"
+
+  # --- Corpus (was corpus-ci.yml) ---
+  corpus:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        pip-packages: pytest-xdist
+        extras: testing
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # Pinned, not left to the defaults: nearly every case compiles, so build caching is most of
+        # the wall time here.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        pytest -n auto --tb=short --timeout_method thread --timeout=600 \
+          -m "corpus and not gpu and not long and not sequential and not perf and not mpi"
+
+  # --- Loop-to-X and new library nodes (was loop2x-libnodes-ci.yml) ---
+  loop2x-libnodes:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        # libfftw3-dev: the FFT lowering tests in this suite include ``fftw3.h``. The
+        # ``fft_interpolate_*`` cases are not ``fftw``-marked, so this runner is their only home
+        # -- without the package they are permanently red rather than skipped.
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+        pip-packages: pytest-xdist
+        extras: testing
+
+    - name: Install Intel oneAPI MKL
+      # The Syrk / Symm nodes are parametrized over the ``MKL`` implementation, whose expansion
+      # includes ``mkl.h``; without the dev meta-package those cases fail to compile. Same install
+      # as general CI, which is where they used to run.
+      run: |
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
+
+    - name: Test with pytest
+      run: |
+        # ``MKLROOT`` for the expansion's include/link paths, ``LD_LIBRARY_PATH`` for loading
+        # libmkl_rt at run time. Must be sourced in the step that runs pytest -- env does not
+        # carry across steps.
+        source /opt/intel/oneapi/setvars.sh || true
+        # setvars puts Intel's OpenMP runtime on the load path next to libgomp, which the
+        # generated kernels are built against. Two runtimes in one process partition a
+        # parallel loop against different team sizes and silently drop iterations; MKL on
+        # libgomp keeps one runtime.
+        export MKL_THREADING_LAYER=GNU
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # Pinned, not left to the defaults: every case here compiles, so build caching is most of
+        # the wall time.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        pytest -n auto --tb=short --timeout_method thread --timeout=600 \
+          -m "loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi and not tblis"
+
+  # --- CPU Codegen + External TU (was codegen-external-tu-ci.yml) ---
+  cpu-codegen:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        # 3.12 is this workflow's only axis: General Tests covers 3.10/3.14 and ML covers 3.13.
+        python-version: '3.14'
+        # cmake + ninja: the build cache replays a recorded ``ninja -t compdb``, and
+        # dace/codegen/compiler.py only selects the Ninja generator when ``ninja`` is on PATH.
+        # BLAS/LAPACK: the readable library-lowering test lowers BLAS library nodes and the corpus
+        # kernels link against cBLAS/LAPACKE.
+        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev
+    - name: Codegen knob suite + CPU external TU
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # Deterministic reduction order for the bit-exact legacy-vs-experimental corpus compare.
+        export OMP_NUM_THREADS=1
+        # Pinned, not left to the defaults: build caching is most of the wall time here.
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        export DACE_compiler_configure_cache=1
+        # Both suites drive legacy AND experimental_readable internally; -m "not gpu" keeps this
+        # CPU-only. The GPU external-TU file's codegen-shape tests (per-kernel .cu split) are not
+        # gpu marked and run here too -- they only generate code, no device needed.
+        pytest -v --tb=short --timeout_method thread --timeout=600 -m "not gpu" \
+          tests/codegen/readable \
+          tests/codegen/split_nsdfg_translation_units_test.py
+
+  # --- Optional Extensions (was extensions-ci.yml) ---
+  extensions:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip-packages: pytest-xdist
+        extras: testing,fastgraph,polyhedral
+
+    - name: Extension dependencies present
+      # Both extras must actually install: a missing one turns the whole job into silent skips,
+      # which is the failure this workflow exists to prevent.
+      run: |
+        python -c "import rustworkx; print('rustworkx', rustworkx.__version__)"
+        python -c "import islpy; print('islpy', islpy.version.VERSION_TEXT)"
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        export DACE_optimizer_automatic_simplification=1
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
+          tests/graphlib \
+          tests/sdfg/analysis/polyhedral_isl_test.py \
+          tests/canonicalize/wavefront_polyhedron_test.py \
+          -m "not gpu and not long and not sequential"
+
+  # --- Graph Backend (rustworkx) (was graph-backend-ci.yml) ---
+  # Job id was "test" in graph-backend-ci.yml; renamed to "graph-backend" only because General Tests
+  # already owns "test". Everything else is verbatim.
+  graph-backend:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        python-version: ['3.10','3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+        pip-packages: flake8 pytest-xdist coverage
+        extras: testing,fastgraph
+
+    - name: Test with pytest (rustworkx backend)
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        export DACE_graph_backend=rustworkx
+        pytest -n auto --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+
+  # --- Integration Tests (was integration-ci.yml) ---
+  cloudsc-e2e:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: CloudSC end-to-end integration tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # The chains drive simplification explicitly (build with ``simplify=False``,
+        # then apply it as a step), so pin the automatic heuristic off.
+        export DACE_optimizer_automatic_simplification=0
+        # Each parametrized regime builds and compiles the whole SDFG repeatedly;
+        # a couple of workers parallelize the regimes without oversubscribing memory.
+        # ``--dist loadfile`` keeps every test of a file on one worker, so each file's
+        # module-scoped CloudSC build is paid once instead of once per worker.
+        # 2400s does not cover the canonicalize file: one ``canonicalize`` call on the
+        # 6342-block CloudSC SDFG is over an hour on a loaded 16-core box, and the fixture
+        # that pays it is billed to whichever test runs first.
+        # The two tests/canonicalize entries are integration-marked for the same reason and were
+        # previously collected by the canonicalization workflow, whose 600s per-test cap kills them.
+        pytest -n 2 --dist loadfile -m integration --tb=short --timeout_method thread --timeout=7200 \
+          tests/corpus/cloudsc/cloudsc_parallelize_chain_test.py \
+          tests/corpus/cloudsc/cloudsc_transform_chain_test.py \
+          tests/corpus/cloudsc/cloudsc_canonicalize_test.py \
+          tests/canonicalize/cloudsc_canonicalize_staged_test.py \
+          tests/canonicalize/canonicalize_determinism_test.py
