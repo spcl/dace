@@ -104,7 +104,6 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     "dep on i, not on j"). The materialiser receives the mask explicitly
     and emits ``(W_0, ONE)`` per the cuTile contract.
     """
-    from dace.symbolic import ONE
     m, n = 8, 8
     vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)
     vec_sdfg.name = "k2_partial_kdep_shape_audit"
@@ -115,7 +114,6 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     # Inspect every nested SDFG for ``_idx_*`` tiles produced by the gather
     # materialiser. Each must have shape ``(8, ONE)`` -- the row dim is
     # lane-dep, the col dim is broadcast.
-    import sympy
     idx_descs = []
     for sd in vec_sdfg.all_sdfgs_recursive():
         for name, desc in sd.arrays.items():
@@ -125,5 +123,5 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     for name, shape in idx_descs:
         assert len(shape) == 2, f"{name!r}: expected K=2 shape, got {shape}"
         assert int(shape[0]) == 8, f"{name!r}: expected W_0=8 on lane-dep dim, got {shape}"
-        assert isinstance(shape[1], sympy.Basic) and ONE in shape[1].free_symbols, \
+        assert dace.symbolic.has_one_marker(shape[1]), \
             f"{name!r}: expected ONE on broadcast dim 1, got {shape}"

@@ -324,7 +324,7 @@ def is_symbol_leaf(value) -> bool:
 #: replicated -- not collapse-and-fold-out. Transformations that special-case
 #: literal-1 dims (length-1-array-to-scalar conversion, soft-squeeze in cpp
 #: codegen, ``to_unsqueeze`` in schedule trees) skip dims marked ``ONE`` via
-#: a sympy free-symbol identity check (``ONE in shape.free_symbols``).
+#: :func:`has_one_marker`.
 #:
 #: Final lowering substitutes ``ONE -> 1`` at the bottom of the per-arch
 #: codegen pipeline, so the C++ literal is unchanged for actual indexing.
@@ -332,6 +332,30 @@ def is_symbol_leaf(value) -> bool:
 #: arrays always carry ``ONE`` for non-dependent dims so the gather lib
 #: nodes' broadcast lowering is uniform across CPU and GPU expansions.
 ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
+
+#: The marker's name -- the only part of :data:`ONE` that survives storage in an SDFG.
+ONE_NAME = 'ONE'
+
+
+def has_one_marker(s) -> bool:
+    """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
+
+    Matches on the symbol NAME, not on sympy object identity. A symbol stored in an SDFG is
+    BARE -- ``absorb_symbol_assumptions`` moves its assumptions into the SDFG's registry and
+    rewrites the descriptor with ``symbol(name, dtype)`` -- so a descriptor's ``ONE`` is a
+    different sympy object than :data:`ONE` (which carries ``positive=True``) and compares
+    unequal. The name is what the marker contract is written on (user direction 2026-06-10).
+
+    :param s: A shape entry: Python int, sympy ``Basic``, :class:`SymExpr`, or native expression.
+    :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
+    """
+    if to_sympy is not None:
+        converted = to_sympy(s)
+        if converted is not None:
+            s = converted
+    if not isinstance(s, sympy.Basic):
+        return False
+    return any(isinstance(fs, sympy.Symbol) and fs.name == ONE_NAME for fs in s.free_symbols)
 
 
 def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
@@ -345,8 +369,8 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
       ``ONE``-marker firewall in :class:`ConvertLengthOneArraysToScalars`)
       keep working. ``(8, 1)`` -> ``(8,)``; ``(8, ONE)`` -> ``(8, ONE)``.
 
-    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims whose
-      ``free_symbols`` contains :data:`ONE`. Used by sites that need the
+    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims that
+      :func:`has_one_marker` accepts. Used by sites that need the
       "structural-equivalent" view (e.g. ``resolve_gather_deps`` in
       :mod:`dace.libraries.tileops._pure_codegen`, the GatherLift tile-shape
       lookup, and test assertions). ``(8, ONE)`` -> ``(8,)`` here.
@@ -360,14 +384,7 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
     def _is_dropped(s):
         if s == 1:
             return True
-        if not treat_one_symbol_as_one:
-            return False
-        # ONE is a genuine sympy/dace symbol; walk a real sympy tree to compare against it.
-        if to_sympy is not None:
-            converted = to_sympy(s)
-            if converted is not None:
-                s = converted
-        return isinstance(s, sympy.Basic) and ONE in s.free_symbols
+        return treat_one_symbol_as_one and has_one_marker(s)
 
     return tuple(s for s in shape if not _is_dropped(s))
 

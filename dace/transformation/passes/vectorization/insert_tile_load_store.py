@@ -23,6 +23,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
+from dace.symbolic import has_one_marker
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
@@ -158,14 +159,6 @@ def stage_constant_access(state: SDFGState,
     return bridge_name
 
 
-def _shape_dim_is_one_symbol(s) -> bool:
-    """True when a descriptor extent is the :data:`~dace.symbolic.ONE` broadcast
-    marker (a collapsed gather-index dim), as opposed to a literal width."""
-    import sympy
-    from dace.symbolic import ONE
-    return isinstance(s, sympy.Basic) and ONE in s.free_symbols
-
-
 def _safe_bridge_hint(name_hint: str) -> str:
     """Keep a staged-transient name out of the reserved ``__return`` namespace.
 
@@ -233,7 +226,7 @@ def stage_tile_load(state: SDFGState,
     bridge_shape = tuple(dst_shape) if dst_shape is not None else tuple(widths)
     # A ``ONE``-marked (collapsed) descriptor dim needs the ``ONE`` constant on
     # the SDFG; ``ONE == 1`` so the broadcast dim is genuinely length-1.
-    if any(_shape_dim_is_one_symbol(s) for s in bridge_shape) and "ONE" not in sdfg.constants_prop:
+    if any(has_one_marker(s) for s in bridge_shape) and "ONE" not in sdfg.constants_prop:
         sdfg.add_constant("ONE", 1, data.Scalar(dtypes.int32))
     bridge_name, _ = sdfg.add_array(name_hint,
                                     shape=bridge_shape,
@@ -1062,7 +1055,7 @@ class InsertTileLoadStore(ppl.Pass):
                 f"_stage_index_via_tileops: arithmetic gather index {begin_str!r} mixes index tiles of "
                 f"differing shapes {in_shapes}; broadcasting collapsed index tiles through tile-op "
                 f"arithmetic is a design boundary (discuss before extending).")
-        if any(_shape_dim_is_one_symbol(s) for s in common):
+        if any(has_one_marker(s) for s in common):
             raise NotImplementedError(
                 f"_stage_index_via_tileops: arithmetic gather index {begin_str!r} over a partially-"
                 f"collapsed index tile {common}; tile-op arithmetic carries integer widths and cannot "

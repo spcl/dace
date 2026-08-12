@@ -196,20 +196,13 @@ def resolve_gather_deps(idx_shape, widths):
     :returns: Sorted tuple of tile dim indices, ``()`` for the scalar case,
         or ``None`` when the shape cannot be reconciled with ``widths``.
     """
-    import sympy
     import dace
-    from dace.symbolic import ONE
-
-    def _is_one(s):
-        """True only for the :data:`ONE` broadcast marker -- NOT a literal ``1``.
-
-        ``ONE`` is the deliberate broadcast / collapsed-dim marker; a literal
-        ``1`` extent means a genuine width-1 tile dim (a real dependency). The
-        two must stay distinct here -- that disambiguation (broadcast vs a
-        coincidental width-1 dep) is the whole reason ``ONE`` is a symbol and
-        not just ``1`` (user 2026-06-14), and it is what keeps the index-tile
-        rank aligned with the data tile (cuTile-faithful broadcast dims)."""
-        return isinstance(s, sympy.Basic) and ONE in s.free_symbols
+    # ``has_one_marker`` is True only for the ONE broadcast marker -- NOT a literal ``1``. A
+    # literal ``1`` extent means a genuine width-1 tile dim (a real dependency). The two must
+    # stay distinct here -- that disambiguation (broadcast vs a coincidental width-1 dep) is the
+    # whole reason ONE is a symbol and not just ``1`` (user 2026-06-14), and it is what keeps the
+    # index-tile rank aligned with the data tile (cuTile-faithful broadcast dims).
+    from dace.symbolic import has_one_marker
 
     def _extent_eq(a, b):
         """Symbolic-safe extent equality."""
@@ -231,7 +224,7 @@ def resolve_gather_deps(idx_shape, widths):
         return None
     deps = []
     for d in range(K):
-        if _is_one(idx_shape[d]):
+        if has_one_marker(idx_shape[d]):
             continue  # broadcast dim -- not a dependency
         if not _extent_eq(idx_shape[d], widths[d]):
             return None  # non-marker extent disagrees with the tile width

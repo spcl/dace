@@ -13,7 +13,6 @@ import re
 import dace
 from dace.config import set_temporary
 
-
 #: The array extent inside a ``new`` expression. The legacy CPU codegen prints the literal (``[2]``),
 #: the experimental readable one a generated size helper (``[tmp_size()]``). The alignment contract
 #: under test is the same either way, so match both rather than pinning one code generator.

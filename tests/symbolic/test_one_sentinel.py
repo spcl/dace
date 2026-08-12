@@ -40,6 +40,23 @@ def test_shape_with_one_preserves_symbol():
     assert ONE not in shape[2].free_symbols
 
 
+def test_one_marker_survives_storage_in_an_sdfg():
+    """Storing a ``(W, ONE)`` shape in an SDFG strips the sentinel's assumptions
+    (``absorb_symbol_assumptions`` makes stored symbols BARE), so sympy object
+    identity no longer holds -- :func:`dace.symbolic.has_one_marker` must still
+    recognise the marker, and ``collapse_one_dims`` must still drop it."""
+    sdfg = dace.SDFG("one_marker_absorbed")
+    sdfg.add_array("Idx", (4, ONE), dace.int64, transient=True)
+    stored = tuple(sdfg.arrays["Idx"].shape)
+
+    assert ONE not in stored[1].free_symbols, "expected the stored symbol to be bare (no assumptions)"
+    assert stored[1].name == "ONE"
+    assert dace.symbolic.has_one_marker(stored[1])
+    assert not dace.symbolic.has_one_marker(stored[0])
+    assert dace.symbolic.collapse_one_dims(stored, treat_one_symbol_as_one=True) == (4, )
+    assert dace.symbolic.collapse_one_dims(stored) == stored
+
+
 def test_sympy_arithmetic_preserves_one():
     """``ONE`` survives ``Mul`` / ``Add`` / ``simplify`` -- it never
     collapses to literal 1."""
@@ -121,7 +138,6 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
     accidentally leaked the broadcast marker outside its intended scope.
     """
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-    from dace.symbolic import ONE
 
     N = dace.symbol("N_GATHER_AUDIT")
 
@@ -138,7 +154,7 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
         for name, desc in sd.arrays.items():
             if not isinstance(desc, dace.data.Array):
                 continue
-            shape_has_one = any(isinstance(s, sympy.Basic) and ONE in s.free_symbols for s in desc.shape)
+            shape_has_one = any(dace.symbolic.has_one_marker(s) for s in desc.shape)
             if shape_has_one and not name.startswith("_idx_"):
                 offenders.append(f"{sd.name}::{name} shape={tuple(desc.shape)}")
     assert not offenders, ("ONE found on non-gather descriptors (should appear only on _idx_<d> "

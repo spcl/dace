@@ -29,8 +29,6 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
     :param widths: Per-tile-dim widths, innermost-last.
     :returns: True iff ``desc`` is a tile or broadcast-tile of rank ``len(widths)``.
     """
-    import sympy
-    from dace.symbolic import ONE
     if not isinstance(desc, dace.data.Array):
         return False
     shape = tuple(desc.shape)
@@ -42,7 +40,7 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
             is_w = bool(dace.symbolic.simplify(s - w) == 0)
         except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
             is_w = (s == w)
-        is_one_marker = isinstance(s, sympy.Basic) and ONE in s.free_symbols
+        is_one_marker = dace.symbolic.has_one_marker(s)
         try:
             is_lit_one = bool(dace.symbolic.simplify(s - 1) == 0)
         except Exception:  # noqa: BLE001
