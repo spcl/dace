@@ -414,7 +414,7 @@ def scalar_read_expression(access: DataAccess) -> Optional[str]:
 
 def substitute_symbolic_scalars(subset, context):
     """
-    Put back the symbolic VALUE of any ANF temporary a subset references.
+    Put back the symbolic VALUE of any materialized scalar a subset references.
 
     Canonicalization hoists a compound index expression into a temporary
     (``O[i * 96:(i + 1) * 96]`` becomes ``__anf0 = i + 1; O[i * 96:__anf0 *
@@ -423,10 +423,16 @@ def substitute_symbolic_scalars(subset, context):
     index, which inside a dataflow scope is refused outright, and even outside
     one it keeps sizes like ``__anf0 * 96 - i * 96`` from folding to 96.
 
-    The temporaries that hold a compile-time symbolic value record it
-    (``ProgramContext.symbolic_scalar_values``, written for single-assignment
-    ANF temps precisely so the value survives materialization), so substituting
-    it back recovers the expression the source wrote.
+    A source name the program indexes with (``jC = i * C2 + j`` … ``C[jC]``)
+    reaches the same place from the other direction: without its value the
+    subscript becomes an indirection through a scalar connector, which is both
+    slower and opaque to the map transformations.
+
+    The scalars that hold a compile-time symbolic value record it
+    (``ProgramContext.symbolic_scalar_values``, written for ANF temps and for
+    the source names ``foldable_scalar_names`` clears, precisely so the value
+    survives materialization), so substituting it back recovers the expression
+    the source wrote.
     """
     if not context.symbolic_scalar_values:
         return subset
@@ -561,6 +567,12 @@ def scalar_data_reads(expression: ast.expr, state: LoweringState) -> List[ast.ex
                 return False
             access = resolve_access(node, state)  # UnsupportedFeatureError propagates (nested indirection)
             if access is None or not access.is_scalar_access:
+                return False
+            if access.container in state.context.symbolic_scalar_values:
+                # A scalar that also carries a compile-time symbolic value is
+                # not a data read: ``substitute_symbolic_scalars`` puts the
+                # value back into the subset, so the index is symbol-side and
+                # needs neither an indirection connector nor a defined symbol.
                 return False
             key = astutils.unparse(node)
             if key not in seen:

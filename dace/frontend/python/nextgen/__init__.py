@@ -22,7 +22,7 @@ from dace.frontend.python.nextgen.lowering.mechanisms.return_elision import elid
 from dace.frontend.python.nextgen.lowering.parse_cache import warm_nested_parses
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
-from dace.frontend.python.nextgen.semantics.context import ProgramContext
+from dace.frontend.python.nextgen.semantics.context import ProgramContext, foldable_scalar_names
 from dace.frontend.python.nextgen.verify import verify_tree
 
 # Importing the rule modules registers all lowering rules.
@@ -72,6 +72,7 @@ def build_schedule_tree(name: str,
 
     # Stage 2: semantic context (single repository, shared with the tree root)
     context = ProgramContext(name, parsed_ast.filename, argtypes, parsed_ast.program_globals, constants or {})
+    context.foldable_scalar_names = foldable_scalar_names(program.body)
     context.callback_callables.update({
         name: interpreter_callable(function)
         for name, function in (callbacks or {}).items()

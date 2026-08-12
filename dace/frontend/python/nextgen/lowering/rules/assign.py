@@ -411,9 +411,12 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
         return
 
     target_access = prepare_name_target(target, inferred, state, statement)
-    # Compile-time values of ANF temporaries stay visible to inference (e.g. as
-    # computed shape arguments) alongside the materialized scalar. ANF temps are
-    # single-assignment, so the recorded value cannot go stale.
+    # Compile-time values stay visible to inference (e.g. as computed shape
+    # arguments) alongside the materialized scalar, and let a subset carry the
+    # arithmetic rather than reading the scalar back through an indirection
+    # (``jC = i * C2 + j`` … ``C[jC]``). ANF temps are single-assignment, so a
+    # recorded value cannot go stale; a source name has to earn the same
+    # guarantee from ``foldable_scalar_names``.
     #
     # Both a symbolic expression and a plain integer count, and the integer case
     # matters: hoisting ``numpy.zeros((a.shape[0], ...))`` leaves the STATIC
@@ -423,7 +426,7 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
     # a size the program computes, but for a static one it would needlessly turn
     # a shape the caller can evaluate into one it cannot. A temporary whose
     # value is neither is promoted at the consuming call instead.
-    if target.id.startswith('__anf'):
+    if target.id.startswith('__anf') or target.id in state.context.foldable_scalar_names:
         value_of_temporary = _compile_time_scalar_value(inferred)
         if value_of_temporary is not None:
             state.context.symbolic_scalar_values[target_access.container] = value_of_temporary

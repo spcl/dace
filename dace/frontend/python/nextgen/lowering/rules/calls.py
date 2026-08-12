@@ -159,7 +159,7 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     scope = tn.FunctionCallScope(call=tn.FrontendFunctionCall(callee_name=callee.name, arguments=argument_labels),
                                  children=[])
     with state.context.inline_scope(callee.f, parameter_bindings, callee_globals, return_prefix,
-                                    _annotated_return_dtype(callee)) as return_names:
+                                    _annotated_return_dtype(callee), callee_body) as return_names:
         with state.emitter.scope(scope):
             state.lower_body(callee_body)
         _strip_tail_returns(scope)  # Tail returns fall off the scope end

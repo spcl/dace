@@ -59,6 +59,63 @@ class Binding:
     declared: bool = False
 
 
+def foldable_scalar_names(body: List[ast.stmt]) -> Set[str]:
+    """
+    The source-level names of a canonical body whose compile-time value may be
+    recorded alongside the scalar container they materialize into.
+
+    Recording a value is only sound while it cannot go stale, which needs two
+    properties that a plain ``name = <symbolic expression>`` does not have on
+    its own -- ANF temporaries have both by construction, source names have to
+    be checked:
+
+    - the name is assigned exactly ONCE, so no later assignment can invalidate
+      the recorded expression. A loop-carried ``x = x + 1`` is the case that
+      matters: the loop body is lowered once, so a value recorded from ``x =
+      0`` would be substituted into every iteration's reads;
+    - every read sits inside the block holding the assignment, so an expression
+      over a loop or map parameter cannot outlive the scope that defines the
+      parameter (``for i in ...: y = i * 2`` with ``y`` read after the loop).
+
+    :param body: The canonical statements to analyze.
+    :return: The set of names that satisfy both properties.
+    """
+    assignment_blocks: Dict[str, Tuple[int, ...]] = {}
+    reassigned: Set[str] = set()
+    read_blocks: Dict[str, List[Tuple[int, ...]]] = {}
+
+    def record(node: ast.AST, block: Tuple[int, ...]) -> None:
+        for descendant in ast.walk(node):
+            if not isinstance(descendant, ast.Name):
+                continue
+            if isinstance(descendant.ctx, ast.Load):
+                read_blocks.setdefault(descendant.id, []).append(block)
+            elif descendant.id in assignment_blocks:
+                reassigned.add(descendant.id)
+            else:
+                assignment_blocks[descendant.id] = block
+
+    def visit(statements: List[ast.stmt], block: Tuple[int, ...]) -> None:
+        for statement in statements:
+            for _, value in ast.iter_fields(statement):
+                if isinstance(value, list) and any(isinstance(item, ast.stmt) for item in value):
+                    visit([item for item in value if isinstance(item, ast.stmt)], block + (id(statement), ))
+                elif isinstance(value, ast.AST):
+                    record(value, block)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            record(item, block)
+
+    visit(body, ())
+    return {
+        name
+        for name, assigned_in in assignment_blocks.items()
+        if name not in reassigned and all(read_in[:len(assigned_in)] == assigned_in
+                                          for read_in in read_blocks.get(name, ()))
+    }
+
+
 class ProgramContext:
     """
     Mutable semantic state shared by all lowering rules.
@@ -175,13 +232,19 @@ class ProgramContext:
         #: object (member resolution clones by contract).
         self._member_descriptors: Dict[str, data.Data] = {}
 
-        #: Compile-time symbolic values of materialized single-assignment ANF
-        #: scalar temporaries, keyed by repository container name. Lets
-        #: registry-call arguments (e.g. computed symbolic shapes) pass the
-        #: symbolic expression by value instead of rejecting the data
-        #: container. Only ANF temps are recorded: they are written exactly
-        #: once and used immediately, so the alias can never go stale.
+        #: Compile-time symbolic values of materialized scalars, keyed by
+        #: repository container name. Lets registry-call arguments (e.g.
+        #: computed symbolic shapes) pass the symbolic expression by value
+        #: instead of rejecting the data container, and lets a subset carry the
+        #: arithmetic instead of an indirection. Recorded for ANF temps (which
+        #: are written exactly once and used immediately) and for the source
+        #: names :func:`foldable_scalar_names` clears.
         self.symbolic_scalar_values: Dict[str, Any] = {}
+
+        #: Source-level names whose compile-time value may be recorded in
+        #: :attr:`symbolic_scalar_values`, for the body currently being lowered
+        #: (see :func:`foldable_scalar_names`).
+        self.foldable_scalar_names: Set[str] = set()
 
         #: Containers holding an opaque HANDLE a registry replacement produced
         #: (an MPI subarray from ``dace.comm.Subarray``, a redistribution from
@@ -445,7 +508,8 @@ class ProgramContext:
                      parameter_bindings: Dict[str, str],
                      callee_globals: Dict[str, Any],
                      return_prefix: str,
-                     return_dtype: Optional[dtypes.typeclass] = None) -> Iterator[List[str]]:
+                     return_dtype: Optional[dtypes.typeclass] = None,
+                     body: Optional[List[ast.stmt]] = None) -> Iterator[List[str]]:
         """
         Establish a fresh binding scope for lowering an inlined callee into
         the shared repository. Saves and restores the caller's bindings,
@@ -460,11 +524,13 @@ class ProgramContext:
         :param return_prefix: Prefix for materialized callee return containers.
         :param return_dtype: Element type declared by the callee's return
                              annotation, if it has one.
+        :param body: The callee's canonical body, analyzed for the names whose
+                     compile-time value may be recorded.
         :yield: The callee's ``return_names`` list, populated as return
                 statements are lowered (read it before the scope exits).
         """
         saved = (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-                 self.return_names, self.expression_sources, self.return_dtype)
+                 self.return_names, self.expression_sources, self.return_dtype, self.foldable_scalar_names)
         self.inline_stack.append(function)
         # A callee was canonicalized by its own pipeline run, whose temporary
         # names restart from zero: the caller's map would answer a callee's
@@ -481,12 +547,13 @@ class ProgramContext:
         self.return_prefix = return_prefix
         self.return_names = []
         self.return_dtype = return_dtype
+        self.foldable_scalar_names = foldable_scalar_names(body) if body is not None else set()
         try:
             yield self.return_names
         finally:
             self.inline_stack.pop()
             (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-             self.return_names, self.expression_sources, self.return_dtype) = saved
+             self.return_names, self.expression_sources, self.return_dtype, self.foldable_scalar_names) = saved
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""
