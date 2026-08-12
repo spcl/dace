@@ -130,13 +130,16 @@ def cuda_emits_tree_reductions() -> bool:
     return emits_tree_reductions(config.Config.get('compiler', 'cuda', 'implementation') == 'experimental')
 
 
-@lru_cache()
 def get_gpu_backend() -> str:
     """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.
 
     If automatic, will perform a series of checks to see if an NVIDIA device exists,
     then if an AMD device exists, or fail. Note that the automatically detected case
     will never be revisited.
+
+    NOT cached as a whole: that would freeze the first answer, so a later
+    ``set_temporary('compiler', 'cuda', 'backend', ...)`` could never take effect. Only the
+    probing is expensive, and it carries its own cache.
     """
     backend: str = config.Config.get('compiler', 'cuda', 'backend')
     if backend and backend != 'auto':
