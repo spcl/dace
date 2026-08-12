@@ -2988,6 +2988,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
     def remove_node(self, node: ControlFlowBlock):
         # The region owns this invariant, so callers never have to re-pin the start block by hand.
+        # PR #2493 re-resolves an INDEX around the removal; here `_start_block` holds the block
+        # itself, so a removal cannot leave it pointing at a different block -- clearing by
+        # identity is the whole fix.
         if node is self._start_block:
             self._start_block = None
         if node is self._cached_start_block:

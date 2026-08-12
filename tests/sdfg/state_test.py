@@ -3,6 +3,7 @@ from copy import deepcopy
 import dace
 from dace import subsets as sbs
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ControlFlowRegion
 
 
 def test_read_write_set():
@@ -290,6 +291,44 @@ def test_find_downstream_nodes_bloking():
     assert found == {mx, tlet}
 
 
+def _make_ambiguous_start_region():
+    """A region whose start block is only resolvable through `_start_block`.
+
+    The two blocks are unconnected, so `source_nodes()` is ambiguous and the explicitly
+    set start block is the only thing that disambiguates it.
+    """
+    sdfg = dace.SDFG('cfg_start_block')
+    cfg = ControlFlowRegion('cfg', sdfg)
+    sdfg.add_node(cfg, is_start_block=True)
+    other = cfg.add_state('other')
+    start = cfg.add_state('start', is_start_block=True)
+    assert cfg.start_block is start
+    return cfg, other, start
+
+
+def test_start_block_survives_removal_of_another_block():
+    cfg, other, start = _make_ambiguous_start_region()
+
+    cfg.remove_node(other)
+
+    assert cfg.start_block is start
+    assert cfg._start_block is None or cfg._start_block in cfg.nodes()
+    # The serialized index used to be left at 1 while only one block remained, which put a stale,
+    # out-of-range `start_block` into the SDFG and changed its hash. Asserted on the JSON rather
+    # than on `_start_block`, which holds the block itself here and an index on `main`.
+    serialized_start = cfg.to_json(parent=cfg.parent_graph).get('start_block')
+    assert serialized_start is None or serialized_start < cfg.number_of_nodes()
+
+
+def test_start_block_reset_when_start_block_removed():
+    cfg, other, start = _make_ambiguous_start_region()
+
+    cfg.remove_node(start)
+
+    assert cfg._start_block is None
+    assert cfg.start_block is other
+
+
 if __name__ == '__main__':
     test_read_and_write_set_selection()
     test_read_and_write_set_filter()
@@ -298,3 +337,9 @@ if __name__ == '__main__':
     test_read_and_write_set_names()
     test_deepcopy_state()
     test_add_mapped_tasklet()
+    test_find_upstream_nodes()
+    test_find_upstream_nodes_bloking()
+    test_find_downstream_nodes()
+    test_find_downstream_nodes_bloking()
+    test_start_block_survives_removal_of_another_block()
+    test_start_block_reset_when_start_block_removed()
