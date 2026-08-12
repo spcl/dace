@@ -36,9 +36,10 @@ from typing import BinaryIO
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
-#: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
-#: which is optional and initializes MPI. All are job-unique; node-local counters are not.
-LAUNCHER_RANK_VARS = (
+#: How an MPI launcher tells a rank its rank, most specific first. Read instead of importing
+#: mpi4py, which is optional and initializes MPI. All are job-unique; node-local counters are not.
+#: Only these mean "this process is a rank of an MPI job" -- a Slurm task is not.
+MPI_RANK_VARS = (
     'OMPI_COMM_WORLD_RANK',  # Open MPI and the vendor MPIs built on it
     'MV2_COMM_WORLD_RANK',  # MVAPICH2
     'PMIX_RANK',  # Open MPI 4+, Slurm pmix
@@ -47,8 +48,11 @@ LAUNCHER_RANK_VARS = (
     'FLUX_TASK_RANK',  # Flux
     'PALS_RANKID',  # HPE/Cray PALS
     'ALPS_APP_PE',  # Cray ALPS
-    'SLURM_PROCID',  # srun with no MPI
 )
+
+#: How any launcher tells a task its rank. Adds the Slurm task id, which srun sets whether or not
+#: the step runs MPI at all -- enough to name a build folder, not enough to call MPI_Init on.
+LAUNCHER_RANK_VARS = MPI_RANK_VARS + ('SLURM_PROCID', )  # srun with no MPI
 
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport

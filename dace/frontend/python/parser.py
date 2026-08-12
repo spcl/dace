@@ -24,6 +24,11 @@ try:
     from dace.sdfg.utils import distributed_compile
 except ImportError:
     mpi4py = None
+else:
+    # Settle MPI bring-up here, once, rather than at the first communicator call: under a launcher
+    # a process that skipped mpi4py's automatic MPI_Init aborts the whole job the moment anything
+    # touches a communicator, with no Python traceback to say why.
+    preprocessing.ensure_mpi_initialized()
 
 ArgTypes = Dict[str, Data]
 

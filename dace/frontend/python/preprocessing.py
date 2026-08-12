@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import atexit
 import collections
 import copy
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ import functools
 import inspect
 import numbers
 import numpy
+import os
 import re
 import sympy
 import warnings
@@ -16,6 +18,7 @@ import dace
 from dace import data, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
+from dace.sdfg.sdfg import MPI_RANK_VARS
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
@@ -1540,13 +1543,54 @@ def mpi4py_is_usable() -> bool:
     fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
     same thing to DaCe -- there is no MPI -- so both answer False here.
 
-    Importing the submodule does not initialize MPI, so this stays side-effect-free on the parse path.
+    Importing the submodule also runs ``MPI_Init`` unless ``mpi4py.rc`` says otherwise, which is why
+    ``ensure_mpi_initialized`` runs at import: on the parse path that bring-up must already be settled.
     """
     try:
         from mpi4py import MPI  # noqa: F401
     except Exception:  # noqa: BLE001 -- any failure to reach MPI means it is unavailable
         return False
     return True
+
+
+def ensure_mpi_initialized() -> None:
+    """Bring MPI up when a launcher started this process but mpi4py was told not to.
+
+    ``from mpi4py import MPI`` calls ``MPI_Init`` on import; ``MPI4PY_RC_INITIALIZE=0`` turns that
+    off, and callers export it to keep an unlaunched parse from bootstrapping a singleton MPI job,
+    whose bring-up stalls on a wedged transport and hangs the whole run. The switch is
+    process-global and one-way: nothing initializes MPI afterwards, so the first communicator call
+    -- dace's own, or the caller's -- aborts the entire job with ``MPI_Comm_rank() was called
+    before MPI_INIT`` and no Python traceback. One process setting it in a long-lived interpreter
+    therefore kills every later MPI user in it.
+
+    Under an MPI launcher the process IS a rank of a job, so that switch cannot be what the caller
+    meant, and MPI_Init is the thing the launcher already prepared. The launcher check comes first
+    because it is a dict lookup, while reaching MPI at all costs a ``dlopen`` of ``libmpi``.
+
+    ``mpi4py.rc`` is not the state to test: the environment switch is read inside the ``MPI``
+    submodule as it loads, never mirrored back into ``rc``, so ``rc.initialize`` stays True while
+    MPI is left down. Only ``MPI_Initialized`` knows.
+    """
+    if not any(os.environ.get(var) for var in MPI_RANK_VARS):
+        return  # no launcher: honour the switch, a singleton bring-up is what it guards against
+    try:
+        from mpi4py import MPI
+    except Exception:  # noqa: BLE001 -- as in mpi4py_is_usable: no reachable MPI, nothing to bring up
+        return
+    if not MPI.Is_initialized():
+        MPI.Init()
+        atexit.register(finalize_mpi, MPI)
+
+
+def finalize_mpi(MPI) -> None:
+    """Close the MPI session ``ensure_mpi_initialized`` opened.
+
+    mpi4py finalizes only what it initialized itself, so an ``MPI_Init`` made here has no owner and
+    the job would end with MPI still up -- which Open MPI reports as an error from every rank.
+    """
+    if MPI.Is_initialized() and not MPI.Is_finalized():
+        MPI.Finalize()
 
 
 class MPIResolver(ast.NodeTransformer):
