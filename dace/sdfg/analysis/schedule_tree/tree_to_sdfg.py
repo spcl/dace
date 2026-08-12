@@ -1776,9 +1776,33 @@ def from_schedule_tree(
     # collides is a property of the graph, not of the syntax that produced it.
     ResolveWriteConflicts().apply_pass(result, {})
 
-    propagation.propagate_memlets_sdfg(result)
+    _propagate_scopes(result)
 
     return result
+
+
+def _propagate_scopes(sdfg: SDFG) -> None:
+    """
+    Widen the per-iteration subsets of every map scope in the finished SDFG.
+
+    Deliberately not ``propagate_memlets_sdfg``: that also recomputes each
+    nested SDFG's OUTER memlets from its inner accesses, which is wrong for a
+    nested SDFG that reinterprets its operand's shape through strides. A
+    library-node expansion is exactly that -- an einsum whose output is
+    transposed reads a ``(2, 3)`` array through a ``(3, 2)`` connector -- and
+    the recomputed outer memlet came out as ``b[0:3, 0:2]``, out of bounds on
+    the array it reads. Every connector memlet here was written either by this
+    conversion or by the expansion that built the nested SDFG, so there is
+    nothing to recompute. The stable frontend does not do it either: it
+    propagates each scope as it builds it.
+
+    :param sdfg: The SDFG to propagate in, in place.
+    """
+    propagation.reset_state_annotations(sdfg)
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            propagation.propagate_memlets_scope(nested, state, state.scope_leaves())
+    propagation.propagate_states(sdfg)
 
 
 def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
