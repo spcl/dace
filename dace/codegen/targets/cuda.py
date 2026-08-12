@@ -264,6 +264,11 @@ class CUDACodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
+        # Deliberately declared WITHOUT an initializer: CompiledSDFG.get_state_struct() recovers
+        # the layout by parsing these declarations, and its field regex is anchored at the end of
+        # the declaration, so a `= nullptr` suffix stops the parse dead and silently drops every
+        # field after this one. The pointer is zeroed by value-initializing the whole state
+        # (`new T()` in framecode) instead, which DACE_GPU_CHECK relies on.
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # Collect all defined symbols and argument lists with one traversal
@@ -405,9 +410,9 @@ class CUDACodeGen(TargetCodeGenerator):
             poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
             pool_header = """
     {backend}MemPool_t mempool;
-    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
     uint64_t threshold = {poolcfg_threshold};
-    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
@@ -419,6 +424,7 @@ class CUDACodeGen(TargetCodeGenerator):
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -440,14 +446,38 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // One GPU per process, chosen here and never changed. compiler.cuda.device, -1 meaning the
+    // device this process is already on.
+    int __dace_device = {configured_device};
+    if (__dace_device < 0 && {backend}GetDevice(&__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: no current {backend} device for this thread\\n");
+        return 3;
+    }}
+    if (__dace_device < 0 || __dace_device >= count)
+    {{
+        printf("ERROR: {backend} device %d requested, but this process can see %d device(s)\\n",
+               __dace_device, count);
+        return 3;
+    }}
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device %d\\n", __dace_device);
+        return 4;
+    }}
+
+    __dace_gpu_drain_error(__state);
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+    __state->gpu_context->device = __dace_device;
+
+    // After the context exists: DACE_GPU_CHECK records into it.
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -483,9 +513,20 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
-// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
-// code recorded instead, and clear it so a failure is delivered exactly once.
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
+}}
+
+// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
 int __dace_gpu_last_error({sdfg_state_name} *__state) {{
     int __err = static_cast<int>(__state->gpu_context->lasterror);
     __state->gpu_context->lasterror = (gpuError_t)0;
@@ -521,6 +562,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
+           configured_device=int(Config.get('compiler', 'cuda', 'device')),
            sdfg=self._global_sdfg)
 
         return [self._codeobject]
@@ -1212,7 +1254,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
-                            callsite_stream.write('DACE_GPU_CHECK_RETURN({backend}Malloc(&{dst}[__idx].{fname}, '
+                            callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
                                                   '{sz}));'.format(dst=str(dst_node),
                                                                    fname=field_name,
                                                                    sz=size,

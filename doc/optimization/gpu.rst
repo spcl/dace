@@ -124,6 +124,13 @@ The number of GPU streams can be controlled with the :envvar:`compiler.cuda.max_
 It is set to zero by default, which does not limit streams. If set to ``-1``, no streams will be created (the default
 stream will be used). This is sometimes preferable for performance.
 
+**One process, one GPU**: the device is selected once in ``__dace_init_cuda`` and never changed;
+the memory pool and every library handle use that one. :envvar:`compiler.cuda.device` sets it, and
+``-1`` (the default) keeps whichever device the process is already on -- one rank per GPU via
+``CUDA_VISIBLE_DEVICES``. An explicit ordinal is compiled in, so a build shared between ranks would
+send them all to one GPU. To use several GPUs, run several processes; placing individual library
+nodes with ``location['gpu']`` is rejected.
+
 .. _amd:
 
 Using AMD GPUs

@@ -1490,10 +1490,9 @@ def gpu_alloc_check(call: str, nodedesc: data.Data) -> str:
     :param nodedesc: Descriptor of the data being allocated.
     :return: A C++ statement, newline-terminated.
     """
-    # Persistent allocations are emitted into ``__dace_init_<name>``, which hands back the state pointer.
-    if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-        return f'DACE_GPU_CHECK_RETURN_VAL({call}, nullptr);\n'
-    return f'DACE_GPU_CHECK_RETURN({call});\n'
+    # PR #2489 keeps a single DACE_GPU_CHECK, which records the error and carries on rather than
+    # returning early; the _RETURN/_RETURN_VAL variants this used to emit no longer exist.
+    return f'DACE_GPU_CHECK({call});\n'
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
