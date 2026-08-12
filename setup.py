@@ -100,7 +100,7 @@ setup(
             'pytest-timeout', 'transformers == 4.50', 'jax <= 0.6.2', 'efficientnet_pytorch'
         ],
         'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
-        'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
+        'linting': ['pre-commit==4.1.0', 'yapf==0.43.0', 'ruff==0.15.5'],
         'fastgraph': ['rustworkx'],
     },
     entry_points={
