@@ -575,7 +575,8 @@ def test_state_fusion_pins_the_region_entry_the_region_cannot_derive():
     StateFusion.apply_to(sdfg, first_state=entry, second_state=worker, verify=False, save=False, annotate=False)
     assert sdfg.number_of_nodes() == 2
     assert len(sdfg.source_nodes()) == 2, 'the island must keep the entry underivable'
-    assert sdfg._start_block is worker, 'an underivable region entry must be pinned to the survivor'
+    assert sdfg._start_block is not None, 'an underivable region entry must be pinned to the survivor'
+    assert sdfg.node(sdfg._start_block) is worker, 'the pin must name the survivor, not the removed entry'
     assert sdfg.start_block is worker
 
 

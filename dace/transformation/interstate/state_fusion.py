@@ -45,7 +45,9 @@ def is_start_block(graph, block) -> bool:
     sources = graph.source_nodes()
     if len(sources) == 1:
         return sources[0] is block
-    return graph._start_block is block
+    # ``_start_block`` is an INDEX into the node list, not the block: comparing it to a block is
+    # always False, which silently reports "not the entry" and skips the re-pin below.
+    return graph._start_block is not None and graph.node(graph._start_block) is block
 
 
 def keep_start_block(graph, block) -> None:

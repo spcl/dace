@@ -822,7 +822,10 @@ class SDFG(ControlFlowRegion):
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if json_obj.get('start_block') is not None:
-            ret._start_block = nodelist[int(json_obj['start_block'])]
+            # An INDEX into the node list, which is what ``to_json`` wrote and what the getter
+            # resolves through ``self.node()``. Storing the block here instead makes every read of
+            # a pinned entry raise on a deserialized SDFG.
+            ret._start_block = int(json_obj['start_block'])
 
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
