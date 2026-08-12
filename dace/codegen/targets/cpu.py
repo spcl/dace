@@ -10,6 +10,7 @@ import warnings
 import numpy as np
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
+from dace.config import set_temporary
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
