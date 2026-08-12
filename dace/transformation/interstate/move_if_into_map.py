@@ -444,6 +444,11 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             arrays_to_pipe |= self._rewrite_inner_sdfg(cond_block, branch_cond, enclosing_sdfg, inner_nsdfg,
                                                        cond_free_syms, moved_assignments)
 
+        # Ask BEFORE the add: a derivable entry is left implicit, and ``add_node`` attaches
+        # ``new_branch_state`` unwired, so until the rewiring lands the region has two source
+        # blocks and the getter raises.
+        was_start = enclosing_sdfg.start_block is cond_block
+
         new_branch_state = copy.deepcopy(branch_state)
         enclosing_sdfg.add_node(new_branch_state, ensure_unique_name=True)
 
@@ -469,7 +474,6 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                                               mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
 
         out_edges = list(enclosing_sdfg.out_edges(cond_block))
-        was_start = enclosing_sdfg.start_block is cond_block
 
         # Wire in_edges to new_branch_state. If an edge has been emptied
         # by the moved-inside step (no assignments, no condition), drop it
@@ -491,9 +495,8 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         enclosing_sdfg.remove_node(cond_block)
 
-        # Repoint the start AFTER the removal: ``start_block`` is stored as a
-        # node index, and removing a node renumbers the ones after it -- so
-        # assigning it first would leave the index dangling.
+        # Repoint the start AFTER the removal, so the pin cannot name a block that is about to
+        # go away.
         if was_start or not in_edges:
             enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)
 
