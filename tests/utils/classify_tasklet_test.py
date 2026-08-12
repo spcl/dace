@@ -8,6 +8,17 @@ import dace.sdfg.tasklet_utils as tutil
 # crossed with the operand-type axis -- every op below is the only one covering its lookup-table entry
 # (`_BINOP_SYMBOLS` / `_CMP_SYMBOLS` / `_UNARY_SYMBOLS` / call name). Non-commutative ops are preferred
 # so the `_reorder_rhs` ordering stays asserted. Do not re-add commuted duplicates of an existing shape.
+#: Slots `classify_tasklet` always returns but only the 3-operand ternary (ITE) fills. Merged under
+#: each case below so a 1-/2-operand entry states only what it exercises; equality stays EXACT, so a
+#: classifier that wrongly populates one of these still fails, as does one that grows a new key.
+TERNARY_SLOTS = {
+    "rhs3": None,
+    "constant3": None,
+    "cond": None,
+    "then_arm": None,
+    "else_arm": None,
+}
+
 tasklet_infos = [
     # === ARRAY + SYMBOL === constant comes from the free-symbol path
     ("out = in_a - sym_b", "array", {"a"}, {}, {"sym_b"}, {
@@ -334,6 +345,23 @@ tasklet_infos = [
         "op": ">",
         "constant1": "i",
         "constant2": None
+    }),
+
+    # === TERNARY (ITE) === the only shape filling rhs3/cond/then_arm/else_arm. The operand slots
+    # and the semantic ones alias the same three connectors, in argument order.
+    ("out = ITE(in_c, in_a, in_b)", "array", {"a", "b", "c"}, {}, {}, {
+        "type": tutil.TaskletType.TERNARY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_c",
+        "rhs2": "in_a",
+        "rhs3": "in_b",
+        "op": "ITE",
+        "constant1": None,
+        "constant2": None,
+        "constant3": None,
+        "cond": "in_c",
+        "then_arm": "in_a",
+        "else_arm": "in_b"
     })
 ]
 
@@ -388,10 +416,11 @@ def test_single_tasklet_split(tasklet_info):
     tasklet, state = tasklets.pop()
 
     tasklet_info_dict = tutil.classify_tasklet(state=state, node=tasklet)
-    print(desired_tasklet_info)
+    expected = {**TERNARY_SLOTS, **desired_tasklet_info}
+    print(expected)
     print(tasklet_info_dict)
 
-    assert desired_tasklet_info == tasklet_info_dict, f"Expected: {desired_tasklet_info}, Got: {tasklet_info_dict}"
+    assert expected == tasklet_info_dict, f"Expected: {expected}, Got: {tasklet_info_dict}"
 
 
 if __name__ == "__main__":

@@ -259,12 +259,23 @@ _CORPUS_FILES = (
     'test_corpus_equivalence.py',
 )
 
+#: Canonicalization fixed-point suites. They re-canonicalize an already-canonical SDFG and assert
+#: nothing moved -- a stricter property than correctness, and one the pipeline does not hold yet.
+#: Marked ON TOP of ``canonicalization`` (not instead of it) so the workflow can deselect them with
+#: ``not idempotence`` while they stay selectable on their own.
+_IDEMPOTENCE_FILES = (
+    'canonicalize_idempotence_corpus_test.py',
+    'pass_idempotence_test.py',
+)
+
 
 def pytest_collection_modifyitems(config, items):
     """Mark the vectorization / canonicalization suites by path, then auto-skip tests marked
     old_gpu_codegen_only / new_gpu_codegen_only per ``compiler.cuda.implementation``."""
     for item in items:
         path = str(getattr(item, 'fspath', ''))
+        if os.path.basename(path) in _IDEMPOTENCE_FILES:
+            item.add_marker(pytest.mark.idempotence)
         for prefix, mark in _SUITE_DIRS:
             if prefix in path:
                 item.add_marker(getattr(pytest.mark, mark))

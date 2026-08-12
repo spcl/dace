@@ -16,6 +16,8 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -31,8 +33,13 @@ def _nloops(sdfg):
 
 
 def _run(prog, inputs, n):
+    # Every test here names its kernel ``k``, so ``prog.name`` alone builds every
+    # SDFG into the same cache=name folder and parallel workers clobber each
+    # other's .so. Key the name on the calling test plus the size instead.
+    tag = f"{inspect.currentframe().f_back.f_code.co_name}_{n}"
+
     ref = prog.to_sdfg(simplify=True)
-    ref.name = prog.name + "_ref"
+    ref.name = tag + "_ref"
     ref_bufs = {k: v.copy() for k, v in inputs.items()}
     ref(**ref_bufs, N=n)
 
@@ -40,7 +47,7 @@ def _run(prog, inputs, n):
     before = _nloops(sd)
     applied = LoopFusion().apply_pass(sd, {}) or 0
     after = _nloops(sd)
-    sd.name = prog.name + "_fused"
+    sd.name = tag + "_fused"
     fus_bufs = {k: v.copy() for k, v in inputs.items()}
     sd(**fus_bufs, N=n)
 
