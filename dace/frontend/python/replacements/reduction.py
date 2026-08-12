@@ -12,7 +12,7 @@ from dace import data, dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 import copy
 import functools
 from numbers import Integral, Number
-from typing import Any, Dict, Callable, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 
@@ -156,19 +156,17 @@ def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, in
 @oprepo.replaces_method('Array', 'max')
 @oprepo.replaces_method('Scalar', 'max')
 @oprepo.replaces_method('View', 'max')
-def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis=None, **kwargs) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'maximum', [arr], kwargs)[0]
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'maximum', [arr], dict(axis=axis, **kwargs))[0]
 
 
 @oprepo.replaces_method('Array', 'min')
 @oprepo.replaces_method('Scalar', 'min')
 @oprepo.replaces_method('View', 'min')
-def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis=None, **kwargs) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr], kwargs)[0]
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr], dict(axis=axis, **kwargs))[0]
 
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
