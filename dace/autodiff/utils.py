@@ -9,6 +9,7 @@ from typing import Dict, List, Set, Tuple, Union
 
 import astunparse
 import sympy as sp
+from ordered_set import OrderedSet
 
 # DaCe imports
 import dace
@@ -483,6 +484,44 @@ def invert_map_connector(conn: str) -> str:
         return "IN" + conn[3:]
     else:
         raise AutoDiffException("Could not parse map connector '{}'".format(conn))
+
+
+def carries_gradient(edge: dgraph.MultiConnectorEdge) -> bool:
+    """Whether a reverse traversal of the dataflow may follow ``edge``.
+
+    A non-empty memlet moves a value and always may. An empty memlet is an ordering edge and moves
+    nothing, so it carries no gradient -- except for the one shape DaCe gives no alternative: the
+    edge that ties a node without data inputs (or outputs) to its enclosing scope. Dropping those
+    would leave a map body without its entry. Every other ordering edge must be left alone;
+    following one drags unrelated dataflow -- an already generated backward pass, for instance --
+    into the differentiated subgraph.
+    """
+    return (not edge.data.is_empty() or isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.ExitNode))
+
+
+def reverse_bfs_gradient_nodes(state: dstate.StateSubgraphView, sources: List[nd.Node]) -> OrderedSet[nd.Node]:
+    """Collect the endpoints of every edge a reverse BFS from ``sources`` reaches along gradients.
+
+    :param state: The state (or subgraph view) to traverse.
+    :param sources: The nodes to start from.
+    :return: The endpoints of the traversed edges, in BFS order.
+    """
+    reached: OrderedSet[nd.Node] = OrderedSet()
+    visited: OrderedSet[nd.Node] = OrderedSet()
+    queue = collections.deque(sources)
+    while queue:
+        node = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+        for edge in state.in_edges(node):
+            if not carries_gradient(edge):
+                continue
+            reached.add(edge.src)
+            reached.add(edge.dst)
+            if edge.src not in visited:
+                queue.append(edge.src)
+    return reached
 
 
 def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView) -> bool:

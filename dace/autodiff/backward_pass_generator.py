@@ -2,6 +2,7 @@
 import copy
 from typing import List, Tuple, Set, Dict, Union, Optional, Sequence
 import sympy as sp
+from ordered_set import OrderedSet
 
 # DaCe imports
 import dace
@@ -829,11 +830,9 @@ class BackwardPassGenerator:
         To calculate the gradients for a node x in ``required_gradients``, we need to sum up the gradient
         contributions from every node y where x is used as an input.
         """
-        backward_nodes: set[nodes.Node] = set()
-        given_gradients_all_states = set(self.given_gradients_data)
-
-        required_gradients_all_states = {n for n in self.required_gradients_data}
-        given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
+        backward_nodes: OrderedSet[nodes.Node] = OrderedSet()
+        given_gradients_all_states = OrderedSet(self.given_gradients_data)
+        given_gradients_all_states.update(self.required_gradients_data)
 
         # Do the backward BFS iteratively
         for state in reversed(self.state_order):
@@ -843,7 +842,7 @@ class BackwardPassGenerator:
                 if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
                     state_given_gradients.append(node)
 
-            backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
+            backward_nodes = ad_utils.reverse_bfs_gradient_nodes(state, state_given_gradients)
             nodes_list = list(backward_nodes)
 
             # Clean up unwanted elements
@@ -874,11 +873,7 @@ class BackwardPassGenerator:
                         state_given_gradients.append(state_node)
 
                 # Do reverse BFS starting from this new set of nodes
-                backward_nodes = {
-                    n
-                    for e in state.edge_bfs(state_given_gradients, reverse=True)
-                    for n in [e.src, e.dst]
-                }
+                backward_nodes = ad_utils.reverse_bfs_gradient_nodes(state, state_given_gradients)
 
                 view_nodes = list(backward_nodes)
                 self._remove_maps_without_input_connectors(nodes_list, state)
@@ -1528,9 +1523,12 @@ class BackwardPassGenerator:
 
                 # Output names on the forward node
                 # (for which the gradient will be connected as an input on the reverse node)
+                # An empty memlet is an ordering edge: it carries no data and no connector, so it
+                # names no gradient. Without this it contributes ``None`` to the list, which the
+                # map reversal then feeds to ``invert_map_connector``.
                 given_gradients = [
                     edge.src_conn for edge in subgraph.out_edges(node)
-                    if ad_utils.path_src_node_in_subgraph(edge, subgraph)
+                    if not edge.data.is_empty() and ad_utils.path_src_node_in_subgraph(edge, subgraph)
                 ]
 
                 # Input names on the forward node that gradients should be generated for
@@ -1692,6 +1690,12 @@ class BackwardPassGenerator:
                     # Add an empty edge to skip the conditional block
                     backward_state.add_edge(conditional_zero_out_an, None, backward_node, None, Memlet())
                 # skip connecting edges for which we don't need to generate grads.
+                continue
+
+            # An ordering edge carries no data, so there is no gradient to route back along it and
+            # no ``data`` to look the descriptor up by. Checked after the conditional-block branch
+            # above, which owns the empty edges the backward pass itself inserts.
+            if edge.data.is_empty():
                 continue
 
             # Skip connecting boolean edges
