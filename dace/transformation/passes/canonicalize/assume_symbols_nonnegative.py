@@ -68,10 +68,12 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     """
     updated = 0
     for g in sdfg.all_sdfgs_recursive():
-        for name in sorted(g.free_symbols):
-            dtype = g.symbols.get(name)
-            if dtype not in _SIGNED_INTEGER_DTYPES:
-                continue
+        # The argument set, not ``free_symbols`` -- see :func:`_signed_integer_free_symbols`. The
+        # latter unions every registered ``sdfg.symbols`` key, so it also names a map parameter a
+        # loop-to-map left registered. A parameter is scope-local, so recording registry facts for
+        # it stamps them on the wrong symbol; validation rejects the shadowing. Recording exactly
+        # what :func:`insert_assumption_guards` traps also keeps the two halves on one set.
+        for name in _signed_integer_free_symbols(g):
             if g.symbol_assumptions.get(name, {}).get('nonnegative'):
                 continue
             g.update_symbol_assumptions(name, nonnegative=True)
