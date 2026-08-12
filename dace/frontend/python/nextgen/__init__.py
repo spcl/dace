@@ -19,6 +19,7 @@ from dace.frontend.python.nextgen.common import (CanonicalViolationError, Fronte
                                                  UnsupportedFeatureError)
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
 from dace.frontend.python.nextgen.lowering.mechanisms.return_elision import elide_return_copies
+from dace.frontend.python.nextgen.lowering.mechanisms.thread_local import serialize_thread_local_scopes
 from dace.frontend.python.nextgen.lowering.parse_cache import warm_nested_parses
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
@@ -109,6 +110,11 @@ def build_schedule_tree(name: str,
     # instead of being copied into it. Done on the finished tree, where every
     # use of the container is visible.
     elide_return_copies(root)
+
+    # Per-thread storage makes every map that touches it single-threaded. Also
+    # done on the finished tree: an inline ``@ StorageType`` hint moves a
+    # container's storage after the map filling it was already emitted.
+    serialize_thread_local_scopes(root)
 
     # Stage 4: verification of the output contract
     verify_tree(root)
