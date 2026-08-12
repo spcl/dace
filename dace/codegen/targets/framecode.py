@@ -273,7 +273,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # __dace_init_cuda below.
         gpu_drain_decl = ''
         gpu_drain_call = ''
-        if any(target.target_name == 'cuda' for target in self._dispatcher.used_targets):
+        # getattr, not attribute access: a user-registered code generator need not define
+        # target_name (the codegen tutorial's MyCustomLoop does not), and this walks every used
+        # target. The loop below only reads target_name inside a has_initializer/has_finalizer
+        # branch, so it never reached those.
+        if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')
             gpu_drain_call = '    __dace_gpu_drain_error(__state);\n'
@@ -308,7 +312,7 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         callsite_stream.write(
             f"""
     int __result = 0;
-    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};""", sdfg)
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)}();""", sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
