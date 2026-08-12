@@ -13,6 +13,8 @@ from dace.transformation import transformation
 from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.array_elimination import ArrayElimination
+from dace.transformation.passes.optional_arrays import OptionalArrayInference
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import (PruneEmptyConditionalBranches)
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
@@ -1364,12 +1366,17 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Led by the inline, like every other cleanup site: an un-inlined map body reports whole-array
     # memlets, so ``StateFusionExtended`` would judge the merge on the bounding box.
     #
-    # NOT covered, deliberately: an empty conditional ARM (the else a guarded scan split leaves in
-    # scan_conditional) is a ControlFlowRegion, not a state, so ``DeadStateElimination`` leaves it.
-    # Pruning it needs ``PruneEmptyConditionalBranches``, which is left out because the recipe leans
-    # on ConditionalBlocks for its guarded specializations and the residue is an empty ``else {}``.
+    # ``PruneEmptyConditionalBranches`` closes the case the state-level cleanup cannot see: an empty
+    # conditional ARM is a ControlFlowRegion, not a state, so ``DeadStateElimination`` walks past it.
+    # ``ConditionFusion`` merges two adjacent guards into one ConditionalBlock whose branches are
+    # their cross product, and the combination that does no work is an empty arm -- the terminal
+    # simplify used to drop it, and without that the collapsed nest carries a dead fourth branch
+    # (``canonicalize_coexisting_guards``) and the guarded scan split keeps an empty ``else``
+    # (``scan_conditional``). It only ever removes a branch with no work in it, so the guarded
+    # specializations the recipe leans on -- whose arms all carry a body -- are untouched.
     s += _inline_single_state('end')
     s += _structural_cleanup('end')
+    s += [('end', PruneEmptyConditionalBranches())]
 
     # Final parallelize sweep: the symbolic-stride scan specialization
     # (``LoopToScan._specialize_scan_under_stride_guard``) emits its carry-free
@@ -1443,6 +1450,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # now-unreferenced entries in sdfg.symbols. No SimplifyPass runs past the ``reduce``
     # stage, so this is the ONLY thing that prunes them -- it is load-bearing, not a top-up.
     s += [('end', RemoveUnusedSymbols())]
+
+    # OptionalArrayInference: ``optional`` is a DERIVED annotation on every array descriptor, and the
+    # terminal simplify was what last recomputed it. Without it canonicalize emits a graph whose
+    # descriptors carry no ``optional``, and re-canonicalizing that output annotates it at the
+    # leading ``clean`` simplify -- so the pipeline is not idempotent (tsvc s000 / s111 / s1112 /
+    # s1113 diverge on ``_arrays.*.attributes.optional`` ABSENT -> PRESENT). Recompute it here,
+    # after the last stage that changes the graph, so the output is already the fixed point.
+    s += [('end', OptionalArrayInference())]
 
     # ConvertLengthOneArraysToScalars a SECOND time (it leads ``prep``): the canonical spelling of
     # a single-value transient is a Scalar, and the stages between the two -- map fusion's
