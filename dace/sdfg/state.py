@@ -2937,9 +2937,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-        if dst is self._cached_start_block:
-            self._cached_start_block = None
-        return super().add_edge(src, dst, data)
+        new_edge = super().add_edge(src, dst, data)
+        # The new edge makes `dst` a non-source: a start block that gains a predecessor is stale.
+        # Re-pin to `src` when it is the unambiguous new entry, otherwise leave it unresolved
+        # (PR #2493, adapted: `_start_block` holds the block itself here, not an index).
+        start_block = self._cached_start_block if self._cached_start_block is not None else self._start_block
+        if dst is start_block:
+            if self.in_degree(src) == 0:
+                self._start_block = src
+                self._cached_start_block = src
+            else:
+                self._start_block = None
+                self._cached_start_block = None
+        return new_edge
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
         # Ledger of every name ever issued, unioned with the live labels on each call. Staleness cannot
