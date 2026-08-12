@@ -264,19 +264,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         initparams_comma = (', ' + initparams) if initparams else ''
         paramnames_comma = (', ' + paramnames) if paramnames else ''
         initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
-        # Discard any GPU error left pending by another party before running. The runtime's
-        # error slot is per-host-thread and shared with every other GPU user in the process, so
-        # a value in it on entry is not ours, and the first checked call inside would report it
-        # as its own failure. __dace_init_cuda drains it too, but that runs once per state while
-        # contamination can arrive between any two calls - hence also here, per invocation.
-        # Declared rather than included: this function lives in the generated .cu, exactly like
-        # __dace_init_cuda below.
+        # Drain per invocation, not just per state: contamination can arrive between any two
+        # calls. Declared rather than included, since it lives in the generated .cu.
         gpu_drain_decl = ''
         gpu_drain_call = ''
-        # getattr, not attribute access: a user-registered code generator need not define
-        # target_name (the codegen tutorial's MyCustomLoop does not), and this walks every used
-        # target. The loop below only reads target_name inside a has_initializer/has_finalizer
-        # branch, so it never reached those.
+        # getattr: a user-registered code generator need not define target_name.
         if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')

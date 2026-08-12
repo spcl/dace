@@ -41,10 +41,7 @@ test_cscs_gh200:
     SLURM_JOB_NUM_NODES: 1
     SLURM_TIMELIMIT: 30
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
-    # These runners are GH200. Naming the architecture keeps cmake off its `native` probe, which
-    # reports no device when the GPUs are busy and then falls back to a compute_60 that newer CUDA
-    # refuses. Plain 90, not 90a: the a-variant emits SASS with no JIT fallback and the modules
-    # then fail to load. Pipeline variables still override this.
+    # GH200. Not 90a: no JIT fallback, so the modules fail to load.
     DACE_compiler_cuda_cuda_arch: '90'
   needs:
     - build_cscs_gh200

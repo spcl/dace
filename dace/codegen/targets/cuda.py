@@ -440,8 +440,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
-    // One process, one GPU: chosen here, never changed. Everything after this reads the ordinal
-    // back from __state->gpu_context->device. compiler.cuda.device of -1 (the default) means the
+    // One GPU per process, chosen here and never changed. compiler.cuda.device, -1 meaning the
     // device this process is already on.
     int __dace_device = {configured_device};
     if (__dace_device < 0 && {backend}GetDevice(&__dace_device) != {backend}Success)
@@ -461,9 +460,6 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 4;
     }}
 
-    // Anything pending in the runtime's error slot on entry is not ours; see
-    // __dace_gpu_drain_error. The CUB temp-storage size query that the init code often emits
-    // below is the usual victim - it is the first checked call in many generated modules.
     __dace_gpu_drain_error(__state);
 
     // Initialize {backend} before we run the application
@@ -474,9 +470,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
     __state->gpu_context->device = __dace_device;
 
-    // The memory-pool setup runs AFTER the context exists: DACE_GPU_CHECK records into
-    // __state->gpu_context, so a failure before this point could not be recorded (and, before
-    // gpu_context was given an initializer, could not even be checked safely).
+    // After the context exists: DACE_GPU_CHECK records into it.
     {pool_header}
 
     // Create {backend} streams and events
@@ -513,24 +507,11 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-// Discard whatever the runtime's per-thread error slot already holds, and say what was discarded.
-//
-// That slot is shared with every other GPU user in this process - CuPy, another SDFG, any library -
-// so a value left in it is NOT ours. Leaving it there makes the next DACE_GPU_CHECK-wrapped call
-// report someone else's failure as its own, which is misleading twice over: it blames an innocent
-// call, and it hides whoever actually failed.
-//
-// Called on entry to __dace_init_cuda AND on entry to every __program_<name> invocation, since
-// initialization happens once while contamination can arrive between any two calls.
-//
-// Only NON-STICKY errors can be discarded this way: a sticky one (illegal access, corrupted
-// context) survives gpuGetLastError() and is reported through the normal path by the next real
-// call. Reporting rather than throwing is deliberate - a pending error is by definition not this
-// SDFG's, and failing here would penalize the innocent SDFG this exists to protect.
-//
-// Must not touch __state->gpu_context: __dace_init_cuda calls this before the context exists.
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
 void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
-    (void)__state;  // signature parity with the other exported entry points; see the note above
+    (void)__state;
     gpuError_t __pre_existing = {backend}GetLastError();
     if (__pre_existing != (gpuError_t)0) {{
         printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
@@ -539,9 +520,7 @@ void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
     }}
 }}
 
-// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
-// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
-// code recorded instead, and clear it so a failure is delivered exactly once.
+// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
 int __dace_gpu_last_error({sdfg_state_name} *__state) {{
     int __err = static_cast<int>(__state->gpu_context->lasterror);
     __state->gpu_context->lasterror = (gpuError_t)0;

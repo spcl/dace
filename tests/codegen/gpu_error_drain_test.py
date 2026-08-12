@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the inherited-GPU-error drain (``__dace_gpu_drain_error``).
-
-All but the last assert on generated source only, so they need neither a GPU nor a CUDA
-toolchain. The last one is marked ``gpu``: it reproduces the failure end to end.
-"""
+"""Tests for __dace_init_cuda: the inherited-error drain, and one-GPU-per-process."""
 import ctypes
+import importlib
 from ctypes.util import find_library
 
 import numpy as np
@@ -16,7 +13,6 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 
 def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
-    """A minimal SDFG that generates GPU code."""
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [8], dace.float64)
     sdfg.arrays['A'].optional = False
@@ -32,7 +28,6 @@ def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
 
 
 def _sources(sdfg: dace.SDFG):
-    """The generated CUDA file and the frame (host) file, as strings."""
     objs = sdfg.generate_code()
     cu = next(o.clean_code for o in objs if o.language == 'cu')
     frame = next(o.clean_code for o in objs if o.language == 'cpp' and o.name == sdfg.name)
@@ -44,11 +39,10 @@ def test_gpu_drain_emitted_in_init_and_per_call():
     foreign error can land between any two calls."""
     cu, frame = _sources(_gpu_sdfg())
 
-    assert 'void __dace_gpu_drain_error(' in cu  # defined in the CUDA file
-    assert '__dace_gpu_drain_error(__state);' in cu  # and called by the initializer
+    assert 'void __dace_gpu_drain_error(' in cu
+    assert '__dace_gpu_drain_error(__state);' in cu
 
-    # The host file cannot include the CUDA headers, so it declares the function and links
-    # against the .cu definition - the same arrangement as __dace_init_cuda.
+    # The host file cannot include the CUDA headers, so it declares and links against the .cu.
     assert 'DACE_EXPORTED void __dace_gpu_drain_error(' in frame
     decl = frame.index('DACE_EXPORTED void __dace_gpu_drain_error(')
     call = frame.index('__dace_gpu_drain_error(__state);')
@@ -57,8 +51,7 @@ def test_gpu_drain_emitted_in_init_and_per_call():
 
 
 def test_gpu_drain_absent_without_gpu_code():
-    """A CPU-only SDFG must not reference the drain: the symbol only exists when the CUDA
-    target emitted it, so an unconditional call would be a link error."""
+    """A CPU-only SDFG must not reference the drain: an unconditional call would not link."""
     sdfg = dace.SDFG('drain_cpu_only_probe')
     sdfg.add_array('A', [8], dace.float64)
     sdfg.arrays['A'].optional = False
@@ -74,13 +67,9 @@ def test_gpu_drain_absent_without_gpu_code():
 
 
 def test_gpu_init_template_substitution_does_not_break_comments():
-    """Regression: a ``{placeholder}`` inside a C++ comment in the init template is substituted
-    there too, so anything expanding to statements breaks the comment.
-
-    Checked against the template source, not generated output: reproducing it needs a non-empty
-    ``{initcode}``, so a test on a simpler SDFG would pass while the bug is present.
-    ``{backend}`` is exempt - it expands to one identifier.
-    """
+    """A ``{placeholder}`` in a generated C++ comment is substituted there too, so anything
+    expanding to statements breaks the comment. Checked against the template source: reproducing
+    it needs a non-empty ``{initcode}``. ``{backend}`` is exempt, expanding to one identifier."""
     import re
     from pathlib import Path
 
@@ -101,8 +90,7 @@ def test_gpu_init_template_substitution_does_not_break_comments():
 
 
 def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
-    """The pool calls are wrapped and run after the context exists - DACE_GPU_CHECK records
-    into it, so a checked call placed earlier could not record."""
+    """The pool calls are wrapped and run after the context exists, which DACE_GPU_CHECK needs."""
     sdfg = dace.SDFG('drain_pool_probe')
     sdfg.add_array('A', [16], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.arrays['A'].optional = False
@@ -120,27 +108,13 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     assert 'DACE_GPU_CHECK(cudaMemPoolSetAttribute' in cu
     assert cu.index('__state->gpu_context = new') < cu.index('MemPool_t')
 
-    # The pool has to be the one belonging to the device this state runs on. A literal 0 is a
-    # valid ordinal whenever any device exists, so this never fails loudly: it silently applies
-    # the release threshold to a pool the allocations below never touch.
+    # A literal 0 never fails loudly, it just configures a pool the allocations never touch.
     assert 'DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool(&mempool, __dace_device))' in cu
 
 
-def test_gpu_init_selects_the_current_device_explicitly():
-    """Init reads the device, range-checks it, and selects it - which also forces the context to
-    exist here, where a placement failure is still attributable."""
-    cu, _ = _sources(_gpu_sdfg('drain_device_probe'))
-
-    assert 'cudaGetDevice(&__dace_device)' in cu
-    assert 'cudaSetDevice(__dace_device)' in cu
-    assert '__dace_device >= count' in cu, 'the ordinal must be range-checked against the device count'
-    assert cu.index('cudaSetDevice(__dace_device)') < cu.index('__dace_gpu_drain_error(__state);'), \
-        'the device must be bound before the slot is claimed, so the drain covers the bound thread'
-
-
 def _load_cudart():
-    """The CUDA runtime as a ctypes handle, or None. Generated modules link it dynamically, so
-    this is the same library instance and therefore the same per-thread error slot."""
+    """The runtime as a ctypes handle: generated modules link it dynamically, so it is the same
+    instance and the same per-thread error slot."""
     for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
         if not name:
             continue
@@ -163,10 +137,9 @@ def _summed(a, b):
 def test_foreign_error_is_not_charged_to_the_next_program():
     """An error left pending by another GPU user must not fail the next SDFG.
 
-    The victim is a CUB reduction: its size query reads the current device through
-    ``cudaGetDevice``, gets the pending error back, and reports ``cudaErrorInvalidDevice`` - so
-    ``invalid argument (1)`` surfaces as ``invalid device ordinal (101)``. Poisoned through
-    ctypes, not cupy, which clears the slot when it raises.
+    A CUB reduction is the victim: its size query reads the device through ``cudaGetDevice``, gets
+    the pending error back, and reports ``cudaErrorInvalidDevice`` - so ``invalid argument (1)``
+    surfaces as ``invalid device ordinal (101)``. Poisoned via ctypes; cupy clears the slot.
     """
     cudart = _load_cudart()
     if cudart is None:
@@ -190,10 +163,76 @@ def test_foreign_error_is_not_charged_to_the_next_program():
     assert np.allclose(b, np.sum(a, axis=_reduction_axes))
 
 
+# Every GPU library environment that creates a handle, and the accessor each emits.
+_ENVIRONMENTS = [
+    ('dace.libraries.blas.environments.cublas', 'cuBLAS', 'cublas_handle'),
+    ('dace.libraries.blas.environments.rocblas', 'rocBLAS', 'rocblas_handle'),
+    ('dace.libraries.lapack.environments.cusolverdn', 'cuSolverDn', 'cusolverDn_handle'),
+    ('dace.libraries.linalg.environments.cutensor', 'cuTensor', 'cutensor_handle'),
+    ('dace.libraries.sparse.environments.cusparse', 'cuSPARSE', 'cusparse_handle'),
+]
+
+
+@pytest.mark.parametrize('configured', [-1, 2])
+def test_init_selects_the_device_once_and_records_it(configured):
+    """-1 falls back to the process's device, an ordinal is compiled in; either way, selected once."""
+    with dace.config.set_temporary('compiler', 'cuda', 'device', value=configured):
+        cu, _ = _sources(_gpu_sdfg(f'one_device_probe{abs(configured)}'))
+
+    assert f'int __dace_device = {configured};' in cu
+    assert 'cudaGetDevice(&__dace_device)' in cu, 'the -1 fallback is a runtime branch, always emitted'
+    assert '__dace_device >= count' in cu
+    assert cu.count('cudaSetDevice(') == 1, 'selecting it anywhere else would make it mutable'
+    record = '__state->gpu_context->device = __dace_device;'
+    assert record in cu
+    assert cu.index('__state->gpu_context = new') < cu.index(record), 'the context must exist first'
+
+
+@pytest.mark.parametrize('module_name,cls_name,accessor', _ENVIRONMENTS)
+def test_handle_setup_uses_the_recorded_device(module_name, cls_name, accessor):
+    """All five, since all five carried their own copy of the location parsing."""
+    env = getattr(importlib.import_module(module_name), cls_name)
+    node = dace.sdfg.nodes.LibraryNode('probe')
+
+    code = env.handle_setup_code(node)
+    assert 'const int __dace_cuda_device = __state->gpu_context->device;' in code
+    assert accessor in code
+
+    node.location['gpu'] = 3
+    with pytest.raises(ValueError, match='one GPU per process') as excinfo:
+        env.handle_setup_code(node)
+    assert 'probe' in str(excinfo.value) and '3' in str(excinfo.value)
+
+
+@pytest.mark.gpu
+def test_a_configured_device_is_the_one_actually_used():
+    """The setting reaches the hardware: the thread is still on it when the program returns."""
+    cudart = None
+    for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
+        if name:
+            try:
+                cudart = ctypes.CDLL(name)
+                break
+            except OSError:
+                continue
+    if cudart is None:
+        pytest.skip('libcudart is not loadable from this process')
+
+    count = ctypes.c_int(0)
+    cudart.cudaGetDeviceCount(ctypes.byref(count))
+    if count.value < 2:
+        pytest.skip(f'need two visible GPUs to tell a configured device apart, saw {count.value}')
+
+    a = np.random.rand(8)
+    with dace.config.set_temporary('compiler', 'cuda', 'device', value=1):
+        _gpu_sdfg('device_runs_where_configured')(A=a)
+
+    current = ctypes.c_int(-1)
+    cudart.cudaGetDevice(ctypes.byref(current))
+    assert current.value == 1
+
+
 if __name__ == '__main__':
-    test_gpu_drain_emitted_in_init_and_per_call()
-    test_gpu_drain_absent_without_gpu_code()
-    test_gpu_init_template_substitution_does_not_break_comments()
-    test_gpu_mempool_setup_is_checked_and_follows_context_creation()
-    test_gpu_init_selects_the_current_device_explicitly()
-    test_foreign_error_is_not_charged_to_the_next_program()
+    for name, fn in sorted(dict(globals()).items()):
+        if name.startswith('test_') and not hasattr(fn, 'pytestmark'):
+            fn()

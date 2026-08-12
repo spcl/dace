@@ -124,20 +124,12 @@ The number of GPU streams can be controlled with the :envvar:`compiler.cuda.max_
 It is set to zero by default, which does not limit streams. If set to ``-1``, no streams will be created (the default
 stream will be used). This is sometimes preferable for performance.
 
-**One process, one GPU**: a DaCe program uses a single GPU, selected once in ``__dace_init_cuda``
-and unchanged after that. Everything that needs a device ordinal — the memory pool, every library
-handle — reads back the one init recorded, so nothing can move the device out from under kernels
-and allocations that assume it.
-
-By default (:envvar:`compiler.cuda.device` = ``-1``) that is whichever GPU the calling process is
-already on, which is what one rank per GPU under ``CUDA_VISIBLE_DEVICES`` gives you. Set the entry
-to an explicit ordinal only when a single process must choose among several visible GPUs; the value
-is compiled into the program, so a build shared between ranks would send them all to the same GPU.
-
-To use several GPUs, run several processes. Placing individual library nodes on other devices with
-``location['gpu']`` is rejected: it was only ever honored when creating library handles, while
-allocations and kernel launches went to the current device and peer access is never enabled, so the
-handle operated on memory belonging to a different device.
+**One process, one GPU**: the device is selected once in ``__dace_init_cuda`` and never changed;
+the memory pool and every library handle use that one. :envvar:`compiler.cuda.device` sets it, and
+``-1`` (the default) keeps whichever device the process is already on -- one rank per GPU via
+``CUDA_VISIBLE_DEVICES``. An explicit ordinal is compiled in, so a build shared between ranks would
+send them all to one GPU. To use several GPUs, run several processes; placing individual library
+nodes with ``location['gpu']`` is rejected.
 
 .. _amd:
 
