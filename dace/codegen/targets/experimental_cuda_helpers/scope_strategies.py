@@ -19,7 +19,7 @@ from dace.transformation.dataflow.add_threadblock_map import product
 
 def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
                                 state_id: int, anchor_node, dispatcher: TargetDispatcher):
-    """Emit ``{ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
+    """Emit ``const {ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
 
     ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
     three dims map directly to ``axis.{x|y|z}``; further dims delinearize off ``axis.z``.
@@ -43,7 +43,9 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
             tail = product(dim_sizes[dim + 1:])
             expr = f"(({axis}.z / ({sym2cpp(tail)})) % ({sym2cpp(dim_sizes[dim])}))"
         var_def = sym2cpp(sym_coords[dim]).replace(f'__SYM_IDX{dim}', expr)
-        callsite_stream.write(f'{ctype} {var_name} = {var_def};', cfg, state_id, anchor_node)
+        # A map coordinate derived from blockIdx/threadIdx is assigned once and never written
+        # again; const says so to the reader and refuses any later emission that would.
+        callsite_stream.write(f'const {ctype} {var_name} = {var_def};', cfg, state_id, anchor_node)
         dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
 
     return map_range, sym_indices, sym_coords
@@ -282,7 +284,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id,
                                                       state_dfg.node_id(node))
 
-            callsite_stream.write(f"{ids_ctype} {threadID_name} = ({flat_thread_idx_expr}) / {warpSize};", cfg,
+            callsite_stream.write(f"const {ids_ctype} {threadID_name} = ({flat_thread_idx_expr}) / {warpSize};", cfg,
                                   state_id, node)
             self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, ids_ctype)
 
@@ -297,7 +299,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                 else:
                     expr = f"({threadID_name} % ({warp_dim_bounds[i]}))"
 
-                callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
+                callsite_stream.write(f"const {ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)

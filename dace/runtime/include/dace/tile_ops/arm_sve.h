@@ -109,16 +109,16 @@ inline T tile_apply(T a, T b) {
 // ===========================================================================
 
 // ---- predicated contiguous load ----
-inline svfloat32_t sve_ld1(svbool_t pg, const float* p) { return svld1_f32(pg, p); }
-inline svint32_t sve_ld1(svbool_t pg, const std::int32_t* p) { return svld1_s32(pg, p); }
-inline svfloat64_t sve_ld1(svbool_t pg, const double* p) { return svld1_f64(pg, p); }
-inline svint64_t sve_ld1(svbool_t pg, const std::int64_t* p) { return svld1_s64(pg, p); }
+inline svfloat32_t sve_ld1(svbool_t pg, const float* __restrict__ p) { return svld1_f32(pg, p); }
+inline svint32_t sve_ld1(svbool_t pg, const std::int32_t* __restrict__ p) { return svld1_s32(pg, p); }
+inline svfloat64_t sve_ld1(svbool_t pg, const double* __restrict__ p) { return svld1_f64(pg, p); }
+inline svint64_t sve_ld1(svbool_t pg, const std::int64_t* __restrict__ p) { return svld1_s64(pg, p); }
 
 // ---- predicated contiguous store ----
-inline void sve_st1(svbool_t pg, float* p, svfloat32_t v) { svst1_f32(pg, p, v); }
-inline void sve_st1(svbool_t pg, std::int32_t* p, svint32_t v) { svst1_s32(pg, p, v); }
-inline void sve_st1(svbool_t pg, double* p, svfloat64_t v) { svst1_f64(pg, p, v); }
-inline void sve_st1(svbool_t pg, std::int64_t* p, svint64_t v) { svst1_s64(pg, p, v); }
+inline void sve_st1(svbool_t pg, float* __restrict__ p, svfloat32_t v) { svst1_f32(pg, p, v); }
+inline void sve_st1(svbool_t pg, std::int32_t* __restrict__ p, svint32_t v) { svst1_s32(pg, p, v); }
+inline void sve_st1(svbool_t pg, double* __restrict__ p, svfloat64_t v) { svst1_f64(pg, p, v); }
+inline void sve_st1(svbool_t pg, std::int64_t* __restrict__ p, svint64_t v) { svst1_s64(pg, p, v); }
 
 // ---- splat ----
 inline svfloat32_t sve_dup(float v) { return svdup_f32(v); }
@@ -235,7 +235,7 @@ inline svbool_t sve_whilelt(int i, int n) {
 // portable ``bool[]`` lane mask. The byte mask is zero-extended to the lane
 // width under ``pg`` so its active set is always a subset of ``pg``.
 template <typename T>
-inline svbool_t sve_mask(svbool_t pg, const bool* mask, int i) {
+inline svbool_t sve_mask(svbool_t pg, const bool* __restrict__ mask, int i) {
   if constexpr (sizeof(T) == 4) {
     svuint32_t mv = svld1ub_u32(pg, (const std::uint8_t*)(mask + i));
     return svcmpne_n_u32(pg, mv, 0);
@@ -626,7 +626,7 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
 // ``svld1sw_s64``) or narrows (s64 -> s32 via a widened load + truncating
 // move) so the gather / scatter index width pairs with the data width.
 template <typename IdxT>
-inline svint32_t sve_load_idx32(svbool_t pg, const IdxT* idx, int i) {
+inline svint32_t sve_load_idx32(svbool_t pg, const IdxT* __restrict__ idx, int i) {
   if constexpr (std::is_same<IdxT, std::int32_t>::value) {
     return svld1_s32(pg, idx + i);
   } else {  // int64_t index for 32-bit data: load s64 then narrow to s32 lanes
@@ -645,7 +645,7 @@ inline svint32_t sve_load_idx32(svbool_t pg, const IdxT* idx, int i) {
   }
 }
 template <typename IdxT>
-inline svint64_t sve_load_idx64(svbool_t pg, const IdxT* idx, int i) {
+inline svint64_t sve_load_idx64(svbool_t pg, const IdxT* __restrict__ idx, int i) {
   if constexpr (std::is_same<IdxT, std::int64_t>::value) {
     return svld1_s64(pg, idx + i);
   } else {  // int32_t index for 64-bit data: sign-extend 32-bit memory -> s64

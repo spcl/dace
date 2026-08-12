@@ -230,7 +230,7 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
 template <typename T>
 inline T tile_load_value(const T& x) noexcept;
 template <typename T>
-inline T tile_load_value(const T* x) noexcept;
+inline T tile_load_value(const T* __restrict__ x) noexcept;
 template <typename T, std::size_t N>
 inline T tile_load_value(const T (&x)[N]) noexcept;
 
@@ -361,7 +361,7 @@ inline T tile_load_value(const T& x) noexcept {
   return x;
 }
 template <typename T>
-inline T tile_load_value(const T* x) noexcept {
+inline T tile_load_value(const T* __restrict__ x) noexcept {
   return *x;
 }
 template <typename T, std::size_t N>
@@ -374,7 +374,7 @@ inline void tile_store_value(T& dst, V v) noexcept {
   dst = static_cast<T>(v);
 }
 template <typename T, typename V>
-inline void tile_store_value(T* dst, V v) noexcept {
+inline void tile_store_value(T* __restrict__ dst, V v) noexcept {
   *dst = static_cast<T>(v);
 }
 template <typename T, std::size_t N, typename V>

@@ -17,6 +17,7 @@ Covered:
     argument, and an odd-offset STORE stays scalar (widening it would clobber the neighbours);
   * a symbolic row stride widens only where a host-side ``stride % 2`` abort backs it, and
     declines again the moment that guard is removed;
+  * a transient over the stencil's INTERIOR, strided by ``N - 2`` rather than ``N``, widens too;
   * the emitted SASS for a heat3d kernel has NO ``LDG.E.U16`` and does not grow;
   * bit-exact vs the NumPy fp16 oracle, boundary iterations included.
 
@@ -32,6 +33,8 @@ import sys
 import pytest
 
 import dace
+from dace.transformation.dataflow import MapFusion
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import STRIDE_GUARD_PREFIX
@@ -108,10 +111,20 @@ def _heat3d_oracle(A, B, steps):
     return A, B
 
 
-def _vectorized(prog, name=None, assume_even=False):
-    """@dace.program -> simplify -> GPU offload -> the half2 GPU vectorizer."""
+def _vectorized(prog, name=None, assume_even=False, fuse=False):
+    """@dace.program -> simplify -> GPU offload -> the half2 GPU vectorizer.
+
+    ``fuse`` adds the LoopToMap + MapFusion pair a real optimization recipe runs first. It is not
+    cosmetic: fusing the stencil's two statements materializes the shared subexpressions as
+    transients over the INTERIOR, whose row stride is ``N - 2`` rather than ``N``, and those are
+    the accesses the alignment proof used to refuse.
+    """
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.simplify()
+    if fuse:
+        sdfg.apply_transformations_repeated([LoopToMap])
+        sdfg.apply_transformations_repeated([MapFusion])
+        sdfg.simplify()
     offload_to_gpu(sdfg)
     VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=assume_even)).apply_pass(sdfg, {})
     if name:
@@ -201,6 +214,21 @@ def test_symbolic_stride_widens_only_under_its_guard():
     assert unguarded, "no fp16 width-2 tile_load emitted"
     assert all(a == "" for a in unguarded), \
         f"a symbolic row stride was claimed aligned with no runtime check behind it, got {set(unguarded)}"
+
+
+def test_interior_transient_stride_widens():
+    """A transient covering a stencil's INTERIOR is strided by ``N - 2``, and that expression is
+    not provably non-negative as written -- so the coefficient test refused it even though the very
+    extent fact that decides its parity, ``N = 2t + 2``, also makes the stride ``2t``. heat3d's
+    fused kernel holds two such transients; before the extent rewrite was moved ahead of the test
+    they were the only per-element loads left in the kernel."""
+    cu = _device_code(_vectorized(_heat3d_symbolic, assume_even=True, fuse=True))
+    strided = re.findall(r"tile_load<dace::float16, 2, false[^>]*>\([^,]+, \([A-Za-z_0-9]+ \+ \([^)]*ipow\(N - 2", cu)
+    assert strided, "no (N-2)-strided access in the fused kernel; the test proves nothing"
+    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
+    assert loads, "no fp16 width-2 tile_load emitted"
+    assert not [a for a in loads if a == ""], \
+        f"an (N-2)-strided transient stayed on the per-element path, got {collections.Counter(loads)}"
 
 
 def test_symbolic_stride_widens_under_assume_even():
@@ -297,6 +325,7 @@ if __name__ == "__main__":
         test_odd_neighbour_load_is_shifted_even_is_plain()
         test_heat3d_widens_every_load()
         test_symbolic_stride_widens_only_under_its_guard()
+        test_interior_transient_stride_widens()
         test_symbolic_stride_widens_under_assume_even()
         test_heat3d_sass_has_no_16bit_load()
         test_heat3d_bitexact_including_boundaries()

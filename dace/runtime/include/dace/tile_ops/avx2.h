@@ -90,12 +90,12 @@ namespace detail {
 // the ``const bool*`` tile mask: active lane -> all-ones (-1), inactive -> 0.
 // The mask lane width must match the element width (32-bit for ps/epi32,
 // 64-bit for pd/epi64).
-inline __m256i mask32_from_bools(const bool* mask, int base, int n) {
+inline __m256i mask32_from_bools(const bool* __restrict__ mask, int base, int n) {
   int32_t mbuf[8];
   for (int j = 0; j < 8; ++j) mbuf[j] = (j < n && mask[base + j]) ? -1 : 0;
   return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(mbuf));
 }
-inline __m256i mask64_from_bools(const bool* mask, int base, int n) {
+inline __m256i mask64_from_bools(const bool* __restrict__ mask, int base, int n) {
   int64_t mbuf[4];
   for (int j = 0; j < 4; ++j) mbuf[j] = (j < n && mask[base + j]) ? -1 : 0;
   return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(mbuf));

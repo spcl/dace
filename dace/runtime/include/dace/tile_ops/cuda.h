@@ -552,7 +552,7 @@ DACE_DFI T tile_load_value(const T& x) {
   return x;
 }
 template <typename T>
-DACE_DFI T tile_load_value(const T* x) {
+DACE_DFI T tile_load_value(const T* __restrict__ x) {
   return *x;
 }
 template <typename T, std::size_t N>
@@ -565,7 +565,7 @@ DACE_DFI void tile_store_value(T& dst, V v) {
   dst = static_cast<T>(v);
 }
 template <typename T, typename V>
-DACE_DFI void tile_store_value(T* dst, V v) {
+DACE_DFI void tile_store_value(T* __restrict__ dst, V v) {
   *dst = static_cast<T>(v);
 }
 template <typename T, std::size_t N, typename V>

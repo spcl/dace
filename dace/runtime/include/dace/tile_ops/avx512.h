@@ -81,7 +81,7 @@ namespace detail {
 // One AVX-512 fp lane-group: out = op(av, bv) for the active lanes (k), zero
 // elsewhere (ZERO-FILL producer semantics via maskz). float (W=16).
 template <char Op>
-inline void avx512_arith_ps(float* out, __m512 va, __m512 vb, __mmask16 k) {
+inline void avx512_arith_ps(float* __restrict__ out, __m512 va, __m512 vb, __mmask16 k) {
   __m512 r;
   if constexpr (Op == '+')
     r = _mm512_add_ps(va, vb);
@@ -100,7 +100,7 @@ inline void avx512_arith_ps(float* out, __m512 va, __m512 vb, __mmask16 k) {
   _mm512_storeu_ps(out, _mm512_maskz_mov_ps(k, r));  // zero-fill inactive
 }
 template <char Op>
-inline void avx512_arith_pd(double* out, __m512d va, __m512d vb, __mmask8 k) {
+inline void avx512_arith_pd(double* __restrict__ out, __m512d va, __m512d vb, __mmask8 k) {
   __m512d r;
   if constexpr (Op == '+')
     r = _mm512_add_pd(va, vb);
