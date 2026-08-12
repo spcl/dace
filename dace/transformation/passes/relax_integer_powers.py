@@ -111,7 +111,10 @@ def _symbol_facts(sdfg: SDFG) -> _Facts:
     facts: Dict[str, OrderedSet] = {}
     for g in sdfg.all_sdfgs_recursive():
         for name, dtype in g.symbols.items():
-            if numpy.issubdtype(dtype.type, numpy.integer):
+            # ``issubclass``, not ``numpy.issubdtype``: the latter converts through ``numpy.dtype``,
+            # which raises on a symbol carrying a non-numeric typeclass (``dace.callback``, whose
+            # ``.type`` is an instance rather than a scalar class).
+            if isinstance(dtype.type, type) and issubclass(dtype.type, numpy.integer):
                 facts.setdefault(name, OrderedSet()).add('integer')
         for name, recorded in g.symbol_assumptions.items():
             declared = facts.setdefault(name, OrderedSet())
