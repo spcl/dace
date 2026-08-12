@@ -404,7 +404,7 @@ class CUDACodeGen(TargetCodeGenerator):
             poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
             pool_header = """
     {backend}MemPool_t mempool;
-    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, 0));
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
     uint64_t threshold = {poolcfg_threshold};
     DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
@@ -438,6 +438,23 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     {{
         printf("ERROR: No {backend}-capable devices found\\n");
         return 2;
+    }}
+
+    // Which device this host thread is on is per-thread state that nothing here has set yet, so
+    // read it rather than assume it. Selecting it explicitly forces the context to exist now, so a
+    // placement problem is reported here instead of by whichever call happens to touch the driver
+    // first; the ordinal is then the one to configure the memory pool of, below.
+    int __dace_device = -1;
+    if ({backend}GetDevice(&__dace_device) != {backend}Success || __dace_device < 0 || __dace_device >= count)
+    {{
+        printf("ERROR: no valid current {backend} device for this thread (got %d of %d)\\n",
+               __dace_device, count);
+        return 3;
+    }}
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device %d\\n", __dace_device);
+        return 4;
     }}
 
     // Anything pending in the runtime's error slot on entry is not ours; see

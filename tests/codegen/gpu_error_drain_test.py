@@ -1,8 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Code-generation tests for the inherited-GPU-error drain (``__dace_gpu_drain_error``).
+"""Tests for the inherited-GPU-error drain (``__dace_gpu_drain_error``).
 
-These assert on generated source only, so they need neither a GPU nor a CUDA toolchain.
+All but the last assert on generated source only, so they need neither a GPU nor a CUDA
+toolchain. The last one is marked ``gpu``: it reproduces the failure end to end.
 """
+import ctypes
+from ctypes.util import find_library
+
+import numpy as np
+
 import dace
 import pytest
 
@@ -134,9 +140,95 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     assert 'DACE_GPU_CHECK(cudaMemPoolSetAttribute' in cu
     assert cu.index('__state->gpu_context = new') < cu.index('MemPool_t')
 
+    # The pool has to be the one belonging to the device this state runs on. A literal 0 is a
+    # valid ordinal whenever any device exists, so this never fails loudly: it silently applies
+    # the release threshold to a pool the allocations below never touch.
+    assert 'DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool(&mempool, __dace_device))' in cu
+
+
+def test_gpu_init_selects_the_current_device_explicitly():
+    """The initializer reads the thread's device, range-checks it, and selects it.
+
+    Which device a host thread is on is per-thread state that ``__dace_init_cuda`` has not set,
+    so it cannot be assumed - and it is what the memory-pool query above needs. Selecting it
+    also forces the context to exist here, where a placement failure is still attributable to
+    the thing that caused it, instead of surfacing later out of whichever checked call runs
+    first (in a CUB-reducing module, the temp-storage size query).
+    """
+    cu, _ = _sources(_gpu_sdfg('drain_device_probe'))
+
+    assert 'cudaGetDevice(&__dace_device)' in cu
+    assert 'cudaSetDevice(__dace_device)' in cu
+    assert '__dace_device >= count' in cu, 'the ordinal must be range-checked against the device count'
+    assert cu.index('cudaSetDevice(__dace_device)') < cu.index('__dace_gpu_drain_error(__state);'), \
+        'the device must be bound before the slot is claimed, so the drain covers the bound thread'
+
+
+def _load_cudart():
+    """The CUDA runtime as a ctypes handle, or None. Generated modules link it dynamically, so
+    this is the same library instance and therefore the same per-thread error slot."""
+    for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
+        if not name:
+            continue
+        try:
+            return ctypes.CDLL(name)
+        except OSError:
+            continue
+    return None
+
+
+_reduction_axes = (0, )
+
+
+@dace.program
+def _summed(a, b):
+    b[:] = np.sum(a, axis=_reduction_axes)
+
+
+@pytest.mark.gpu
+def test_foreign_error_is_not_charged_to_the_next_program():
+    """An error left pending by another GPU user must not fail the next SDFG.
+
+    This is the failure that motivated the drain, reproduced deliberately instead of waiting for
+    it. In CI the poisoning was done by whatever ran earlier in the same pytest-xdist worker, so
+    it landed on a different test every run; here it is one call away.
+
+    The victim is a CUB reduction because CUB is where a stale value becomes unrecognizable. The
+    temp-storage size query launches no kernel and can hardly fail on its own, but it reads the
+    current device through ``cudaGetDevice``, which hands back the pending error; CUB reads that
+    as "no current device" and returns ``cudaErrorInvalidDevice``. A pending
+    ``invalid argument (1)`` therefore surfaces as ``invalid device ordinal (101)`` out of an
+    initializer that did nothing wrong.
+
+    Poisoned through ctypes rather than cupy: cupy calls ``cudaGetLastError()`` when it raises,
+    which clears the very slot this needs left dirty.
+    """
+    cudart = _load_cudart()
+    if cudart is None:
+        pytest.skip('libcudart is not loadable from this process')
+
+    a = np.random.rand(4096).astype(np.float64)
+    b = np.zeros(1, dtype=np.float64)
+    sdfg = _summed.to_sdfg(a, b)
+    sdfg.apply_gpu_transformations()
+    import dace.libraries.standard as std
+    reduce_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
+    reduce_node.implementation = 'CUDA (device)'
+    csdfg = sdfg.compile()
+
+    cudart.cudaFree(ctypes.c_void_p(0))  # initialize the runtime before handing it a bad call
+    rc = cudart.cudaMemcpy(ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_size_t(1), ctypes.c_int(2))
+    if rc == 0 or cudart.cudaPeekAtLastError() == 0:
+        pytest.skip('this runtime build left nothing pending, so there is nothing to inherit')
+
+    csdfg(a=a, b=b)  # must not raise: the pending error is not this SDFG's
+    assert np.allclose(b, np.sum(a, axis=_reduction_axes))
+
 
 if __name__ == '__main__':
     test_gpu_drain_emitted_in_init_and_per_call()
     test_gpu_drain_absent_without_gpu_code()
     test_gpu_init_template_substitution_does_not_break_comments()
     test_gpu_mempool_setup_is_checked_and_follows_context_creation()
+    test_gpu_init_selects_the_current_device_explicitly()
+    test_foreign_error_is_not_charged_to_the_next_program()
