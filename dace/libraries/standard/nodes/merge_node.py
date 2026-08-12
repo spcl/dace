@@ -51,16 +51,18 @@ class ExpandPure(ExpandTransformation):
         sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         def add_input(conn: str, edge):
+            # Array input keeps the operand's own strides, exactly as the
+            # output below does: the connector is a view onto the caller's
+            # buffer, so assuming a packed C layout silently reads a
+            # Fortran-layout or otherwise non-packed operand at the wrong
+            # addresses.
             arr = parent_sdfg.arrays[edge.data.data]
             vol = _subset_volume(edge.data.subset)
             if vol == 1:
-                inner_shape = [1]
-                idx_expr = "0"
-            else:
-                inner_shape = iter_shape
-                idx_expr = full_idx
-            sdfg.add_array(conn, inner_shape, arr.dtype, arr.storage)
-            return idx_expr
+                sdfg.add_array(conn, [1], arr.dtype, arr.storage)
+                return "0"
+            sdfg.add_array(conn, iter_shape, arr.dtype, arr.storage, strides=arr.strides)
+            return full_idx
 
         t_idx = add_input(_TRUE_CONNECTOR_NAME, t_oe)
         f_idx = add_input(_FALSE_CONNECTOR_NAME, f_oe)
