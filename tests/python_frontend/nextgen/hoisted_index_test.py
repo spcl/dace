@@ -84,9 +84,13 @@ def test_full_reduction_broadcasts_into_a_slice():
 
     tree = nextgen.parse_program(filled, np.zeros(8), np.zeros(8))
     assert not _callbacks(tree)
-    # Reduce into a scalar temporary, then fill the target subset from it.
+    # Reduce into a scalar temporary, then fill the target subset from it. The
+    # reduction itself is a deferred replacement (a Reduce library node), so
+    # only the program's own map and the broadcast are map scopes here.
     scopes = [node for node in tree.preorder_traversal() if isinstance(node, tn.MapScope)]
-    assert len(scopes) == 3  # the program's own map, the reduction, the broadcast
+    assert len(scopes) == 2
+    reductions = [node for node in tree.preorder_traversal() if isinstance(node, tn.ReplacementCallNode)]
+    assert [node.qualname for node in reductions] == ['numpy.sum']
     # Asserted on the TREE only: inside a map body the scalar temporary hits
     # the recorded tree-to-SDFG gap where a body-local transient is also given
     # a nested-SDFG connector ("is a connector but its corresponding array is

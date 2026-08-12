@@ -32,7 +32,9 @@ def test_symbolic_shape_creation():
 
     tree = nextgen.parse_program(prog)
     assert not _callbacks(tree)
-    assert tuple(str(s) for s in tree.containers['output'].shape) == ('S0', 'S1 - S4 + 1')
+    # A local array that is returned whole is elided into the return container,
+    # so the shape the creation call resolved is read off "__return".
+    assert tuple(str(s) for s in tree.containers['__return'].shape) == ('S0', 'S1 - S4 + 1')
 
 
 def test_symbolic_shape_execution():
@@ -102,7 +104,8 @@ def test_descriptor_attribute_arguments():
 
     tree = nextgen.parse_program(prog)
     assert not _callbacks(tree)
-    descriptor = tree.containers['out']
+    # "out" is returned whole, so return elision folds it into "__return"
+    descriptor = tree.containers['__return']
     assert descriptor.dtype == dace.float32
     assert tuple(str(s) for s in descriptor.shape) == ('S0', 'S1')
 

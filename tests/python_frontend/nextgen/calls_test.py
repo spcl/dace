@@ -114,7 +114,7 @@ def test_ufunc_broadcasts():
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
-def test_np_sum_reduction_wcr():
+def test_np_sum_full_reduction():
 
     @dace.program
     def sum_all(A: dace.float64[N]):
@@ -123,21 +123,18 @@ def test_np_sum_reduction_wcr():
 
     tree = nextgen.parse_program(sum_all)
     assert isinstance(tree.containers['s'], data.Scalar)
-    tasklets = _nodes_of_type(tree, tn.TaskletNode)
-    # Initialization tasklet writes the identity without inputs
-    init = [t for t in tasklets if not t.in_memlets and t.out_memlets['__out'].data == 's']
-    assert len(init) == 1
-    assert '0' in init[0].node.code.as_string
-    # Reduction tasklet carries the WCR on its output memlet
-    wcr = [t for t in tasklets if t.out_memlets.get('__out') is not None and t.out_memlets['__out'].wcr is not None]
-    assert len(wcr) == 1
-    assert 'a + b' in wcr[0].out_memlets['__out'].wcr
-    maps = _nodes_of_type(tree, tn.MapScope)
-    assert len(maps) == 1
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    # The reduction defers to the registry replacement, which builds a Reduce
+    # library node; the identity initialization and the conflict resolution
+    # that the frontend used to emit itself now live inside its expansion.
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert [node.qualname for node in calls] == ['numpy.sum']
+
+    A = np.random.rand(16)
+    assert np.allclose(sum_all(A, N=16), A.sum())
 
 
-def test_method_max_first_element_init():
+def test_method_max_full_reduction():
 
     @dace.program
     def max_all(A: dace.float64[N]):
@@ -146,15 +143,12 @@ def test_method_max_first_element_init():
 
     tree = nextgen.parse_program(max_all)
     assert isinstance(tree.containers['m'], data.Scalar)
-    tasklets = _nodes_of_type(tree, tn.TaskletNode)
-    # max has no identity: initialization reads the first element instead
-    init = [t for t in tasklets if t.in_memlets and t.out_memlets['__out'].wcr is None]
-    assert len(init) == 1
-    assert str(init[0].in_memlets['__in0'].subset) == '0'
-    wcr = [t for t in tasklets if t.out_memlets['__out'].wcr is not None]
-    assert len(wcr) == 1
-    assert 'max' in wcr[0].out_memlets['__out'].wcr
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    # The reduction defers to the registry replacement (which builds a Reduce
+    # library node), so the accumulator seeding max needs -- it has no identity
+    # -- lives inside that node's expansion and is checked numerically.
+    A = np.random.rand(16) - 2.0
+    assert np.allclose(max_all(A, N=16), A.max())
 
 
 def test_sum_axis0():
@@ -167,21 +161,15 @@ def test_sum_axis0():
     tree = nextgen.parse_program(sum_axis)
     # ``s`` is returned, so it carries the return container's name
     assert tuple(tree.containers['__return'].shape) == (12, )
-    maps = _nodes_of_type(tree, tn.MapScope)
-    # Initialization map over the kept dimension + full-rank WCR map
-    assert len(maps) == 2
-    wcr_tasklets = [
-        t for t in _nodes_of_type(tree, tn.TaskletNode)
-        if t.out_memlets.get('__out') is not None and t.out_memlets['__out'].wcr is not None
-    ]
-    assert len(wcr_tasklets) == 1
-    # The output drops the reduced dimension: indexed by the kept parameter only
-    out_subset = str(wcr_tasklets[0].out_memlets['__out'].subset)
-    assert '__i1' in out_subset and '__i0' not in out_subset
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    # The reduced dimension is dropped, which the shape above states; the
+    # dataflow that drops it lives inside the Reduce library node the deferred
+    # replacement expansion produces.
+    A = np.random.rand(7, 12)
+    assert np.allclose(sum_axis(A, N=7), A.sum(axis=0))
 
 
-def test_method_max_axis1_first_slice_init():
+def test_method_max_axis1():
 
     @dace.program
     def max_axis(A: dace.float64[N, 12]):
@@ -191,16 +179,9 @@ def test_method_max_axis1_first_slice_init():
     tree = nextgen.parse_program(max_axis)
     # ``m`` is returned, so it carries the return container's name
     assert tuple(tree.containers['__return'].shape) == (N, )
-    tasklets = _nodes_of_type(tree, tn.TaskletNode)
-    # max has no identity: the initialization reads the first slice along axis 1
-    init = [t for t in tasklets if t.in_memlets and t.out_memlets['__out'].wcr is None]
-    assert len(init) == 1
-    init_subset = str(init[0].in_memlets['__in0'].subset)
-    assert '__i0' in init_subset and '__i1' not in init_subset
-    wcr = [t for t in tasklets if t.out_memlets['__out'].wcr is not None]
-    assert len(wcr) == 1
-    assert 'max' in wcr[0].out_memlets['__out'].wcr
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    A = np.random.rand(7, 12) - 2.0
+    assert np.allclose(max_axis(A, N=7), A.max(axis=1))
 
 
 def test_sum_negative_axis():
@@ -268,10 +249,10 @@ if __name__ == '__main__':
     test_ufunc_add_elementwise()
     test_ufunc_unary()
     test_ufunc_broadcasts()
-    test_np_sum_reduction_wcr()
-    test_method_max_first_element_init()
+    test_np_sum_full_reduction()
+    test_method_max_full_reduction()
     test_sum_axis0()
-    test_method_max_axis1_first_slice_init()
+    test_method_max_axis1()
     test_sum_negative_axis()
     test_nonconstant_axis_falls_back()
     test_arange()

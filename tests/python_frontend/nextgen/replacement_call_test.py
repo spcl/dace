@@ -84,9 +84,11 @@ def test_transpose_execution():
     assert np.allclose(func(A=A), np.transpose(A, (2, 0, 1)))
 
 
-def test_scalar_axis_keeps_wcr_mechanism():
-    """Single constant axes stay on the dedicated WCR-map mechanism (no
-    ReplacementCallNode)."""
+def test_scalar_axis_defers_to_the_replacement():
+    """A single constant axis lowers through the deferred replacement
+    expansion, which produces a Reduce library node -- not the WCR map the
+    frontend used to emit itself, which was correct but left nothing for the
+    reduction expansions and tiling heuristics to recognize."""
 
     @dace.program
     def prog(A: dace.float64[4, 5]):
@@ -94,7 +96,12 @@ def test_scalar_axis_keeps_wcr_mechanism():
 
     tree = nextgen.parse_program(prog)
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
-    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert [node.qualname for node in calls] == ['numpy.sum']
+    assert calls[0].keyword_arguments == {'axis': 1}
+
+    A = np.random.rand(4, 5)
+    assert np.allclose(prog(A), A.sum(axis=1))
 
 
 def test_ufunc_reduce_method_structure():
@@ -402,7 +409,7 @@ if __name__ == '__main__':
     test_max_tuple_axis_execution()
     test_mean_execution()
     test_transpose_execution()
-    test_scalar_axis_keeps_wcr_mechanism()
+    test_scalar_axis_defers_to_the_replacement()
     test_ufunc_reduce_method_structure()
     test_ufunc_reduce_axis_execution()
     test_ufunc_accumulate_execution()
