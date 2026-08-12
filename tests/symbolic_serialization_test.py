@@ -15,6 +15,7 @@ from dace.properties import DictProperty, ListProperty, SymbolicProperty
 from dace.sdfg.infer_types import infer_connector_types
 from packaging.version import parse as parse_version
 import sympy
+from sympy.core.cache import clear_cache
 import json
 
 
@@ -338,6 +339,33 @@ def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
     restored = symbolic.deserialize_symbolic(serialized)
 
     assert symbolic.serialize_symbolic(restored) == serialized
+
+
+# Passes here because this branch folds a symbol's dtype into its sympy identity, so two same-name
+# symbols of different dtypes do not share a cache key. On main they do, and this fails.
+def test_symbol_dtype_survives_a_sympy_cache_eviction():
+    """A symbol's dtype is not part of what SymPy hashes it by, so two same-name symbols of different
+    dtypes share one cache key, and whichever built an expression first owns it.
+
+    That alone is symmetric -- both sides of a round-trip read the same wrong symbol and the
+    serialization still matches. The eviction below is what makes it observable: the expression the
+    caller holds keeps its own symbol, while the cache entry behind that key is rebuilt around the
+    other one, and the deserializer is handed that instead of what it asked for.
+    """
+    expr = sympy.Mod(symbolic.symbol('cache_probe'), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+    try:
+        # A long enough session evicts this expression from SymPy's bounded cache ...
+        clear_cache()
+        # ... and the next builder of the same key is the same name at another dtype.
+        sympy.Mod(symbolic.symbol('cache_probe', dace.int64), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+
+        serialized = symbolic.serialize_symbolic(expr)
+        assert serialized == 'Mod($cache_probe, 3i16)'
+
+        # Reads back as Mod(symbol($cache_probe, dtype=dace.int64), 3i16).
+        assert symbolic.serialize_symbolic(symbolic.deserialize_symbolic(serialized)) == serialized
+    finally:
+        clear_cache()
 
 
 def test_plain_integer_roundtrip_converts_to_sympy_integer():
