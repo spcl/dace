@@ -847,13 +847,30 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # Format: {access_node: (edge, in_conn, out_conn)}
 
         for map_entry, map_exit in zip(map_entries, map_exits):
+            # An ordering edge into the entry names no connector to rewire, and dropping it would
+            # drop the sequencing it encodes. Where its source ends up decides where it lands. A
+            # source outside the subgraph still gates the whole fused map, so it re-anchors onto
+            # the fused entry. An intermediate node is produced INSIDE the fused map, so anchoring
+            # it on the entry would close a cycle and make the entry its own scope ancestor; what
+            # survives fusion there is the per-iteration order, carried on the body the original
+            # entry guarded. Runs before the connector rewiring, which consumes the entry's out
+            # edges and would leave no body to attach to.
+            for edge in list(graph.in_edges(map_entry)):
+                if edge.dst_conn:
+                    continue
+                if edge.src in intermediate_nodes:
+                    for root in dict.fromkeys(e.dst for e in graph.out_edges(map_entry)):
+                        if root is not map_exit:
+                            graph.add_edge(edge.src, None, root, None, Memlet())
+                    graph.remove_edge(edge)
+                else:
+                    self.copy_edge(graph, edge, new_dst=global_map_entry)
+
             # handle inputs
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                # An ordering edge carries no connector, so it names no connector pair to
-                # rewire; it is re-anchored to the fused entry by the connector-less loop
-                # below, exactly as its outgoing counterpart is.
+                # Ordering edges name no connector pair and were re-anchored above.
                 if edge.dst_conn is None:
                     continue
                 out_edges = [
@@ -892,13 +909,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for out_edge in out_edges:
                         mm = dcpy(out_edge.data)
                         self.copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
-
-            for edge in graph.in_edges(map_entry):
-                # An ordering edge into the entry is a dependency, not an access: it has no
-                # connector to rewire, but dropping it would drop the sequencing it encodes,
-                # so it is re-anchored onto the fused entry.
-                if not edge.dst_conn:
-                    self.copy_edge(graph, edge, new_dst=global_map_entry)
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
