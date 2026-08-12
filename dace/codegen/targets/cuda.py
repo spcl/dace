@@ -258,11 +258,12 @@ class CUDACodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
-        # Initialized, because the state struct is allocated with `new T` (default-initialized, so
-        # a raw pointer member would be indeterminate) and DACE_GPU_CHECK reads this field. The
-        # warm-up allocation in __dace_init_cuda is checked before the context is constructed, so
-        # on that error path the field is read before it is assigned.
-        self._frame.statestruct.append('dace::cuda::Context *gpu_context = nullptr;')
+        # Deliberately declared WITHOUT an initializer: CompiledSDFG.get_state_struct() recovers
+        # the layout by parsing these declarations, and its field regex is anchored at the end of
+        # the declaration, so a `= nullptr` suffix stops the parse dead and silently drops every
+        # field after this one. The pointer is zeroed by value-initializing the whole state
+        # (`new T()` in framecode) instead, which DACE_GPU_CHECK relies on.
+        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # Collect all defined symbols and argument lists with one traversal
         shared_transients = {}
@@ -440,8 +441,8 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     }}
 
     // Anything pending in the runtime's error slot on entry is not ours; see
-    // __dace_gpu_drain_error. The CUB temp-storage size query that {initcode} often emits below is
-    // the usual victim - it is the first checked call in many generated modules.
+    // __dace_gpu_drain_error. The CUB temp-storage size query that the init code often emits
+    // below is the usual victim - it is the first checked call in many generated modules.
     __dace_gpu_drain_error(__state);
 
     // Initialize {backend} before we run the application
