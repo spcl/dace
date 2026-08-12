@@ -2864,6 +2864,57 @@ def specialize_symbols(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
                 node.symbol_mapping.pop(name, None)
 
 
+def symbol_demotes_to_transient_scalar(sdfg: 'dace.SDFG', symbol_str: str) -> bool:
+    """Whether demoting ``symbol_str`` would produce a TRANSIENT scalar of ``sdfg``.
+
+    False for a symbol that enters ``sdfg`` from outside -- a top-level argument (shape,
+    stride or loop bound, i.e. a member of :attr:`~dace.sdfg.SDFG.free_symbols`) or a value
+    bound by the parent nested-SDFG node's symbol mapping. Such a symbol has no definition
+    inside ``sdfg`` to turn into a scalar assignment, so :func:`demote_symbol_to_scalar`
+    needs an ``in_scalar_name`` to write into and raises without one. Callers that demote
+    opportunistically test this first and leave the symbol alone.
+
+    :param sdfg: The SDFG holding the symbol.
+    :param symbol_str: Name of the symbol.
+    :return: ``True`` if the demoted scalar would be transient.
+    """
+    if sdfg.parent_nsdfg_node is None:
+        return symbol_str not in sdfg.free_symbols
+    return symbol_str not in sdfg.parent_nsdfg_node.symbol_mapping
+
+
+def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str) -> bool:
+    """Whether ``symbol_str`` is load-bearing anywhere outside tasklet code in ``sdfg``.
+
+    A demoted symbol becomes a scalar container of the demotion dtype, so any use that
+    the graph itself evaluates symbolically -- a descriptor shape or stride, a memlet
+    subset, a map range, a loop iteration variable -- stops being expressible. Those uses
+    make the symbol undemotable; a symbol read only by tasklet code (typically bound by an
+    interstate-edge assignment) is free to become a scalar.
+
+    Scanned at the same depth :func:`demote_symbol_to_scalar` rewrites: this SDFG's own
+    blocks, not the bodies of nested SDFGs.
+
+    :param sdfg: The SDFG to scan.
+    :param symbol_str: Name of the symbol.
+    :return: ``True`` if some structural use would break under demotion.
+    """
+    for desc in sdfg.arrays.values():
+        if symbol_str in (str(s) for s in desc.free_symbols):
+            return True
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable == symbol_str:
+            return True
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
+                return True
+        for edge in state.edges():
+            if symbol_str in (str(s) for s in edge.data.free_symbols):
+                return True
+    return False
+
+
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                             symbol_str: str,
                             default_type: 'dace.dtypes.typeclass' = None,
@@ -2885,10 +2936,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
 
     # If top-level and in free symbols
     # Or not top-level and in symbol mapping need to make it non transient
-    # TODO:
-    is_top_level = sdfg.parent_nsdfg_node is None
-    is_transient = not ((is_top_level and symbol_str in sdfg.free_symbols) or
-                        ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
+    is_transient = symbol_demotes_to_transient_scalar(sdfg, symbol_str)
 
     if is_transient is False:
         if in_scalar_name is None:

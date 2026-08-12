@@ -86,6 +86,12 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             # We should demote all the free conditional symbols
             for conditional_sym in free_conditional_symbols:
                 sdfg = cfg.sdfg if not isinstance(cfg, SDFG) else cfg
+                # An SDFG argument has no definition here to rewrite, and a symbol the graph
+                # evaluates (subset, map range, loop variable) stops being expressible as a scalar.
+                # Both are uniform across lanes, so the condition holds with them left symbols.
+                if (not sdutil.symbol_demotes_to_transient_scalar(sdfg, conditional_sym)
+                        or sdutil.symbol_carries_graph_structure(sdfg, conditional_sym)):
+                    continue
                 # Cast all symbols to fp64
                 sdfg.symbols[conditional_sym] = dace.float64
                 sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, dace.float64, None)
