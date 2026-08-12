@@ -460,7 +460,7 @@ class Config(object):
 
         Examples::
 
-            Config.append('compiler', 'cpu', 'args', value='-fPIC')
+            Config.append('compiler', 'cpu', 'args', value='-fno-plt')
         """
         return Config._data.append(*key_hierarchy, value=value, autosave=autosave)
 

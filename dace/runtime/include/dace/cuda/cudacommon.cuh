@@ -21,8 +21,8 @@ typedef cudaError_t gpuError_t;
     gpuError_t errr = (err);                                              \
     if (errr != (gpuError_t)0) {                                          \
       printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
-             gpuGetErrorString(err), errr);                               \
-      __state->gpu_context->lasterror = errr;                             \
+             gpuGetErrorString(errr), errr);                              \
+      __state->gpu_context->record_error(errr);                           \
     }                                                                     \
   } while (0)
 
@@ -37,7 +37,7 @@ typedef cudaError_t gpuError_t;
           (unsigned int)(gdimx), (unsigned int)(gdimy), (unsigned int)(gdimz), \
           (unsigned int)(bdimx), (unsigned int)(bdimy),                        \
           (unsigned int)(bdimz));                                              \
-      __state->gpu_context->lasterror = err;                                   \
+      __state->gpu_context->record_error(err);                                 \
     }                                                                          \
   } while (0)
 
@@ -59,6 +59,14 @@ struct Context {
   ~Context() {
     delete[] streams;
     delete[] events;
+  }
+  // Keep the first error. One failure tends to produce more, and only the first names the call that
+  // actually broke: a failed CUB size query leaves its workspace unsized, and the reduction that
+  // then reads it reports a second, later error that describes a consequence.
+  void record_error(gpuError_t err) {
+    if (lasterror == (gpuError_t)0) {
+      lasterror = err;
+    }
   }
 };
 
