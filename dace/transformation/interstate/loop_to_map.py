@@ -170,8 +170,17 @@ def _affine_coeffs(expr, itersym):
         when it is higher, which is the degree test), and evaluating at zero IS ``b``. Both are
         structural, and neither expands the expression. Non-polynomial in ``itersym`` (an
         ``int_floor`` of it, say) is not affine and is refused, as before.
+
+        SOUNDNESS: the expression is re-pointed at ``itersym`` first. A DaCe symbol folds its
+        dtype into its identity, so a subset built by the frontend can carry ``j:int64`` while
+        ``itersym`` is the reparsed ``j:int32``. ``diff`` then sees no occurrence of ``itersym``
+        and reports ``a == 0`` -- the index reads as a loop-INVARIANT constant. Two such
+        "constants" ``j+1`` and ``j`` differ by a nonzero number, so
+        :func:`_dim_provably_disjoint` declares a genuine loop-carried recurrence provably
+        disjoint and LoopToMap parallelizes it (adi/deriche's ``u[1:N-1, j] = ... u[1:N-1, j+1]``
+        silently miscompiled). Aligning first makes the derivative see the real coefficient.
     """
-    e = symbolic.pystr_to_symbolic(expr)
+    e = _align_itersym(symbolic.pystr_to_symbolic(expr), itersym)
     if not e.is_polynomial(itersym):
         return None
     a = sp.diff(e, itersym)
