@@ -105,6 +105,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
         """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
+        self._own_nested_sdfgs: list[tuple[SDFGState, nodes.NestedSDFG]] = []
+        """Nested SDFG nodes THIS conversion created (map bodies, SDFG calls),
+        with the state holding each. Their outer memlets are placeholders to be
+        narrowed by propagation at the end; a nested SDFG a library-node
+        expansion authored is deliberately not in here (see _propagate_scopes)."""
+
         # state management
         self._state_stack: list[SDFGState] = []
 
@@ -491,6 +497,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             inputs=connectors["inputs"],
             outputs=connectors["outputs"],
         )
+        self._own_nested_sdfgs.append((self._current_state, nsdfg))
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
         map_entry, to_connect = self._dataflow_stack[-1]
@@ -1656,6 +1663,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                        inputs=input_connectors,
                                        outputs=output_connectors,
                                        symbol_mapping=symbol_mapping)
+        self._own_nested_sdfgs.append((state, nested))
         # Go through the same per-scope access cache the tasklet path uses, so a
         # later node in this state reading what the call wrote finds the access
         # node the call wrote to. Bypassing it gave the call its own private
@@ -1776,29 +1784,35 @@ def from_schedule_tree(
     # collides is a property of the graph, not of the syntax that produced it.
     ResolveWriteConflicts().apply_pass(result, {})
 
-    _propagate_scopes(result)
+    _propagate_scopes(result, visitor._own_nested_sdfgs)
 
     return result
 
 
-def _propagate_scopes(sdfg: SDFG) -> None:
+def _propagate_scopes(sdfg: SDFG, own_nested: 'list[tuple[SDFGState, nodes.NestedSDFG]]') -> None:
     """
-    Widen the per-iteration subsets of every map scope in the finished SDFG.
+    Widen the per-iteration subsets of every map scope in the finished SDFG, and
+    narrow the placeholder connector memlets on the nested SDFGs this
+    conversion created.
 
-    Deliberately not ``propagate_memlets_sdfg``: that also recomputes each
-    nested SDFG's OUTER memlets from its inner accesses, which is wrong for a
-    nested SDFG that reinterprets its operand's shape through strides. A
-    library-node expansion is exactly that -- an einsum whose output is
-    transposed reads a ``(2, 3)`` array through a ``(3, 2)`` connector -- and
-    the recomputed outer memlet came out as ``b[0:3, 0:2]``, out of bounds on
-    the array it reads. Every connector memlet here was written either by this
-    conversion or by the expansion that built the nested SDFG, so there is
-    nothing to recompute. The stable frontend does not do it either: it
-    propagates each scope as it builds it.
+    Deliberately not ``propagate_memlets_sdfg``, which would do the second part
+    for EVERY nested SDFG. That is wrong for one whose connector reinterprets
+    its operand's shape through strides, which is what a library-node expansion
+    builds: an einsum with a transposed output reads a ``(2, 3)`` array through
+    a ``(3, 2)`` connector, and the recomputed outer memlet came out as
+    ``b[0:3, 0:2]`` -- out of bounds on the array it reads. Such a boundary was
+    authored deliberately by the expansion and has nothing to re-derive. A map
+    body emitted here is the opposite case: its connector memlets are whole-array
+    placeholders (``Memlet.from_array``) precisely because they are meant to be
+    narrowed here.
 
     :param sdfg: The SDFG to propagate in, in place.
+    :param own_nested: The (state, nested SDFG node) pairs this conversion
+                       created, innermost last.
     """
     propagation.reset_state_annotations(sdfg)
+    for state, node in reversed(own_nested):
+        propagation.propagate_memlets_nested_sdfg(state.sdfg, state, node)
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
             propagation.propagate_memlets_scope(nested, state, state.scope_leaves())
