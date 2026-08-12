@@ -3769,12 +3769,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         defined_vars[name] = true_name
                         continue
                     elif (not result_data.transient or result in self.sdfg.constants_prop
-                          or isinstance(result_data, data.Scalar)):
+                          or (isinstance(result_data, data.Scalar) and result in defined_vars.values())):
                         # Scalars rebind in Python instead of being mutated in place, so ``b = a`` must copy the
                         # value. Arrays keep aliasing, which is what NumPy does. The copy binds to a descriptor
                         # named after the variable: an anonymous ``__tmp{N}`` collides with the temporaries a
                         # nested scope mints from its own counter, and the nested one shadows it -- the
                         # accumulator write in ``if c: tmp += a[j]`` then never reaches the outer scalar.
+                        # Only a container that some name already holds needs the copy: an unbound intermediate
+                        # (``b = abs(a[i])``) has no second handle to corrupt, and copying it buries the
+                        # expression behind a state boundary where scalar-to-symbol promotion cannot fold it.
                         true_name, new_data = _add_transient_data(self,
                                                                   self.sdfg,
                                                                   result_data,
