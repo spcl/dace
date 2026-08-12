@@ -39,18 +39,6 @@ class cuTensor:
 
     @staticmethod
     def handle_setup_code(node):
-        location = node.location
-        if not location or "gpu" not in node.location:
-            location = -1  # -1 means current device
-        else:
-            try:
-                location = int(location["gpu"])
-            except ValueError:
-                raise ValueError("Invalid GPU identifier: {}".format(location))
-
-        code = """\
-const int __dace_cuda_device = {location};
+        return dace.library.gpu_device_setup_code(node) + """\
 cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get(__dace_cuda_device);
 // cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""
-
-        return code.format(location=location)

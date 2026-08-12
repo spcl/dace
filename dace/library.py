@@ -203,6 +203,29 @@ def get_environment(env_name):
     return env
 
 
+def gpu_device_setup_code(node) -> str:
+    """Declares ``__dace_cuda_device``, the device a GPU library handle is created on.
+
+    DaCe runs one process per GPU: ``__dace_init_cuda`` selects the device once and records it,
+    and everything that needs an ordinal reads it back from there.
+
+    Placing a node on a different GPU via ``location['gpu']`` is rejected rather than ignored.
+    It never worked: only these environments ever read it, while allocations and kernel launches
+    always went to the current device and peer access is never enabled -- so the handle operated
+    on pointers belonging to another device. Failing to expand is the loud version of what used
+    to be an illegal access or a silently wrong result.
+    """
+    if node.location and 'gpu' in node.location:
+        raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
+                         'location["gpu"], but DaCe runs one process per GPU: every allocation and kernel '
+                         'launch uses the device selected in __dace_init_cuda, so a library handle on any '
+                         'other device would read memory it does not own. Remove the location and select '
+                         'the GPU for the whole process instead (CUDA_VISIBLE_DEVICES, or cudaSetDevice '
+                         'before the first DaCe call).')
+
+    return 'const int __dace_cuda_device = __state->gpu_context->device;\n'
+
+
 # Mapping from string to library
 def get_library(lib_name):
     try:

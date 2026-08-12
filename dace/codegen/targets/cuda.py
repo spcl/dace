@@ -440,14 +440,24 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
-    // Which device this host thread is on is per-thread state that nothing here has set yet, so
-    // read it rather than assume it. Selecting it explicitly forces the context to exist now, so a
-    // placement problem is reported here instead of by whichever call happens to touch the driver
-    // first; the ordinal is then the one to configure the memory pool of, below.
-    int __dace_device = -1;
-    if ({backend}GetDevice(&__dace_device) != {backend}Success || __dace_device < 0 || __dace_device >= count)
+    // One process, one GPU: the device is chosen here and never changed again. Everything that
+    // needs an ordinal afterwards - the memory pool below, every library handle - reads it back
+    // from __state->gpu_context->device rather than selecting its own.
+    //
+    // The ordinal below is the compiler.cuda.device setting. -1, the default, means "whatever
+    // device this process is already on", which is what one-rank-per-GPU under
+    // CUDA_VISIBLE_DEVICES gives. Selecting it explicitly rather than leaving it implicit forces
+    // the context to exist now, so a placement problem is reported here instead of by whichever
+    // call happens to touch the driver first.
+    int __dace_device = {configured_device};
+    if (__dace_device < 0 && {backend}GetDevice(&__dace_device) != {backend}Success)
     {{
-        printf("ERROR: no valid current {backend} device for this thread (got %d of %d)\\n",
+        printf("ERROR: no current {backend} device for this thread\\n");
+        return 3;
+    }}
+    if (__dace_device < 0 || __dace_device >= count)
+    {{
+        printf("ERROR: {backend} device %d requested, but this process can see %d device(s)\\n",
                __dace_device, count);
         return 3;
     }}
@@ -468,6 +478,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     DACE_GPU_CHECK({backend}Free(dev_X));
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+    __state->gpu_context->device = __dace_device;
 
     // The memory-pool setup runs AFTER the context exists: DACE_GPU_CHECK records into
     // __state->gpu_context, so a failure before this point could not be recorded (and, before
@@ -572,6 +583,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
+           configured_device=int(Config.get('compiler', 'cuda', 'device')),
            sdfg=self._global_sdfg)
 
         return [self._codeobject]

@@ -23,21 +23,9 @@ class rocBLAS:
 
     @staticmethod
     def handle_setup_code(node):
-        location = node.location
-        if not location or "gpu" not in node.location:
-            location = -1  # -1 means current device
-        else:
-            try:
-                location = int(location["gpu"])
-            except ValueError:
-                raise ValueError("Invalid GPU identifier: {}".format(location))
-
-        code = """\
-const int __dace_cuda_device = {location};
+        return dace.library.gpu_device_setup_code(node) + """\
 rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get(__dace_cuda_device);
 rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
-
-        return code.format(location=location)
 
     @staticmethod
     def _find_library():

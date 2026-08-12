@@ -55,8 +55,12 @@ struct Context {
   gpuStream_t *internal_streams;
   gpuEvent_t *events;
   gpuError_t lasterror;
+  // The one device this process uses, as selected by __dace_init_cuda. Anything needing an
+  // ordinal reads it from here rather than choosing its own; -1 until init has run.
+  int device;
   Context(int nstreams, int nevents)
-      : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0) {
+      : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0),
+        device(-1) {
     streams = new gpuStream_t[nstreams];
     internal_streams = new gpuStream_t[nstreams];
     events = new gpuEvent_t[nevents];
