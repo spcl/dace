@@ -329,8 +329,6 @@ def test_start_block_reset_when_start_block_removed():
 
 
 if __name__ == '__main__':
-    test_start_block_survives_removal_of_another_block()
-    test_start_block_reset_when_start_block_removed()
     test_read_and_write_set_selection()
     test_read_and_write_set_filter()
     test_read_write_set()
@@ -338,3 +336,9 @@ if __name__ == '__main__':
     test_read_and_write_set_names()
     test_deepcopy_state()
     test_add_mapped_tasklet()
+    test_find_upstream_nodes()
+    test_find_upstream_nodes_bloking()
+    test_find_downstream_nodes()
+    test_find_downstream_nodes_bloking()
+    test_start_block_survives_removal_of_another_block()
+    test_start_block_reset_when_start_block_removed()

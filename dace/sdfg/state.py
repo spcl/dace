@@ -2937,15 +2937,17 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        start_block = None
-        if self._start_block is not None and self._start_block < self.number_of_nodes():
-            start_block = self.node(self._start_block)
+        if self._start_block is not None:
+            start_block = self._cached_start_block or self.node(self._start_block)
+        else:
+            start_block = None
         super().remove_node(node)
-        self._cached_start_block = None
         if start_block is None or start_block is node:
             self._start_block = None
+            self._cached_start_block = None
         else:
             self._start_block = self.node_id(start_block)
+            self._cached_start_block = start_block
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
