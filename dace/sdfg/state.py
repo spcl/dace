@@ -2957,10 +2957,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         else:
             start_block = None
         super().remove_node(node)
-        if start_block is None or start_block is node:
+        if start_block is node:
             self._start_block = None
             self._cached_start_block = None
-        else:
+        elif start_block is not None:
             self._start_block = self.node_id(start_block)
             self._cached_start_block = start_block
 
