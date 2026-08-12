@@ -140,7 +140,10 @@ def _async_ring_sdfg(dtype):
     irecv = mpi.nodes.irecv.Irecv("irecv")
     waitall = mpi.nodes.wait.Waitall("waitall")
     req_s = state.add_access("req")
-    req_r = state.add_access("req")
+    # ONE access node for both request writes. A second one is a different node over the same
+    # container, so nothing orders the Irecv against the Waitall reading req[0:2] -- codegen is free
+    # to emit Isend, Waitall, Irecv, and the Waitall then dereferences an unposted MPI_Request.
+    req_r = req_s
 
     state.add_memlet_path(state.add_access("X"), isend, dst_conn="_buffer", memlet=Memlet.simple("X", col))
     state.add_memlet_path(state.add_access("dest"), isend, dst_conn="_dest", memlet=Memlet.simple("dest", "0:1"))
