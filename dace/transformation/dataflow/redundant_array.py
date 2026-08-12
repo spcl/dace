@@ -418,6 +418,24 @@ class RedundantArray(pm.SingleStateTransformation):
                                     if desc is true_out_desc:
                                         return False
 
+            # A second write landing on the same region of out_array is sequenced against this one
+            # only by the copy: the value reaches out_array after in_array's producer completed,
+            # which puts it behind anything that producer's scope already wrote. Folding the copy
+            # away turns both into direct writes of out_array out of one scope, and siblings in a
+            # scope have no relative order -- codegen may replay the superseded value last. Only
+            # provably disjoint regions, and equal WCRs (accumulation commutes), stay safe.
+            if out_array is true_out_array:
+                for e in graph.in_edges(true_out_array):
+                    if e is e1 or e.data.is_empty():
+                        continue
+                    if e.data.wcr is not None and e.data.wcr == e1.data.wcr:
+                        continue
+                    other_subset = e.data.get_dst_subset(e, graph)
+                    if other_subset is None:
+                        return False
+                    if any(subsets.intersects(oset, other_subset) is not False for oset in true_out_subsets):
+                        return False
+
             # In non-permissive mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
