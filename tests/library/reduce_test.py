@@ -73,7 +73,6 @@ def test_multidim_gpu(impl, test_case):
     a = np.random.rand(*in_shape).astype(dtype)
     b = np.random.rand(*out_shape).astype(dtype)
     sdfg = multidimred.to_sdfg(a, b)
-    sdfg.name = 'multidimred_' + re.sub(r'\W+', '_', variant_id)
     sdfg.apply_gpu_transformations()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
     rednode.implementation = impl
