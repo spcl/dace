@@ -31,18 +31,28 @@ _Facts = Dict[str, FrozenSet[str]]
 #: The power head, in whichever backend built the expression.
 _POW = symbolic_engine.Pow
 
+#: Build modes tried when rebuilding a node, in order: evaluating first, then unevaluated.
+_BUILD_MODES = ({}, {'evaluate': False})
 
-def _rebuildable(expr, args) -> bool:
-    """Whether ``expr.func(*args)`` reproduces ``expr``.
+
+def _rebuild(expr, args, mapped):
+    """``expr``'s head applied to ``mapped``, built the way ``expr`` itself was, or ``None``.
 
     An engine may hold several ops under one head (real division and a product both read ``Mul``), and
-    a structural head is not a constructor at all. Checked per node, so an unmodelled kind costs a
-    missed relaxation rather than a changed value.
+    a structural head is not a constructor at all -- so the head is trusted only where it reproduces
+    ``expr`` from ``expr``'s OWN arguments. DaCe mints packed shapes and strides unevaluated, and their
+    argument order is exactly what the evaluating constructor canonicalizes away: reproducing those
+    needs the unevaluated build, which is then also what the rewritten node is built with, so the pack
+    survives. Checked per node, so an unmodelled kind costs a missed relaxation rather than a changed
+    value.
     """
-    try:
-        return expr.func(*args) == expr
-    except (TypeError, ValueError):
-        return False
+    for kwargs in _BUILD_MODES:
+        try:
+            if expr.func(*args, **kwargs) == expr:
+                return expr.func(*mapped, **kwargs)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _map_pows(expr, rewrite):
@@ -57,9 +67,10 @@ def _map_pows(expr, rewrite):
     mapped = [_map_pows(a, rewrite) for a in args]
     if isinstance(expr, _POW):
         return rewrite(mapped[0], mapped[1])
-    if all(m is a for m, a in zip(mapped, args)) or not _rebuildable(expr, args):
+    if all(m is a for m, a in zip(mapped, args)):
         return expr
-    return expr.func(*mapped)
+    rebuilt = _rebuild(expr, args, mapped)
+    return expr if rebuilt is None else rebuilt
 
 
 def _affine_coeff(exp, sym):
@@ -125,6 +136,16 @@ def _symbol_facts(sdfg: SDFG) -> _Facts:
             elif recorded.get('nonnegative'):
                 declared.add('nonnegative')
     return {name: frozenset(declared) for name, declared in facts.items()}
+
+
+def _merged_facts(own: _Facts, inherited: Optional[_Facts]) -> _Facts:
+    """``own`` widened by ``inherited`` -- a name known in both keeps every fact either states."""
+    if not inherited:
+        return own
+    merged = dict(own)
+    for name, declared in inherited.items():
+        merged[name] = merged.get(name, frozenset()) | declared
+    return merged
 
 
 def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, sdfg: SDFG, ranges: Optional[_Ranges] = None) -> bool:
@@ -275,6 +296,30 @@ class RelaxIntegerPowers(ppl.Pass):
             if relaxed is not core:
                 nsdfg.symbol_mapping[name] = relaxed
 
+    def _nested_facts(self, nsdfg: nodes.NestedSDFG) -> _Facts:
+        """What the enclosing scope proves about each symbol mapped into ``nsdfg``.
+
+        A nested SDFG a library expansion mints declares symbol dtypes only -- the sign registry stays
+        on the SDFG the frontend built -- so an exponent that is a provable non-negative integer
+        outside would decline inside and emit a ``double`` ``pow`` in an integer bound. The inner name
+        IS the mapped outer expression, so what holds of that expression holds of the name.
+        """
+        inner: _Facts = {}
+        for name, value in nsdfg.symbol_mapping.items():
+            value = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value
+            if not isinstance(value, symbolic.SymbolicBasic):
+                continue
+            proven = OrderedSet()
+            if symbolic.ask('integer', value, self._facts) is True:
+                proven.add('integer')
+            if symbolic.ask('positive', value, self._facts) is True:
+                proven.add('positive')
+            elif symbolic.ask('nonnegative', value, self._facts) is True:
+                proven.add('nonnegative')
+            if proven:
+                inner[str(name)] = frozenset(proven)
+        return inner
+
     def _nested_ranges(self, nsdfg: nodes.NestedSDFG, ranges: _Ranges) -> _Ranges:
         """Carry outer ranges through a nested SDFG's symbol mapping."""
         inner: _Ranges = {}
@@ -284,11 +329,11 @@ class RelaxIntegerPowers(ppl.Pass):
                 inner[str(name)] = ranges[value.name]
         return inner
 
-    def _visit_sdfg(self, sdfg: SDFG, ranges: _Ranges) -> None:
+    def _visit_sdfg(self, sdfg: SDFG, ranges: _Ranges, inherited: Optional[_Facts] = None) -> None:
         # ``sdfg.free_symbols`` yields names; the sign / integrality assumptions
         # live on the symbol objects in the array descriptors, so collect those.
         saved = self._facts
-        self._facts = _symbol_facts(sdfg)
+        self._facts = _merged_facts(_symbol_facts(sdfg), inherited)
         self._visit_region(sdfg, ranges, OrderedSet())
         self._facts = saved
 
@@ -349,7 +394,7 @@ class RelaxIntegerPowers(ppl.Pass):
                     descend(node, inner)
                 elif isinstance(node, nodes.NestedSDFG):
                     self._relax_symbol_mapping(node, live)
-                    self._visit_sdfg(node.sdfg, self._nested_ranges(node, live))
+                    self._visit_sdfg(node.sdfg, self._nested_ranges(node, live), self._nested_facts(node))
                 elif isinstance(node, nodes.AccessNode) and node.data not in relaxed_arrays:
                     relaxed_arrays.add(node.data)
                     desc = sdfg.arrays.get(node.data)

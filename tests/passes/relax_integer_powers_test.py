@@ -284,3 +284,57 @@ def test_loop_condition_off_by_one_not_relaxed():
 
     assert 'ipow' not in build('i < R**(K - i - 1)')  # exponent uses i, negative at i = K
     assert 'ipow' in build('i < R**K')  # constant exponent -> safe to relax
+
+
+def test_relaxes_pow_inside_a_packed_product():
+    """A stored shape product comes back from serialization UNEVALUATED, so the evaluating
+    constructor answers a canonically REORDERED product. That reordering is not a value change:
+    reading it as one drops the whole node's relaxation and leaves a ``double`` ``pow`` in an
+    int64 array size."""
+    R = dace.symbol('R', positive=True, integer=True)
+    K = dace.symbol('K', positive=True, integer=True)
+    i = dace.symbol('i', positive=True, integer=True)
+
+    sdfg = dace.SDFG('packed')
+    sdfg.add_array('x', [R, R**i, R**(K - i - 1)], dace.float64)  # the stockham stride-permutation shape
+    loop = LoopRegion('L', condition_expr='i < K', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True).add_access('x')  # i in [0, K-1] -> K - i - 1 >= 0
+    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the route a packed product actually reaches the pass by
+
+    packed = sdfg.arrays['x'].total_size
+    assert packed.args != symbolic_engine.Mul(*packed.args).args  # unevaluated: NOT in canonical order
+
+    assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
+    total = sdfg.arrays['x'].total_size
+    assert len(total.atoms(ipow)) == 2  # both powers inside the product, not just the bare shape dims
+    assert not total.atoms(sympy.Pow)  # no libm pow survives in an int64 size
+    assert 'dace::math::pow' not in symstr(total, cpp_mode=True)
+
+
+def test_nested_sdfg_inherits_outer_sign_facts():
+    """A nested SDFG an expansion mints declares symbol DTYPES only -- the sign registry stays on
+    the SDFG the frontend built. The facts have to travel the symbol mapping, else ``R**K`` inside
+    declines for want of a sign and codegen emits a ``double`` ``pow`` loop bound."""
+    shape = [pystr_to_symbolic('R**K')]  # bare symbols, exactly as a store spells them
+
+    inner = dace.SDFG('inner')
+    inner.add_symbol('R', dace.int64)
+    inner.add_symbol('K', dace.int64)
+    inner.add_array('y', shape, dace.float64)
+    inner.add_state().add_access('y')
+    assert not inner.symbol_assumptions  # the whole point: no signs recorded here
+
+    outer = dace.SDFG('outer')
+    outer.add_symbol('R', dace.int64)
+    outer.add_symbol('K', dace.int64)
+    outer.update_symbol_assumptions('R', integer=True, positive=True)
+    outer.update_symbol_assumptions('K', integer=True, positive=True)
+    outer.add_array('y', shape, dace.float64)
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {}, {'y'}, symbol_mapping={'R': 'R', 'K': 'K'})
+    state.add_edge(nsdfg, 'y', state.add_write('y'), None, dace.Memlet('y[0:R**K]'))
+
+    assert RelaxIntegerPowers().apply_pass(outer, {}) is not None
+    assert len(inner.arrays['y'].shape[0].atoms(ipow)) == 1
+    assert not inner.arrays['y'].shape[0].atoms(sympy.Pow)
