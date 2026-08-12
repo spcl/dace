@@ -43,6 +43,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.simplify import SimplifyPass
 
 LEN_1D = dace.symbol('LEN_1D')
@@ -95,7 +96,7 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 #: the three units of :func:`_structural_cleanup`. Spelled out so the A/B below cannot silently start
 #: skipping the wrong passes if the band is reordered.
 _TERMINAL_BAND = ('FixedPointPipeline', 'PatternMatchAndApplyRepeated', 'PatternMatchAndApplyRepeated',
-                  'EmptyStateElimination', 'DeadStateElimination')
+                  'EmptyStateElimination', 'DeadStateElimination', 'PruneEmptyConditionalBranches')
 
 
 def _band_start() -> int:
@@ -105,10 +106,14 @@ def _band_start() -> int:
     return at[0]
 
 
-def _canonicalize(sdfg: dace.SDFG, with_reclaim: bool = True, with_cleanup: bool = True) -> dace.SDFG:
-    """Run the real recipe, optionally with either half of the terminal band skipped (the A/B
-    reference). ``with_reclaim`` drops the two reclaimers; ``with_cleanup`` drops the inline plus
-    the structural cleanup that follows them."""
+def _canonicalize(sdfg: dace.SDFG,
+                  with_reclaim: bool = True,
+                  with_cleanup: bool = True,
+                  with_optional: bool = True) -> dace.SDFG:
+    """Run the real recipe, optionally with one part of the terminal work skipped (the A/B
+    reference). ``with_reclaim`` drops the two reclaimers; ``with_cleanup`` drops the inline, the
+    structural cleanup and the empty-arm prune that follow them; ``with_optional`` drops the
+    terminal ``OptionalArrayInference``, which sits later, beside the symbol cleanups."""
     canon_pipeline.disable_openmp_sections(sdfg)
     start = _band_start()
     cleanup_slots = range(start + 1, start + len(_TERMINAL_BAND))
@@ -116,6 +121,8 @@ def _canonicalize(sdfg: dace.SDFG, with_reclaim: bool = True, with_cleanup: bool
         if not with_reclaim and index == start:
             continue
         if not with_cleanup and index in cleanup_slots:
+            continue
+        if not with_optional and isinstance(unit, OptionalArrayInference):
             continue
         unit.apply_pass(sdfg, {})
     canon_pipeline.disable_openmp_sections(sdfg)
