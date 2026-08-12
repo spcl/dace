@@ -2628,7 +2628,11 @@ class ProgramVisitor(ExtNodeVisitor):
             self.cfg_target.add_node(test_region)
             self._on_block_added(test_region)
         else:
-            parsed_node = astutils.unparse(node)
+            # Unparsed verbatim, so resolve names first: reassignment versions them (``m`` -> ``m_0``).
+            parsed_node = astutils.copy_tree(node)
+            for name_node in ast.walk(parsed_node):
+                if isinstance(name_node, ast.Name):
+                    name_node.id = self.variables.get(name_node.id, name_node.id)
             test_region = None
 
         # Generate conditions
