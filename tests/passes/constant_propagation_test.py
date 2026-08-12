@@ -453,7 +453,8 @@ def test_for_with_external_init_nested_start_with_guard():
 
     nsdfg = dace.SDFG('nested_sdfg')
     nsdfg.add_array('inner_A', (N, ), dace.int32)
-    nguard = nsdfg.add_state('nested_guard', is_start_block=True)
+    nentry = nsdfg.add_state('nested_entry', is_start_block=True)
+    nguard = nsdfg.add_state_after(nentry, 'nested_guard')
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
     nsdfg.add_edge(nguard, nbody, dace.InterstateEdge(condition='i <= N'))
