@@ -186,6 +186,8 @@ _build/
 # and no longer deserialized at all. Build fixtures from source instead.
 # (doc/_static/sdfg/*.sdfg are hand-maintained documentation assets and stay tracked.)
 *.sdfgz
+/*.sdfgz
+/*.sdfg
 
 
 .DS_STORE
