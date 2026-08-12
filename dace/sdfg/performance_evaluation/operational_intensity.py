@@ -5,7 +5,7 @@ or from the VS Code extension. """
 import argparse
 from collections import deque
 from dace.sdfg import nodes as nd
-from dace import SDFG, SDFGState, dtypes
+from dace import SDFG, SDFGState, dtypes, subsets
 from typing import Tuple, Dict
 import os
 import sympy as sp
@@ -210,6 +210,23 @@ def scope_op_in(state: SDFGState,
     :param entry: If None, the whole state gets analyzed. Else, only the scope starting at this entry node is analyzed.
     """
 
+    def whole(accessed: str):
+        """The full range of a container, for a copy memlet that leaves one side implicit."""
+        descriptor = state.sdfg.arrays.get(accessed)
+        return subsets.Range.from_array(descriptor) if descriptor is not None else None
+
+    def touch(accessed: str, subset) -> int:
+        """Charge one access to ``accessed[subset]``, returning 1 if it misses."""
+        if subset is None:
+            return 0
+        if accessed in array_names and array_names[accessed] in clt.array_info:
+            accessed = array_names[accessed]
+        elif accessed not in clt.array_info:
+            return 0
+        line_id = clt.cache_line_id(accessed, [x[0].subs(mapping) for x in subset.ranges], mapping)
+        dist = stack.touch(int(line_id.subs(mapping)))
+        return 1 if dist >= C or dist == -1 else 0
+
     # find the number of cache misses for each node.
     # for maps and nested SDFG, we do it recursively.
     scope_misses = 0
@@ -222,19 +239,26 @@ def scope_op_in(state: SDFGState,
 
             update_map(op_in_map, get_uuid(node, state), map_misses)
             scope_misses += map_misses
+        elif isinstance(node, nd.AccessNode):
+            # A copy straight between two access nodes moves data with no
+            # tasklet to attribute the accesses to. Every other access reaches
+            # memory through a tasklet, a scope connector or a nested SDFG and
+            # is counted there; only this one would otherwise be free, which
+            # made an SDFG that copies (rather than assigning through a
+            # tasklet) look cheaper than the identical program.
+            copy_misses = 0
+            for e in state.out_edges(node):
+                if not isinstance(e.dst, nd.AccessNode):
+                    continue
+                copy_misses += touch(node.data, e.data.get_src_subset(e, state) or whole(node.data))
+                copy_misses += touch(e.dst.data, e.data.get_dst_subset(e, state) or whole(e.dst.data))
+            scope_misses += copy_misses
+            update_map(op_in_map, get_uuid(node, state), copy_misses)
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
             # analyze the memory accesses of this tasklet and whether they hit in cache or not
             for e in state.in_edges(node) + state.out_edges(node):
-                if e.data.data in clt.array_info or (e.data.data in array_names
-                                                     and array_names[e.data.data] in clt.array_info):
-                    line_id = clt.cache_line_id(
-                        e.data.data if e.data.data not in array_names else array_names[e.data.data],
-                        [x[0].subs(mapping) for x in e.data.subset.ranges], mapping)
-
-                    line_id = int(line_id.subs(mapping))
-                    dist = stack.touch(line_id)
-                    tasklet_misses += 1 if dist >= C or dist == -1 else 0
+                tasklet_misses += touch(e.data.data, e.data.subset)
 
             scope_misses += tasklet_misses
             # a tasklet can get passed multiple times... we report the average misses in the end
