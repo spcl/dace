@@ -212,8 +212,8 @@ def gpu_device_setup_code(node) -> str:
     if node.location and 'gpu' in node.location:
         raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
                          'location["gpu"], but DaCe uses one GPU per process: allocations and kernels run '
-                         'on the device selected in __dace_init_cuda. Remove the location and select the '
-                         'GPU for the whole process (CUDA_VISIBLE_DEVICES, or compiler.cuda.device).')
+                         'on the device selected in __dace_init_cuda. Remove the location and give the '
+                         'process its own GPU with CUDA_VISIBLE_DEVICES.')
 
     return 'const int __dace_cuda_device = __state->gpu_context->device;\n'
 

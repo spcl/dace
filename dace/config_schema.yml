@@ -466,17 +466,6 @@ required:
                             default stream, 0 uses infinite concurrent streams.
                         default: 0
 
-                    device:
-                        type: int
-                        title: GPU device to run on
-                        description: >
-                            Ordinal of the GPU the program runs on, selected once in
-                            __dace_init_cuda. -1 keeps whichever device the process is already
-                            on (one process per GPU, via CUDA_VISIBLE_DEVICES). An explicit
-                            ordinal is compiled in, so a build shared by several ranks would
-                            send them all to the same GPU.
-                        default: -1
-
                     syncdebug:
                         type: bool
                         title: Synchronous Debugging

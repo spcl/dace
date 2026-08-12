@@ -173,19 +173,22 @@ _ENVIRONMENTS = [
 ]
 
 
-@pytest.mark.parametrize('configured', [-1, 2])
-def test_init_selects_the_device_once_and_records_it(configured):
-    """-1 falls back to the process's device, an ordinal is compiled in; either way, selected once."""
-    with dace.config.set_temporary('compiler', 'cuda', 'device', value=configured):
-        cu, _ = _sources(_gpu_sdfg(f'one_device_probe{abs(configured)}'))
+def test_init_selects_device_zero_once_and_records_it():
+    """The ordinal is not a build-time choice: one build is shared by every rank, so a compiled-in
+    ordinal would send them all to the same GPU. Device 0 always, and which physical GPU that is is
+    the process's business (CUDA_VISIBLE_DEVICES renumbers what it exposes)."""
+    cu, _ = _sources(_gpu_sdfg('one_device_probe'))
 
-    assert f'int __dace_device = {configured};' in cu
-    assert 'cudaGetDevice(&__dace_device)' in cu, 'the -1 fallback is a runtime branch, always emitted'
-    assert '__dace_device >= count' in cu
+    assert 'const int __dace_device = 0;' in cu
     assert cu.count('cudaSetDevice(') == 1, 'selecting it anywhere else would make it mutable'
     record = '__state->gpu_context->device = __dace_device;'
     assert record in cu
     assert cu.index('__state->gpu_context = new') < cu.index(record), 'the context must exist first'
+
+
+def test_the_device_ordinal_is_not_configurable():
+    """A configuration entry for it is the thing that was wrong, not its default."""
+    assert 'device' not in dace.Config.get('compiler', 'cuda')
 
 
 @pytest.mark.parametrize('module_name,cls_name,accessor', _ENVIRONMENTS)
@@ -205,8 +208,10 @@ def test_handle_setup_uses_the_recorded_device(module_name, cls_name, accessor):
 
 
 @pytest.mark.gpu
-def test_a_configured_device_is_the_one_actually_used():
-    """The setting reaches the hardware: the thread is still on it when the program returns."""
+def test_the_program_runs_on_device_zero_whatever_the_caller_was_on():
+    """``__dace_init_cuda`` SELECTS device 0 rather than inheriting the caller's, so the thread is
+    on it when the program returns. Started from a different device, which is the only way to tell
+    selecting apart from inheriting."""
     cudart = None
     for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
         if name:
@@ -221,15 +226,15 @@ def test_a_configured_device_is_the_one_actually_used():
     count = ctypes.c_int(0)
     cudart.cudaGetDeviceCount(ctypes.byref(count))
     if count.value < 2:
-        pytest.skip(f'need two visible GPUs to tell a configured device apart, saw {count.value}')
+        pytest.skip(f'need two visible GPUs to tell selecting apart from inheriting, saw {count.value}')
 
+    cudart.cudaSetDevice(1)
     a = np.random.rand(8)
-    with dace.config.set_temporary('compiler', 'cuda', 'device', value=1):
-        _gpu_sdfg('device_runs_where_configured')(A=a)
+    _gpu_sdfg('device_runs_on_zero')(A=a)
 
     current = ctypes.c_int(-1)
     cudart.cudaGetDevice(ctypes.byref(current))
-    assert current.value == 1
+    assert current.value == 0
 
 
 if __name__ == '__main__':
