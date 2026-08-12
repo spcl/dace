@@ -312,10 +312,9 @@ def test_start_block_survives_removal_of_another_block():
     cfg.remove_node(other)
 
     assert cfg.start_block is start
-    assert cfg._start_block is None or cfg._start_block in cfg.nodes()
-    # The serialized index used to be left at 1 while only one block remained, which put a stale,
-    # out-of-range `start_block` into the SDFG and changed its hash. Asserted on the JSON rather
-    # than on `_start_block`, which holds the block itself here and an index on `main`.
+    # The index used to be left at 1 while only one block remained, which put a stale,
+    # out-of-range `start_block` into the serialized SDFG and changed its hash.
+    assert cfg._start_block is None or cfg._start_block < cfg.number_of_nodes()
     serialized_start = cfg.to_json(parent=cfg.parent_graph).get('start_block')
     assert serialized_start is None or serialized_start < cfg.number_of_nodes()
 
