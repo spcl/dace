@@ -11,10 +11,11 @@ any other opaque statement.
 """
 import ast
 import copy
+import inspect
 import types
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dace import data, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
@@ -157,12 +158,40 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     return_prefix = state.context.fresh_name(f'__{callee.name}_ret')
     scope = tn.FunctionCallScope(call=tn.FrontendFunctionCall(callee_name=callee.name, arguments=argument_labels),
                                  children=[])
-    with state.context.inline_scope(callee.f, parameter_bindings, callee_globals, return_prefix) as return_names:
+    with state.context.inline_scope(callee.f, parameter_bindings, callee_globals, return_prefix,
+                                    _annotated_return_dtype(callee)) as return_names:
         with state.emitter.scope(scope):
             state.lower_body(callee_body)
         _strip_tail_returns(scope)  # Tail returns fall off the scope end
         returned = list(dict.fromkeys(return_names))
     _bind_call_results(target, returned, statement, state)
+
+
+def _annotated_return_dtype(callee: Any) -> Optional[dtypes.typeclass]:
+    """
+    Element type declared by an inlined callee's ``-> dtype`` return
+    annotation, or None when it has none.
+
+    A top-level program's annotation reaches the frontend as a pre-registered
+    ``__return`` container (see ``DaceProgram._get_type_annotations``), but an
+    inlined callee never has ``argtypes`` built for it -- its parameters bind
+    to caller containers at the call site -- so the annotation has to be read
+    off the signature here. Without it, ``return 5`` in a callee declared
+    ``-> dace.int32`` hands back the literal's own inferred type.
+
+    Tuple annotations describe several return values with potentially
+    differing types; those are left to inference.
+    """
+    signature = getattr(callee, 'signature', None)
+    if signature is None or getattr(callee, 'ignore_type_hints', False):
+        return None
+    annotation = signature.return_annotation
+    if annotation is inspect.Signature.empty or annotation is None or isinstance(annotation, tuple):
+        return None
+    try:
+        return data.create_datadescriptor(annotation).dtype
+    except (TypeError, ValueError):
+        return None
 
 
 def _prepare_callee(

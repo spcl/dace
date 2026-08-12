@@ -161,6 +161,12 @@ class ProgramContext:
         #: set by :meth:`inline_scope` while lowering an inlined callee).
         self.return_prefix: str = ''
 
+        #: Element type declared by the callee's ``-> dtype`` return annotation,
+        #: while lowering an inlined callee that has one (None otherwise). The
+        #: top-level program's annotation arrives through ``argtypes`` instead,
+        #: as a pre-registered ``__return`` container.
+        self.return_dtype: Optional[dtypes.typeclass] = None
+
         #: Stack of function objects currently being inlined (recursion detection).
         self.inline_stack: List[Any] = []
 
@@ -434,8 +440,12 @@ class ProgramContext:
     # ------------------------------------------------------------------ #
 
     @contextmanager
-    def inline_scope(self, function: Any, parameter_bindings: Dict[str, str], callee_globals: Dict[str, Any],
-                     return_prefix: str) -> Iterator[List[str]]:
+    def inline_scope(self,
+                     function: Any,
+                     parameter_bindings: Dict[str, str],
+                     callee_globals: Dict[str, Any],
+                     return_prefix: str,
+                     return_dtype: Optional[dtypes.typeclass] = None) -> Iterator[List[str]]:
         """
         Establish a fresh binding scope for lowering an inlined callee into
         the shared repository. Saves and restores the caller's bindings,
@@ -448,11 +458,13 @@ class ProgramContext:
                                    repository container names.
         :param callee_globals: The callee's resolved global variables.
         :param return_prefix: Prefix for materialized callee return containers.
+        :param return_dtype: Element type declared by the callee's return
+                             annotation, if it has one.
         :yield: The callee's ``return_names`` list, populated as return
                 statements are lowered (read it before the scope exits).
         """
         saved = (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-                 self.return_names, self.expression_sources)
+                 self.return_names, self.expression_sources, self.return_dtype)
         self.inline_stack.append(function)
         # A callee was canonicalized by its own pipeline run, whose temporary
         # names restart from zero: the caller's map would answer a callee's
@@ -468,12 +480,13 @@ class ProgramContext:
         self.globals = callee_globals
         self.return_prefix = return_prefix
         self.return_names = []
+        self.return_dtype = return_dtype
         try:
             yield self.return_names
         finally:
             self.inline_stack.pop()
             (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
-             self.return_names, self.expression_sources) = saved
+             self.return_names, self.expression_sources, self.return_dtype) = saved
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""
