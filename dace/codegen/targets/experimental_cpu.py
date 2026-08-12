@@ -22,7 +22,7 @@ from dace import data as dt
 from dace import dtypes, symbolic
 from dace.codegen import cppunparse
 from dace.codegen.codeobject import CODE_ANNOTATION
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import emits_tree_reductions, sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
@@ -198,6 +198,8 @@ def deduplicate_includes(code: str) -> str:
 class ExperimentalCPUCodeGen(CPUCodeGen):
     """ Human-readable CPU/GPU-kernel code generator (see module docstring). """
 
+    experimental_codegen = True
+
     def __init__(self, frame, sdfg):
         super().__init__(frame, sdfg)
         # Helper name -> full C++ definition (deduplicated), for the ``<array>_idx`` index
@@ -286,8 +288,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # this scope; keep the brace so the directive does not leak to the enclosing scope and clash
         # across sibling maps. (Real-type reductions need only a ``reduction(op:var)`` clause on the
         # pragma, which is self-contained, so they do not force the brace.)
-        if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
-                and Config.get_bool('compiler', 'emit_tree_reductions')
+        if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(self.experimental_codegen)
                 and any(declare is not None
                         for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node))):
             return True

@@ -65,26 +65,30 @@ def test_tree_reduction_wcr_map_gets_deep_block():
     # A WCR-reduction device map (tree_reduction on) takes the deep 512-thread block, not the
     # 1-D 128 default, so the block-reduce folds more of the reduction per block.
     sdfg, m = make_wcr_reduction_sdfg()
-    prev = dace.Config.get_bool('compiler', 'emit_tree_reductions')
-    dace.Config.set('compiler', 'emit_tree_reductions', value=True)
-    try:
-        select_gpu_device_block_size(sdfg)
-        assert m.gpu_block_size == [512, 1, 1]
-    finally:
-        dace.Config.set('compiler', 'emit_tree_reductions', value=prev)
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=True):
+            select_gpu_device_block_size(sdfg)
+    assert m.gpu_block_size == [512, 1, 1]
 
 
 def test_wcr_map_uses_default_block_when_tree_reduction_off():
-    # With tree_reduction off the WCR write is a plain atomic, not a block tree-reduce, so the
-    # map keeps the ordinary 1-D default block.
+    # Legacy codegen with the flag off: the WCR write is a plain atomic, not a block tree-reduce,
+    # so the map keeps the ordinary 1-D default block.
     sdfg, m = make_wcr_reduction_sdfg()
-    prev = dace.Config.get_bool('compiler', 'emit_tree_reductions')
-    dace.Config.set('compiler', 'emit_tree_reductions', value=False)
-    try:
-        select_gpu_device_block_size(sdfg)
-        assert m.gpu_block_size == [128, 1, 1]
-    finally:
-        dace.Config.set('compiler', 'emit_tree_reductions', value=prev)
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=False):
+            select_gpu_device_block_size(sdfg)
+    assert m.gpu_block_size == [128, 1, 1]
+
+
+def test_experimental_codegen_gets_deep_block_with_the_flag_off():
+    # ``compiler.emit_tree_reductions`` is legacy-only: the experimental CUDA target always folds
+    # the WCR through cub::BlockReduce, so the map still wants the deep block with the flag off.
+    sdfg, m = make_wcr_reduction_sdfg()
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=False):
+            select_gpu_device_block_size(sdfg)
+    assert m.gpu_block_size == [512, 1, 1]
 
 
 def test_pick_block_size_2d_mild_ratio_stays_square():
@@ -197,4 +201,7 @@ if __name__ == '__main__':
     test_gpu_transform_1d_end_to_end()
     test_config_default_block_size_is_128()
     test_pass_is_idempotent()
+    test_tree_reduction_wcr_map_gets_deep_block()
+    test_wcr_map_uses_default_block_when_tree_reduction_off()
+    test_experimental_codegen_gets_deep_block_with_the_flag_off()
     print('OK')

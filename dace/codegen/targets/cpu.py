@@ -14,7 +14,7 @@ from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
+from dace.codegen.common import codeblock_to_cpp, emits_tree_reductions, sym2cpp, update_persistent_desc
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -444,6 +444,9 @@ class CPUCodeGen(TargetCodeGenerator):
     title = "CPU"
     target_name = "cpu"
     language = "cpp"
+
+    #: Legacy target: tree reductions are opt-in. The experimental subclass overrides this.
+    experimental_codegen = False
 
     def _define_sdfg_arguments(self, sdfg, arglist):
         # NOTE: Multi-nesting with container arrays must be further investigated.
@@ -3105,12 +3108,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # pairs are pushed onto ``_omp_reduction_scope_stack`` so the
             # downstream ``write_and_resolve_expr`` skips the now-redundant
             # ``reduce_atomic`` for them.
-            # Gated by compiler.emit_tree_reductions: OFF leaves omp_reductions empty, so no
-            # reduction(op:var) clause is emitted and the WCR write below takes the plain
-            # atomic path (correct but contended) instead of privatize-and-tree-reduce.
+            # OFF leaves omp_reductions empty, so no reduction(op:var) clause is emitted and the
+            # WCR write below takes the plain atomic path (correct but contended) instead of
+            # privatize-and-tree-reduce.
             omp_reductions = []
             if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
-                    and Config.get_bool('compiler', 'emit_tree_reductions')):
+                    and emits_tree_reductions(self.experimental_codegen)):
                 omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
                 declares = []
                 for op_str, clause_target, _dname, declare in omp_reductions:

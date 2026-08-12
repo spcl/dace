@@ -33,7 +33,7 @@ map -- those derive the block size from the thread-block map, and a preset
 from typing import Any, Dict, List, Optional
 
 from dace import SDFG, dtypes
-from dace.config import Config
+from dace.codegen.common import cuda_emits_tree_reductions
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -45,8 +45,8 @@ THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleTyp
 #: Default 1-D thread-block (matches ``compiler.cuda.default_block_size``).
 DEFAULT_1D_BLOCK_SIZE = [128, 1, 1]
 
-#: A device map whose reduction is lowered as a block tree-reduce (``compiler.emit_tree_reductions``
-#: on + a WCR map output) wants a DEEP block: more lanes per block-reduce means more of the
+#: A device map whose reduction is lowered as a block tree-reduce (a WCR map output, where the active
+#: CUDA codegen tree-reduces) wants a DEEP block: more lanes per block-reduce means more of the
 #: reduction is folded inside the block (one shared-memory tree) and fewer partial results
 #: race through the cross-block atomic. 512 (vs the 128/256 a plain elementwise map takes)
 #: keeps well under the 1024 thread/block limit while roughly halving the atomic traffic.
@@ -135,12 +135,12 @@ def scope_contains_block_reduce(state: SDFGState, map_entry: nodes.MapEntry) -> 
 
 def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff this device map's reduction is lowered as an in-block tree-reduce whose depth
-    is this map's thread-block size -- either a WCR accumulator write out of the map exit (with
-    ``compiler.emit_tree_reductions`` on, codegen emits the inline warp/block reduce) or a ``Reduce``
+    is this map's thread-block size -- either a WCR accumulator write out of the map exit (where the
+    active CUDA codegen tree-reduces, it emits the inline warp/block reduce) or a ``Reduce``
     library node in the map's scope (``cub::BlockReduce`` sized by the block, see
     :func:`scope_contains_block_reduce`). Such a map benefits from a larger thread block (see
     :data:`TREE_REDUCTION_BLOCK_SIZE`); a plain elementwise / scatter map does not."""
-    if Config.get_bool('compiler', 'emit_tree_reductions'):
+    if cuda_emits_tree_reductions():
         map_exit = state.exit_node(map_entry)
         for edge in state.out_edges(map_exit):
             if edge.data is not None and edge.data.wcr is not None:

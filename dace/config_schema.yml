@@ -141,10 +141,12 @@ required:
 
             emit_tree_reductions:
                 type: bool
-                default: true
-                title: Emit tree reductions for parallel WCR
+                default: false
+                title: Emit tree reductions for parallel WCR (legacy codegen only)
                 description: >
-                    Experimental automated tree-reduction emission for certain WCR patterns.
+                    LEGACY CODE GENERATORS ONLY -- the experimental CPU/CUDA targets always
+                    tree-reduce and ignore this flag, since the fold is how they lower a
+                    reduction at all.
                     If enabled, a conflict-free (WCR) reduction accumulator written from a
                     parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
                     OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a

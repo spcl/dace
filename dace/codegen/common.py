@@ -112,6 +112,24 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
+def emits_tree_reductions(experimental: bool) -> bool:
+    """Whether a WCR accumulator folds into a tree reduction rather than a per-thread atomic.
+
+    Always on for the experimental targets -- the fold IS how they lower a reduction, so there is
+    nothing to opt into. The legacy targets keep it behind ``compiler.emit_tree_reductions``.
+    """
+    return experimental or config.Config.get_bool('compiler', 'emit_tree_reductions')
+
+
+def cuda_emits_tree_reductions() -> bool:
+    """:func:`emits_tree_reductions` for whichever CUDA codegen ``compiler.cuda.implementation`` picks.
+
+    For callers outside codegen (a pass sizing thread blocks for a fold that codegen may or may not
+    emit) that have no code generator to ask.
+    """
+    return emits_tree_reductions(config.Config.get('compiler', 'cuda', 'implementation') == 'experimental')
+
+
 @lru_cache()
 def get_gpu_backend() -> str:
     """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.

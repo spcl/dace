@@ -10,6 +10,8 @@ from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
+from dace.codegen.targets.cpu import (collect_gpu_block_reductions, drain_gpu_block_reduction,
+                                      register_gpu_block_reduction)
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
 from dace.transformation.dataflow.add_threadblock_map import product
@@ -175,6 +177,20 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
+            # Fold this block's map-exit WCR accumulators through cub::BlockReduce (one atomic per
+            # block, not per thread) -- the GPU mirror of an OpenMP reduction clause. Unconditional:
+            # this target always tree-reduces, so ``compiler.emit_tree_reductions`` (legacy-only)
+            # is not consulted. Partials are declared BEFORE the bounds guard so out-of-range
+            # threads carry the identity into the barrier; ``covered`` redirects the per-thread WCR
+            # writes the dispatch below emits.
+            reductions = collect_gpu_block_reductions(sdfg, cfg.state(state_id), node, kernel_block_dims,
+                                                      self.codegen._frame)
+            covered = self.codegen._cpu_codegen._gpu_block_reduction_covered
+            for red in reductions:
+                callsite_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, node)
+
+            guard_mark = scope_manager.opened
+
             # Guard each dim so out-of-bounds threads in a trailing block are skipped.
             minels = map_range.min_element()
             maxels = map_range.max_element()
@@ -201,6 +217,12 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                     scope_manager.open(condition=condition)
 
             self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+
+            # Guards closed: every thread is live for the barrier-using cub fold.
+            scope_manager.close_through(guard_mark)
+            for i, red in enumerate(reductions):
+                callsite_stream.write(drain_gpu_block_reduction(red, f'{node.map.label}_{i}', covered), cfg, state_id,
+                                      node)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
@@ -421,3 +443,22 @@ class ScopeManager:
             line += f" // {self.comment} (open {self._opened + 1})"
         self.callsite_stream.write(line, self.cfg, self.state_id, self.entry_node)
         self._opened += 1
+
+    @property
+    def opened(self) -> int:
+        """How many brackets are currently open, as a mark for :meth:`close_through`."""
+        return self._opened
+
+    def close_through(self, mark: int):
+        """Close every bracket opened since ``mark``, leaving the rest to ``__exit__``.
+
+        Lets a caller emit code after its guards close but still inside the enclosing scope --
+        a thread-block reduction folds once every thread is past the bounds guard, yet must
+        still see the register partials the scope declared.
+        """
+        while self._opened > mark:
+            line = "}"
+            if self.debug:
+                line += f" // {self.comment} (close {self._opened})"
+            self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
+            self._opened -= 1
