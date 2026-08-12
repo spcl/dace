@@ -2886,15 +2886,22 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
+        new_edge = super().add_edge(src, dst, data)
+        update_start_block = False
         if self._cached_start_block is not None:
             if dst is self._cached_start_block:
-                self._start_block = None
-                self._cached_start_block = None
+                update_start_block = True
         elif self._start_block is not None:
             if self.node_id(dst) == self._start_block:
+                update_start_block = True
+        if update_start_block:
+            if self.in_degree(src) == 0:
+                self._start_block = self.node_id(src)
+                self._cached_start_block = src
+            else:
                 self._start_block = None
                 self._cached_start_block = None
-        return super().add_edge(src, dst, data)
+        return new_edge
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
         # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
