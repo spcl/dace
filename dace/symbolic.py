@@ -1428,6 +1428,31 @@ def _ask_facts(symbols, facts: Dict[str, FrozenSet[str]]) -> List[Any]:
     return out
 
 
+def stamped_with_facts(expr, facts: Dict[str, FrozenSet[str]]):
+    """`expr` with every declared symbol respelled carrying `facts` as SYMBOL-LEVEL assumptions.
+
+    sympy's contextual engine (`assuming` + `Q`) does not combine integrality with a sign: given
+    `Q.integer(K) & Q.positive(K)` it cannot answer `K - 1 >= 0`, while the symbol-level form knows
+    a positive integer is `>= 1` and settles it. The respelling is TRANSIENT -- for one query, never
+    stored -- so the bare spelling the SDFG holds is untouched.
+
+    :return: the restamped expression, or `None` when no declared symbol occurs in `expr`.
+    """
+    repl = {}
+    for sym in expr.free_symbols:
+        declared = facts.get(sym.name, frozenset())
+        assumptions = {}
+        if sym.is_integer or 'integer' in declared:
+            assumptions['integer'] = True
+        if 'positive' in declared:
+            assumptions['positive'] = True
+        elif 'nonnegative' in declared:
+            assumptions['nonnegative'] = True
+        if assumptions:
+            repl[sym] = sympy.Symbol(sym.name, **assumptions)
+    return expr.xreplace(repl) if repl else None
+
+
 def ask(predicate: str, expr, facts: Optional[Dict[str, FrozenSet[str]]] = None) -> Optional[bool]:
     """Three-valued (`True`/`False`/`None`) query on `expr`, in whichever backend built it.
 
@@ -1454,7 +1479,15 @@ def ask(predicate: str, expr, facts: Optional[Dict[str, FrozenSet[str]]] = None)
     if not isinstance(expr, sympy.Basic):
         return None
     expr = equalize_symbol(expr)
-    with sympy.assuming(*_ask_facts(expr.free_symbols, facts or {})):
+    facts = facts or {}
+    # Symbol-level first: it is strictly stronger than the contextual engine below, which cannot
+    # combine integrality with a sign (see `stamped_with_facts`).
+    stamped = stamped_with_facts(expr, facts)
+    if stamped is not None:
+        answer = _ask_direct(predicate, stamped)
+        if answer is not None:
+            return answer
+    with sympy.assuming(*_ask_facts(expr.free_symbols, facts)):
         return sympy.ask(_ASK_Q[predicate](expr))
 
 
