@@ -493,8 +493,8 @@ _ARG_REDUCTION_INDEX_DTYPE = dtypes.int32
 
 @infers_descriptor('numpy.argmax')
 @infers_descriptor('numpy.argmin')
-def _infer_argminmax(input_descs, arr, axis=None, **_kw):
-    return _reduction_descriptor(input_descs, arr, axis, dtype_override=_ARG_REDUCTION_INDEX_DTYPE)
+def _infer_argminmax(input_descs, arr, axis=None, result_type=_ARG_REDUCTION_INDEX_DTYPE, **_kw):
+    return _reduction_descriptor(input_descs, arr, axis, dtype_override=result_type)
 
 
 # Method inference for .max(), .min(), .argmax(), .argmin()
@@ -507,8 +507,8 @@ for _cls in ('Array', 'View', 'Scalar'):
         infers_method_descriptor(_cls, _method)(_infer_method_basic_reduction)
 
 
-def _infer_method_argminmax(self_desc, axis=None, **_kw):
-    return _method_reduction_descriptor(self_desc, axis, dtype_override=_ARG_REDUCTION_INDEX_DTYPE)
+def _infer_method_argminmax(self_desc, axis=None, result_type=_ARG_REDUCTION_INDEX_DTYPE, **_kw):
+    return _method_reduction_descriptor(self_desc, axis, dtype_override=result_type)
 
 
 for _cls in ('Array', 'View', 'Scalar'):
