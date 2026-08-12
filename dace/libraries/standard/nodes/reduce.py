@@ -745,16 +745,23 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_call = '%s, %s' % (num_segments, segment_size)
 
         # Reduce fn: query temp-storage size, fetch from per-stream ReduceTag pool
-        # (lazy alloc new streams, grow in place on demand), then run CUB.
+        # (lazy alloc new streams, grow in place on demand), then run CUB. Every step reports its
+        # status rather than dropping it: CUB reads a null workspace as "only report the size", so a
+        # failed query leaves the size unset and a failed allocation hands back a null pointer -- and
+        # either turns the reduction below into a silent no-op that leaves the output untouched.
+        # The function RETURNS the status instead of checking it, because the check macro needs
+        # ``__state``, which this function has no reason to take; the caller below checks it.
         cuda_globalcode.write("""
 DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
 cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
 {{
     size_t _cub_needed = 0;
-    cub::{reduce_type}::{kname}(nullptr, _cub_needed,
+    cudaError_t _cub_status = cub::{reduce_type}::{kname}(nullptr, _cub_needed,
                                 input, output, {reduce_range_use}{redop}, stream);
-    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream);
-    cub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
+    if (_cub_status != cudaSuccess) return _cub_status;
+    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream, &_cub_status);
+    if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : cudaErrorMemoryAllocation;
+    return cub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
                                 input, output, {reduce_range_use}{redop}, stream);
 }}
         """.format(id=idstr,
@@ -786,8 +793,9 @@ DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output,
             tin, tout = '_cub_in', '_cub_out'
 
         # Call reduction function where necessary
-        host_localcode.write('__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream);'.format(
-            id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
+        host_localcode.write(
+            'DACE_GPU_CHECK(__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream));'.format(
+                id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
 
         # Make tasklet
         tnode = dace.nodes.Tasklet('reduce', {tin: dace.pointer(input_data.dtype)},

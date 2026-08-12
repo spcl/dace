@@ -48,18 +48,29 @@ namespace _detail {
 /// per-stream entry in place if its current allocation is too small. The
 /// returned pointer is valid until the next :func:`get_scratch` call (same
 /// ``Tag`` + ``stream``) that grows the entry, or until :func:`release_scratch`
-/// is called for that ``Tag``.
+/// is called for that ``Tag``. ``status``, when given, receives the allocation's error code; a
+/// failed allocation returns ``nullptr``, which the caller MUST treat as an error rather than pass
+/// on to CUB (see below).
 template<typename Tag>
-inline void *get_scratch(std::size_t bytes_needed, cudaStream_t stream = 0) {
+inline void *get_scratch(std::size_t bytes_needed, cudaStream_t stream = 0, cudaError_t *status = nullptr) {
     // Keyed per stream, and the default/null stream (0) is just another key -- entries never share.
     auto &e = _detail::pool_map<Tag>()[stream];
+    if (status) *status = cudaSuccess;
     // ``!e.storage`` and the 1-byte floor are both load-bearing: CUB reads a NULL workspace as "only
     // report the size" and leaves the output untouched, so handing back a null pointer turns the
     // reduction into a silent no-op rather than an error. A zero-byte request hits that twice --
     // ``0 > 0`` skips the allocation, and cudaMalloc(0) hands back null anyway.
     if (bytes_needed > e.bytes || !e.storage) {
         if (e.storage) cudaFree(e.storage);
-        cudaMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
+        cudaError_t err = cudaMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
+        if (err != cudaSuccess) {
+            // The entry has to go back to empty: cudaMalloc leaves the pointer unspecified on
+            // failure, and a stale non-null one would be handed to the next caller as a live buffer.
+            e.storage = nullptr;
+            e.bytes = 0;
+            if (status) *status = err;
+            return nullptr;
+        }
         e.bytes = bytes_needed;
     }
     return e.storage;
