@@ -36,17 +36,11 @@ if TYPE_CHECKING:
 def use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
-    The function considers the selected C++ standard and the `alignment` property
-    of the data descriptor.
+    DaCe always builds against C++20 or newer (see ``dace.codegen.common.cpp_standard``), where
+    aligned ``operator new``/``operator delete`` are guaranteed available, so this follows the
+    descriptor's ``alignment`` property alone.
     """
-    try:
-        if int(Config.get('compiler', 'cpp_standard')) < 17:
-            return False  # Aligned `new` not supported by the standard.
-        if desc.alignment >= 0:
-            return True  # Alignment requested either default (0) or concrete value
-        return False
-    except ValueError:
-        return False
+    return desc.alignment >= 0  # Alignment requested either default (0) or concrete value
 
 
 def aligned_new_value(desc: data.Data) -> int:

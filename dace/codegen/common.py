@@ -112,6 +112,17 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
+def cpp_standard() -> str:
+    """The C++ standard version to build with, per ``compiler.cpp_standard`` -- clamped to a minimum
+    of 20. DaCe assumes C++20 or newer everywhere (aligned ``operator new``, ``consteval``, ...), so a
+    lower configured value is raised to 20 rather than passed through to the compiler invocation."""
+    try:
+        standard = int(str(config.Config.get('compiler', 'cpp_standard')).strip())
+    except ValueError:
+        standard = 20
+    return str(max(standard, 20))
+
+
 def emits_tree_reductions(experimental: bool) -> bool:
     """Whether a WCR accumulator folds into a tree reduction rather than a per-thread atomic.
 

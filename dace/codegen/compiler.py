@@ -27,6 +27,7 @@ import dace
 from dace.config import Config
 from dace.codegen import build_cache
 from dace.codegen import command_db
+from dace.codegen import common
 from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
@@ -352,8 +353,8 @@ def prepare_precompiled_header(targets) -> Optional[str]:
         return None
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     cxx = make_absolute(compiler_family.host_compiler())
-    flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
+    flags = ([f'-std=c++{common.cpp_standard()}', '-fPIC', '-fopenmp'] + shlex.split(compiler_family.cpu_args() or '') +
+             build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
@@ -576,7 +577,7 @@ def cmake_configure_and_build(
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
-        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
+        "-DDACE_CPP_STANDARD={}".format(common.cpp_standard()),
     ]
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)

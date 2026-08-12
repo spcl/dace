@@ -505,7 +505,7 @@ def build_native(program_folder: str,
             target_libs += shlex.split(raw)
 
     # --- shared flag context ------------------------------------------------
-    std = Config.get('compiler', 'cpp_standard')
+    std = common.cpp_standard()
     cpu_args = shlex.split(Config.get('compiler', 'cpu', 'args'))
     build_type_flags = _BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
     cuda_build_type_flags = _CUDA_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
