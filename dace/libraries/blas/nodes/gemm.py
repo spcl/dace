@@ -21,6 +21,13 @@ def _is_complex(dtype):
         return dtype in [np.complex64, np.complex128]
 
 
+def _as_typeclass(dtype) -> dtypes.typeclass:
+    # Callers pass either a typeclass (as taken off a data descriptor) or a numpy scalar type.
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    return dace.dtype_to_typeclass(dtype)
+
+
 def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype) and _is_complex(type(value)):
         raise ValueError("Cannot use complex beta with non-complex array")
@@ -29,12 +36,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
+            type=_as_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return "dace.{}({})".format(_as_typeclass(dtype).to_string(), value)
 
 
 @dace.library.expansion
