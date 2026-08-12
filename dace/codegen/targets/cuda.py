@@ -440,15 +440,9 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
-    // One process, one GPU: the device is chosen here and never changed again. Everything that
-    // needs an ordinal afterwards - the memory pool below, every library handle - reads it back
-    // from __state->gpu_context->device rather than selecting its own.
-    //
-    // The ordinal below is the compiler.cuda.device setting. -1, the default, means "whatever
-    // device this process is already on", which is what one-rank-per-GPU under
-    // CUDA_VISIBLE_DEVICES gives. Selecting it explicitly rather than leaving it implicit forces
-    // the context to exist now, so a placement problem is reported here instead of by whichever
-    // call happens to touch the driver first.
+    // One process, one GPU: chosen here, never changed. Everything after this reads the ordinal
+    // back from __state->gpu_context->device. compiler.cuda.device of -1 (the default) means the
+    // device this process is already on.
     int __dace_device = {configured_device};
     if (__dace_device < 0 && {backend}GetDevice(&__dace_device) != {backend}Success)
     {{

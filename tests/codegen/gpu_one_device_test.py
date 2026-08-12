@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the one-process-one-GPU model.
-
-``__dace_init_cuda`` selects the device and records it in the GPU context; everything that
-needs an ordinal reads it back from there. Placing a single node on another GPU is rejected.
-
-These assert on generated source and on expansion, so they need neither a GPU nor a CUDA
-toolchain.
-"""
+"""Tests for the one-process-one-GPU model: init selects the device, everything reads it back."""
 import numpy as np
 
 import dace
@@ -46,12 +39,7 @@ def _gpu_sdfg(name: str) -> dace.SDFG:
 
 
 def test_init_records_the_device_in_the_context():
-    """The ordinal init selected is stored, so later code has something to read.
-
-    Without this the device is known only inside ``__dace_init_cuda``'s stack frame, and every
-    other site has to re-derive it - which is how the hardcoded ``0`` in the memory-pool setup
-    came about in the first place.
-    """
+    """The ordinal is stored, so later code has something to read instead of re-deriving it."""
     cu = next(o.clean_code for o in _gpu_sdfg('one_device_probe').generate_code() if o.language == 'cu')
 
     assert '__state->gpu_context->device = __dace_device;' in cu
@@ -60,11 +48,7 @@ def test_init_records_the_device_in_the_context():
 
 
 def test_device_defaults_to_the_one_the_process_is_on():
-    """With no configuration, init takes the process's current device.
-
-    This is the one-rank-per-GPU path: CUDA_VISIBLE_DEVICES has already narrowed the process to
-    its GPU, so there is nothing to choose and the ordinal is read, not picked.
-    """
+    """With no configuration, init takes the process's current device."""
     with dace.config.set_temporary('compiler', 'cuda', 'device', value=-1):
         cu = next(o.clean_code for o in _gpu_sdfg('device_default_probe').generate_code() if o.language == 'cu')
 
@@ -84,12 +68,7 @@ def test_configured_device_is_baked_into_init():
 
 
 def test_the_device_is_selected_exactly_once():
-    """Nothing after init changes the device.
-
-    This is the whole point of the model: the ordinal is settable at init and immutable after,
-    so no library node can move the thread out from under the kernels and allocations that
-    assume it. A second cudaSetDevice in generated code would reintroduce exactly that.
-    """
+    """Settable at init, immutable after: a second cudaSetDevice would undo the whole model."""
     with dace.config.set_temporary('compiler', 'cuda', 'device', value=1):
         cu = next(o.clean_code for o in _gpu_sdfg('device_once_probe').generate_code() if o.language == 'cu')
 
@@ -98,12 +77,7 @@ def test_the_device_is_selected_exactly_once():
 
 @pytest.mark.parametrize('module_name,cls_name,accessor', _ENVIRONMENTS)
 def test_handle_setup_uses_the_recorded_device(module_name, cls_name, accessor):
-    """Every GPU library environment takes its ordinal from the context, not from the node.
-
-    Parametrized over all five rather than spot-checking one: they were five byte-identical
-    copies of the same location-parsing block, which is exactly how they drifted into being a
-    device-selection mechanism nothing else in the codebase honored.
-    """
+    """Every environment takes its ordinal from the context. All five, since all five drifted."""
     env = _environment(module_name, cls_name)
     node = dace.sdfg.nodes.LibraryNode('probe')
 
@@ -116,18 +90,12 @@ def test_handle_setup_uses_the_recorded_device(module_name, cls_name, accessor):
 
 @pytest.mark.parametrize('module_name,cls_name,accessor', _ENVIRONMENTS)
 def test_per_node_gpu_placement_is_rejected(module_name, cls_name, accessor):
-    """``location['gpu']`` fails loudly instead of being honored or quietly dropped.
-
-    Honoring it was never sound: only these environments read it, while allocations and kernel
-    launches went to the current device and peer access is never enabled, so the handle worked
-    on memory belonging to another device. Silently ignoring it would be worse than either -
-    the same wrong answer with nothing to notice.
-    """
+    """``location['gpu']`` fails loudly; silently dropping it would give the same wrong answer."""
     env = _environment(module_name, cls_name)
     node = dace.sdfg.nodes.LibraryNode('probe')
     node.location['gpu'] = 1
 
-    with pytest.raises(ValueError, match='one process per GPU'):
+    with pytest.raises(ValueError, match='one GPU per process'):
         env.handle_setup_code(node)
 
 
@@ -154,11 +122,7 @@ def test_gpu_placement_survives_an_empty_location():
 
 @pytest.mark.gpu
 def test_a_configured_device_is_the_one_actually_used():
-    """The setting reaches the hardware, not just the generated source.
-
-    Asserted by reading the thread's current device after the program returns: init selected it
-    and nothing since was allowed to change it, so it still names the GPU the work ran on.
-    """
+    """The setting reaches the hardware: the thread is still on it when the program returns."""
     import ctypes
     from ctypes.util import find_library
 
@@ -190,11 +154,7 @@ def test_a_configured_device_is_the_one_actually_used():
 
 @pytest.mark.gpu
 def test_a_gpu_library_node_still_runs():
-    """End to end: a cuBLAS gemm compiles and gives the right answer through the new path.
-
-    The source-level tests above cannot catch a handle accessor that no longer compiles, which
-    is the realistic way this rewrite could break.
-    """
+    """End to end: a cuBLAS gemm still compiles and is correct through the rewritten path."""
     a = np.random.rand(64, 64)
     b = np.random.rand(64, 64)
 

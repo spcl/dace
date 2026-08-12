@@ -40,13 +40,8 @@ def _sources(sdfg: dace.SDFG):
 
 
 def test_gpu_drain_emitted_in_init_and_per_call():
-    """The drain is defined in the .cu, called from __dace_init_cuda, and called again at
-    the top of every __program_<name> invocation.
-
-    Initialization runs once per state, but a foreign GPU error can be left in the
-    runtime's shared last-error slot between any two calls, so the per-call site is the
-    one that actually protects a long-running process.
-    """
+    """Defined in the .cu, called from init, and again per call - init runs only once, but a
+    foreign error can land between any two calls."""
     cu, frame = _sources(_gpu_sdfg())
 
     assert 'void __dace_gpu_drain_error(' in cu  # defined in the CUDA file
@@ -79,23 +74,12 @@ def test_gpu_drain_absent_without_gpu_code():
 
 
 def test_gpu_init_template_substitution_does_not_break_comments():
-    """Regression: a ``{placeholder}`` written inside a C++ comment in the init template.
+    """Regression: a ``{placeholder}`` inside a C++ comment in the init template is substituted
+    there too, so anything expanding to statements breaks the comment.
 
-    ``__dace_init_cuda`` is built with ``str.format``, so a placeholder inside a comment is
-    substituted there like anywhere else. ``{initcode}`` expands to multiple statements, so
-    writing it in a comment dumped the whole init body into the middle of that comment and
-    left the rest of the sentence as a bare statement - nvcc reported
-    ``identifier "often" is undefined``.
-
-    Checked against the TEMPLATE SOURCE rather than against generated output. Reproducing
-    the corruption through a generated file needs an SDFG whose ``{initcode}`` is non-empty
-    (a CUB reduction, say) - so a test built on a simpler SDFG passes while the bug is
-    present, which is worse than no test. Reading the source catches the whole class for
-    every SDFG shape.
-
-    ``{backend}`` is allowed: it expands to a single identifier (``cuda``/``hip``) and has
-    always been used this way. Everything else is rejected, since a placeholder that
-    expands to statements turns the rest of the comment line into code.
+    Checked against the template source, not generated output: reproducing it needs a non-empty
+    ``{initcode}``, so a test on a simpler SDFG would pass while the bug is present.
+    ``{backend}`` is exempt - it expands to one identifier.
     """
     import re
     from pathlib import Path
@@ -117,12 +101,8 @@ def test_gpu_init_template_substitution_does_not_break_comments():
 
 
 def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
-    """The memory-pool calls are wrapped, and run only after the GPU context exists.
-
-    DACE_GPU_CHECK records into ``__state->gpu_context``, so a checked call placed before
-    the context is constructed could not record - and, before ``gpu_context`` was given an
-    initializer, could not even be read safely.
-    """
+    """The pool calls are wrapped and run after the context exists - DACE_GPU_CHECK records
+    into it, so a checked call placed earlier could not record."""
     sdfg = dace.SDFG('drain_pool_probe')
     sdfg.add_array('A', [16], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.arrays['A'].optional = False
@@ -147,14 +127,8 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
 
 
 def test_gpu_init_selects_the_current_device_explicitly():
-    """The initializer reads the thread's device, range-checks it, and selects it.
-
-    Which device a host thread is on is per-thread state that ``__dace_init_cuda`` has not set,
-    so it cannot be assumed - and it is what the memory-pool query above needs. Selecting it
-    also forces the context to exist here, where a placement failure is still attributable to
-    the thing that caused it, instead of surfacing later out of whichever checked call runs
-    first (in a CUB-reducing module, the temp-storage size query).
-    """
+    """Init reads the device, range-checks it, and selects it - which also forces the context to
+    exist here, where a placement failure is still attributable."""
     cu, _ = _sources(_gpu_sdfg('drain_device_probe'))
 
     assert 'cudaGetDevice(&__dace_device)' in cu
@@ -189,19 +163,10 @@ def _summed(a, b):
 def test_foreign_error_is_not_charged_to_the_next_program():
     """An error left pending by another GPU user must not fail the next SDFG.
 
-    This is the failure that motivated the drain, reproduced deliberately instead of waiting for
-    it. In CI the poisoning was done by whatever ran earlier in the same pytest-xdist worker, so
-    it landed on a different test every run; here it is one call away.
-
-    The victim is a CUB reduction because CUB is where a stale value becomes unrecognizable. The
-    temp-storage size query launches no kernel and can hardly fail on its own, but it reads the
-    current device through ``cudaGetDevice``, which hands back the pending error; CUB reads that
-    as "no current device" and returns ``cudaErrorInvalidDevice``. A pending
-    ``invalid argument (1)`` therefore surfaces as ``invalid device ordinal (101)`` out of an
-    initializer that did nothing wrong.
-
-    Poisoned through ctypes rather than cupy: cupy calls ``cudaGetLastError()`` when it raises,
-    which clears the very slot this needs left dirty.
+    The victim is a CUB reduction: its size query reads the current device through
+    ``cudaGetDevice``, gets the pending error back, and reports ``cudaErrorInvalidDevice`` - so
+    ``invalid argument (1)`` surfaces as ``invalid device ordinal (101)``. Poisoned through
+    ctypes, not cupy, which clears the slot when it raises.
     """
     cudart = _load_cudart()
     if cudart is None:

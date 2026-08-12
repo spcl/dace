@@ -470,14 +470,11 @@ required:
                         type: int
                         title: GPU device to run on
                         description: >
-                            Ordinal of the GPU the generated program uses, selected once in
-                            __dace_init_cuda and used for everything after that. -1 keeps
-                            whichever device the calling process is already on, which is the
-                            recommended setup: one process per GPU, chosen with
-                            CUDA_VISIBLE_DEVICES. Set an explicit ordinal only when one process
-                            must pick from several visible GPUs. The value is baked into the
-                            generated code, so a build shared by several ranks would send them
-                            all to the same GPU.
+                            Ordinal of the GPU the program runs on, selected once in
+                            __dace_init_cuda. -1 keeps whichever device the process is already
+                            on (one process per GPU, via CUDA_VISIBLE_DEVICES). An explicit
+                            ordinal is compiled in, so a build shared by several ranks would
+                            send them all to the same GPU.
                         default: -1
 
                     syncdebug:
