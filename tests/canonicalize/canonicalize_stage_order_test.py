@@ -8,17 +8,21 @@ and the value-preservation corpus stays green.
 """
 import pytest
 
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, _assert_self_contained, _build_stages
+from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.constant_propagation import ConstantPropagation
+from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 
@@ -212,6 +216,42 @@ def test_every_stage_unit_is_self_contained(target: str, knob: str):
     for flipped in (False, True):
         for _label, unit in _build_stages(target=target, **{knob: flipped}):
             _assert_self_contained(unit)
+
+
+@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+def test_simplify_never_runs_after_the_reduce_stage(target):
+    """``SimplifyPass`` is confined to ``clean`` and ``reduce``; nothing past them may lean on it.
+
+    A terminal simplify makes every later stage's precondition invisible: it re-inlines, re-fuses
+    states and re-folds copy chains, so a stage that only matches on already-normalized input still
+    looks like it works. The stages after ``reduce`` -- the terminal LoopToMap, the terminal fuse,
+    the remat and symbol-cleanup band -- have to hold on un-simplified input instead, and the
+    reclaimers they DO need are wired explicitly (see
+    ``tests/passes/canonicalize/terminal_cleanup_band_test.py``). Asserting the confinement here is what
+    keeps a re-added simplify from silently restoring the crutch.
+    """
+    labels = [lbl for lbl, p in _build_stages(target=target) if type(p).__name__ == SimplifyPass.__name__]
+    assert labels == ['clean', 'reduce', 'reduce'], labels
+
+
+@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+def test_the_reclaimers_replace_the_terminal_simplify(target):
+    """What the recipe kept of the terminal simplify: the two reclaimers, and only those.
+
+    They must sit AFTER the last ``SimplifyPass`` (otherwise the simplify would do their work and
+    they would be dead weight) and BEFORE the terminal ``LoopToMap`` (which is what the reclaimed
+    graph feeds).
+    """
+    stages = _build_stages(target=target)
+    reclaim = [
+        i for i, (_lbl, p) in enumerate(stages)
+        if isinstance(p, ppl.FixedPointPipeline) and not isinstance(p, SimplifyPass)
+        and p._pass_names == {DeadDataflowElimination.__name__, ArrayElimination.__name__}
+    ]
+    assert len(reclaim) == 1, f'expected exactly one reclaim stage, found {reclaim}'
+    flat = _flat(target)
+    assert reclaim[0] > _last_index(flat, SimplifyPass.__name__), 'the reclaimers must follow the last simplify'
+    assert reclaim[0] < _last_index(flat, 'LoopToMap'), 'the reclaimers must precede the terminal LoopToMap'
 
 
 if __name__ == '__main__':

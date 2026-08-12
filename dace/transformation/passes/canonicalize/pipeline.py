@@ -12,6 +12,8 @@ from dace import SDFG, properties
 from dace.transformation import transformation
 from dace.transformation import pass_pipeline as ppl
 
+from dace.transformation.passes.array_elimination import ArrayElimination
+from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
@@ -439,11 +441,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     fresh instances each call.
 
     ``SimplifyPass`` runs at the very start, after the cleaning passes (unique
-    loop iterators, split tasklets, trivial-tasklet cleanup), once more right
-    after ``ShortLoopUnroll`` to collapse the redundant straight-line code an
-    unroll produces, and once at the end -- never otherwise between transforming
-    stages. Between-stage structural cleanup is ``StateFusionExtended`` +
-    ``InlineSDFG`` instead.
+    loop iterators, split tasklets, trivial-tasklet cleanup), and twice in the
+    ``reduce`` stage around ``ShortLoopUnroll`` to collapse the redundant
+    straight-line code an unroll produces -- never otherwise, and never after
+    ``reduce``. Between-stage structural cleanup is ``StateFusionExtended`` +
+    ``InlineSDFG`` instead; every stage past ``reduce`` therefore has to stand on
+    its own on un-simplified input.
     ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
     honest and slottable.
     """
@@ -462,8 +465,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     _uniq_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     _uniq_unroll = UniqueLoopIterators(assign_loop_iterator_post_value=False)
 
-    # clean: unique loop iterators -> split tasklets -> the single SimplifyPass
-    # (only here and at the end). Trivial-tasklet elimination now opens the
+    # clean: unique loop iterators -> split tasklets -> the leading SimplifyPass
+    # (only here and, twice, in 'reduce'). Trivial-tasklet elimination now opens the
     # 'reduce' recipe (after simplify), not here.
     # NormalizeNegativeStride runs first so every downstream matcher
     # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
@@ -1313,44 +1316,73 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # WCRToAugAssign's injectivity gate keeps real in-map reductions + scatters as WCR.
     s += [('revert_nonreduction_wcr', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
 
-    # end: the final SimplifyPass.
-    #
-    # ``ArrayElimination`` now runs at end-of-canonicalize. Two classes of bug
-    # that previously forced it off are fixed: (1) the ``merge_access_nodes``
-    # source-merge reorder that diverged the s254/s255 scalar-lookback carriers
-    # -- guarded by ``_state_has_read_write_sibling_carrier`` / ``_is_war_carrier``
-    # (a read-only merged container whose sibling transient is a read-then-seed
-    # carrier, or the anti-dep snapshot of s212, is left un-merged); and (2) the
-    # dead-data removal that ignored control-flow-region *condition* codeblocks --
-    # ``FindAccessStates`` now records data read by a loop/branch condition as live
-    # in the states the region governs, so a data-dependent bound is no longer
-    # dropped from under its own condition. Running it here reclaims the dead
-    # transients later canon phases strand (e.g. the wavefront's absorbed
-    # ``arr_split_snap`` snapshot copy).
-    #
-    # relax_powers (before the terminal simplify): freeze a provable non-negative integer
-    # ``base ** exp`` to the exact integer ``ipow`` on the size / subscript / bound sites WHILE
-    # the loop-iterator ranges that prove the exponent non-negative are still live. This must be
-    # a canonicalization pass, NOT deferred to codegen: SimplifyPass folds ``R**i * R**(K-i-1)``
-    # (both exponents range-nonnegative inside the enclosing loop) into ``R**(K-1)``, and by
-    # codegen that size is a persistent state-struct allocation OUTSIDE any loop -- the range
-    # that proved ``K-1 >= 0`` is gone, so the codegen-time relax leaves a ``dace::math::pow``
-    # (double) size that is not integral (``new complex128[...]`` -> compile error, stockham_fft).
+    # relax_powers: freeze a provable non-negative integer ``base ** exp`` to the exact integer
+    # ``ipow`` on the size / subscript / bound sites WHILE the loop-iterator ranges that prove the
+    # exponent non-negative are still live. This must be a canonicalization pass, NOT deferred to
+    # codegen: an earlier ``SimplifyPass`` folds ``R**i * R**(K-i-1)`` (both exponents
+    # range-nonnegative inside the enclosing loop) into ``R**(K-1)``, and by codegen that size is a
+    # persistent state-struct allocation OUTSIDE any loop -- the range that proved ``K-1 >= 0`` is
+    # gone, so the codegen-time relax leaves a ``dace::math::pow`` (double) size that is not
+    # integral (``new complex128[...]`` -> compile error, stockham_fft).
     # (This does NOT harm ``N**2``-style sizes: freezing ``N**2 -> ipow(N, 2)`` is value-exact;
     # an earlier suspicion that it miscompiled gramschmidt was a misdiagnosis -- that was an
     # uninitialized WCR read whose layout the relax merely perturbed.)
     s += [('relax_powers', RelaxIntegerPowers())]
-    s += [('end', SimplifyPass())]
+
+    # end (reclaim): the two reclaimers, on their own -- NOT a SimplifyPass. These are the only parts of
+    # the former terminal simplify the recipe actually relied on; the rest of ``SIMPLIFY_PASSES``
+    # (inlining, state fusion, control-flow raising, scalar-to-symbol promotion, constant
+    # propagation) is either done by dedicated stages above or actively unwanted this late.
+    #
+    # ``DeadDataflowElimination`` first: ``SplitStatements`` replicates a statement per independent
+    # output, and a replica whose output no later stage consumes (``fission_dep_then_indep``'s
+    # ``nested_sdfg_a`` chain -- an uninitialized read feeding a write nothing reads back) is orphaned
+    # only AFTER the ``reduce`` simplifies have run, by the fission / parallelize stages that drop its
+    # consumer. Nothing else in the recipe removes a dead chain.
+    #
+    # ``ArrayElimination`` second, on the smaller graph: ``MapFusionVertical`` mints a fresh
+    # ``__map_fusion_<x>`` carrier per fused edge, so a value consumed by two fused consumers (the
+    # ``fuse_diamond`` shape) ends up with a second carrier that is a plain copy of the first. The
+    # post-fuse ``RedundantArray`` below cannot fold that -- it only redirects a transient's WRITERS,
+    # which is impossible while the SOURCE still has another reader -- and the mirrored
+    # ``RedundantSecondArray`` is unsafe to run bare (it would redirect a copy's READERS onto a WAR
+    # carrier, TSVC s212). ``ArrayElimination`` is the pass that carries the ``_is_war_carrier`` /
+    # ``_state_has_read_write_sibling_carrier`` guards for exactly that case.
+    #
+    # Wrapped in a ``Pipeline`` because both declare dependencies (``ControlFlowBlockReachability`` /
+    # ``AccessSets``, ``StateReachability`` / ``FindAccessStates``), the same way ``ScalarFission`` /
+    # ``ArrayFission`` are above. Placed where the terminal simplify used to sit, so the reclamation
+    # point is unchanged and the stages after it see the graph they were written against.
+    s += [('end', ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
+
+    # ...then tidy the state machine, with the recipe's own between-phase helper rather than a
+    # SimplifyPass. The terminal simplify used to be the last thing that ran ``FuseStates`` /
+    # ``DeadStateElimination``, so the scaffolding earlier stages leave behind reached codegen the
+    # moment it went -- ``BreakAntiDependence``'s spent ``*_antidep_prologue`` state (ext_war_unit)
+    # is pure state-machine residue with no dataflow of its own, which is exactly what this helper
+    # is for. Running it AFTER the reclaimers means it also splices out whatever they just emptied.
+    # Led by the inline, like every other cleanup site: an un-inlined map body reports whole-array
+    # memlets, so ``StateFusionExtended`` would judge the merge on the bounding box.
+    #
+    # NOT covered, deliberately: an empty conditional ARM (the else a guarded scan split leaves in
+    # scan_conditional) is a ControlFlowRegion, not a state, so ``DeadStateElimination`` leaves it.
+    # Pruning it needs ``PruneEmptyConditionalBranches``, which is left out because the recipe leans
+    # on ConditionalBlocks for its guarded specializations and the residue is an empty ``else {}``.
+    s += _inline_single_state('end')
+    s += _structural_cleanup('end')
 
     # Final parallelize sweep: the symbolic-stride scan specialization
     # (``LoopToScan._specialize_scan_under_stride_guard``) emits its carry-free
-    # delta-build loop INSIDE the ``if stride >= 1`` ConditionalBlock branch. The
-    # earlier ``parallelize`` LoopToMap stages ran before that loop settled into
-    # liftable form (subsets propagated, offsets normalized by the intervening
-    # simplify / symbol passes), so it survived as a residual sequential loop even
-    # though it is embarrassingly parallel (``scan_strided_sym`` / ``ext_floordiv_offset``
-    # / ``fission_dep_sym_offset`` -- the delta-build ``_scan_in[i-K] = x[i]``). Lift
-    # any such residual now. LoopToMap only fires on genuinely parallel loops and
+    # delta-build loop INSIDE the ``if stride >= 1`` ConditionalBlock branch, i.e. AFTER
+    # the earlier ``parallelize`` LoopToMap stages have run, so it survived as a residual
+    # sequential loop even though it is embarrassingly parallel (``scan_strided_sym`` /
+    # ``ext_floordiv_offset`` / ``fission_dep_sym_offset`` -- the delta-build
+    # ``_scan_in[i-K] = x[i]``). Lift any such residual now. Nothing normalizes the graph
+    # between the earlier sweeps and this one, so ``LoopToMap`` matches on un-simplified
+    # input; its bound/subset comparisons re-parse through the symbol registry by NAME
+    # (:func:`~dace.transformation.interstate.loop_to_map._same_injective_index`,
+    # ``symbolic.equalize_symbols``), which is what keeps that robust.
+    # LoopToMap only fires on genuinely parallel loops and
     # no-ops otherwise, so this cannot mis-parallelize a real carry. BEFORE
     # AssumeSymbolConstraints, which must stay the terminal stage.
     # Lift loop-carried in-place array reductions (contour_integral's
@@ -1378,10 +1410,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                                                 MapFusionHorizontal()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
-    # its destination, so the producing map writes the destination directly. The last ``SimplifyPass``
-    # ran BEFORE the terminal LoopToMap and the terminal fuse above, so from that point on nothing
-    # reclaims arrays at all -- and ``ArrayElimination`` (Simplify's array reclaimer) refuses this
-    # shape anyway: its ``_is_war_carrier`` guard skips the candidate whenever the DESTINATION is read
+    # its destination, so the producing map writes the destination directly. No ``SimplifyPass`` runs
+    # after the ``reduce`` stage, so from well before the terminal LoopToMap and the terminal fuse
+    # above nothing reclaims arrays at all -- and ``ArrayElimination`` (Simplify's array reclaimer)
+    # refuses this shape anyway: its ``_is_war_carrier`` guard skips the candidate whenever the DESTINATION is read
     # and written in the same state, which is every in-place stencil sweep (heat3d's
     # ``A_slice -> A[1:-1, 1:-1, 1:-1]``, an (N-2)^3 buffer). ``RedundantArray`` only ever redirects a
     # transient's WRITERS into the destination, so it cannot expose a read to a later in-place write;
@@ -1408,8 +1440,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # AssumeSymbolConstraints, which must stay the terminal stage.
     s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
     # SymbolPropagation above folds symbols out of interstate edges but leaves the
-    # now-unreferenced entries in sdfg.symbols; the last SimplifyPass (which prunes
-    # them via SIMPLIFY_PASSES) already ran earlier, so prune again here.
+    # now-unreferenced entries in sdfg.symbols. No SimplifyPass runs past the ``reduce``
+    # stage, so this is the ONLY thing that prunes them -- it is load-bearing, not a top-up.
     s += [('end', RemoveUnusedSymbols())]
 
     # ConvertLengthOneArraysToScalars a SECOND time (it leads ``prep``): the canonical spelling of
@@ -1460,7 +1492,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``std::abort`` start state that aborts when one is violated -- a
     # negative signed-integer free symbol (the offset-sign nonnegativity
     # contract) or a false tracked relation (e.g. the ``K < N`` a modular-wrap
-    # split leaned on). Runs AFTER every structural pass + the terminal simplify:
+    # split leaned on). Runs AFTER every structural pass:
     # a guard prepended earlier is orphaned by any pass that builds its own entry
     # state (LoopToScan's scan-init block, reduction init, ...), which resets the
     # top-level start block and leaves the guard a disconnected source that
