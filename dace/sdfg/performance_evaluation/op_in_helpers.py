@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
 Further, provides a curve fitting method and plotting function. """

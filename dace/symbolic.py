@@ -2938,8 +2938,6 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 return getattr(dtypes, node.attr)
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
-        # Uncached: a symbol-bearing function expression built through SymPy's cache can come
-        # back with an equal-named symbol of the wrong dtype.
         return _construct_function_uncached(Attr, self.visit(node.value), symbol(node.attr))
 
     def generic_visit(self, node):

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -784,23 +784,22 @@ class Range(Subset):
 
     def __setitem__(self, key, value):
         # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
-        # quietly put Python ints into a container whose contract says symbolic. A 4-tuple
-        # carries the tile size, which lives in its own list rather than in ``ranges``.
-        if isinstance(key, slice):
-            entries = [symbolic_range_tuple(v) for v in value]
-            if any(len(e) == 4 for e in entries):
-                self.tile_sizes[key] = [e[3] if len(e) == 4 else old for e, old in zip(entries, self.tile_sizes[key])]
-            return self.ranges.__setitem__(key, [e[:3] for e in entries])
-        if isinstance(value, (tuple, list)):
-            value = symbolic_range_tuple(value)
-            if len(value) == 4:
-                self.tile_sizes[key] = value[3]
-            value = value[:3]
-        else:
+        # quietly put Python ints into a container whose contract says symbolic.
+        # A 4-tuple carries the tile size, which lives in its own list rather than in ``ranges``.
+        def coerce(idx, v):
+            if isinstance(v, (tuple, list)):
+                v = symbolic_range_tuple(v)
+                if len(v) == 4:
+                    self.tile_sizes[idx] = v[3]
+                return v[:3]
             # Single-index write (e.g. the frontend replacing one dimension by an
             # expression): still coerce so no raw Python number slips in.
-            value = tuple_to_symexpr(value)
-        return self.ranges.__setitem__(key, value)
+            return symbolic.pystr_to_symbolic(v)
+
+        if isinstance(key, slice):
+            indices = range(*key.indices(len(self.ranges)))
+            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+        return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
         if not isinstance(other, Range):

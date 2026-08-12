@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Helper functions shared by the SDFG performance analyses: element UUIDs, fixed-point symbol
 substitution, and static-symbol detection. """
 
