@@ -1,0 +1,132 @@
+{
+  "suite": "poly",
+  "kernel": "seidel_2d",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:07:11",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "tsteps": 20,
+        "N": 40
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.856798,
+          "median_ms": 0.896673,
+          "mean_ms": 0.906306,
+          "std_ms": 0.036594,
+          "times_ms": [
+            0.856798,
+            0.96836,
+            0.896673,
+            0.906091,
+            0.937721,
+            0.883278,
+            0.895221
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.864022,
+          "median_ms": 0.876474,
+          "mean_ms": 0.928352,
+          "std_ms": 0.095008,
+          "times_ms": [
+            0.894338,
+            1.025949,
+            1.10019,
+            0.876474,
+            0.864022,
+            0.871304,
+            0.866186
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 0.9916
+      },
+      "reference": {
+        "kind": "python-scalar",
+        "vectorization": "scalar"
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "python-scalar",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    },
+    "paper": {
+      "shape": {
+        "tsteps": 100,
+        "N": 400
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 119.329679,
+          "median_ms": 124.039736,
+          "mean_ms": 124.468107,
+          "std_ms": 4.614416,
+          "times_ms": [
+            120.111995,
+            121.696706,
+            119.329679,
+            124.039736,
+            125.975097,
+            127.863523,
+            132.260013
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 109.763217,
+          "median_ms": 110.523481,
+          "mean_ms": 110.867038,
+          "std_ms": 0.937383,
+          "times_ms": [
+            111.131619,
+            111.845485,
+            110.523481,
+            110.442166,
+            110.056964,
+            112.306335,
+            109.763217
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.0872
+      },
+      "reference": {
+        "kind": "python-scalar",
+        "vectorization": "scalar"
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "python-scalar",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

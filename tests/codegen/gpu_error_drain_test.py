@@ -173,7 +173,7 @@ _ENVIRONMENTS = [
 ]
 
 
-def test_init_selects_device_zero_once_and_records_it():
+def test_init_selects_device_zero_once():
     """The ordinal is not a build-time choice: one build is shared by every rank, so a compiled-in
     ordinal would send them all to the same GPU. Device 0 always, and which physical GPU that is is
     the process's business (CUDA_VISIBLE_DEVICES renumbers what it exposes)."""
@@ -181,9 +181,6 @@ def test_init_selects_device_zero_once_and_records_it():
 
     assert 'const int __dace_device = 0;' in cu
     assert cu.count('cudaSetDevice(') == 1, 'selecting it anywhere else would make it mutable'
-    record = '__state->gpu_context->device = __dace_device;'
-    assert record in cu
-    assert cu.index('__state->gpu_context = new') < cu.index(record), 'the context must exist first'
 
 
 def test_the_device_ordinal_is_not_configurable():
@@ -192,14 +189,15 @@ def test_the_device_ordinal_is_not_configurable():
 
 
 @pytest.mark.parametrize('module_name,cls_name,accessor', _ENVIRONMENTS)
-def test_handle_setup_uses_the_recorded_device(module_name, cls_name, accessor):
-    """All five, since all five carried their own copy of the location parsing."""
+def test_handle_setup_takes_no_device(module_name, cls_name, accessor):
+    """All five, since all five carried their own copy of the location parsing. The handle lives on
+    the one device init selected, so there is no ordinal left to pass it."""
     env = getattr(importlib.import_module(module_name), cls_name)
     node = dace.sdfg.nodes.LibraryNode('probe')
 
     code = env.handle_setup_code(node)
-    assert 'const int __dace_cuda_device = __state->gpu_context->device;' in code
-    assert accessor in code
+    assert f'{accessor}.Get()' in code
+    assert '__dace_cuda_device' not in code
 
     node.location['gpu'] = 3
     with pytest.raises(ValueError, match='one GPU per process') as excinfo:

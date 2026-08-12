@@ -1,0 +1,168 @@
+{
+  "suite": "np",
+  "kernel": "mlp",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:23:26",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "C_in": 3,
+        "N": 8,
+        "S0": 32,
+        "S1": 32,
+        "S2": 32
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.018364,
+          "median_ms": 0.018585,
+          "mean_ms": 0.018685,
+          "std_ms": 0.000304,
+          "times_ms": [
+            0.019316,
+            0.018756,
+            0.018675,
+            0.018535,
+            0.018585,
+            0.018364,
+            0.018565
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.017924,
+          "median_ms": 0.018094,
+          "mean_ms": 0.018156,
+          "std_ms": 0.000275,
+          "times_ms": [
+            0.018736,
+            0.018214,
+            0.018114,
+            0.018074,
+            0.017934,
+            0.017924,
+            0.018094
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.0245
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 6.253757,
+        "median_ms": 6.630487,
+        "mean_ms": 6.682154,
+        "std_ms": 0.278987,
+        "times_ms": [
+          6.630487,
+          7.060196,
+          6.548833,
+          7.014339,
+          6.684138,
+          6.583328,
+          6.253757
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 6.253757
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 340.5444,
+        "dace-canon-gcc": 348.9041
+      }
+    },
+    "paper": {
+      "shape": {
+        "C_in": 3,
+        "N": 8,
+        "S0": 30000,
+        "S1": 10000,
+        "S2": 1000
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 226.691615,
+          "median_ms": 228.568559,
+          "mean_ms": 228.822585,
+          "std_ms": 1.775825,
+          "times_ms": [
+            229.347006,
+            227.08159,
+            230.060279,
+            228.176431,
+            226.691615,
+            228.568559,
+            231.832615
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 224.190004,
+          "median_ms": 227.822466,
+          "mean_ms": 227.171664,
+          "std_ms": 1.801973,
+          "times_ms": [
+            229.018569,
+            227.822466,
+            227.352631,
+            225.167415,
+            228.477439,
+            228.173125,
+            224.190004
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.0112
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 244.225604,
+        "median_ms": 246.110846,
+        "mean_ms": 246.027094,
+        "std_ms": 1.026113,
+        "times_ms": [
+          246.110846,
+          245.312211,
+          246.771369,
+          244.225604,
+          247.369083,
+          245.936504,
+          246.464038
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 244.225604
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 1.0773,
+        "dace-canon-gcc": 1.0894
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

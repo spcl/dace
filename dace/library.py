@@ -204,10 +204,11 @@ def get_environment(env_name):
 
 
 def gpu_device_setup_code(node) -> str:
-    """Declares ``__dace_cuda_device``: the device ``__dace_init_cuda`` selected.
+    """Rejects ``location['gpu']``. Only these environments ever honored it, while allocations and
+    kernel launches used the current device, so the handle worked on another device's memory.
 
-    ``location['gpu']`` is rejected. Only these environments ever honored it, while allocations
-    and kernel launches used the current device, so the handle worked on another device's memory.
+    Nothing is emitted: the library handles live on the one device ``__dace_init_cuda`` selects,
+    so there is no ordinal left to thread through them.
     """
     if node.location and 'gpu' in node.location:
         raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
@@ -215,7 +216,7 @@ def gpu_device_setup_code(node) -> str:
                          'on the device selected in __dace_init_cuda. Remove the location and give the '
                          'process its own GPU with CUDA_VISIBLE_DEVICES.')
 
-    return 'const int __dace_cuda_device = __state->gpu_context->device;\n'
+    return ''
 
 
 # Mapping from string to library

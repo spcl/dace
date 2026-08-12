@@ -40,5 +40,5 @@ class cuTensor:
     @staticmethod
     def handle_setup_code(node):
         return dace.library.gpu_device_setup_code(node) + """\
-cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get(__dace_cuda_device);
+cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get();
 // cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""

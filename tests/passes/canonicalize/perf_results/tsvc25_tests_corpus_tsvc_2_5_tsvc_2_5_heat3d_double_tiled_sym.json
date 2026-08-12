@@ -1,0 +1,161 @@
+{
+  "suite": "tsvc25",
+  "kernel": "tests_corpus_tsvc_2_5_tsvc_2_5_heat3d_double_tiled_sym",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-08T23:00:30",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "epoch": 2,
+  "presets": {
+    "S": {
+      "shape": {
+        "LEN_1D": 128,
+        "LEN_2D": 32,
+        "LEN_3D": 16,
+        "ITERATIONS": 4,
+        "S": 4,
+        "SSYM": 3,
+        "K": 3,
+        "KMASK": 0,
+        "KFIND": 2,
+        "M": 4,
+        "T": 4,
+        "T1": 8,
+        "T2": 4,
+        "T3": 2,
+        "LEN_R7": 126
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.002975,
+          "median_ms": 0.003026,
+          "mean_ms": 0.003152,
+          "std_ms": 0.000258,
+          "reps": 7,
+          "times_ms": [
+            0.003667,
+            0.003337,
+            0.003035,
+            0.003026,
+            0.003006,
+            0.002975,
+            0.003016
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.001974,
+          "median_ms": 0.002044,
+          "mean_ms": 0.002156,
+          "std_ms": 0.000305,
+          "reps": 7,
+          "times_ms": [
+            0.002835,
+            0.002104,
+            0.001994,
+            0.002124,
+            0.002044,
+            0.002014,
+            0.001974
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.5071
+      },
+      "reference": {
+        "kind": "python-scalar"
+      },
+      "denominator": {
+        "source": "seq-cpp",
+        "kind": "sequential-c++",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    },
+    "paper": {
+      "shape": {
+        "LEN_1D": 589824,
+        "LEN_2D": 768,
+        "LEN_3D": 96,
+        "ITERATIONS": 4,
+        "S": 4,
+        "SSYM": 3,
+        "K": 3,
+        "KMASK": 0,
+        "KFIND": 2,
+        "M": 4,
+        "T": 4,
+        "T1": 8,
+        "T2": 4,
+        "T3": 2,
+        "LEN_R7": 516096
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 2.973439,
+          "median_ms": 3.352583,
+          "mean_ms": 3.555194,
+          "std_ms": 0.678399,
+          "reps": 7,
+          "times_ms": [
+            4.918461,
+            3.496393,
+            2.981884,
+            2.973439,
+            3.889864,
+            3.273734,
+            3.352583
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.720577,
+          "median_ms": 0.757517,
+          "mean_ms": 0.79127,
+          "std_ms": 0.100343,
+          "reps": 7,
+          "times_ms": [
+            0.997558,
+            0.843448,
+            0.757517,
+            0.732038,
+            0.720577,
+            0.721539,
+            0.766212
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 4.1265
+      },
+      "reference": {
+        "kind": "python-scalar"
+      },
+      "denominator": {
+        "source": "seq-cpp",
+        "kind": "sequential-c++",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    }
+  }
+}

@@ -24,7 +24,7 @@ class cuBLAS:
     @staticmethod
     def handle_setup_code(node):
         return dace.library.gpu_device_setup_code(node) + """\
-cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get(__dace_cuda_device);
+cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get();
 cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
 
     @staticmethod

@@ -1,0 +1,166 @@
+{
+  "suite": "np",
+  "kernel": "lenet",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:22:00",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "N": 4,
+        "H": 16,
+        "W": 16,
+        "C_before_fc1": 16
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.667948,
+          "median_ms": 0.683848,
+          "mean_ms": 0.709943,
+          "std_ms": 0.05173,
+          "times_ms": [
+            0.689188,
+            0.683398,
+            0.683848,
+            0.797642,
+            0.770702,
+            0.667948,
+            0.676876
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.033894,
+          "median_ms": 0.034415,
+          "mean_ms": 0.034459,
+          "std_ms": 0.000391,
+          "times_ms": [
+            0.035176,
+            0.034625,
+            0.034415,
+            0.033894,
+            0.034495,
+            0.034244,
+            0.034365
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 19.707
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 1.134257,
+        "median_ms": 1.162389,
+        "mean_ms": 1.246968,
+        "std_ms": 0.127418,
+        "times_ms": [
+          1.134257,
+          1.141501,
+          1.149005,
+          1.334574,
+          1.395148,
+          1.4119,
+          1.162389
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 1.134257
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 1.6981,
+        "dace-canon-gcc": 33.4648
+      }
+    },
+    "paper": {
+      "shape": {
+        "N": 16,
+        "H": 256,
+        "W": 256,
+        "C_before_fc1": 59536
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 2726.111843,
+          "median_ms": 2763.461549,
+          "mean_ms": 2758.944665,
+          "std_ms": 20.640471,
+          "times_ms": [
+            2726.111843,
+            2760.199712,
+            2763.461549,
+            2775.939726,
+            2779.581739,
+            2772.173984,
+            2735.144099
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 170.03926,
+          "median_ms": 171.370055,
+          "mean_ms": 171.655695,
+          "std_ms": 1.129994,
+          "times_ms": [
+            173.606758,
+            170.03926,
+            171.104667,
+            171.205155,
+            172.448126,
+            171.815845,
+            171.370055
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 16.0322
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 2151.476219,
+        "median_ms": 2159.431042,
+        "mean_ms": 2159.016564,
+        "std_ms": 4.804973,
+        "times_ms": [
+          2157.477359,
+          2160.213553,
+          2156.868232,
+          2160.161236,
+          2167.488309,
+          2159.431042,
+          2151.476219
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 2151.476219
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 0.7892,
+        "dace-canon-gcc": 12.6528
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

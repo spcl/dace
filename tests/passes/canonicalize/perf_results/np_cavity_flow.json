@@ -1,0 +1,138 @@
+{
+  "suite": "np",
+  "kernel": "cavity_flow",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:36:44",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "ny": 32,
+        "nx": 32,
+        "nt": 25,
+        "nit": 5,
+        "rho": 1.0,
+        "nu": 0.1
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "error": "ValueError: Cyclic scope structure in state \"BinOp_115\": node outer_fused[__i0=0:ny] is its own ancestor on the scope path from oute"
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.539525,
+          "median_ms": 0.54743,
+          "mean_ms": 0.550769,
+          "std_ms": 0.009918,
+          "times_ms": [
+            0.567387,
+            0.560855,
+            0.550225,
+            0.546909,
+            0.54743,
+            0.539525,
+            0.543051
+          ]
+        }
+      },
+      "speedup_vs_baseline": {},
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 3.544848,
+        "median_ms": 3.566228,
+        "mean_ms": 3.567596,
+        "std_ms": 0.012507,
+        "times_ms": [
+          3.544848,
+          3.565687,
+          3.566228,
+          3.561429,
+          3.573702,
+          3.580604,
+          3.580675
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 3.544848
+      },
+      "speedup_vs_reference": {
+        "dace-canon-gcc": 6.5703
+      }
+    },
+    "paper": {
+      "shape": {
+        "ny": 101,
+        "nx": 101,
+        "nt": 700,
+        "nit": 50,
+        "rho": 1.0,
+        "nu": 0.1
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "error": "ValueError: Cyclic scope structure in state \"BinOp_115\": node outer_fused[__i0=0:ny] is its own ancestor on the scope path from oute"
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 302.500161,
+          "median_ms": 302.753778,
+          "mean_ms": 303.177086,
+          "std_ms": 0.864986,
+          "times_ms": [
+            303.917347,
+            303.011834,
+            302.500161,
+            302.721658,
+            304.805006,
+            302.529816,
+            302.753778
+          ]
+        }
+      },
+      "speedup_vs_baseline": {},
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 1367.92843,
+        "median_ms": 1376.542715,
+        "mean_ms": 1374.256016,
+        "std_ms": 5.244571,
+        "times_ms": [
+          1367.92843,
+          1381.658844,
+          1369.033073,
+          1369.982307,
+          1376.542715,
+          1376.774309,
+          1377.872431
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 1367.92843
+      },
+      "speedup_vs_reference": {
+        "dace-canon-gcc": 4.5221
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

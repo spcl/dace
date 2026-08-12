@@ -1,0 +1,164 @@
+{
+  "suite": "np",
+  "kernel": "softmax",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:26:59",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "N": 16,
+        "H": 16,
+        "SM": 32
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 13.894614,
+          "median_ms": 14.134265,
+          "mean_ms": 14.130699,
+          "std_ms": 0.150284,
+          "times_ms": [
+            14.134265,
+            14.139555,
+            14.367523,
+            14.128684,
+            13.894614,
+            14.016653,
+            14.233602
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 13.555375,
+          "median_ms": 13.603004,
+          "mean_ms": 13.621781,
+          "std_ms": 0.05893,
+          "times_ms": [
+            13.658299,
+            13.718121,
+            13.582876,
+            13.573199,
+            13.603004,
+            13.555375,
+            13.661595
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.025
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 0.935692,
+        "median_ms": 0.95057,
+        "mean_ms": 0.956906,
+        "std_ms": 0.018578,
+        "times_ms": [
+          0.992228,
+          0.943506,
+          0.935692,
+          0.949477,
+          0.960879,
+          0.965988,
+          0.95057
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 0.935692
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 0.0673,
+        "dace-canon-gcc": 0.069
+      }
+    },
+    "paper": {
+      "shape": {
+        "N": 64,
+        "H": 16,
+        "SM": 512
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 2264.718098,
+          "median_ms": 2280.403155,
+          "mean_ms": 2280.744953,
+          "std_ms": 13.358204,
+          "times_ms": [
+            2286.104824,
+            2289.753138,
+            2270.258902,
+            2264.718098,
+            2303.048815,
+            2280.403155,
+            2270.927741
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 2302.869271,
+          "median_ms": 2330.907123,
+          "mean_ms": 2334.329571,
+          "std_ms": 26.590624,
+          "times_ms": [
+            2343.729542,
+            2321.053404,
+            2330.907123,
+            2302.869271,
+            2311.538851,
+            2381.877752,
+            2348.331057
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 0.9834
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 9368.928372,
+        "median_ms": 10460.970438,
+        "mean_ms": 12436.593649,
+        "std_ms": 3519.399385,
+        "times_ms": [
+          10460.970438,
+          10043.238697,
+          13027.31395,
+          9368.928372,
+          19279.722637,
+          10425.795627,
+          14450.185822
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 9368.928372
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 4.1369,
+        "dace-canon-gcc": 4.0684
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

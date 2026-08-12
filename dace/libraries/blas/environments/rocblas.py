@@ -24,7 +24,7 @@ class rocBLAS:
     @staticmethod
     def handle_setup_code(node):
         return dace.library.gpu_device_setup_code(node) + """\
-rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get(__dace_cuda_device);
+rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get();
 rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
 
     @staticmethod

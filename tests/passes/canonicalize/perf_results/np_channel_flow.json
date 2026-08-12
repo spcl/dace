@@ -1,0 +1,170 @@
+{
+  "suite": "np",
+  "kernel": "channel_flow",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:37:41",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "ny": 32,
+        "nx": 32,
+        "nit": 5,
+        "rho": 1.0,
+        "nu": 0.1,
+        "F": 1.0
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.034234,
+          "median_ms": 0.034474,
+          "mean_ms": 0.034525,
+          "std_ms": 0.000399,
+          "times_ms": [
+            0.035397,
+            0.034475,
+            0.034505,
+            0.034474,
+            0.034305,
+            0.034234,
+            0.034285
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.024337,
+          "median_ms": 0.024646,
+          "mean_ms": 0.024848,
+          "std_ms": 0.000731,
+          "times_ms": [
+            0.02647,
+            0.024646,
+            0.024587,
+            0.024436,
+            0.024667,
+            0.024796,
+            0.024337
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.4067
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 274.048885,
+        "median_ms": 274.722242,
+        "mean_ms": 275.242794,
+        "std_ms": 1.343982,
+        "times_ms": [
+          274.722242,
+          274.048885,
+          274.602116,
+          277.840036,
+          276.239425,
+          274.288245,
+          274.958606
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 274.048885
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 8005.1669,
+        "dace-canon-gcc": 11260.5861
+      }
+    },
+    "paper": {
+      "shape": {
+        "ny": 101,
+        "nx": 101,
+        "nit": 50,
+        "rho": 1.0,
+        "nu": 0.1,
+        "F": 1.0
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.468605,
+          "median_ms": 0.474557,
+          "mean_ms": 0.476966,
+          "std_ms": 0.00858,
+          "times_ms": [
+            0.476591,
+            0.472903,
+            0.482573,
+            0.468605,
+            0.493423,
+            0.470109,
+            0.474557
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.409544,
+          "median_ms": 0.416847,
+          "mean_ms": 0.415835,
+          "std_ms": 0.005157,
+          "times_ms": [
+            0.420945,
+            0.418049,
+            0.411738,
+            0.422738,
+            0.410986,
+            0.409544,
+            0.416847
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.1442
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 2622.92931,
+        "median_ms": 2627.216245,
+        "mean_ms": 2627.806812,
+        "std_ms": 2.790292,
+        "times_ms": [
+          2629.901484,
+          2627.216245,
+          2630.83213,
+          2626.942771,
+          2630.356346,
+          2626.469396,
+          2622.92931
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 2622.92931
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 5597.314,
+        "dace-canon-gcc": 6404.5116
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

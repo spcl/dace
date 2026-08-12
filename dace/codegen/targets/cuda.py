@@ -459,7 +459,6 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     DACE_GPU_CHECK({backend}Free(dev_X));
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
-    __state->gpu_context->device = __dace_device;
 
     // After the context exists: DACE_GPU_CHECK records into it.
     {pool_header}

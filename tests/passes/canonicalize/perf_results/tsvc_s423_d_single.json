@@ -1,0 +1,87 @@
+{
+  "suite": "tsvc",
+  "kernel": "s423_d_single",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-08T22:43:59",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "epoch": 2,
+  "presets": {
+    "S": {
+      "shape": {
+        "LEN_1D": 64,
+        "LEN_2D": 16
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.000721,
+          "median_ms": 0.000791,
+          "mean_ms": 0.00089,
+          "std_ms": 0.000306,
+          "reps": 7,
+          "times_ms": [
+            0.001573,
+            0.000831,
+            0.000862,
+            0.000721,
+            0.000732,
+            0.000791,
+            0.000721
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.001893,
+          "median_ms": 0.002004,
+          "mean_ms": 0.002097,
+          "std_ms": 0.000296,
+          "reps": 7,
+          "times_ms": [
+            0.002755,
+            0.002014,
+            0.001983,
+            0.002004,
+            0.001954,
+            0.001893,
+            0.002074
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 0.3809
+      },
+      "reference": {
+        "kind": "python-scalar"
+      },
+      "denominator": {
+        "source": "seq-cpp",
+        "kind": "sequential-c++",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    },
+    "paper": {
+      "shape": null,
+      "pipelines": {},
+      "speedup_vs_baseline": {},
+      "error": "IndexError: index 256 is out of bounds for axis 0 with size 256"
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    }
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "suite": "tsvc",
+  "kernel": "s291_d_single",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-08T22:36:21",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "epoch": 2,
+  "presets": {
+    "S": {
+      "shape": {
+        "LEN_1D": 64
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.001392,
+          "median_ms": 0.001453,
+          "mean_ms": 0.001562,
+          "std_ms": 0.000285,
+          "reps": 7,
+          "times_ms": [
+            0.002184,
+            0.001623,
+            0.001463,
+            0.001403,
+            0.001392,
+            0.001453,
+            0.001413
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.002194,
+          "median_ms": 0.002374,
+          "mean_ms": 0.002552,
+          "std_ms": 0.000495,
+          "reps": 7,
+          "times_ms": [
+            0.003626,
+            0.002325,
+            0.002194,
+            0.002374,
+            0.002275,
+            0.002414,
+            0.002655
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 0.6345
+      },
+      "reference": {
+        "kind": "python-scalar"
+      },
+      "denominator": {
+        "source": "seq-cpp",
+        "kind": "sequential-c++",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    },
+    "paper": {
+      "shape": {
+        "LEN_1D": 589824
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.133882,
+          "median_ms": 0.15408,
+          "mean_ms": 0.173843,
+          "std_ms": 0.037928,
+          "reps": 7,
+          "times_ms": [
+            0.15408,
+            0.13824,
+            0.151135,
+            0.133882,
+            0.224864,
+            0.209785,
+            0.204916
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.123192,
+          "median_ms": 0.131428,
+          "mean_ms": 0.135438,
+          "std_ms": 0.010431,
+          "reps": 7,
+          "times_ms": [
+            0.149511,
+            0.150334,
+            0.133852,
+            0.130976,
+            0.131428,
+            0.123192,
+            0.128773
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.0868
+      },
+      "reference": {
+        "kind": "python-scalar"
+      },
+      "denominator": {
+        "source": "seq-cpp",
+        "kind": "sequential-c++",
+        "min_ms": null
+      },
+      "speedup_vs_reference": {}
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed); blas=OpenBLAS -> ? [parallel=pthreads (spack threads=pthreads)] OpenBLAS 0.3.32 NO_LAPACKE DYNAMIC_ARCH NO_AFFINITY Cooperlake MAX_THREADS=128"
+    }
+  }
+}

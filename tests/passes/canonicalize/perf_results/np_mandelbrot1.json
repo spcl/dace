@@ -1,0 +1,147 @@
+{
+  "suite": "np",
+  "kernel": "mandelbrot1",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:20:50",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "xmin": -1.75,
+        "xmax": 0.25,
+        "xn": 32,
+        "XN": 32,
+        "ymin": -1.0,
+        "ymax": 1.0,
+        "yn": 32,
+        "YN": 32,
+        "maxiter": 32,
+        "horizon": 2.0
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.182344,
+          "median_ms": 0.184238,
+          "mean_ms": 0.185836,
+          "std_ms": 0.003653,
+          "times_ms": [
+            0.190289,
+            0.190489,
+            0.182734,
+            0.182344,
+            0.182754,
+            0.188004,
+            0.184238
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.186391,
+          "median_ms": 0.186892,
+          "mean_ms": 0.188927,
+          "std_ms": 0.003122,
+          "times_ms": [
+            0.194076,
+            0.186431,
+            0.190759,
+            0.186542,
+            0.191401,
+            0.186892,
+            0.186391
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 0.9783
+      },
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 0.2283,
+        "median_ms": 0.230515,
+        "mean_ms": 0.231694,
+        "std_ms": 0.003552,
+        "times_ms": [
+          0.232818,
+          0.238419,
+          0.230174,
+          0.230515,
+          0.228321,
+          0.23331,
+          0.2283
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 0.2283
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 1.252,
+        "dace-canon-gcc": 1.2248
+      }
+    },
+    "paper": {
+      "shape": {
+        "xmin": -2.25,
+        "xmax": 0.75,
+        "xn": 1000,
+        "XN": 1000,
+        "ymin": -1.25,
+        "ymax": 1.25,
+        "yn": 1000,
+        "YN": 1000,
+        "maxiter": 200,
+        "horizon": 2.0
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": false
+        },
+        "dace-canon-gcc": {
+          "correct": false
+        }
+      },
+      "speedup_vs_baseline": {},
+      "reference": {
+        "kind": "numpy",
+        "min_ms": 676.454466,
+        "median_ms": 689.148652,
+        "mean_ms": 688.44906,
+        "std_ms": 8.211617,
+        "times_ms": [
+          698.935015,
+          689.148652,
+          693.711837,
+          695.754622,
+          682.395657,
+          682.743169,
+          676.454466
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 676.454466
+      },
+      "speedup_vs_reference": {}
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}

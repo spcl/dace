@@ -1,0 +1,164 @@
+{
+  "suite": "poly",
+  "kernel": "trmm",
+  "host": "primrose-pc",
+  "timestamp": "2026-08-07T13:13:34",
+  "omp_num_threads": "1",
+  "reps": 7,
+  "warmup": 2,
+  "baseline": "dace-autoopt-gcc",
+  "presets": {
+    "S": {
+      "shape": {
+        "M": 20,
+        "N": 30
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 0.004418,
+          "median_ms": 0.004438,
+          "mean_ms": 0.004573,
+          "std_ms": 0.000259,
+          "times_ms": [
+            0.005129,
+            0.004649,
+            0.004519,
+            0.004438,
+            0.004428,
+            0.004429,
+            0.004418
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 0.003557,
+          "median_ms": 0.003577,
+          "mean_ms": 0.003677,
+          "std_ms": 0.000213,
+          "times_ms": [
+            0.004138,
+            0.003737,
+            0.003566,
+            0.003577,
+            0.003567,
+            0.003557,
+            0.003596
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.2421
+      },
+      "reference": {
+        "kind": "numpy",
+        "vectorization": "blocked",
+        "min_ms": 0.643876,
+        "median_ms": 0.662302,
+        "mean_ms": 0.659415,
+        "std_ms": 0.008948,
+        "times_ms": [
+          0.663654,
+          0.65645,
+          0.653034,
+          0.669956,
+          0.643876,
+          0.662302,
+          0.66663
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 0.643876
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 145.7392,
+        "dace-canon-gcc": 181.0166
+      }
+    },
+    "paper": {
+      "shape": {
+        "M": 1000,
+        "N": 1200
+      },
+      "pipelines": {
+        "dace-autoopt-gcc": {
+          "correct": true,
+          "min_ms": 588.432104,
+          "median_ms": 595.077984,
+          "mean_ms": 595.338652,
+          "std_ms": 5.844103,
+          "times_ms": [
+            603.858304,
+            601.402421,
+            595.2326,
+            588.437907,
+            594.929247,
+            588.432104,
+            595.077984
+          ]
+        },
+        "dace-canon-gcc": {
+          "correct": true,
+          "min_ms": 548.43735,
+          "median_ms": 578.230038,
+          "mean_ms": 573.937597,
+          "std_ms": 18.332907,
+          "times_ms": [
+            548.43735,
+            560.228151,
+            560.033453,
+            598.054017,
+            592.608374,
+            578.230038,
+            579.971796
+          ]
+        }
+      },
+      "speedup_vs_baseline": {
+        "dace-canon-gcc": 1.0729
+      },
+      "reference": {
+        "kind": "numpy",
+        "vectorization": "blocked",
+        "min_ms": 2038.606664,
+        "median_ms": 2058.056854,
+        "mean_ms": 2054.017195,
+        "std_ms": 9.716723,
+        "times_ms": [
+          2060.210053,
+          2064.282312,
+          2058.197693,
+          2058.056854,
+          2056.750213,
+          2038.606664,
+          2042.016574
+        ]
+      },
+      "denominator": {
+        "source": "reference",
+        "kind": "numpy",
+        "min_ms": 2038.606664
+      },
+      "speedup_vs_reference": {
+        "dace-autoopt-gcc": 3.4645,
+        "dace-canon-gcc": 3.7171
+      }
+    }
+  },
+  "arms": {
+    "dace-autoopt-gcc": {
+      "sdfg": "_autoopt",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    },
+    "dace-canon-gcc": {
+      "sdfg": "_canon",
+      "cxx": "g++",
+      "args": "-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -ffp-contract=fast",
+      "engaged": "g++ (base flags only, no external pass claimed)"
+    }
+  }
+}
