@@ -41,7 +41,6 @@ test_cscs_gh200:
     SLURM_JOB_NUM_NODES: 1
     SLURM_TIMELIMIT: 30
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
-    # GH200. Not 90a: no JIT fallback, so the modules fail to load.
     DACE_compiler_cuda_cuda_arch: '90'
   needs:
     - build_cscs_gh200
