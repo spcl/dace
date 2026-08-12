@@ -36,10 +36,16 @@ def lower_return(statement: ast.Return, state: LoweringState) -> None:
         state.emitter.emit(tn.ReturnNode())
         return
 
-    values = statement.value.elts if isinstance(statement.value, ast.Tuple) else [statement.value]
+    # Indexed ``__return_<i>`` containers are what tells the calling convention
+    # to hand back a tuple, so the choice follows the SYNTAX of the returned
+    # expression rather than how many values it has: ``return (x, )`` returns a
+    # one-element tuple in Python, and naming its single value ``__return``
+    # would flatten it to a bare array.
+    is_tuple = isinstance(statement.value, (ast.Tuple, ast.List))
+    values = statement.value.elts if is_tuple else [statement.value]
     names: List[str] = []
     for index, value in enumerate(values):
-        base_name = '__return' if len(values) == 1 else f'__return_{index}'
+        base_name = f'__return_{index}' if is_tuple else '__return'
         names.append(_materialize_return_value(f'{prefix}{base_name}', value, statement, state))
     state.context.return_names.extend(names)
     state.emitter.emit(tn.ReturnNode(values=names))
@@ -177,7 +183,8 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
             _reject_deferred_size(shape, value, statement, state)
         _reject_disagreeing_shape(return_name, shape, value, statement, state)
         if return_name not in state.context.containers:
-            return_name = state.context.add_container(return_name, data.Array(source.dtype, shape), transient=transient)
+            dtype = state.context.return_dtype or source.dtype
+            return_name = state.context.add_container(return_name, data.Array(dtype, shape), transient=transient)
         descriptor = state.context.containers[return_name]
         dispatch.lower_computation(DataAccess(return_name, subsets.Range.from_array(descriptor), descriptor), value,
                                    statement, state)
@@ -191,7 +198,13 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
                                       category='type-inference')
     _reject_disagreeing_shape(return_name, [1], value, statement, state)
     if return_name not in state.context.containers:
-        return_name = state.context.add_container(return_name, data.Array(dtype, [1]), transient=transient)
+        # An inlined callee's ``-> dtype`` annotation names the type it hands
+        # back, over the one inferred from the returned expression: ``return 5``
+        # under ``-> dace.int32`` is an int32, not the literal's own type. The
+        # tasklet below performs the conversion.
+        return_name = state.context.add_container(return_name,
+                                                  data.Array(state.context.return_dtype or dtype, [1]),
+                                                  transient=transient)
     # A name that reaches here resolved to no container (``resolve_access``
     # declined above), so unparsing it would leave the tasklet reading a name
     # nothing defines. That is what canonicalization hands us for a hoisted

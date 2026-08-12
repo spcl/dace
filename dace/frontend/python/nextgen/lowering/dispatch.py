@@ -2530,10 +2530,12 @@ def _fallback_return(statement: ast.Return, state: LoweringState, reason: str) -
         return
 
     prefix = state.context.return_prefix
-    values = statement.value.elts if isinstance(statement.value, ast.Tuple) else [statement.value]
+    # Tuple-ness follows the returned expression's syntax, as in ``rules.returns``
+    is_tuple = isinstance(statement.value, (ast.Tuple, ast.List))
+    values = statement.value.elts if is_tuple else [statement.value]
     names: List[str] = []
     for index, value in enumerate(values):
-        base_name = '__return' if len(values) == 1 else f'__return_{index}'
+        base_name = f'__return_{index}' if is_tuple else '__return'
         target_name = f'{prefix}{base_name}'
         assign = ast.copy_location(ast.Assign(targets=[ast.Name(id=target_name, ctx=ast.Store())], value=value),
                                    statement)
