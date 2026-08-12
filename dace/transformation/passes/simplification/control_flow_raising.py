@@ -261,6 +261,14 @@ class ControlFlowRaising(ppl.Pass):
                 for edge in cfg.edges():
                     if edge.src in unstructured_nodes and edge.dst in unstructured_nodes or edge.dst is region_exit:
                         unstructured_region.add_edge(edge.src, edge.dst, edge.data)
+                # Re-assert the start block: adding edges (in particular back-edges
+                # to the entry when the unstructured region contains a cycle) may
+                # have invalidated the manually-set start block, leaving it
+                # ambiguous since the region has no source nodes.
+                try:
+                    assert unstructured_region.start_block is region_entry
+                except ValueError:
+                    unstructured_region.start_block = unstructured_region.node_id(region_entry)
                 if cfg.in_degree(region_entry) == 0:
                     # If there is no incoming edge, this is a start block.
                     cfg.add_node(unstructured_region, is_start_block=True)
