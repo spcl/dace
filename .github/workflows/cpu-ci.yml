@@ -153,6 +153,10 @@ jobs:
         # Source Intel oneAPI environment so ``MKLROOT`` / link flags
         # are populated for the MKL expansion's CMake env.
         source /opt/intel/oneapi/setvars.sh || true
+        # setvars puts Intel's OpenMP runtime on the load path next to libgomp, which the generated
+        # kernels are built against. Two runtimes in one process partition a parallel loop against
+        # different team sizes and silently drop iterations; MKL on libgomp keeps one runtime.
+        export MKL_THREADING_LAYER=GNU
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -646,6 +650,10 @@ jobs:
         # libmkl_rt at run time. Must be sourced in the step that runs pytest -- env does not
         # carry across steps.
         source /opt/intel/oneapi/setvars.sh || true
+        # setvars puts Intel's OpenMP runtime on the load path next to libgomp, which the generated
+        # kernels are built against. Two runtimes in one process partition a parallel loop against
+        # different team sizes and silently drop iterations; MKL on libgomp keeps one runtime.
+        export MKL_THREADING_LAYER=GNU
         export NOSTATUSBAR=1
         export DACE_cache=unique
         # Pinned, not left to the defaults: every case here compiles, so build caching is most of
