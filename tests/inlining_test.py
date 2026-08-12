@@ -318,7 +318,7 @@ def test_multistate_inline():
 
 def test_multistate_inline_samename():
 
-    @dace.program
+    @dace.program(inline=False)
     def nested(A: dace.float64[20]):
         for i in range(5):
             A[i + 1] += A[i]
