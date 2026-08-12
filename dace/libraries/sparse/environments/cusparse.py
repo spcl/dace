@@ -22,6 +22,6 @@ class cuSPARSE:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.gpu_device_setup_code(node) + """\
+        return dace.library.reject_gpu_location(node) + """\
 cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get();
 cusparseSetStream(__dace_cusparse_handle, __dace_current_stream);\n"""

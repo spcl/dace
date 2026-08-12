@@ -22,6 +22,6 @@ class cuSolverDn:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.gpu_device_setup_code(node) + """\
+        return dace.library.reject_gpu_location(node) + """\
 cusolverDnHandle_t &__dace_cusolverDn_handle = __state->cusolverDn_handle.Get();
 cusolverDnSetStream(__dace_cusolverDn_handle, __dace_current_stream);\n"""

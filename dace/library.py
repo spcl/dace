@@ -203,12 +203,12 @@ def get_environment(env_name):
     return env
 
 
-def gpu_device_setup_code(node) -> str:
+def reject_gpu_location(node) -> str:
     """Rejects ``location['gpu']``. Only these environments ever honored it, while allocations and
     kernel launches used the current device, so the handle worked on another device's memory.
 
-    Nothing is emitted: the library handles live on the one device ``__dace_init_cuda`` selects,
-    so there is no ordinal left to thread through them.
+    Returns the empty string, so an environment can prepend it to its handle setup: the handles
+    live on the one device ``__dace_init_cuda`` selects, leaving nothing to emit.
     """
     if node.location and 'gpu' in node.location:
         raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
