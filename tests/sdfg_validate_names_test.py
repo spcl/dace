@@ -98,8 +98,7 @@ def test_interstate_edge():
     sdfg.add_array('A', [1], dace.float32)
     sdfg.add_array('B', [1], dace.float32)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    state = sdfg.add_state_after(entry, 'also_ok')
+    state = sdfg.add_state('also_ok', is_start_block=True)
     A = state.add_access('A')
     B = state.add_access('B')
     t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a')

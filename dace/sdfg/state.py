@@ -2886,22 +2886,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-        new_edge = super().add_edge(src, dst, data)
-        update_start_block = False
-        if self._cached_start_block is not None:
-            if dst is self._cached_start_block:
-                update_start_block = True
-        elif self._start_block is not None:
-            if self.node_id(dst) == self._start_block:
-                update_start_block = True
-        if update_start_block:
-            if self.in_degree(src) == 0:
-                self._start_block = self.node_id(src)
-                self._cached_start_block = src
-            else:
-                self._start_block = None
-                self._cached_start_block = None
-        return new_edge
+        if dst is self._cached_start_block:
+            self._cached_start_block = None
+        return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
         # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
@@ -2922,6 +2909,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             node.label = self._ensure_unique_block_name(node.label)
 
         super().add_node(node)
+        self._cached_start_block = None
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
             sdfg = self
@@ -2949,19 +2937,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._cached_start_block is not None:
-            start_block = self._cached_start_block
-        elif self._start_block is not None:
-            start_block = self.node(self._start_block)
-        else:
-            start_block = None
+        start_block = self.start_block
         super().remove_node(node)
         if start_block is node:
             self._start_block = None
             self._cached_start_block = None
-        elif start_block is not None:
-            self._start_block = self.node_id(start_block)
-            self._cached_start_block = start_block
+        else:
+            self.start_block = self.node_id(start_block)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
