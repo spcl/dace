@@ -120,12 +120,15 @@ def test_deferred_tile_nodes_are_cuda_stamped():
 
 def test_scalar_cast_constant_broadcasts():
     """The canonical constant-input shape ``tmp = float16(0.5); C = A * tmp`` -- a
-    scalar cast feeding a binop -- vectorizes to a single ``TileBinop`` (the scalar
-    is cast to the tile precision and broadcast into the tile), and compiles."""
+    scalar cast feeding a binop -- vectorizes to one ``TileBinop`` per branch arm (the
+    scalar is cast to the tile precision and broadcast into the tile), and compiles."""
     sdfg = _prep(_scale_const16)
     VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
-    assert len(binops) == 1, f"expected one TileBinop for A*const; got {len(binops)}"
+    # ONE per branch arm: the K=1 remainder default is ``branched_masked_tail`` (640c9e8d9), whose
+    # else-arm is a MASKED tile body rather than a scalar lane loop, so the multiply is a tile op in
+    # both arms. The cast is still broadcast, not re-materialized -- that would show up as a third.
+    assert len(binops) == 2, f"expected one TileBinop per branch arm for A*const; got {len(binops)}"
     sdfg.expand_library_nodes()
     # the constant stays at the input (fp16) precision -- no fp64 container leaked
     assert all(d.dtype != dace.float64 for d in sdfg.arrays.values())
