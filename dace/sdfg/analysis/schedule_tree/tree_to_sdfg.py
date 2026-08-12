@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final, Optional, Sequence, Set
+from typing import Final, Iterator, Optional, Sequence, Set
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -110,6 +110,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         with the state holding each. Their outer memlets are placeholders to be
         narrowed by propagation at the end; a nested SDFG a library-node
         expansion authored is deliberately not in here (see _propagate_scopes)."""
+
+        self._own_map_bodies: list[tuple[SDFGState, nodes.NestedSDFG]] = []
+        """The subset of :attr:`_own_nested_sdfgs` whose inner SDFG this
+        conversion also BUILT -- map bodies emitted from tree scopes. An SDFG
+        call's callee came from outside and is not ours to rewrite, so only
+        these are refined and resized (see _refine_own_boundaries)."""
 
         # state management
         self._state_stack: list[SDFGState] = []
@@ -498,6 +504,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             outputs=connectors["outputs"],
         )
         self._own_nested_sdfgs.append((self._current_state, nsdfg))
+        self._own_map_bodies.append((self._current_state, nsdfg))
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
         map_entry, to_connect = self._dataflow_stack[-1]
@@ -1784,9 +1791,142 @@ def from_schedule_tree(
     # collides is a property of the graph, not of the syntax that produced it.
     ResolveWriteConflicts().apply_pass(result, {})
 
+    _refine_own_boundaries(result, visitor._own_map_bodies)
     _propagate_scopes(result, visitor._own_nested_sdfgs)
+    _shrink_own_boundaries(visitor._own_map_bodies)
 
     return result
+
+
+def _refine_own_boundaries(sdfg: SDFG, own_nested: 'list[tuple[SDFGState, nodes.NestedSDFG]]') -> None:
+    """
+    Reduce each map body this conversion emitted as a nested SDFG to the part
+    of every container it actually touches.
+
+    A body is emitted with its containers at FULL extent, because the memlets
+    the schedule tree carries are written in the enclosing index space
+    (``tmp[i]``, over the map parameter). That is self-consistent -- the inner
+    index space equals the outer one, so the placeholder connector memlet is
+    the whole array -- but it hands a whole array across a per-iteration
+    boundary. Nothing downstream can then see that the body reads one element:
+    memlet propagation can only answer with a union over the body
+    (``tmp[0:i+1]``), MapFusion cannot tell that the intermediate is consumed
+    element-wise, and the generated code passes a base pointer where an element
+    was meant.
+
+    :class:`~dace.transformation.interstate.sdfg_nesting.RefineNestedAccess`
+    is precisely this narrowing, and it already handles the parts that make
+    doing it by hand error-prone: reindexing the body's memlets against the new
+    origin, and the accesses that live in branch conditions and interstate
+    assignments rather than in memlets.
+
+    Applied only to bodies this conversion BUILT. An SDFG call's callee came
+    from outside -- a ``@dace.program``'s SDFG, or one the user assembled by
+    hand -- and rewriting it here changed what such a call computed; a nested
+    SDFG a library-node expansion authored is out of scope for the same reason.
+    A round trip through the schedule tree must not silently rewrite either.
+
+    Refinement declines wherever it cannot show the narrowing is safe, leaving
+    the full-extent form, which is correct if imprecise.
+
+    :param sdfg: The SDFG holding the bodies, refined in place.
+    :param own_nested: The (state, nested SDFG node) pairs for the map bodies
+                       this conversion built, innermost last.
+    """
+    from dace.transformation.interstate import RefineNestedAccess
+
+    sdfg.reset_cfg_list()
+    for state, node in reversed(own_nested):
+        if node not in state.nodes():
+            continue  # Removed or replaced since it was created
+        refine = RefineNestedAccess()
+        refine.setup_match(state.sdfg, state.parent_graph.cfg_id, state.block_id,
+                           {RefineNestedAccess.nsdfg: state.node_id(node)}, 0)
+        if refine.can_be_applied(state, 0, state.sdfg):
+            refine.apply(state, state.sdfg)
+
+
+def _shrink_own_boundaries(own_nested: 'list[tuple[SDFGState, nodes.NestedSDFG]]') -> None:
+    """
+    Resize each map body's connector descriptors to the window its outer memlet
+    actually passes.
+
+    Refinement narrows the outer memlet and re-indexes the body's accesses
+    against the new origin, but leaves the inner descriptor at the source
+    array's full extent. What crosses the boundary is then a one-element window
+    described as a ten-element array -- correct only because nothing reads past
+    the first element, and a shape every consumer has to distrust. MapFusion is
+    one such consumer: it can reduce an intermediate consumed by a nested SDFG
+    only when the connector's declared shape matches the reduced intermediate,
+    so the overstated shape kept the fusion from applying.
+
+    The strides stay as they are: the window is read with the source array's
+    layout, which is what makes a non-contiguous slice (``A[i, 0:5]`` of a
+    2-D array) address correctly.
+
+    Declines for any container whose accesses do not all fall inside the
+    window, which leaves the full-extent form -- the same conservative
+    direction refinement itself takes.
+
+    :param own_nested: The (state, nested SDFG node) pairs for the map bodies
+                       this conversion built.
+    """
+    for state, node in own_nested:
+        if node not in state.nodes():
+            continue  # Removed or replaced since it was created
+        windows: dict[str, list] = {}
+        for edge in state.in_edges(node):
+            if edge.dst_conn is not None and edge.data.subset is not None:
+                windows.setdefault(edge.dst_conn, []).append(edge.data.subset.size())
+        for edge in state.out_edges(node):
+            if edge.src_conn is not None and edge.data.subset is not None:
+                windows.setdefault(edge.src_conn, []).append(edge.data.subset.size())
+        for connector, sizes in windows.items():
+            window = sizes[0]
+            # A container connected both ways has to agree on one window
+            if any(list(other) != list(window) for other in sizes[1:]):
+                continue
+            _shrink_connector(node.sdfg, connector, window)
+
+
+def _shrink_connector(inner: SDFG, connector: str, window: 'list') -> None:
+    """Resize one nested-SDFG connector descriptor to ``window``, if every access fits."""
+    descriptor = inner.arrays.get(connector)
+    if descriptor is None or isinstance(descriptor, (data.View, data.Structure)):
+        return
+    if not isinstance(descriptor, (data.Array, data.Scalar)):
+        return
+    if len(descriptor.shape) != len(window) or list(descriptor.shape) == list(window):
+        return
+    # Constant extents only. A per-iteration window -- the case worth narrowing
+    # -- always has them; a symbolic one means the outer memlet is still a union
+    # over the enclosing map (``A[0:i+1, 0:4]``), and taking that as the shape
+    # would declare a body whose size varies per iteration.
+    if not all(symbolic.issymbolic(size) is False and int(size) >= 0 for size in map(symbolic.simplify, window)):
+        return
+    for memlet in _memlets_referring_to(inner, connector):
+        if memlet.subset is None or len(memlet.subset.ranges) != len(window):
+            return
+        for maximum, size in zip(memlet.subset.max_element(), window):
+            if not (symbolic.simplify(maximum - size) < 0) == True:  # noqa: E712 -- sympy tri-state
+                return
+    shrunk = copy.deepcopy(descriptor)
+    shrunk.shape = tuple(window)
+    if isinstance(shrunk, data.Array):
+        shrunk.total_size = data._prod(window)
+    inner.arrays[connector] = shrunk
+
+
+def _memlets_referring_to(inner: SDFG, container: str) -> 'Iterator[Memlet]':
+    """Every memlet in a nested SDFG that names ``container``, dataflow and otherwise."""
+    from dace.transformation.interstate import RefineNestedAccess
+    for state in inner.all_states():
+        for edge in state.edges():
+            if edge.data.data == container:
+                yield edge.data
+    for memlet in RefineNestedAccess._non_dataflow_reads(inner):
+        if memlet.data == container:
+            yield memlet
 
 
 def _propagate_scopes(sdfg: SDFG, own_nested: 'list[tuple[SDFGState, nodes.NestedSDFG]]') -> None:
