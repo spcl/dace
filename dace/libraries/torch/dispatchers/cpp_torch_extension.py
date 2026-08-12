@@ -651,7 +651,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     # separately-built SDFG libraries. Mirror the generated CMake (-DWITH_CUDA, CUDA
     # include dirs via with_cuda=True) and link the SDFG libraries so those symbols
     # resolve in the extension.
-    extra_cflags = ["-g"]
+    # The DaCe runtime headers this extension includes are C++20 (``std::bit_cast`` in types.h).
+    # torch's extension builder injects its own ``-std=`` default, which is C++17 on current
+    # releases; ours comes after it on the command line and wins.
+    extra_cflags = ["-g", "-std=c++20"]
     extra_ldflags = []
 
     # ``has_gpu_code`` keys off dtypes.GPU_STORAGES (only GPU_Shared) + GPU schedules, so an SDFG
