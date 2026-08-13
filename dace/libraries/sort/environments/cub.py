@@ -43,7 +43,12 @@ class CUB:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ['cub/cub.cuh', 'dace/cub_scratch.cuh', 'dace/cub_compat.cuh']}
+    # cub/cub.cuh does not compile under a host compiler from CCCL 3 (CUDA 13) on, so only the
+    # host-safe scratch header goes to the frame; the wrappers that call CUB live in the .cu.
+    headers = {
+        'frame': ['dace/cub_scratch.cuh'],
+        'cuda': ['cub/cub.cuh', 'dace/cub_scratch.cuh', 'dace/cub_compat.cuh'],
+    }
     state_fields = []
     init_code = ""
     finalize_code = ""
