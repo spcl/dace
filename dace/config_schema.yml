@@ -415,6 +415,87 @@ required:
                             generate "#pragma omp parallel sections" code around
                             them.
 
+                    simd_sequential_maps:
+                        type: bool
+                        default: true
+                        title: Emit "#pragma omp simd" on an innermost Sequential map loop
+                        description: >
+                            Applies to: legacy AND experimental_readable (shared map-loop emitter
+                            in cpu.py -- see ``loop_index_type`` above). Escape hatch: set false to
+                            drop back to no ``simd`` on Sequential maps.
+
+                            Only an INNERMOST Sequential map qualifies: its body (``cpu.py``'s
+                            ``_map_body_is_leaf``) must hold no inner Map and no NestedSDFG. This
+                            is deliberately not a recursive check -- a NestedSDFG disqualifies on
+                            sight, whatever it holds, because a single state's dataflow cannot
+                            directly contain a ``LoopRegion`` (that is control flow, not a dataflow
+                            node), so a NestedSDFG is the only place a loop could be hiding in the
+                            body and refusing every one of them catches it without inspecting it.
+                            An OUTER sequential map wrapping an inner map never gets this pragma,
+                            regardless of the flag.
+
+                            A leaf Sequential map is, by the SDFG map contract, data-parallel
+                            across its own iterations (the same contract that makes it legal to
+                            schedule as ``CPU_Multicore`` instead -- ``Sequential`` is a CPU
+                            specialization, not a different contract; a genuine loop-carried
+                            recurrence is a ``LoopRegion``, not a ``Map``). So a leaf Sequential map
+                            with NO write-conflict-resolution (WCR) output is provably safe to
+                            vectorize: ``omp simd`` on it is a no-op assertion, not a gamble.
+
+                            A WCR output is where this call can still refuse. WCR covers two
+                            shapes: a genuine reduction into a fixed target (accumulate into the
+                            same scalar/array-slice every iteration -- reorder-safe under
+                            ``+``/``*``/bitwise/logical ops, which is why a covered edge ALSO gets a
+                            ``reduction(op:target)`` clause, via ``_collect_omp_reductions``), and a
+                            SCATTER (the WCR target subset depends on the map's own iteration
+                            variable, e.g. a histogram ``hist[bin(a[i])] += 1``). A Sequential map's
+                            WCR write lowers to a plain, non-atomic ``wcr_fixed::reduce`` (no thread
+                            to race against), so a scatter target under ``simd`` is a genuine
+                            cross-iteration aliasing hazard the compiler cannot see statically:
+                            ``simd`` asserts no such hazard exists and licenses the compiler to
+                            trust that assertion over its own analysis, exactly like
+                            ``#pragma ivdep``. If two SIMD lanes land on the same bin, blind
+                            vectorization can silently drop one lane's increment -- a wrong answer,
+                            no error. So unlike the CPU_Multicore case below, an uncovered WCR edge
+                            here withholds the pragma entirely rather than emitting it bare.
+
+                            ``min``/``max`` reductions never get a clause (so a map with only a
+                            min/max WCR gets no ``simd`` either), matching
+                            ``dace/runtime/include/dace/reduction.h``'s ``sum``/``product`` vs.
+                            ``min``/``max`` split: the NaN-preserving ``std::min``/``std::max``
+                            combine does not fold under ``simd`` (clang warns on the attempt), which
+                            would trip this repo's warnings-as-errors build.
+
+                    simd_innermost_multicore_maps:
+                        type: bool
+                        default: true
+                        title: Emit "#pragma omp parallel for simd" on an innermost CPU_Multicore map
+                        description: >
+                            Applies to: legacy AND experimental_readable (shared map-loop emitter
+                            in cpu.py). Escape hatch: set false to drop back to a plain
+                            ``parallel for`` / ``for`` (inside an enclosing ``CPU_Persistent``
+                            region) with no ``simd`` clause.
+
+                            Same leaf test as ``simd_sequential_maps`` (``_map_body_is_leaf``): no
+                            inner Map, no NestedSDFG, checked non-recursively for the same reason.
+                            A CPU_Multicore map that is NOT a leaf (wraps an inner map, or a
+                            NestedSDFG that may hold a loop) keeps its plain ``parallel for``.
+
+                            Unlike the Sequential case, an uncovered WCR edge (a scatter) does NOT
+                            withhold the pragma here: CPU_Multicore always lowers an uncovered WCR
+                            write through ``wcr_fixed::reduce_atomic``, which is
+                            ``#pragma omp atomic`` under the hood (see reduction.h) -- an idiom that
+                            composes correctly with an enclosing ``simd`` loop by design (the usual
+                            SIMD histogram/scatter-add pattern), unlike the Sequential path's plain
+                            non-atomic write. A covered WCR edge still gets its
+                            ``reduction(op:target)`` clause exactly as before (governed by
+                            ``compiler.emit_tree_reductions`` / ``emits_tree_reductions``,
+                            unchanged by this flag).
+
+                            ``min``/``max`` is excluded here too, same reason as above -- clang
+                            warns on the fold attempt, which this repo's zero-warning policy
+                            treats as a build failure.
+
                     parallel_transfer_min_elements:
                         type: int
                         default: 1024

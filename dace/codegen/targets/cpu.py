@@ -3017,6 +3017,60 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((op_str, clause_target, oedge.dst.data, declare))
         return out
 
+    def _map_body_is_leaf(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """True if the map's body holds no inner Map and no NestedSDFG.
+
+        Deliberately NOT recursive: a NestedSDFG disqualifies on sight, whatever it holds. A
+        single state's dataflow (what ``all_nodes_between`` walks) cannot directly contain a
+        ``LoopRegion`` -- that is control flow, not a dataflow node -- so a NestedSDFG is the
+        only place a loop could be hiding in this map's body, and refusing every NestedSDFG
+        catches it without inspecting one. Errs toward NOT simd: a map this call can't clear is
+        simply left alone.
+        """
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return False
+        for n in state.all_nodes_between(map_entry, map_exit):
+            if isinstance(n, (nodes.MapEntry, nodes.NestedSDFG)):
+                return False
+        return True
+
+    def _sequential_simd_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> Optional[str]:
+        """``#pragma omp simd`` (+ any safe ``reduction`` clauses) for a Sequential map's
+        innermost loop, or ``None`` if this call cannot prove it safe. Gated by
+        ``compiler.cpu.simd_sequential_maps`` at the call site.
+
+        Requires the body to be a leaf (:func:`_map_body_is_leaf`) and every WCR out-edge, if
+        any, to be a fixed-target reduction :func:`_collect_omp_reductions` can form a clause
+        for (``min``/``max`` excluded -- see ``dace/runtime/include/dace/reduction.h``). A WCR
+        edge that is NOT covered is a scatter (subset depends on this map's own iteration
+        variable) or otherwise unrecognized: the write lowers to a plain, non-atomic
+        ``wcr_fixed::reduce`` (no thread contention to guard against, since the map is
+        Sequential), so a colliding target address across iterations is a genuine
+        cross-iteration hazard ``simd`` cannot see -- withhold the pragma rather than guess.
+        """
+        if not self._map_body_is_leaf(state, map_entry):
+            return None
+        try:
+            map_exit = state.exit_node(map_entry)
+            wcr_edges = sum(1 for e in state.in_edges(map_exit) if e.data is not None and e.data.wcr is not None)
+        except (KeyError, StopIteration):
+            wcr_edges = 0
+        reductions = self._collect_omp_reductions(sdfg, state, map_entry)
+        safe = [r for r in reductions if r[0] not in ('min', 'max')]
+        if wcr_edges and len(safe) != wcr_edges:
+            return None
+        pragma = "#pragma omp simd"
+        declares = []
+        for op_str, clause_target, _dname, declare in safe:
+            pragma += f' reduction({op_str}:{clause_target})'
+            if declare is not None and declare not in declares:
+                declares.append(declare)
+        for declare in declares:
+            pragma = declare + '\n' + pragma
+        return pragma
+
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -3124,6 +3178,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 # each unique one on its own line ahead of the ``parallel for``.
                 for declare in declares:
                     map_header = declare + '\n' + map_header
+
+            # Innermost CPU_Multicore map (leaf body -- see ``_map_body_is_leaf``): stamp
+            # ``simd`` onto the existing ``parallel for`` / ``for`` pragma, EXCEPT a ``min``/
+            # ``max`` WCR target -- same NaN-combine exclusion as above, computed fresh here
+            # since it must hold regardless of ``emits_tree_reductions``. A WCR edge NOT covered
+            # by ``_collect_omp_reductions`` (a scatter) is left in: CPU_Multicore always lowers
+            # an uncovered WCR through ``wcr_fixed::reduce_atomic`` (``#pragma omp atomic``
+            # under the hood -- see reduction.h), which composes with ``simd`` by design.
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and ' simd' not in map_header
+                    and Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps')
+                    and self._map_body_is_leaf(state_dfg, node)
+                    and all(op not in ('min', 'max')
+                            for op, _ct, _dn, _dec in self._collect_omp_reductions(sdfg, state_dfg, node))):
+                head, sep, rest = map_header.partition(' for')
+                map_header = f'{head}{sep} simd{rest}'
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
@@ -3184,6 +3253,16 @@ class CPUCodeGen(TargetCodeGenerator):
                     # what bounds it (experimental keeps that brace when hoisting).
                     result.write('%s;\n' % init, cfg, state_id, node)
                     init = ''
+                if (not node.map.unroll and i == len(node.map.range) - 1
+                        and node.map.schedule == dtypes.ScheduleType.Sequential
+                        and Config.get_bool('compiler', 'cpu', 'simd_sequential_maps')):
+                    # ``#pragma omp simd`` must immediately precede the ``for`` -- written last,
+                    # after any hoisted declaration above. ``None`` means this call could not
+                    # prove the loop safe (inner map/NestedSDFG body, or an uncovered WCR edge)
+                    # -- see ``simd_sequential_maps`` in config_schema.yml.
+                    pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
+                    if pragma is not None:
+                        result.write(pragma, cfg, state_id, node)
                 result.write(
                     "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),
                     cfg,
