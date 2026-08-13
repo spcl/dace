@@ -628,16 +628,46 @@ def _concat(visitor: ProgramVisitor,
         name = out
         odesc = sdfg.arrays[out]
 
-    # Make copies
-    w = state.add_write(name)
-    offset = 0
-    subset = subsets.Range.from_array(odesc)
-    for arr, desc in zip(arrays, descs):
-        r = state.add_read(arr)
-        subset = copy.deepcopy(subset)
-        subset[axis] = (offset, offset + desc.shape[axis] - 1, 1)
-        state.add_edge(r, None, w, None, Memlet(data=name, subset=subset))
-        offset += desc.shape[axis]
+    if out is None:
+        # Fast path: a single write node with per-array subset edges is enough
+        # for most cases. A single write access node with multiple incoming direct
+        # edges can be mis-optimized when the output is also an input/argument
+        # (see numpy.concatenate(..., out=...)), so we use explicit tasklets there.
+        w = state.add_write(name)
+        offset = 0
+        subset = subsets.Range.from_array(odesc)
+        for arr, desc in zip(arrays, descs):
+            r = state.add_read(arr)
+            subset = copy.deepcopy(subset)
+            subset[axis] = (offset, offset + desc.shape[axis] - 1, 1)
+            state.add_edge(r, None, w, None, Memlet(data=name, subset=subset))
+            offset += desc.shape[axis]
+    else:
+        # The output array is reused from the caller; materialize the copy with
+        # per-array tasklets so the simplifier cannot drop a partial write.
+        offset = 0
+        for arr, desc in zip(arrays, descs):
+            map_ranges = {}
+            inpidx = []
+            outidx = []
+            for i, s in enumerate(desc.shape):
+                var = f'__i{i}'
+                map_ranges[var] = f'0:{s}:1'
+                inpidx.append(var)
+                if i == axis:
+                    outidx.append(f'{offset} + {var}')
+                else:
+                    outidx.append(var)
+            inpidx = ','.join(inpidx)
+            outidx = ','.join(outidx)
+            state.add_mapped_tasklet(name='_concat_copy_',
+                                     map_ranges=map_ranges,
+                                     inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+                                     code='__out = __inp',
+                                     outputs={'__out': Memlet(f'{name}[{outidx}]')},
+                                     external_edges=True,
+                                     propagate=True)
+            offset += desc.shape[axis]
 
     return name
 
