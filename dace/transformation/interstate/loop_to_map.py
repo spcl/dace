@@ -962,16 +962,15 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
 
-        # Add headers of any nested loops and conditional blocks
-        nodelist = list(self.loop.nodes())
-        while nodelist:
-            node = nodelist.pop()
-            if isinstance(node, (LoopRegion, ConditionalBlock)):
-                code_blocks = node.get_meta_codeblocks()
-                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
-                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
-                read_set |= set(free_syms)
-                nodelist.extend(node.nodes())
+        # Add headers of any nested loops and conditional blocks, at EVERY depth: a walk that
+        # recurses only into LoopRegion / ConditionalBlock stops at a ConditionalBlock's branch,
+        # which is a plain ControlFlowRegion. A container a header below that point reads then
+        # never enters the read set, so it stays a free symbol of the body instead of becoming a
+        # connector -- and the parent's interstate edge is left referencing an undefined symbol.
+        for block in self.loop.all_control_flow_blocks():
+            if isinstance(block, (LoopRegion, ConditionalBlock)):
+                free_syms = {s for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+                read_set |= {s for s in free_syms if s in sdfg.arrays}
 
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
