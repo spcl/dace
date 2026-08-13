@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -769,9 +769,20 @@ class Range(Subset):
     def __setitem__(self, key, value):
         # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
         # quietly put Python ints into a container whose contract says symbolic.
+        def coerce(idx, v):
+            if isinstance(v, (tuple, list)):
+                v = symbolic_range_tuple(v)
+                if len(v) == 4:
+                    self.tile_sizes[idx] = v[3]
+                return v[:3]
+            # Single-index write (e.g. the frontend replacing one dimension by an
+            # expression): still coerce so no raw Python number slips in.
+            return symbolic.pystr_to_symbolic(v)
+
         if isinstance(key, slice):
-            return self.ranges.__setitem__(key, [symbolic_range_tuple(v) for v in value])
-        return self.ranges.__setitem__(key, symbolic_range_tuple(value))
+            indices = range(*key.indices(len(self.ranges)))
+            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+        return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
         if not isinstance(other, Range):
