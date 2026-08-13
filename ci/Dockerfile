@@ -15,8 +15,19 @@ RUN apt-get update -qq && apt-get install -qq -y \
     iputils-ping \
     curl \
     git \
+    gnupg \
     build-essential && \
     apt-get clean
+
+# HIP's NVIDIA platform: headers over the CUDA toolkit, built by nvcc. Not hip-runtime-nvidia --
+# that metapackage depends on the whole cuda package, and so on a display driver.
+ARG ROCM_VERSION=7.2.4
+RUN curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /usr/share/keyrings/rocm.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" \
+      > /etc/apt/sources.list.d/rocm.list && \
+    apt-get update -qq && apt-get install -qq -y hip-dev hipcc-nvidia && \
+    apt-get clean
+ENV PATH="/opt/rocm/bin:$PATH"
 
 # Install uv
 ARG UV_VERSION=0.6.12
