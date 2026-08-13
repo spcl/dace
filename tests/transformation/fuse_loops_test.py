@@ -241,12 +241,34 @@ def doall_2d_map_pair(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
             c[i, j] = a[i, j] + 1.0
 
 
-def test_doall_map_bodied_pair_fuses_on_read_only_shared():
-    # the outer loops are element-wise but each carries a map, so LoopToMap does not re-map them
-    # (_is_doall is False) and their only shared array (a) is read by both -- no dependence, a legal fuse.
+def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
+    # Their only shared array (a) is read by both, so the dependence check clears the pair -- but the
+    # second loop is DOALL, and serializing a loop LoopToMap could map is not FuseLoops' call. Only
+    # ReconstructWavefrontNest's allow_doall_fuse opt-in gets it.
     before, after, applied, exact = run_fused(doall_2d_map_pair, mk2d(names=("a", "b", "c")), 24)
     assert exact
-    assert applied == 1 and after == before - 1
+    assert applied == 0 and after == before
+
+    inputs = mk2d(names=("a", "b", "c"))
+    reference = doall_2d_map_pair.to_sdfg(simplify=True)
+    reference.name = "doall_2d_map_pair_unfused"
+    ref_bufs = {k: v.copy() for k, v in inputs.items()}
+    reference(**ref_bufs, N=24)
+
+    sdfg = doall_2d_map_pair.to_sdfg(simplify=True)
+    first, second = adjacent_loop_pairs(sdfg)[0]
+    graph = first.parent_graph
+    xform = FuseLoops()
+    xform.first, xform.second = first, second
+    assert xform.can_be_applied(graph, 0, sdfg) is False
+    assert xform.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True) is True
+
+    xform.apply(graph, sdfg)
+    assert nloops(sdfg) == before - 1
+    sdfg.name = "doall_2d_map_pair_forced"
+    forced_bufs = {k: v.copy() for k, v in inputs.items()}
+    sdfg(**forced_bufs, N=24)
+    assert all(np.allclose(forced_bufs[k], ref_bufs[k]) for k in inputs)
 
 
 # --- refused for structure: nested for-loops (outer body is multiple blocks, not one compute state) --
@@ -513,10 +535,12 @@ def reverse_recurrence(a: f64[N], b: f64[N], c: f64[N]):
         c[i] = c[i + 1] + b[i]
 
 
-def test_conditional_loop_body_is_refused():
+def test_conditional_loop_body_fuses():
+    # A ConditionalBlock in the body is a recognized body shape: legality is decided by the dependence
+    # check over both branches' accesses unioned, not by the body being one compute state.
     before, after, applied, exact = run_fused(conditional_in_loop_body, mk(names=("a", "b", "c")), 48)
     assert exact
-    assert applied == 0  # a branch in the body -> not a single compute state -> refused
+    assert applied == 1 and after == before - 1
 
 
 def test_reverse_iteration_pair_is_value_preserving():
