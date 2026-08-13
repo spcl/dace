@@ -5,9 +5,16 @@ import uuid
 import pathlib
 import copy
 import re
+import tempfile
 
 import dace
 from dace.codegen import compiler as sdfg_compiler
+
+
+@pytest.fixture
+def tmp_path() -> pathlib.Path:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield pathlib.Path(tmp_dir)
 
 
 def _make_test_sdfg() -> dace.SDFG:
@@ -311,7 +318,6 @@ def test_already_loaded_and_comple_again():
 
 
 if __name__ == '__main__':
-    import tempfile
     test_development_folder_mode()
     test_production_folder_mode()
     test_already_loaded_and_comple_again()
