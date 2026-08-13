@@ -1156,7 +1156,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  have to reroute inside the Map.
             # NOTE: Assumes that Map (if connected is the direct neighbour).
             conn_names: OrderedSet[str] = OrderedSet()
-            for inter_node_out_edge in list(state.out_edges(inter_node)):
+            for inter_node_out_edge in state.out_edges(inter_node):
                 if inter_node_out_edge.dst == second_map_entry:
                     # Redundant beside the data edge, and fusing would turn it into a self loop.
                     if inter_node_out_edge.data.is_empty():

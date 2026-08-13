@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -135,7 +135,7 @@ class Subset(object):
     def ndrange(self) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
         """
         Implements an iterator over strided N-dimensional rectangular regions of the subset.
-        Note that this may be an overapproximation of the actual subset, based on the subclass.
+        Note that this may be an over-approximation of the actual subset, based on the subclass.
 
         :return: An iterator over N-dimensional ranges.
         """
@@ -153,8 +153,7 @@ class Subset(object):
 
         if Config.get('optimizer', 'symbolic_positive'):
             return bounding_box_symbolic_positive(self, other, approximation=True)
-        else:
-            return bounding_box_cover_exact(self, other, approximation=True)
+        return bounding_box_cover_exact(self, other, approximation=True)
 
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
@@ -169,7 +168,7 @@ class Subset(object):
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         if symbolic_positive and (not bounding_box_cover_exact(self, other)):
             return False
-        elif not bounding_box_symbolic_positive(self, other):
+        if not bounding_box_symbolic_positive(self, other):
             return False
 
         # NOTE: The original implementation always called ``nng()``. However, it was decided that
@@ -769,9 +768,20 @@ class Range(Subset):
     def __setitem__(self, key, value):
         # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
         # quietly put Python ints into a container whose contract says symbolic.
+        def coerce(idx, v):
+            if isinstance(v, (tuple, list)):
+                v = symbolic_range_tuple(v)
+                if len(v) == 4:
+                    self.tile_sizes[idx] = v[3]
+                return v[:3]
+            # Single-index write (e.g. the frontend replacing one dimension by an
+            # expression): still coerce so no raw Python number slips in.
+            return symbolic.pystr_to_symbolic(v)
+
         if isinstance(key, slice):
-            return self.ranges.__setitem__(key, [symbolic_range_tuple(v) for v in value])
-        return self.ranges.__setitem__(key, symbolic_range_tuple(value))
+            indices = range(*key.indices(len(self.ranges)))
+            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+        return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
         if not isinstance(other, Range):

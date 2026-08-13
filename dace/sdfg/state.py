@@ -1722,9 +1722,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
@@ -1800,9 +1802,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(
@@ -2934,24 +2938,23 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             start_block = is_start_state
 
         if start_block:
-            self.start_block = len(self.nodes()) - 1
+            self._start_block = len(self.nodes()) - 1
             self._cached_start_block = node
 
-    def remove_node(self, node: ControlFlowBlock):
-        # The region owns this invariant, so callers never have to re-pin the start block by hand.
-        # ``_start_block`` is a node ID and removing a block renumbers every later one, so leaving
-        # the ID alone would silently make it name a DIFFERENT block; resolve it to the block it
-        # currently points at and re-derive the ID afterwards. A stale ``_cached_start_block``
-        # is worse still: ``start_block`` returns it without checking, handing callers a block
-        # that is no longer in the graph (``nx.immediate_dominators`` then raises "start is not
-        # in G" from deep inside an unrelated pass).
-        pinned = None
-        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
-            pinned = self.node(self._start_block)
-        if node is self._cached_start_block:
-            self._cached_start_block = None
+    def remove_node(self, node):
+        # `_start_block` is an index into the node list, so any removal invalidates it:
+        # the indices of later nodes shift down, leaving it pointing at a different block
+        # or past the end. Re-resolve it by identity around the removal.
+        if self._start_block is not None:
+            start_block = self.node(self._start_block)
+        else:
+            start_block = None
         super().remove_node(node)
-        self._start_block = None if (pinned is None or pinned is node) else self.node_id(pinned)
+        self._cached_start_block = None
+        if start_block is node:
+            self._start_block = None
+        elif start_block is not None:
+            self.start_block = self.node_id(start_block)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
