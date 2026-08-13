@@ -13,7 +13,8 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import MATCH_ERRORS, is_fusible_state_shape, is_start_block
+from dace.transformation.interstate.state_fusion import (MATCH_ERRORS, is_fusible_state_shape, is_start_block,
+                                                         keep_start_block)
 
 
 # Helper class for finding connected component correspondences
@@ -130,6 +131,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._connections_to_make = []
+        # The mode the LAST ``can_be_applied`` ran in, so ``apply``'s recorder replay below can
+        # ask the same question the matcher answered. See ``apply``.
+        self._matched_permissive = False
 
     @property
     def connections_to_make(self):
@@ -254,7 +258,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         #  is what the s253 flake actually needed. (``match_nodes`` is built from a ``sorted``
         #  intersection above, so its order is stable too; this does not rely on that.)
         #
-        # ⛔ Deliberately NOT strengthened to "every (first, second) pair is connected by some
+        # Deliberately NOT strengthened to "every (first, second) pair is connected by some
         #  match". That property is stronger than the hazard being covered, and pricing it costs
         #  a BFS per (first_node, second_node, match) triple -- measured 14.8s vs 0.1ms at 160
         #  nodes, which stalled the cloudsc ``pretreat`` phase for over an hour. The weaker
@@ -300,6 +304,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # We keep the recorded connections alive, such that `apply()` can use them later.
         self.connections_to_make.clear()
+        self._matched_permissive = permissive
         try:
             if self.check_fusible(graph, sdfg, permissive):
                 return True
@@ -827,7 +832,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # This will populate `self.connections_to_make`. A False verdict means the recorder stopped
         # early, so that list is INCOMPLETE -- wiring a partial set of happens-before edges drops an
         # ordering (a silent miscompile), so decline instead. Nothing is mutated before this point.
-        if not self.can_be_applied(graph, 0, sdfg):
+        # Replayed in the mode the MATCH was made in. Hardcoding the strict mode here turned every
+        # permissive-only match into a silent no-op -- the driver counts an application either way,
+        # so ``apply_transformations_repeated`` re-matched the same pair forever (measured on 31
+        # corpus kernels under ``permissive=True``).
+        if not self.can_be_applied(graph, self.expr_index, sdfg, permissive=self._matched_permissive):
             return
 
         # Remove interstate edge(s)
@@ -846,7 +855,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
             if was_start:
-                graph.start_block = graph.node_id(second_state)
+                keep_start_block(graph, second_state)
             return
 
         # Special case 2: second state is empty
@@ -856,7 +865,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
             if was_start:
-                graph.start_block = graph.node_id(first_state)
+                keep_start_block(graph, first_state)
             return
 
         # Normal case: both states are not empty
@@ -1002,7 +1011,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         sdutil.change_edge_src(graph, second_state, first_state)
         graph.remove_node(second_state)
         if was_start:
-            graph.start_block = graph.node_id(first_state)
+            keep_start_block(graph, first_state)
 
         # Technically unneeded, but better to keep track.
         self.connections_to_make.clear()
