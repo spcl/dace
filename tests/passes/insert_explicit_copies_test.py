@@ -34,6 +34,11 @@ fdtd2d = _fdtd2d_module.fdtd2d
 _fdtd2d_init_array = _fdtd2d_module.init_array
 
 
+def _wcr_edges(sdfg):
+    """``(state, edge)`` for every edge still carrying a WCR."""
+    return [(st, e) for st in sdfg.all_states() for e in st.edges() if e.data.wcr is not None]
+
+
 def _count_copy_nodes(sdfg):
     """Count CopyLibraryNode instances across all states (recursive)."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode))
@@ -1045,6 +1050,37 @@ def test_iec_staging_keeps_memlet_named_inner_subset():
     B = np.zeros((4, 4), dtype=np.float64)
     sdfg(B=B)
     np.testing.assert_array_equal(B[1], np.array([23.0, 33.0, 0.0, 0.0]))
+
+
+def test_iec_skips_wcr_staging_edge():
+    """A WCR edge is a reduction, not a copy. ``CopyLibraryNode``'s expansions emit an unconditional
+    store, so lifting the tile-merge edge AccumulateTransient produces turns ``out[i] += tile[i]``
+    into ``out[i] = tile[i]`` -- silently, with a valid SDFG and a wrong answer."""
+    sdfg = dace.SDFG("iec_wcr_staging")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_transient("tile", [1], dace.float64)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:8"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("copy", {"inp"}, {"o"}, "o = inp")
+    tile = state.add_access("tile")
+    state.add_memlet_path(state.add_read("A"), me, t, dst_conn="inp", memlet=Memlet("A[i]"))
+    state.add_edge(t, "o", tile, None, Memlet("tile[0]"))
+    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
+    state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0]", wcr="lambda a, b: a + b"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a WCR edge must not be lowered to CopyLibraryNode"
+    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
+    assert wcr_edges, "the accumulate must survive the pass"
+    sdfg.validate()
+
+    A = np.arange(8, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, out=out)
+    assert out[0] == A.sum(), f"expected the accumulate {A.sum()}, got {out[0]} (an overwrite keeps only the last)"
 
 
 if __name__ == "__main__":

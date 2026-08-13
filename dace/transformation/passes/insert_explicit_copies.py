@@ -177,6 +177,12 @@ class InsertExplicitCopies(ppl.Pass):
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
+        # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
+        # into the real output). CopyLibraryNode's expansions (ExpandMemcpyCPU et al.) always emit
+        # an unconditional store; lifting a WCR edge here would silently turn the accumulate into
+        # an overwrite. Mirrors the same guard in ``_replace_direct_copies``.
+        if edge.data.wcr is not None:
+            return False
         # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
         # ``set`` connector and leave the Reference unbound.
         if edge.dst_conn == 'set':
@@ -221,9 +227,23 @@ class InsertExplicitCopies(ppl.Pass):
             map_node = edge.src
             state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, outer_side_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
+            boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
+            boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
+            boundary_conn = 'OUT_' + edge.dst_conn[len('IN_'):]
+            boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
         state.remove_edge(edge)
+
+        # The scope-boundary edge on this connector may still carry a memlet whose ``.data``
+        # names the inner array, relying on memlet_path continuing through the scope entry/exit
+        # straight to inner_node for validation (validation.py resolves src/dst from the full
+        # path, not the edge's immediate neighbours). That continuation broke: the libnode now
+        # sits between the scope node and inner_node, so the path ends at a non-AccessNode and
+        # the boundary edge needs its own outer-relative memlet instead.
+        for bedge in boundary_edges:
+            if bedge.data.data != outer.data:
+                bedge.data = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         return True
