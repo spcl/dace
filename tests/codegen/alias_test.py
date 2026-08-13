@@ -2,8 +2,15 @@
 """ Tests aliasing analysis. """
 import pytest
 import dace
+from dace import config
 
 AliasedArray = dace.data.Array(dace.float64, (20, ), may_alias=True)
+
+# These tests count literal "__restrict__" occurrences, one per nested-SDFG call boundary kept
+# in the generated code. Only the legacy generator keeps each dace.program as its own call with
+# its own pointer parameter; experimental_readable inlines connectors and indexes the outer array
+# directly (see compiler.cpu.implementation docs), so the count is generator-specific. Same pin
+# used by cpp_test.py's test_ndcopy_to_strided_copy_declines_broadcast_source for the same reason.
 
 
 @pytest.mark.parametrize('may_alias', (False, True))
@@ -14,7 +21,8 @@ def test_simple_program(may_alias):
     def tester(a: desc, b: desc, c: desc):
         c[:] = a + b
 
-    code = tester.to_sdfg().generate_code()[0]
+    with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = tester.to_sdfg().generate_code()[0]
 
     if may_alias:
         assert code.clean_code.count('__restrict__') == 0
@@ -36,7 +44,8 @@ def test_multi_nested():
     def tester(a: AliasedArray, b: dace.float64[20]):
         interim(a, b)
 
-    code = tester.to_sdfg(simplify=False).generate_code()[0]
+    with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
     assert code.clean_code.count('__restrict__') == 4  # = [__program, tester, interim, nested]
@@ -56,7 +65,8 @@ def test_inference():
     def tester(a: dace.float64[20]):
         interim(a)
 
-    code = tester.to_sdfg(simplify=False).generate_code()[0]
+    with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should never show up in "nested", since arrays are aliased,
     # but should show up in [__program, tester, interim]
