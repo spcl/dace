@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import contextlib
+import math
 from collections import Counter
 from functools import lru_cache, cache
 import sympy
