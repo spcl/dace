@@ -860,10 +860,17 @@ class CPPUnparser:
 
     def _Num(self, t):
         t_n = t.value
+        # numpy bools reach here (only Python True/False are caught in _Constant) and str() them
+        # emits Python 'True'.
+        if isinstance(t_n, (bool, np.bool_)):
+            self.write('true' if t_n else 'false')
+            return
+
         repr_n = str(t_n)
-        # For complex values, use ``dtype_to_typeclass``
-        if isinstance(t_n, complex):
-            dtype = dtypes.dtype_to_typeclass(complex)
+        # For complex values, use ``dtype_to_typeclass`` -- of the value's OWN type, so a
+        # complex64 literal does not widen to dace::complex128.
+        if isinstance(t_n, (complex, np.complexfloating)):
+            dtype = dtypes.dtype_to_typeclass(type(t_n))
             repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
         # Handle large integer values

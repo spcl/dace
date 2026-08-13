@@ -9,6 +9,7 @@ from dace.codegen import cppunparse
 from dace.codegen.tools import gpu_runtime
 from functools import lru_cache
 from io import StringIO
+import numpy as np
 import os
 import subprocess
 from typing import List, Optional, Set, Union
@@ -51,9 +52,16 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
                        user-functions back to array expressions.
     :return: C++-compilable expression or list thereof.
     """
-    if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
-    return [sym2cpp(d, arrayexprs) for d in s]
+    if isinstance(s, list):
+        return [sym2cpp(d, arrayexprs) for d in s]
+    # Two literal kinds symstr cannot carry: a bool round-trips as Python 'True' (or as the
+    # integer 1, which loses the type), and a complex loses its width -- a complex64 constant
+    # would be emitted as dace::complex128.
+    if isinstance(s, (bool, np.bool_)):
+        return 'true' if s else 'false'
+    if isinstance(s, (complex, np.complexfloating)):
+        return f'{dtypes.dtype_to_typeclass(type(s))}({s.real}, {s.imag})'
+    return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
 
 
 def codeblock_to_cpp(cb: CodeBlock):
