@@ -59,7 +59,7 @@ sees a clean shape.
 import ast
 from typing import Any, Dict, Optional, Tuple
 
-from dace import SDFG, symbolic
+from dace import SDFG
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
@@ -344,14 +344,38 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
     return dest
 
 
-def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
-    """Whether ``key = rhs`` can join the edges it would land on without racing them.
+def _edge_landing_order(existing: Dict[str, str], key: str, rhs_syms: Dict[str, None]) -> str:
+    """How ``key = rhs`` must be sequenced against the assignments already on a landing edge.
 
-    The assignments on one interstate edge are unordered -- they all read the symbol state on
-    entry -- so validation rejects an edge where one assignment's rhs reads a symbol another
-    assignment on that same edge writes. Every guard above examines ``child``'s interior and its
-    predecessors; none looks at what the DESTINATION edge already assigns, which is how a hoisted
-    ``ip_index = ip[i]`` came to share an edge with the loop's own ``i = i + 1`` (TSVC s353).
+    Assignments on one interstate edge are unordered -- they all read the pre-edge symbol
+    state -- so co-placing two that depend on each other races (this is how a hoisted
+    ``ip_index = ip[i]`` came to share an edge with the loop's own ``i = i + 1``, TSVC s353).
+    A dependency in one direction is resolvable by splitting the edge in two; a dependency in
+    both directions is a cycle and is not.
+
+    :returns: ``'direct'`` if there is no dependency, ``'after'`` if ours must follow
+              ``existing``, ``'before'`` if ours must precede it, ``'conflict'`` if both.
+    """
+    after = any(s in existing for s in rhs_syms if s != key)
+    before = any(key in names_read_by(str(other_rhs)) for other_key, other_rhs in existing.items() if other_key != key)
+    if after and before:
+        return 'conflict'
+    if after:
+        return 'after'
+    if before:
+        return 'before'
+    return 'direct'
+
+
+def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
+    """Whether ``key = rhs`` can join the edges it would land on, directly or via a split.
+
+    Every guard above examines ``child``'s interior and its predecessors; none looks at what
+    the DESTINATION edge already assigns. A one-directional dependency on an unconditional
+    landing edge is resolvable -- ``_place_assignment_at`` inserts a state that sequences the
+    two assignments. Refuse a same-edge cycle outright, refuse the 'existing depends on ours'
+    direction (v1 only implements the 'ours depends on existing' split), and refuse splitting a
+    conditional edge (it would run the split-off assignment regardless of the condition).
 
     Self-reference is not a race: ``k = k + 1`` reads the pre-edge value, and validation excludes
     it for the same reason.
@@ -360,22 +384,18 @@ def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: 
     :param child: The block the assignment must dominate within ``dest``.
     :param key: The assigned symbol name.
     :param rhs: The assignment's right-hand-side expression.
-    :returns: ``True`` if the placement is race-free on every edge it would touch.
+    :returns: ``True`` if the placement is legal (directly or via a split) on every edge.
     """
     if child is None:
         return True
-    rhs_syms = symbolic.free_symbols_and_functions(rhs)
+    rhs_syms = names_read_by(rhs)
     for e in dest.in_edges(child):
-        existing = e.data.assignments
-        # Our rhs would read a symbol this edge already writes.
-        if any(s in existing for s in rhs_syms if s != key):
-            return False
-        # An assignment already on this edge reads the symbol we would write.
-        for other_key, other_rhs in existing.items():
-            if other_key == key:
-                continue
-            if key in symbolic.free_symbols_and_functions(other_rhs):
-                return False
+        order = _edge_landing_order(e.data.assignments, key, rhs_syms)
+        if order == 'direct':
+            continue
+        if order == 'after' and e.data.is_unconditional():
+            continue
+        return False
     return True
 
 
@@ -388,18 +408,29 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
     if ``child`` has no in-edges (it is ``dest``'s start block), prepend a
     fresh hoist state with the assignment on its outgoing edge.
 
+    ``_lands_without_race`` may have found that some in-edge already carries an assignment
+    ``rhs`` reads (a transitive chain, e.g. ``s1 = K + 1`` hoisted just ahead of
+    ``s2 = 2 * s1``): co-placing them on that edge would race, so instead every in-edge of
+    ``child`` is reconnected one hop earlier and ``key = rhs`` lands on the new edge into
+    ``child``, after all of them.
+
     :param dest: The region the assignment is placed in.
     :param child: The block the assignment must dominate within ``dest``.
     :param key: The assigned symbol name.
     :param rhs: The assignment's right-hand-side expression.
     """
     in_edges = list(dest.in_edges(child))
-    if in_edges:
-        for e in in_edges:
-            e.data.assignments[key] = rhs
+    if not in_edges:
+        pre = dest.add_state(f'{child.label}_iedge_hoist', is_start_block=dest.start_block is child)
+        dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
         return
-    pre = dest.add_state(f'{child.label}_iedge_hoist', is_start_block=dest.start_block is child)
-    dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
+    rhs_syms = names_read_by(rhs)
+    needs_split = any(_edge_landing_order(e.data.assignments, key, rhs_syms) == 'after' for e in in_edges)
+    if needs_split:
+        dest.add_state_before(child, f'{child.label}_iedge_hoist', assignments={key: rhs})
+        return
+    for e in in_edges:
+        e.data.assignments[key] = rhs
 
 
 def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion):
