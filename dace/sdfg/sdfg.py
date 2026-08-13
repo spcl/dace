@@ -36,11 +36,40 @@ from typing import BinaryIO
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
+#: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
+#: which is optional and initializes MPI. All are job-unique; node-local counters are not.
+LAUNCHER_RANK_VARS = (
+    'OMPI_COMM_WORLD_RANK',  # Open MPI and the vendor MPIs built on it
+    'MV2_COMM_WORLD_RANK',  # MVAPICH2
+    'PMIX_RANK',  # Open MPI 4+, Slurm pmix
+    'PMI_RANK',  # MPICH, Intel MPI, Cray MPICH
+    'PMI_ID',  # older MPICH
+    'FLUX_TASK_RANK',  # Flux
+    'PALS_RANKID',  # HPE/Cray PALS
+    'ALPS_APP_PE',  # Cray ALPS
+    'SLURM_PROCID',  # srun with no MPI
+)
+
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
+
+
+def build_folder_root() -> str:
+    """The build cache root, one per rank if ``cache_distaware`` is on and a launcher set a rank.
+
+    Ranks that each compile otherwise share a folder and can load each other's half-written library.
+    """
+    base = Config.get('default_build_folder')
+    if not Config.get_bool('cache_distaware'):
+        return base
+    for var in LAUNCHER_RANK_VARS:
+        rank = os.environ.get(var)
+        if rank:
+            return f'{base}_rank{rank}'
+    return base
 
 
 class NestedDict(dict):
@@ -124,8 +153,9 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
     """Returns the path to the build cache folder for ``sdfg``.
 
     If the build folder was explicitly set it is returned. If not set, then the function
-    will consult the configuration key ``default_build_folder`` and also ``cache``,
-    which both influence the returned path.
+    will derive the root through ``build_folder_root()``, i.e. from the configuration keys
+    ``default_build_folder`` and ``cache_distaware``, and name the folder inside it according
+    to the configuration key ``cache``.
     It is also important that retrieving the folder through this function does not set
     the build folder in the SDFG.
 
@@ -135,7 +165,7 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
     if getattr(sdfg, "_build_folder", None) is not None:
         return sdfg._build_folder
     cache_config = Config.get('cache')
-    base_folder = Config.get('default_build_folder')
+    base_folder = build_folder_root()
     if cache_config == 'single':
         # Always use the same directory, overwriting any other program,
         # preventing parallelism and caching of multiple programs, but
@@ -176,6 +206,7 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
+    Can also parse a None check of the form `array is [not] None`.
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
@@ -186,10 +217,16 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 
     for subnode in ast.walk(node):
         if isinstance(subnode, ast.Subscript):
-            data = astutils.rname(subnode.value)
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif (isinstance(subnode, ast.Compare) and len(subnode.ops) == 1
+              and isinstance(subnode.ops[0], (ast.Is, ast.IsNot)) and len(subnode.comparators) == 1
+              and isinstance(subnode.comparators[0], ast.Constant) and subnode.comparators[0].value is None):
+            # Parsing `array is [not] None`
+            data = astutils.rname(subnode.left)
+            if data in arrays:
+                result.append(mm.Memlet.from_array(data, arrays[data]))
         elif include_scalars and isinstance(subnode, ast.Name):
             data = astutils.rname(subnode)
             if data in arrays and isinstance(arrays[data], dace.data.Scalar):

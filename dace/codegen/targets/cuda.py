@@ -258,6 +258,11 @@ class CUDACodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
+        # Deliberately declared WITHOUT an initializer: CompiledSDFG.get_state_struct() recovers
+        # the layout by parsing these declarations, and its field regex is anchored at the end of
+        # the declaration, so a `= nullptr` suffix stops the parse dead and silently drops every
+        # field after this one. The pointer is zeroed by value-initializing the whole state
+        # (`new T()` in framecode) instead, which DACE_GPU_CHECK relies on.
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # Collect all defined symbols and argument lists with one traversal
@@ -399,9 +404,9 @@ class CUDACodeGen(TargetCodeGenerator):
             poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
             pool_header = """
     {backend}MemPool_t mempool;
-    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
     uint64_t threshold = {poolcfg_threshold};
-    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
@@ -413,6 +418,7 @@ class CUDACodeGen(TargetCodeGenerator):
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -434,14 +440,28 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
+    // every library handle share it. Which physical GPU is the process's business: the visible-
+    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
+    // fixed at codegen time cannot do that -- every rank shares one build.
+    const int __dace_device = 0;
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
+        return 4;
+    }}
+
+    __dace_gpu_drain_error(__state);
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    // After the context exists: DACE_GPU_CHECK records into it.
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -477,9 +497,20 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
-// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
-// code recorded instead, and clear it so a failure is delivered exactly once.
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
+}}
+
+// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
 int __dace_gpu_last_error({sdfg_state_name} *__state) {{
     int __err = static_cast<int>(__state->gpu_context->lasterror);
     __state->gpu_context->lasterror = (gpuError_t)0;
@@ -563,11 +594,12 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         # Get CUDA architectures from configuration
         backend = common.get_gpu_backend()
         if backend == 'cuda':
-            cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
-            cuda_arch = ';'.join(cuda_arch)
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
+            if cuda_arch := Config.get('compiler', 'cuda', 'cuda_arch'):
+                # A CUDA architecture was provided so use it.
+                cuda_arch = cuda_arch.split(',')
+                cuda_arch = [ca for ca in map(str.strip, cuda_arch) if len(ca) > 0]
+                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{";".join(cuda_arch)}"')
 
             # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
             # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
@@ -576,12 +608,15 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
+
+            if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
+                # HIP architecture was given.
+                hip_arch = hip_arch.split(',')
+                hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
+                options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
 
             # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
             flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
-            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
@@ -671,9 +706,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             if nodedesc.pool:
-                cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                 result_alloc.write(
                     f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
                 )
@@ -820,9 +853,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
                 if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
-                    cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                    if cudastream != 'nullptr':
-                        cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                    cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                     callsite_stream.write(
                         f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
                         node)
@@ -1069,8 +1100,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     elif e.dst._cuda_stream != cudastream:
                         syncwith[e.dst._cuda_stream] = e._cuda_event
 
-                if cudastream != 'nullptr':
-                    cudastream = '__state->gpu_context->streams[%d]' % cudastream
+                cudastream = common.gpu_stream_expr(cudastream)
 
             if memlet.wcr is not None:
                 raise NotImplementedError('Accumulate %s to %s not implemented' % (src_location, dst_location))
@@ -1289,7 +1319,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 # Synchronize with other streams as necessary
                 for streamid, event in syncwith.items():
-                    syncstream = '__state->gpu_context->streams[%d]' % streamid
+                    syncstream = common.gpu_stream_expr(streamid)
                     callsite_stream.write(
                         '''
     DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
@@ -1475,15 +1505,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 del self.pool_release[sd, name]
 
             if state.nosync == False:
-                streams_to_sync = set()
+                # Ordered set: the default stream is named by a string, so a plain set would order the
+                # synchronizations below by hash and make the emitted code depend on PYTHONHASHSEED.
+                streams_to_sync = {}
                 for node in state.sink_nodes():
-                    if hasattr(node, '_cuda_stream') and node._cuda_stream != 'nullptr':
-                        streams_to_sync.add(node._cuda_stream)
+                    if hasattr(node, '_cuda_stream'):
+                        streams_to_sync[node._cuda_stream] = None
                     else:
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
-                            if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
-                                streams_to_sync.add(e.src._cuda_stream)
+                            if hasattr(e.src, '_cuda_stream'):
+                                streams_to_sync[e.src._cuda_stream] = None
 
                 # Relaxed condition for skipping synchronization:
                 # if ALL the immediately reachable non-empty states (i.e.,
@@ -1492,14 +1524,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # then we can skip synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if next_states and len(streams_to_sync) == 1:
-                    if all(self._begin_streams(sdfg, ns) == streams_to_sync for ns in next_states):
+                    if all(self._begin_streams(sdfg, ns) == streams_to_sync.keys() for ns in next_states):
                         # Relax synchronization
-                        streams_to_sync = set()
+                        streams_to_sync = {}
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), cfg, state.block_id)
+                        'DACE_GPU_CHECK(%sStreamSynchronize(%s));' % (self.backend, common.gpu_stream_expr(stream)),
+                        cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1873,7 +1905,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            cudastream = common.gpu_stream_expr(scope_entry._cuda_stream)
         else:
             cudastream = 'nullptr'
 
