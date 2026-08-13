@@ -498,9 +498,9 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{factort}Pone()",
-            #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
-            0.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+            1.0: f"__state->{cls.backend}blas_handle.Constants().{factort}Pone()",
+            #-1.0: f"__state->cublas_handle.Constants().{factort}Mone()",
+            0.0: f"__state->{cls.backend}blas_handle.Constants().{factort}Zero()",
         }
         handle = f"__dace_{cls.backend}blas_handle"
         scalars = _coeff_conn_descs(node, state, sdfg)

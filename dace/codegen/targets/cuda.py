@@ -446,23 +446,14 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
-    // One GPU per process, chosen here and never changed. compiler.cuda.device, -1 meaning the
-    // device this process is already on.
-    int __dace_device = {configured_device};
-    if (__dace_device < 0 && {backend}GetDevice(&__dace_device) != {backend}Success)
-    {{
-        printf("ERROR: no current {backend} device for this thread\\n");
-        return 3;
-    }}
-    if (__dace_device < 0 || __dace_device >= count)
-    {{
-        printf("ERROR: {backend} device %d requested, but this process can see %d device(s)\\n",
-               __dace_device, count);
-        return 3;
-    }}
+    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
+    // every library handle share it. Which physical GPU is the process's business: the visible-
+    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
+    // fixed at codegen time cannot do that -- every rank shares one build.
+    const int __dace_device = 0;
     if ({backend}SetDevice(__dace_device) != {backend}Success)
     {{
-        printf("ERROR: could not select {backend} device %d\\n", __dace_device);
+        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
         return 4;
     }}
 
@@ -474,7 +465,6 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     DACE_GPU_CHECK({backend}Free(dev_X));
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
-    __state->gpu_context->device = __dace_device;
 
     // After the context exists: DACE_GPU_CHECK records into it.
     {pool_header}
@@ -562,7 +552,6 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
-           configured_device=int(Config.get('compiler', 'cuda', 'device')),
            sdfg=self._global_sdfg)
 
         return [self._codeobject]

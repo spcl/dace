@@ -55,11 +55,8 @@ struct Context {
   gpuStream_t *internal_streams;
   gpuEvent_t *events;
   gpuError_t lasterror;
-  // The device __dace_init_cuda selected; -1 until it has run.
-  int device;
   Context(int nstreams, int nevents)
-      : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0),
-        device(-1) {
+      : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0) {
     streams = new gpuStream_t[nstreams];
     internal_streams = new gpuStream_t[nstreams];
     events = new gpuEvent_t[nevents];

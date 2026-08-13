@@ -203,8 +203,8 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         func = func + 'geam'
 
-        alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"
-        beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
+        alpha = f"__state->cublas_handle.Constants().{factort}Pone()"
+        beta = f"__state->cublas_handle.Constants().{factort}Zero()"
         _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
         _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
 

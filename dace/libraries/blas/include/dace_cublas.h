@@ -7,7 +7,7 @@
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::to_string
-#include <unordered_map>
+#include <optional>
 
 namespace dace {
 
@@ -20,12 +20,7 @@ static void CheckCublasError(cublasStatus_t const& status) {
   }
 }
 
-static cublasHandle_t CreateCublasHandle(int device) {
-  if (device >= 0) {
-    if (cudaSetDevice(device) != cudaSuccess) {
-      throw std::runtime_error("Failed to set CUDA device.");
-    }
-  }
+static cublasHandle_t CreateCublasHandle() {
   cublasHandle_t handle;
   CheckCublasError(cublasCreate(&handle));
   return handle;
@@ -66,12 +61,7 @@ class _CublasConstants {
     return (cuDoubleComplex*)custom_beta_;
   }
 
-  _CublasConstants(int device) {
-    if (device >= 0) {
-      if (cudaSetDevice(device) != cudaSuccess) {
-        throw std::runtime_error("Failed to set CUDA device.");
-      }
-    }
+  _CublasConstants() {
     // Allocate constant zero with the largest used size
     cudaMalloc(&zero_, sizeof(cuDoubleComplex) * 1);
     cudaMemset(zero_, 0, sizeof(cuDoubleComplex) * 1);
@@ -139,9 +129,9 @@ class _CublasConstants {
 
 /**
  * CUBLAS wrapper class for DaCe. Once constructed, the class can be used to
- * get or create a CUBLAS library handle (cublasHandle_t) for a given GPU ID,
- * or get pre-allocated constants (see ``_CublasConstants`` class) for CUBLAS
- * calls.
+ * get or create the CUBLAS library handle (cublasHandle_t), or get pre-allocated
+ * constants (see ``_CublasConstants`` class) for CUBLAS calls. One per process,
+ * like the GPU itself.
  * The class is constructed when the CUBLAS DaCe library is used.
  **/
 class CublasHandle {
@@ -149,39 +139,30 @@ class CublasHandle {
   CublasHandle() = default;
   CublasHandle(CublasHandle const&) = delete;
 
-  cublasHandle_t& Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new cuBLAS handle if the specified key does not yet
-      // exist
-      auto handle = CreateCublasHandle(device);
+  cublasHandle_t& Get() {
+    if (!handle_) {
+      auto handle = CreateCublasHandle();
       cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
-      f = handles_.emplace(device, handle).first;
+      handle_ = handle;
     }
-    return f->second;
+    return *handle_;
   }
 
-  _CublasConstants& Constants(int device) {
-    auto f = constants_.find(device);
-    if (f == constants_.end()) {
-      // Lazily construct new cuBLAS constants
-      f = constants_.emplace(device, device).first;
-    }
-    return f->second;
+  _CublasConstants& Constants() {
+    if (!constants_) constants_.emplace();
+    return *constants_;
   }
 
   // A destructor that throws terminates the process. Teardown failures have nowhere left to go, so
   // they are dropped rather than turned into a crash that hides whatever the program computed.
   ~CublasHandle() {
-    for (auto& h : handles_) {
-      static_cast<void>(cublasDestroy(h.second));
-    }
+    if (handle_) CheckCublasError(cublasDestroy(*handle_));
   }
 
   CublasHandle& operator=(CublasHandle const&) = delete;
 
-  std::unordered_map<int, cublasHandle_t> handles_;
-  std::unordered_map<int, _CublasConstants> constants_;
+  std::optional<cublasHandle_t> handle_;
+  std::optional<_CublasConstants> constants_;
 };
 
 }  // namespace blas

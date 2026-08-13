@@ -23,9 +23,15 @@ class rocBLAS:
 
     @staticmethod
     def handle_setup_code(node):
+<<<<<<< HEAD
         return dace.library.gpu_device_setup_code(node) + """\
 rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get(__dace_cuda_device);
 dace::blas::CheckRocblasError(rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream));\n"""
+=======
+        return dace.library.reject_gpu_location(node) + """\
+rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get();
+rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
+>>>>>>> ci/pin-gpu-workers
 
     @staticmethod
     def _find_library():

@@ -169,8 +169,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
-            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+            1.0: f"__state->cublas_handle.Constants().{runtimetype}Pone()",
+            0.0: f"__state->cublas_handle.Constants().{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
