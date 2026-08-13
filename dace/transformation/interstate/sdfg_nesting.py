@@ -202,6 +202,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # Do not inline if an inner/outer connector pair disagrees on vector-ness.
         # The current memlet reoffset does not scale scalar indices for vector elements,
         # so inlining would access the wrong memory locations.
+        nsdfg = nested_sdfg.sdfg
         for edge in graph.in_edges(nested_sdfg):
             if edge.data.is_empty():
                 continue
