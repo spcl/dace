@@ -3,6 +3,10 @@
 #define __DACE_CUDACOMMON_CUH
 
 #if defined(__HIPCC__) || defined(WITH_HIP)
+// Pull in the declarations this header uses instead of relying on the including translation unit:
+// the precompiled runtime header reaches here through a forced -include, ahead of anything the
+// generated file includes itself.
+#include <hip/hip_runtime.h>
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
