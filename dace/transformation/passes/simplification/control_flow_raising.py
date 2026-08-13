@@ -249,12 +249,7 @@ class ControlFlowRaising(ppl.Pass):
             # Find the single entry / single exit region around the unstructured edges and turn it into a region
             # of unstructured control flow.
             if len(unstructured_edges) > 0:
-                tgt_nodes = OrderedSet()
-                for u, v in unstructured_edges:
-                    if u not in tgt_nodes:
-                        tgt_nodes.add(u)
-                    if v not in tgt_nodes:
-                        tgt_nodes.add(v)
+                tgt_nodes = OrderedSet.union(*unstructured_edges)
                 unstructured_nodes, region_entry, region_exit = cfg_analysis.find_sese_region(cfg, tgt_nodes)
 
                 unstructured_region = UnstructuredControlFlow('unstructured_' + str(cfg.name) + '_' + str(lifted))
