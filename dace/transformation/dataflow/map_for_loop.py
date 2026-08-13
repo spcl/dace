@@ -92,6 +92,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
     loop_region: Optional[LoopRegion] = None
 
+    #: State holding the dataflow that stayed outside the loop, set by ``apply``. With
+    #: ``inline_after`` that is a fresh successor of the state passed in, not the state itself.
+    target_state: Optional[SDFGState] = None
+
     keep_reductions_parallel = properties.Property(
         dtype=bool,
         default=False,
@@ -220,6 +224,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Retrieve map entry and exit nodes.
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        self.target_state = graph
 
         loop_idx = map_entry.map.params[0]
         loop_from, loop_to, loop_step = map_entry.map.range[0]
@@ -309,43 +314,47 @@ class MapToForLoop(transformation.SingleStateTransformation):
             from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
             parent_cfr = graph.parent_graph
-            target_state = graph
-            if parent_cfr is not None:
-                was_start = parent_cfr.start_block is graph
-                target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
-                # Move ``graph``'s INTRA-state dataflow to ``target_state``.
-                nodes_to_move = list(graph.nodes())
-                edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
-                for n in nodes_to_move:
-                    graph.remove_node(n)
-                for n in nodes_to_move:
-                    target_state.add_node(n)
-                for src, sc, dst, dc, data in edges_to_move:
-                    target_state.add_edge(src, sc, dst, dc, data)
-                # Reparent every existing ``graph -> *`` INTERSTATE edge to
-                # ``target_state -> *``. Otherwise the placeholder ``graph``
-                # would end up with both the new ``graph -> target_state``
-                # edge AND the original successor edges, giving it multiple
-                # unconditional out-edges that later trip
-                # ``control_flow_raising`` (else-not-last) and
-                # ``DeadStateElimination`` validation.
-                successor_edges = list(parent_cfr.out_edges(graph))
-                for e in successor_edges:
-                    parent_cfr.remove_edge(e)
-                    parent_cfr.add_edge(target_state, e.dst, e.data)
-                parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
-                if was_start:
-                    parent_cfr.start_block = parent_cfr.node_id(graph)
 
             expand = ExpandNestedSDFGInputs()
             expand.nested_sdfg = node
             expand.expr_index = 0
-            if expand.can_be_applied(target_state, 0, sdfg, permissive=False):
-                expand.apply(target_state, sdfg)
+            if expand.can_be_applied(graph, 0, sdfg, permissive=False):
+                expand.apply(graph, sdfg)
             inline = InlineMultistateSDFG()
             inline.nested_sdfg = node
             inline.expr_index = 0
-            if inline.can_be_applied(target_state, 0, sdfg, permissive=False):
+            # Migrate ONLY once the inline is known to apply. Splitting the state to protect a
+            # reference and then not inlining leaves an empty placeholder behind, which any
+            # later simplify deletes -- the reference is lost anyway, minus the dataflow.
+            if inline.can_be_applied(graph, 0, sdfg, permissive=False):
+                target_state = graph
+                if parent_cfr is not None:
+                    was_start = parent_cfr.start_block is graph
+                    target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
+                    # Move ``graph``'s INTRA-state dataflow to ``target_state``.
+                    nodes_to_move = list(graph.nodes())
+                    edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
+                    for n in nodes_to_move:
+                        graph.remove_node(n)
+                    for n in nodes_to_move:
+                        target_state.add_node(n)
+                    for src, sc, dst, dc, data in edges_to_move:
+                        target_state.add_edge(src, sc, dst, dc, data)
+                    # Reparent every existing ``graph -> *`` INTERSTATE edge to
+                    # ``target_state -> *``. Otherwise the placeholder ``graph``
+                    # would end up with both the new ``graph -> target_state``
+                    # edge AND the original successor edges, giving it multiple
+                    # unconditional out-edges that later trip
+                    # ``control_flow_raising`` (else-not-last) and
+                    # ``DeadStateElimination`` validation.
+                    successor_edges = list(parent_cfr.out_edges(graph))
+                    for e in successor_edges:
+                        parent_cfr.remove_edge(e)
+                        parent_cfr.add_edge(target_state, e.dst, e.data)
+                    parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
+                    if was_start:
+                        parent_cfr.start_block = parent_cfr.node_id(graph)
+                    self.target_state = target_state
                 inline.apply(target_state, sdfg)
                 # After inline, the NSDFG node is gone and the LoopRegion
                 # has been hoisted into the parent CFR. Clear the stale
