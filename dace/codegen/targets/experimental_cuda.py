@@ -1172,9 +1172,7 @@ int __dace_gpu_last_error({sdfg_state_name} *__state) {{
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
-            # CMakeLists reads DACE_HIP_ARCHITECTURES_DEFAULT and CMAKE_HIP_FLAGS. The previous
-            # EXTRA_HIP_FLAGS was read by nothing, so hip_args and hip_arch were both dropped, and
-            # the hand-built --offload-arch only spells AMD targets.
+            # CMakeLists reads these two; the previous EXTRA_HIP_FLAGS was read by nothing.
             if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
                 hip_arch = [ha for ha in map(str.strip, hip_arch.split(',')) if len(ha) > 0]
                 options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')

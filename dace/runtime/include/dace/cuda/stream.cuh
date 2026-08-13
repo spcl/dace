@@ -30,8 +30,7 @@
 namespace dace {
 // Adapted from
 // https://devblogs.nvidia.com/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
-// __CUDACC__, matching warpReduce in reduction.h: hip_common.h defines __HIPCC__ on the NVIDIA
-// platform too, where the 64-bit-warp AMD intrinsics below (__shfl, __ballot) do not exist.
+// Not __HIPCC__: it is set on HIP's NVIDIA platform, which has no __shfl/__ballot.
 #if defined(__CUDACC__)
 __inline__ __device__ uint32_t atomicAggInc(uint32_t *ctr) {
   auto g = cooperative_groups::coalesced_threads();
