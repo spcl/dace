@@ -1158,8 +1158,10 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
+        # Single element, not necessarily spelled as the literal 0: a squeezed view indexed by a
+        # map parameter that ranges over one element (``tmp[_o0]``) selects the same thing.
         if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
+                and symbolic.equal(internal_subset.num_elements(), 1) is True):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
