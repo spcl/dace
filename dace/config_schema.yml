@@ -326,10 +326,12 @@ required:
                         title: Arguments
                         description: >
                             Flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``). ``default_<family>`` applies for that
-                            host compiler, since nvc++ rejects several switches below.
-                        default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
-                        default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it for every
+                            language, from ``CMAKE_POSITION_INDEPENDENT_CODE``).
+                            ``default_<family>`` applies for that host compiler, since nvc++
+                            rejects several switches below.
+                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_nvhpc: '-Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
                         default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -383,27 +385,24 @@ required:
                         title: hipcc Arguments
                         description: >
                             hipcc flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``). Host flags are not listed here: DaCe forwards
-                            ``compiler.cpu.args``, which hipcc takes directly.
-                        default: '-fPIC'
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it, from
+                            ``CMAKE_POSITION_INDEPENDENT_CODE``). Host flags are not listed here:
+                            DaCe forwards ``compiler.cpu.args``, which hipcc takes directly.
+                        default: ''
 
                     cuda_arch:
                         type: str
-                        title: Additional CUDA architectures
+                        title: CUDA architectures to compile for
                         description: >
-                            Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: '60'
+                            If empty, the SDFG is compiled for the 'native' CUDA architecture.
+                        default: ''
 
                     hip_arch:
                         type: str
-                        title: Additional HIP architectures
+                        title: HIP architectures to compile for
                         description: >
-                            Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: 'gfx906'
+                            If empty, the SDFG build will detect the local HIP architecture.
+                        default: ''
 
                     default_block_size:
                         type: str
@@ -738,6 +737,16 @@ required:
             * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
+
+    cache_distaware:
+        type: bool
+        default: true
+        title: Distribution-aware build cache
+        description: >
+            Give every rank of a job its own build folder, named after the rank its launcher
+            (MPI, Flux, Slurm) advertises. Without it, ranks that each compile share one folder
+            and can load a library another rank is still writing. Leave it off when only one
+            rank compiles, as ``dace.sdfg.utils.distributed_compile`` does.
 
     store_history:
         type: bool
