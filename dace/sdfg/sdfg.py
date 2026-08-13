@@ -867,9 +867,12 @@ class SDFG(ControlFlowRegion):
                 keys_to_delete = []
                 kv_to_recurse = []
                 for key, value in json_obj.items():
-                    if (isinstance(key, str)
-                            and (key.startswith('_meta_')
-                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid'])):
+                    # 'scope_dict' is a derived cache of scope_children() that to_json emits for
+                    # the viewer and from_json never reads back. It restates node ids the 'nodes'
+                    # list already carries, and being ordered first it masks the real divergence.
+                    if (isinstance(key, str) and
+                        (key.startswith('_meta_') or key
+                         in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid', 'scope_dict'])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))
