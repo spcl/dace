@@ -107,7 +107,7 @@ def test_forward_aligned_producer_consumer_splits():
 
     @dace.program
     def two_matvec(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
-        tmp = dace.define_local([M], dace.float64)
+        tmp = np.zeros([M], dtype=np.float64)
         for i in range(M):
             for j in range(N):
                 tmp[i] += A[i, j] * x[j]
