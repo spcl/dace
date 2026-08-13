@@ -144,7 +144,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def inline_host_nested_sdfgs(sdfg: SDFG) -> None:
+def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     """Flatten the nested SDFGs the CPU target emits, leaving device-level nests where they are.
 
     ``compiler.cpu.implementation`` selects a *CPU* code generator, so its readability sweeps may only
@@ -166,8 +166,8 @@ def inline_host_nested_sdfgs(sdfg: SDFG) -> None:
     for node in pinned:
         node.no_inline = True
     try:
-        sdfg.apply_transformations_repeated(InlineSDFG)
-        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        sdfg.apply_transformations_repeated(InlineSDFG, validate=validate)
+        sdfg.apply_transformations_repeated(InlineMultistateSDFG, validate=validate)
     finally:
         for node in pinned:
             node.no_inline = False
@@ -258,7 +258,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
-        inline_host_nested_sdfgs(sdfg)
+        inline_host_nested_sdfgs(sdfg, validate=validate)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar/len1-array (default is transient-only, so the
@@ -308,7 +308,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # A nested SDFG surviving inlining (e.g. a library expansion) must not share a data name with a
         # differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
         CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
-        sdfg.validate()
+        if validate:
+            sdfg.validate()
 
         # Device code reaching the constexpr _idx/_size helpers needs nvcc's --expt-relaxed-constexpr;
         # ensure it's set (idempotent) so GPU builds don't need a manual config edit.
