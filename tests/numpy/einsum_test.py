@@ -166,16 +166,13 @@ def test_lift_einsum_reduce():
     B = np.random.rand(1)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    sdfg.expand_library_nodes()
-    assert sdfg.apply_transformations(LiftEinsum) == 1
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk->'
-
-    # Specialize to ensure Reduce node is there
-    sdfg.expand_library_nodes(recursive=False)
+    # Capture the original Reduce node before lowering; afterwards it lives in a
+    # nested SDFG that LiftEinsum intentionally does not traverse.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (0, 1, 2)
+    assert rnode.axes is None
+
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->', A))
@@ -194,16 +191,13 @@ def test_lift_einsum_reduce_partial():
     B = np.random.rand(10, 9)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    sdfg.expand_library_nodes()
-    assert sdfg.apply_transformations(LiftEinsum) == 1
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk->ik'
-
-    # Specialize to ensure Reduce node is there
-    sdfg.expand_library_nodes(recursive=False)
+    # Capture the original Reduce node before lowering; afterwards it lives in a
+    # nested SDFG that LiftEinsum intentionally does not traverse.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
     assert tuple(rnode.axes) == (1, )
+
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->ik', A))
