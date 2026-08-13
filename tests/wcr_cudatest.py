@@ -27,7 +27,7 @@ def create_zero_initialization(init_state: dace.SDFGState, array_name):
 
 
 def create_test_sdfg():
-    sdfg = dace.SDFG('test_sdfg_super_random_string')
+    sdfg = dace.SDFG('test_sdfg')
 
     sdfg.add_array('BETA', shape=[10], dtype=dace.float32)
     sdfg.add_array('BETA_MAX', shape=[1], dtype=dace.float32)
