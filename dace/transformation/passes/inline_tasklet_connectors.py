@@ -72,7 +72,7 @@ class InlineTaskletConnectors(ppl.Pass):
         # "cannot convert 'double' to 'double*' in argument passing". Array connectors are
         # unaffected -- their whole-array subsets already fail the single-element test below.
         conntype = node.out_connectors[conn] if is_output else node.in_connectors[conn]
-        if isinstance(conntype, dtypes.pointer):
+        if isinstance(conntype, (dtypes.pointer, dtypes.vector)):
             return None
         memlet = edge.data
         if memlet.data is None or memlet.data not in osdfg.arrays:
