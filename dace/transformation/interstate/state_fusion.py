@@ -41,13 +41,19 @@ MATCH_ERRORS = (nx.NetworkXUnfeasible, nx.NodeNotFound, StopIteration, KeyError,
 
 
 def is_start_block(graph, block) -> bool:
-    """``graph.start_block is block``, without the getter's raise on an ambiguous region."""
+    """``graph.start_block is block``, without the getter's raise on an ambiguous region.
+
+    ``_start_block`` holds a node ID here, not the block itself, so it is resolved through
+    ``node()`` -- comparing the raw attribute would be ``False`` for every block and the start
+    block would silently never be re-pinned. The bounds check covers a stale ID left behind by a
+    removal, which shifts every later node's ID.
+    """
     sources = graph.source_nodes()
     if len(sources) == 1:
         return sources[0] is block
-    # ``_start_block`` is an INDEX into the node list, not the block: comparing it to a block is
-    # always False, which silently reports "not the entry" and skips the re-pin below.
-    return graph._start_block is not None and graph.node(graph._start_block) is block
+    if graph._start_block is None or not 0 <= graph._start_block < graph.number_of_nodes():
+        return False
+    return graph.node(graph._start_block) is block
 
 
 def keep_start_block(graph, block) -> None:
