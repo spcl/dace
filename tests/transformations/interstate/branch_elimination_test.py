@@ -17,6 +17,17 @@ S1 = 0
 S2 = 32
 
 
+def parsed_simplified(program, **kwargs):
+    """Parse ``program`` into the simplified SDFG that branch elimination is meant to run on.
+
+    The transformation only handles branch bodies that are a single state, and the frontend emits
+    one state per statement. Simplification is what fuses them, so ask for it here rather than
+    inheriting ``optimizer.automatic_simplification`` -- a config the CI matrix turns off, which
+    would otherwise decide whether these assertions are about the transformation at all.
+    """
+    return program.to_sdfg(simplify=True, **kwargs)
+
+
 def temporarily_disable_autoopt_and_serialization(func):
 
     @functools.wraps(func)
@@ -353,7 +364,7 @@ def run_and_compare(
     **arrays,
 ):
     # Run SDFG version (no transformation)
-    sdfg = program.to_sdfg()
+    sdfg = parsed_simplified(program)
     sdfg.validate()
     sdfg.name = sdfg_name
 
@@ -531,7 +542,7 @@ def test_condition_on_bounds():
     c = np.random.choice([0.001, 5.0], size=(2, 2))
     d = np.random.choice([0.001, 5.0], size=(2, 2))
 
-    sdfg = condition_on_bounds.to_sdfg()
+    sdfg = parsed_simplified(condition_on_bounds)
     sdfg.validate()
     sdfg.name = "condition_on_bounds"
     arrays = {"a": a, "b": b, "c": c, "d": d}
@@ -600,7 +611,7 @@ def test_single_branch_connectors():
     d = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.randn(1, )
 
-    sdfg = single_branch_connectors.to_sdfg()
+    sdfg = parsed_simplified(single_branch_connectors)
     sdfg.validate()
     sdfg.name = "test_single_branch_connectors_use_pass_false"
     arrays = {"a": a, "b": b, "c": c, "d": d}
@@ -671,7 +682,7 @@ def _multi_state_nested_if(
 
 @temporarily_disable_autoopt_and_serialization
 def test_try_clean():
-    sdfg1 = _multi_state_nested_if.to_sdfg()
+    sdfg1 = parsed_simplified(_multi_state_nested_if)
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 2
 
@@ -735,7 +746,7 @@ def test_try_clean():
 @temporarily_disable_autoopt_and_serialization
 def test_try_clean_as_pass():
     # This is a test to check the different configurations of try clean, applicability depends on the SDFG and the pass
-    sdfg = _multi_state_nested_if.to_sdfg()
+    sdfg = parsed_simplified(_multi_state_nested_if)
     fbpass = EliminateBranches()
     fbpass.clean_only = True
     fbpass.try_clean = False
@@ -860,7 +871,7 @@ def _find_state(root_sdfg: dace.SDFG, node):
 
 @temporarily_disable_autoopt_and_serialization
 def test_if_over_map():
-    sdfg = if_over_map.to_sdfg()
+    sdfg = parsed_simplified(if_over_map)
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
     inner_cblocks = {
@@ -887,7 +898,7 @@ def test_if_over_map():
 
 @temporarily_disable_autoopt_and_serialization
 def test_if_over_map_with_top_level_tasklets():
-    sdfg = if_over_map.to_sdfg()
+    sdfg = parsed_simplified(if_over_map)
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
     inner_cblocks = {
@@ -919,7 +930,7 @@ def test_if_over_map_with_top_level_tasklets():
 
 @temporarily_disable_autoopt_and_serialization
 def test_can_be_applied_parameters_on_nested_sdfg():
-    sdfg = nested_if.to_sdfg()
+    sdfg = parsed_simplified(nested_if)
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
     inner_cblocks = {
@@ -1048,7 +1059,7 @@ def test_split_on_disjoint_subsets():
     D = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = split_on_disjoint_subsets.to_sdfg()
+    sdfg = parsed_simplified(split_on_disjoint_subsets)
 
     # Is disjoit subset needs to return true
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
@@ -1092,7 +1103,7 @@ def test_split_on_disjoint_subsets_nested():
     D = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = split_on_disjoint_subsets_nested.to_sdfg()
+    sdfg = parsed_simplified(split_on_disjoint_subsets_nested)
 
     # Is disjoit subset needs to return true
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -1205,7 +1216,7 @@ def test_double_empty_state():
     D = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = write_to_transient_two.to_sdfg()
+    sdfg = parsed_simplified(write_to_transient_two)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
 
@@ -1252,7 +1263,7 @@ def test_complicated_pattern_for_manual_clean_up_one():
     D = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = complicated_pattern_for_manual_clean_up_one.to_sdfg()
+    sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_one)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
 
@@ -1311,7 +1322,7 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
     D = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = complicated_pattern_for_manual_clean_up_one.to_sdfg()
+    sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_one)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
 
@@ -1388,7 +1399,7 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
     E = np.ones([
         1,
     ], dtype=np.float64)
-    sdfg = complicated_pattern_for_manual_clean_up_two.to_sdfg()
+    sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_two)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
 
@@ -1460,7 +1471,7 @@ def test_single_assignment():
 @temporarily_disable_autoopt_and_serialization
 def test_single_assignment_cond_from_scalar():
     A = np.ones(shape=(512, ), dtype=np.float64)
-    before = single_assignment_cond_from_scalar.to_sdfg()
+    before = parsed_simplified(single_assignment_cond_from_scalar)
     before.compile()
     run_and_compare(single_assignment_cond_from_scalar, 0, True, "single_assignment_cond_from_scalar", a=A)
 
@@ -1766,7 +1777,7 @@ def test_can_be_applied_on_map_param_usage():
     B = np.random.choice([0.001, 5.0], size=(N, N))
     D = np.random.choice([0.001, 5.0], size=(N, N))
 
-    sdfg = map_param_usage.to_sdfg()
+    sdfg = parsed_simplified(map_param_usage)
 
     xform = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -2106,7 +2117,7 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
     data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
 
-    sdfg = huge_sdfg.to_sdfg()
+    sdfg = parsed_simplified(huge_sdfg)
     sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
     sdfg.validate()
     #it_23: dace.int64, it_47: dace.int64
@@ -2190,7 +2201,7 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     data['zrho'] = safe_uniform(0.9, 1.2, (N, ))  # density
     data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
     data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
-    sdfg = mid_sdfg.to_sdfg()
+    sdfg = parsed_simplified(mid_sdfg)
     sdfg.name = f"mid_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = f"mid_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}_branch_eliminated"
@@ -2256,7 +2267,7 @@ def test_loop_param_usage():
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
 
-    sdfg = loop_param_usage.to_sdfg()
+    sdfg = parsed_simplified(loop_param_usage)
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
 
@@ -2273,7 +2284,7 @@ def test_loop_param_usage():
 
 @temporarily_disable_autoopt_and_serialization
 def test_can_be_applied_on_wcr_edge():
-    sdfg = wcr_edge.to_sdfg()
+    sdfg = parsed_simplified(wcr_edge)
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
@@ -2316,7 +2327,7 @@ def interstate_boolean_op(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace
 
 
 def test_interstate_boolean():
-    sdfg = interstate_boolean_op.to_sdfg()
+    sdfg = parsed_simplified(interstate_boolean_op)
     sdfg.name = "interstate_boolean_op"
     nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
     inner_sdfg: dace.SDFG = nsdfg.sdfg
@@ -2334,7 +2345,7 @@ def test_interstate_boolean():
 
 @temporarily_disable_autoopt_and_serialization
 def test_top_level_if():
-    sdfg = top_level_if.to_sdfg()
+    sdfg = parsed_simplified(top_level_if)
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
@@ -2382,7 +2393,7 @@ def test_s441():
     c = np.random.rand(LEN_1D_val).astype(np.float64)
     d = np.random.randn(LEN_1D_val).astype(np.float64)  # includes negative, zero, positive
 
-    sdfg = dace_s441.to_sdfg()
+    sdfg = parsed_simplified(dace_s441)
     EliminateBranches().apply_pass(sdfg, {})
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     if len(branches) > 0:
@@ -2410,13 +2421,15 @@ def test_interstate_boolean_op_two():
     B = np.random.rand(N, N).astype(np.float64)
     c0 = np.int64(0)
 
-    sdfg = interstate_boolean_op_two.to_sdfg()
+    sdfg = parsed_simplified(interstate_boolean_op_two)
 
-    EliminateBranches().apply_pass(sdfg, {})
-    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    if len(branches) > 0:
-        assert False
-    run_and_compare_sdfg(sdfg, False, "interstate_boolean_op_two", A=A, B=B, c0=c0)
+    # The condition is built from the map parameters, and predicating such a branch is only safe if
+    # the body cannot go out of bounds -- which the transformation does not prove, so it refuses
+    # unless permissive. Here the body reads and writes A[i, j]/B[i, j] only, and the comparison
+    # against the un-eliminated SDFG below is what checks that.
+    eliminated = run_and_compare_sdfg(sdfg, True, "interstate_boolean_op_two", A=A, B=B, c0=c0)
+    branches = {n for (n, g) in eliminated.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(branches) == 0, branches
 
 
 LEN_1D = dace.symbol("LEN_1D")
@@ -2435,7 +2448,7 @@ def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 
 
 def test_s1161():
-    sdfg = dace_s1161.to_sdfg()
+    sdfg = parsed_simplified(dace_s1161)
     from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
     be = branch_elimination.BranchElimination()
