@@ -203,6 +203,22 @@ def get_environment(env_name):
     return env
 
 
+def reject_gpu_location(node) -> str:
+    """Rejects ``location['gpu']``. Only these environments ever honored it, while allocations and
+    kernel launches used the current device, so the handle worked on another device's memory.
+
+    Returns the empty string, so an environment can prepend it to its handle setup: the handles
+    live on the one device ``__dace_init_cuda`` selects, leaving nothing to emit.
+    """
+    if node.location and 'gpu' in node.location:
+        raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
+                         'location["gpu"], but DaCe uses one GPU per process: allocations and kernels run '
+                         'on the device selected in __dace_init_cuda. Remove the location and give the '
+                         'process its own GPU with CUDA_VISIBLE_DEVICES.')
+
+    return ''
+
+
 # Mapping from string to library
 def get_library(lib_name):
     try:
