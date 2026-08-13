@@ -962,16 +962,15 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
 
-        # Add headers of any nested loops and conditional blocks
-        nodelist = list(self.loop.nodes())
-        while nodelist:
-            node = nodelist.pop()
-            if isinstance(node, (LoopRegion, ConditionalBlock)):
-                code_blocks = node.get_meta_codeblocks()
-                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
-                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
-                read_set |= set(free_syms)
-                nodelist.extend(node.nodes())
+        # Add headers of any nested loops and conditional blocks, at EVERY depth: a walk that
+        # recurses only into LoopRegion / ConditionalBlock stops at a ConditionalBlock's branch,
+        # which is a plain ControlFlowRegion. A container a header below that point reads then
+        # never enters the read set, so it stays a free symbol of the body instead of becoming a
+        # connector -- and the parent's interstate edge is left referencing an undefined symbol.
+        for block in self.loop.all_control_flow_blocks():
+            if isinstance(block, (LoopRegion, ConditionalBlock)):
+                free_syms = {s for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+                read_set |= {s for s in free_syms if s in sdfg.arrays}
 
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
@@ -1115,6 +1114,16 @@ class LoopToMap(xf.MultiStateTransformation):
                 # Only add explicit type, if it cannot be inferred
                 if vtype is None:
                     nsdfg.symbols[k] = ktype
+
+        # The registrations above can free a symbol after ``add_nested_sdfg`` fixed the mapping;
+        # a free symbol missing from the node's mapping fails validation, so self-map leftovers.
+        nconnectors = cnode.in_connectors.keys() | cnode.out_connectors.keys()
+        for sym in sorted(nsdfg.free_symbols):
+            if sym in nconnectors or sym in cnode.symbol_mapping:
+                continue
+            cnode.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
+            if sym not in nsdfg.symbols and sym in sdfg.symbols:
+                nsdfg.symbols[sym] = sdfg.symbols[sym]
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
@@ -1275,6 +1284,13 @@ class LoopToMap(xf.MultiStateTransformation):
                     sdfg.remove_symbol(var)
             else:
                 sdfg.remove_symbol(var)
+
+        # Deregistering does not un-free a symbol whose uses remain; the parent node must map it.
+        if sdfg.parent_nsdfg_node is not None:
+            pnode = sdfg.parent_nsdfg_node
+            pconnectors = pnode.in_connectors.keys() | pnode.out_connectors.keys()
+            for var in sorted((sdfg.free_symbols - fsymbols) - pnode.symbol_mapping.keys() - pconnectors):
+                pnode.symbol_mapping[var] = symbolic.pystr_to_symbolic(var)
 
         # Also remove arrays that are unique to the loop body
         for name in unique_set:

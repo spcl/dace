@@ -211,16 +211,16 @@ def test_forward_then_inverse_stays_correct():
     assert _run(sdfg, 3.0) == pytest.approx(6.0)
 
 
-def test_repeated_forward_finds_new_name_and_stays_correct():
-    """Applying the forward pass twice must not collide on the scalar name it created before
-    (``find_new_name``), and stays numerically correct."""
+def test_repeated_forward_is_idempotent_and_stays_correct():
+    """Applying the forward pass twice must be a no-op the second time and stay numerically
+    correct. Staging KEEPS the signature array, so without an already-staged check the array
+    stays eligible forever and each re-run chains another copy hop onto the last."""
     sdfg = _io_sdfg()
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    before = set(sdfg.arrays)
+    before, before_states = set(sdfg.arrays), len(list(sdfg.all_states()))
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    fresh = set(sdfg.arrays) - before
-    assert fresh, "second application created no fresh staging scalar"
-    assert all(f.startswith("scal_") for f in fresh)  # uniquified, not a collision
+    assert set(sdfg.arrays) == before, "second application re-staged an already-staged array"
+    assert len(list(sdfg.all_states())) == before_states, "second application added copy states"
     sdfg.validate()
     assert _run(sdfg, 3.0) == pytest.approx(6.0)
 

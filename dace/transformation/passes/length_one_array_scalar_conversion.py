@@ -83,6 +83,27 @@ def _descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     return False
 
 
+#: Label prefixes of the states staging creates; ``add_state`` uniquifies, so match by prefix.
+_STAGING_STATE_PREFIXES = ('stage_copyin', 'stage_copyout')
+
+
+def _already_staged(sdfg: SDFG, name: str) -> bool:
+    """True if every reference to ``name`` sits in a staging state a previous run created.
+
+    Staging keeps the signature array, so a re-run would find it eligible again and chain a second
+    redundant copy hop onto the first. Detecting that here is what makes the pass idempotent.
+    """
+    seen = False
+    for state in sdfg.all_states():
+        in_staging = state.label.startswith(_STAGING_STATE_PREFIXES)
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data == name:
+                if not in_staging:
+                    return False
+                seen = True
+    return seen
+
+
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -232,6 +253,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             elif stage_nontransients:
                 is_read = _descriptor_is_read(sdfg, arr_name)
                 is_written = _descriptor_is_written(sdfg, arr_name)
+                # An unreferenced signature array has nothing to stage, and one already staged would
+                # only gain a second copy hop -- skipping both keeps re-application a true no-op.
+                if not (is_read or is_written) or _already_staged(sdfg, arr_name):
+                    continue
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
