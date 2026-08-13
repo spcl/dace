@@ -8,12 +8,18 @@ typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
+#define gpuStreamSynchronize hipStreamSynchronize
+#define gpuDeviceSynchronize hipDeviceSynchronize
+#define gpuEventSynchronize hipEventSynchronize
 #else
 typedef cudaStream_t gpuStream_t;
 typedef cudaEvent_t gpuEvent_t;
 typedef cudaError_t gpuError_t;
 #define gpuGetLastError cudaGetLastError
 #define gpuGetErrorString cudaGetErrorString
+#define gpuStreamSynchronize cudaStreamSynchronize
+#define gpuDeviceSynchronize cudaDeviceSynchronize
+#define gpuEventSynchronize cudaEventSynchronize
 #endif
 
 #define DACE_GPU_CHECK(err)                                               \
