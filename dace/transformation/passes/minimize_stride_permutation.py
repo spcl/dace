@@ -99,17 +99,19 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
             continue
         for rng, stride in zip(subset.ndrange(), desc.strides):
             index_expr = pystr_to_symbolic(rng[0])
-            stride_val = sympy.Abs(pystr_to_symbolic(stride))
-            free_names = {str(s) for s in index_expr.free_symbols}
-            present = [v for v in var_set if v in free_names]
-            if not present:
+            # The expression may carry the map parameter as a plain sympy
+            # ``Symbol`` while ``pystr_to_symbolic`` returns a DaCe ``symbol``.
+            # Coefficient extraction is object-sensitive, so resolve each name to
+            # the actual symbol instance present in the expression.
+            symbols_by_name = {str(s): s for s in index_expr.free_symbols if str(s) in var_set}
+            if not symbols_by_name:
                 continue
-            for vname in present:
-                vsym = pystr_to_symbolic(vname)
+            stride_val = sympy.Abs(pystr_to_symbolic(str(stride)))
+            for vname, vsym in symbols_by_name.items():
                 coeff = index_expr.coeff(vsym, 1)
                 if coeff == 0:
                     continue
-                others = {s: 0 for s in index_expr.free_symbols if str(s) in var_set and str(s) != vname}
+                others = {s: 0 for name, s in symbols_by_name.items() if name != vname}
                 constant = index_expr.subs(others).subs({vsym: 0})
                 offset_sum[vname] = offset_sum[vname] + sympy.Abs(constant)
                 if sympy.Abs(coeff) == 1:
@@ -218,7 +220,7 @@ class MinimizeStridePermutation(ppl.Pass):
         # (e.g. ``N*M`` versus ``M``), so leaving the nest untouched is the
         # intended, idempotent behavior rather than guessing an order.
         for stride_score, _ in scores:
-            term = pystr_to_symbolic(stride_score)
+            term = pystr_to_symbolic(str(stride_score))
             if not (term.is_number and term.is_finite and not term.free_symbols):
                 return 0
 
