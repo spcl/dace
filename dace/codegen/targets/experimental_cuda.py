@@ -15,7 +15,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
-from dace.codegen import common
+from dace.codegen import common, compiler_family
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
@@ -42,6 +42,20 @@ if TYPE_CHECKING:
 # once and freed at teardown) rather than transiently inside a state or scope.
 _GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                      dtypes.AllocationLifetime.External)
+
+#: Host flags a device compiler must not be handed: warnings that only fire inside the CUDA
+#: headers, and position-independent code, which CMake already adds for a shared library.
+_HOST_FLAGS_NOT_FORWARDED = frozenset({'-Wall', '-Wextra', '-fPIC'})
+
+
+def _forwarded_host_args() -> List[str]:
+    """The host flags a ``.cu`` or ``.hip`` translation unit has to be built with as well.
+
+    Most of what is emitted into one is host code, and it includes the same header-only runtime as
+    the ``.cpp``; building the two halves under different flags leaves two versions of the same
+    inline function to pick from.
+    """
+    return [flag for flag in compiler_family.cpu_args().split() if flag not in _HOST_FLAGS_NOT_FORWARDED]
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -1158,13 +1172,15 @@ int __dace_gpu_last_error({sdfg_state_name} *__state) {{
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
-            flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
-                for arch in hip_arch)
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
+            # CMakeLists reads DACE_HIP_ARCHITECTURES_DEFAULT and CMAKE_HIP_FLAGS. The previous
+            # EXTRA_HIP_FLAGS was read by nothing, so hip_args and hip_arch were both dropped, and
+            # the hand-built --offload-arch only spells AMD targets.
+            if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
+                hip_arch = [ha for ha in map(str.strip, hip_arch.split(',')) if len(ha) > 0]
+                options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
+
+            flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + _forwarded_host_args())
+            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
             host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
