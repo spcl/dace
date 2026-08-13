@@ -71,7 +71,7 @@ setup(name='dace',
       include_package_data=True,
       install_requires=[
           'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
-          'fparser >= 0.1.3, != 0.2.3', 'dill', 'pyreadline;platform_system=="Windows"', 'packaging',
+          'fparser >= 0.1.3, != 0.2.3', 'nanobind >= 2.0', 'dill', 'pyreadline;platform_system=="Windows"', 'packaging',
           'typing-extensions', 'ml_dtypes', 'ordered-set >= 4.0.0'
       ] + cmake_requires + ninja_requires,
       extras_require={

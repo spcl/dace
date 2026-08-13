@@ -3,20 +3,25 @@
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
+from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from types import ModuleType
+
 import collections
 import getpass
 import glob
 import hashlib
+import importlib.util
 import io
 import os
 import pathlib
+import pickle
 import platform
 import re
 import shutil
 import shlex
 import subprocess
+import sys
 import tempfile
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 from functools import lru_cache
 
@@ -27,7 +32,9 @@ from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
-from dace.codegen import compiled_sdfg as csd
+from dace.codegen import ctypes_compiled_sdfg as csd
+from dace.codegen import nanobind_bindings
+from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
@@ -123,6 +130,51 @@ def generate_program_folder(
             if code_object.language == 'cpp' and code_object.title == 'Frame':
                 code_object.create_source_map(sdfg)
 
+    # Nanobind interface: emit the bindings source next to the frame code, so
+    # it is compiled into the program library (the module *is* the library).
+    interface = Config.get('compiler', 'interface')
+    if interface not in ('ctypes', 'nanobind'):
+        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
+    if sdfg is None:
+        # Raw code objects without an SDFG (e.g. helper libraries): no bindings can be
+        # generated, so the folder is a plain ctypes-style artifact regardless of the
+        # configured interface - and the marker must say so, or configure_and_compile
+        # would build a nanobind module without a bindings TU and the ctypes-style
+        # loaders (ReloadableDLL) would refuse the folder.
+        interface = 'ctypes'
+    if interface == 'nanobind':
+        bindings_folder = os.path.join(src_path, 'cpu')
+        os.makedirs(bindings_folder, exist_ok=True)
+        bindings_name = f'{sdfg.name}_nanobind.cpp'
+        statestruct = next((getattr(obj, 'statestruct', None) for obj in code_objects if obj.title == 'Frame'), None)
+        # The GPU error record accessor exists exactly when the CUDA target emitted its code
+        # object, so the binding's per-call check is gated on that - not on a storage or
+        # schedule heuristic, which would declare a symbol the library may not have.
+        gpu_backend = None
+        if any(obj.title == 'CUDA' for obj in code_objects):
+            from dace.codegen import common
+            gpu_backend = common.get_gpu_backend()
+        bindings_code = nanobind_bindings.generate_bindings_code(sdfg, statestruct=statestruct, gpu_backend=gpu_backend)
+        bindings_path = os.path.join(bindings_folder, bindings_name)
+        if not identical_file_exists(bindings_path, bindings_code):
+            with open(bindings_path, 'w') as bindings_file:
+                bindings_file.write(bindings_code)
+        filelist.append('cpu,,{}'.format(bindings_name))
+
+    # Record which interface produced this folder (see `load_precompiled_sdfg`),
+    # analogous to the `FOLDER_MODE` file.
+    with open(os.path.join(out_path, "INTERFACE"), "w") as interface_file:
+        interface_file.write(interface)
+
+    # Create the instrumentation-report folder when reports can actually be
+    # produced: the runtime's report.save() opens `<folder>/perf/report-*.json`
+    # with a bare std::ofstream, which neither creates directories nor reports
+    # a failed open - a missing folder drops every report SILENTLY. Gated on
+    # instrumentation, so uninstrumented folders stay lean in both folder
+    # modes; the production trim list deliberately does not touch `perf`.
+    if sdfg is not None and sdfg.is_instrumented():
+        os.makedirs(os.path.join(out_path, 'perf'), exist_ok=True)
+
     # Write list of files
     #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -180,6 +232,109 @@ def generate_program_folder(
     return out_path
 
 
+#: Namespace under which generated nanobind modules are registered in ``sys.modules``.
+GENERATED_NAMESPACE = 'dace.generated'
+
+
+def nanobind_qualified_module_name(build_folder, module_name: str) -> str:
+    """Generate the qualified name used for importing the ``nanobind`` extension module.
+
+    The module will be imported under ``dace.generated.<magic>.<module_name>``.
+    ``<module_name>`` is the name of the module and must match the ``SDFG.name`` property.
+    The intermediate level ``<magic>`` is unspecific but derived from ``build_folder``.
+    This means that (in general) SDFGs with the same name, but different build folders,
+    can be imported without issues.
+    """
+    magic = hashlib.sha256(os.path.realpath(os.fspath(build_folder)).encode('utf-8')).hexdigest()[:16]
+    return f'{GENERATED_NAMESPACE}.{magic}.{module_name}'
+
+
+def get_program_interface(program_folder) -> str:
+    """Returns which Python interface ('ctypes' or 'nanobind') produced ``program_folder``.
+
+    Consults the ``INTERFACE`` marker file written by ``generate_program_folder()``;
+    folders that predate the marker are old-style ctypes folders.
+
+    The rule is: ``Config`` is consulted only when *generating* a folder;
+    when *loading*, only this marker decides, so the two interfaces can be
+    used transparently side by side.
+    """
+    marker = os.path.join(program_folder, 'INTERFACE')
+    if os.path.isfile(marker):
+        with open(marker, 'r') as f:
+            interface = f.read().strip()
+            assert interface in ['nanobind', 'ctypes']
+            return interface
+    return 'ctypes'
+
+
+def load_nanobind_module(library_path: Union[str, pathlib.Path], module_name: str,
+                         build_folder: Union[str, pathlib.Path]) -> ModuleType:
+    """Loads the compiled nanobind module of an SDFG and returns it.
+
+    The module is imported once per process, the qualified module path is obtained
+    from :func:`nanobind_qualified_module_name`.
+
+    In case the module is already loaded, i.e. the module's qualified name is already
+    present in ``sys.modules``, the function will check if they refer to the same _path_.
+    This is done by comparing the already loaded modules ``__file__`` attribute with
+    ``library_path``. In case they differ an error is generated.
+
+    :param library_path: Path to the compiled shared library (the nanobind
+                         extension module) to import.
+    :param module_name: The SDFG name (the last component of the registered
+                        qualified name).
+    :param build_folder: The SDFG's build folder, hashed into the registry
+                         key's magic component.
+    :return: The imported module.
+    :raises ValueError: If the registry key is taken by a module from a
+                        different file (a folder-magic hash collision, or the
+                        folder's artifact changed path under a loaded module).
+
+    :note: In case the compiled extension was regenerated between the first and second
+        time this function was called the function will return the same module the
+        first call has returned.
+    """
+    library_path = os.fspath(library_path)
+    qualified = nanobind_qualified_module_name(build_folder, module_name)
+
+    existing = sys.modules.get(qualified)
+    if existing is not None:
+        # A hit should mean the very same artifact - verify it, so a hash
+        # collision between two different folders fails loudly instead of
+        # silently aliasing the artifacts.
+        existing_file = getattr(existing, '__file__', None)
+        # A module without `__file__` under our key is something we did not load,
+        #  treat it as a mismatch too. The `realpath()` comparison (rather than plain
+        #  string equality) keeps relative vs. absolute spellings and symlinked cache
+        #  folders of the same file from being flagged as collisions.
+        if existing_file is None or os.path.realpath(existing_file) != os.path.realpath(library_path):
+            raise ValueError(f"Generated-module registry collision: key '{qualified}' is taken by the module "
+                             f"loaded from '{existing_file}', but '{library_path}' hashes to the same key. "
+                             f"Rename the SDFG or move the build folder to resolve the folder-hash collision.")
+        return existing
+
+    # The unprefixed module_name makes the loader resolve the matching init
+    # hook in the library; the shared library's file name itself is irrelevant.
+    spec = importlib.util.spec_from_file_location(module_name, library_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f'Cannot create an import spec for the compiled SDFG module at {library_path}.')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[qualified] = module
+    return module
+
+
+def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG",
+                                build_folder: Union[str, pathlib.Path]) -> NanobindCompiledSDFG:
+    """Loads the compiled nanobind module for ``sdfg`` and mints a fresh handle.
+
+    The nanobind counterpart of ``load_ctypes_compiled_sdfg()``.
+    """
+    module = load_nanobind_module(library_path, sdfg.name, build_folder)
+    return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)
+
+
 #: Untested on Windows.
 CACHES_SUPPORTED = os.name != 'nt'
 
@@ -202,6 +357,59 @@ def build_cache_root() -> str:
         if root is None:
             return os.path.join(Config.get('default_build_folder'), BUILD_CACHE_FOLDER)
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
+
+
+#: Glob for nanobind's helper archive. nanobind derives the library NAME from the options passed
+#: to ``nanobind_add_module()`` (e.g. ``NB_STATIC`` selects ``nanobind-static``, ``PROTECT_STACK``
+#: appends ``-ps`` - variants are compiled differently, so each deliberately gets its own name).
+#: The name is therefore never assumed anywhere: publishing discovers it from what the build
+#: actually produced, and the CMake side verifies a cached candidate against the helper target it
+#: really links before swapping it in (a non-matching candidate is ignored, costing only the
+#: cache benefit). This keeps the cache working - or at worst, harmlessly inactive - when the
+#: option list or nanobind's naming scheme changes.
+NANOBIND_STATIC_GLOB = 'libnanobind*.a'
+
+
+def nanobind_static_cache_dir() -> str:
+    """Cache directory of nanobind's prebuilt helper archive(s).
+
+    The archives are NOT keyed on any DaCe configuration: nanobind compiles its helper library
+    with its own fixed flags, so nothing configurable in DaCe reaches those translation units. If
+    a configuration that DOES influence them is ever introduced (e.g. forwarding configurable
+    flags into ``nanobind_add_module``), it MUST be folded into this path. The interpreter and
+    nanobind versions are part of the path already - the archive embeds the active Python's ABI
+    and the active nanobind's sources, and several virtual environments share one cache root.
+    Within the directory each option-derived variant lives under its own discovered name; the
+    CMake-side verification picks the one matching the current build, so stale variants can
+    coexist without ever being linked.
+    """
+    import nanobind
+    tag = f'{getattr(nanobind, "__version__", "unknown")}-py{sys.version_info.major}.{sys.version_info.minor}'
+    return os.path.join(build_cache_root(), 'nanobind', tag)
+
+
+def publish_nanobind_static(build_folder: str, cache_dir: str) -> None:
+    """Copy a freshly built helper archive into the cache (atomic, first writer wins).
+
+    The archive is discovered by pattern, never by an assumed name (see
+    :data:`NANOBIND_STATIC_GLOB`). An already-cached name is left alone - in particular, when the
+    cached archive was linked, the build folder holds only the tiny stub archive under that very
+    name, which must not overwrite the real one.
+    """
+    for built in glob.glob(os.path.join(build_folder, NANOBIND_STATIC_GLOB)):
+        cache_path = os.path.join(cache_dir, os.path.basename(built))
+        if os.path.exists(cache_path):
+            continue
+        staging = f'{cache_path}.{os.getpid()}'
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            shutil.copyfile(built, staging)
+            os.rename(staging, cache_path)
+        except OSError:
+            try:
+                os.remove(staging)
+            except OSError:
+                pass
 
 
 #: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
@@ -283,9 +491,7 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
             # CMake refuses a cache it finds anywhere other than where it was created, aborting the
             # configure outright, so retarget that one entry at this build folder.
             cache = re.sub(r'(?m)^CMAKE_CACHEFILE_DIR:INTERNAL=.*$',
-                           'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'),
-                           fp.read(),
-                           count=1)
+                           'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'), fp.read(), 1)
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
@@ -484,6 +690,37 @@ def configure_and_compile(
         "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
 
+    # Nanobind interface: build the program as a nanobind extension module.
+    nanobind_static_cache = ''
+    if get_program_interface(program_folder) == 'nanobind':
+        try:
+            import nanobind
+        except ImportError:
+            raise cgx.CompilerConfigurationError('The "nanobind" compiler interface is selected (compiler.interface), '
+                                                 'but the nanobind package is not installed.')
+        cmake_command += [
+            "-DDACE_ENABLE_NANOBIND=ON",
+            '-DDACE_NANOBIND_CMAKE_DIR="{}"'.format(nanobind.cmake_dir()),
+            '-DPython_EXECUTABLE="{}"'.format(sys.executable),
+        ]
+        # Reuse nanobind's helper archive across build folders: its ~12
+        # translation units are byte-identical for every program (nanobind
+        # compiles them with its own fixed flags - no DaCe configuration
+        # reaches them) and dominate a replayed build's remaining cost. The
+        # path carries the interpreter and nanobind versions because the
+        # archive is compiled against the active Python's headers and the
+        # active nanobind's sources - several virtual environments share one
+        # cache root. Advisory like every cache here: a missing archive just
+        # builds (and then publishes) it. Every cached variant is offered as
+        # a candidate; the CMake side links the one matching the helper
+        # target it actually builds, and ignores the rest (variant names
+        # encode HOW nanobind was compiled - see NANOBIND_STATIC_GLOB).
+        if CACHES_SUPPORTED:
+            nanobind_static_cache = nanobind_static_cache_dir()
+            candidates = sorted(glob.glob(os.path.join(nanobind_static_cache, NANOBIND_STATIC_GLOB)))
+            if candidates:
+                cmake_command.append('-DDACE_NANOBIND_STATIC_LIB="{}"'.format(';'.join(candidates)))
+
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
         environments = set(l.strip() for l in f)
@@ -562,37 +799,55 @@ def configure_and_compile(
             command_db.publish(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
+        # A build that had no cached helper archive just produced one.
+        if nanobind_static_cache:
+            publish_nanobind_static(build_folder, nanobind_static_cache)
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.
     lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
     libstub_path = _get_stub_library_path(lib_path)
 
-    # In production mode, we are now deleting what we need and relocating it.
+    # In production mode, we are now deleting what we need and relocating it. Relocation must
+    # OVERWRITE: a production folder may be rebuilt in place (same program recompiled into the
+    # same folder), and shutil.move refuses an existing destination. os.replace is safe here -
+    # the build folder lies inside the program folder, so both sides share a filesystem, and on
+    # POSIX replacing a loaded library leaves the existing mapping intact.
+    def _relocate(path: pathlib.Path) -> pathlib.Path:
+        target = pathlib.Path(program_folder) / path.name
+        os.replace(path, target)
+        return target
+
     if folder_mode == "production":
-        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
-        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+        lib_path = _relocate(lib_path)
+        if libstub_path.is_file():  # No stub is built on the nanobind path.
+            libstub_path = _relocate(libstub_path)
         program_folder = pathlib.Path(program_folder)
         # TODO: Find out where `sample/` are generated and suppress their generation.
+        # missing_ok: not every folder has the full layout (raw code-object folders
+        # have no include/, uninstrumented ones may lack entries) - absent simply
+        # means nothing to trim.
         for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
             if (program_folder / to_delete).is_dir():
                 shutil.rmtree(os.path.join(program_folder, to_delete))
             else:
-                (program_folder / to_delete).unlink()
+                (program_folder / to_delete).unlink(missing_ok=True)
 
     return lib_path
 
 
-def get_program_handle(
+def load_ctypes_compiled_sdfg(
     library_path: Union[pathlib.Path, str],
     sdfg: 'dace.SDFG',
     stub_library_path: Union[pathlib.Path, str, None] = None,
-) -> csd.CompiledSDFG:
-    """Construct a  ``CompiledSDFG`` form a precompiled library directly.
+) -> csd.CtypesCompiledSDFG:
+    """Construct a  ``CtypesCompiledSDFG`` form a precompiled library directly.
 
-    This function is similar to the (preferred) ``load_precompiled_sdfg()``. However,
-    instead of passing the build folder of the SDFG to the function, the path to the
-    compiled library is passed directly.
+    This function requires that the SDFG was compiled with the `ctypes` interface.
+    It is the equivalent to ``load_nanobind_compiled_sdfg()` but for `ctypes`.
+
+    Note that this is a low level function and it is highly recommended to use
+    ``load_precompiled_sdfg()`` which handles both interface types.
 
     :param library_path: Path to the compiled library representing ``sdfg``.
     :param sdfg: The SDFG, will be referenced by the returned ``CompiledSDFG``.
@@ -606,16 +861,25 @@ def get_program_handle(
     assert libstub_path.is_file()
 
     lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
-    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+    return csd.CtypesCompiledSDFG(sdfg, lib, sdfg.arg_names)
+
+
+def get_program_handle(*args, **kwargs) -> csd.CtypesCompiledSDFG:
+    warnings.warn(
+        'Used deprecated ``get_program_handle()`` function, use ``load_ctypes_compiled_sdfg()`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return load_ctypes_compiled_sdfg(*args, **kwargs)
 
 
 def load_from_file(sdfg, binary_filename):
     warnings.warn(
-        'Used deprecated ``load_from_file()`` function, use ``get_program_handle()`` instead.',
+        'Used deprecated ``load_from_file()`` function, use ``load_ctypes_compiled_sdfg()`` instead.',
         category=DeprecationWarning,
         stacklevel=2,
     )
-    return get_program_handle(library_path=binary_filename, sdfg=sdfg)
+    return load_ctypes_compiled_sdfg(library_path=binary_filename, sdfg=sdfg)
 
 
 @overload
@@ -681,6 +945,7 @@ def get_binary_name(
     object_folder: Union[pathlib.Path, str],
     sdfg_name: str,
     lib_extension: Optional[str] = None,
+    lib_prefix: Optional[str] = None,
     folder_mode: Optional[str] = None,
 ) -> pathlib.Path:
     """Returns the supposed location of the compiled library given the boundary conditions.
@@ -691,11 +956,16 @@ def get_binary_name(
                           If not given the config option `compiler.library_extension` is used.
     :param folder_mode: The save mode for the build folder. If not given the config
                         option `compiler.build_folder_mode` is used.
+    :param lib_prefix: The prefix name for the library. If not given the config
+                        option `compiler.library_prefix` is used.
     """
     if lib_extension is None:
         lib_extension = Config.get('compiler', 'library_extension')
+    if lib_prefix is None:
+        lib_prefix = Config.get('compiler', 'library_prefix')
     if folder_mode is None:
         folder_mode = Config.get('compiler', 'build_folder_mode')
+    assert lib_extension and lib_prefix and folder_mode
 
     folder_hirarchy = [object_folder]
     if folder_mode == 'development':
@@ -706,24 +976,26 @@ def get_binary_name(
     else:
         raise ValueError(f"Unknown folder mode '{folder_mode}' found.")
 
-    return pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
+    return pathlib.Path(os.path.join(*folder_hirarchy, f'{lib_prefix}{sdfg_name}.{lib_extension}'))
 
 
 def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
     """Returns the supposed location of the compiled stub library given the path of the compiled library.
     """
+    # Base assumption of the function is that the stub is located right next to the sdfg so file.
+    #  This allows us to not figuring out which folder mode is active.
     sdfg_lib_path = pathlib.Path(sdfg_lib_path)
     parent = sdfg_lib_path.parent
     lib_name = sdfg_lib_path.name
-    assert lib_name.startswith('lib') and len(lib_name) > 3
-
-    return sdfg_lib_path.parent / ('libdacestub_' + lib_name[3:])
+    lib_prefix = Config.get('compiler', 'library_prefix')
+    assert lib_name.startswith(lib_prefix)
+    return sdfg_lib_path.parent / (lib_prefix + 'dacestub_' + lib_name[len(lib_prefix):])
 
 
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
     sdfg: Optional['dace.SDFG'] = None,
-) -> csd.CompiledSDFG:
+) -> csd.CtypesCompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
@@ -755,8 +1027,102 @@ def load_precompiled_sdfg(
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
 
-    return get_program_handle(library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode),
-                              sdfg=sdfg)
+    library_path = get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode)
+
+    # Dispatch on the interface that produced the folder (INTERFACE marker).
+    if get_program_interface(folder) == 'nanobind':
+        return load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg, build_folder=folder)
+    return load_ctypes_compiled_sdfg(library_path=library_path, sdfg=sdfg)
+
+
+def safe_call_precompiled(sdfg, args, kwargs) -> None:
+    """Runs an already-compiled SDFG in a separate process, surviving crashes.
+
+    A crash in the SDFG (e.g. a segfault) takes down only the child process and
+    is reported here as ``RuntimeError``, instead of killing the caller. Output
+    travels through the in/out arguments: the mutated arrays are copied back
+    into the caller's ``args``/``kwargs`` after the child finishes.
+
+    Works for any compiled SDFG regardless of the interface that produced it.
+
+    A single temporary file is the two-way channel between parent and child:
+    the parent writes the pickled inputs, the child overwrites it in place with
+    the mutated arguments. It stays open (auto-deleted on exit) for the whole
+    exchange; the child reopens it by name, which is fine on POSIX.
+
+    :param sdfg: The compiled SDFG to run; its ``build_folder`` must hold the
+                 artifact.
+    :param args: Positional call arguments.
+    :param kwargs: Keyword call arguments.
+    :raises NotImplementedError: If the SDFG has return values (they cannot be
+                                 transmitted through the argument channel).
+    :raises RuntimeError: If the child process exits with a non-zero code.
+    """
+    if any(name == '__return' or name.startswith('__return_') for name in sdfg.arrays.keys()):
+        raise NotImplementedError('safe_call() does not support return values.')
+
+    # Absolute, so the child resolves it regardless of its working directory.
+    folder = os.path.abspath(str(sdfg.build_folder))
+    with tempfile.NamedTemporaryFile(suffix='.pickle') as channel:
+        # The parent's cwd travels along: the child chdirs to it after its
+        # imports, so cwd-relative artifact paths baked into the binary (the
+        # instrumentation report goes to ``<build_folder>/perf``, which is
+        # usually relative) resolve to the same place the parent will look.
+        pickle.dump({'folder': folder, 'cwd': os.getcwd(), 'sdfg': sdfg, 'args': args, 'kwargs': kwargs}, channel)
+        channel.flush()
+
+        # START from a neutral directory: a cwd that contains a ``dace``
+        # directory would shadow the installed package as a namespace package
+        # and break ``import dace`` in the child. Once the import is done the
+        # child chdirs to the parent's cwd (see _safe_call_subprocess_main) -
+        # harmless then, since ``dace`` is already in the child's sys.modules.
+        result = subprocess.run([
+            sys.executable, '-c', 'from dace.codegen.compiler import _safe_call_subprocess_main; '
+            f'_safe_call_subprocess_main(r"{channel.name}")'
+        ],
+                                cwd=os.path.dirname(channel.name))
+        if result.returncode != 0:
+            raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
+
+        channel.seek(0)
+        data = pickle.load(channel)
+
+    for i in range(len(args)):
+        if hasattr(args[i], '__setitem__'):
+            args[i].__setitem__(slice(None), data['args'][i])
+    for k in kwargs:
+        if hasattr(kwargs[k], '__setitem__'):
+            kwargs[k].__setitem__(slice(None), data['kwargs'][k])
+
+
+def _safe_call_subprocess_main(pickle_path: str) -> None:
+    """Child entry point for :func:`safe_call_precompiled`.
+
+    Reads the pickled inputs from the channel file, runs the reloaded SDFG
+    (mutating the in/out arrays), then rewinds the same file and overwrites it
+    with the mutated arguments for the parent.
+    """
+    with open(pickle_path, 'r+b') as channel:
+        data = pickle.load(channel)
+
+        # The child was started in a neutral directory so ``import dace``
+        # could not be shadowed; now that imports are done, adopt the parent's
+        # cwd so cwd-relative artifact paths (the instrumentation report)
+        # resolve exactly as they do for the parent.
+        os.chdir(data['cwd'])
+
+        csdfg = load_precompiled_sdfg(data['folder'], data['sdfg'])
+        csdfg(*data['args'], **data['kwargs'])
+
+        # Finalize explicitly: __dace_exit is what saves the instrumentation
+        # report, and on the nanobind interface nothing runs it at process
+        # exit (extension modules are never unloaded, unlike ctypes' DLL
+        # teardown). Deterministic on both interfaces.
+        csdfg.finalize()
+
+        channel.seek(0)
+        channel.truncate()
+        pickle.dump({'args': data['args'], 'kwargs': data['kwargs']}, channel)
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:

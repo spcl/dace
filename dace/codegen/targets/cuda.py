@@ -258,6 +258,11 @@ class CUDACodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
+        # Deliberately declared WITHOUT an initializer: CompiledSDFG.get_state_struct() recovers
+        # the layout by parsing these declarations, and its field regex is anchored at the end of
+        # the declaration, so a `= nullptr` suffix stops the parse dead and silently drops every
+        # field after this one. The pointer is zeroed by value-initializing the whole state
+        # (`new T()` in framecode) instead, which DACE_GPU_CHECK relies on.
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # Collect all defined symbols and argument lists with one traversal
@@ -399,9 +404,9 @@ class CUDACodeGen(TargetCodeGenerator):
             poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
             pool_header = """
     {backend}MemPool_t mempool;
-    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, 0));
     uint64_t threshold = {poolcfg_threshold};
-    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
@@ -413,6 +418,7 @@ class CUDACodeGen(TargetCodeGenerator):
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -434,14 +440,22 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // Anything pending in the runtime's error slot on entry is not ours; see
+    // __dace_gpu_drain_error. The CUB temp-storage size query that the init code often emits
+    // below is the usual victim - it is the first checked call in many generated modules.
+    __dace_gpu_drain_error(__state);
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    // The memory-pool setup runs AFTER the context exists: DACE_GPU_CHECK records into
+    // __state->gpu_context, so a failure before this point could not be recorded (and, before
+    // gpu_context was given an initializer, could not even be checked safely).
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -475,6 +489,32 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
 
     delete __state->gpu_context;
     return __err;
+}}
+
+// Discard whatever the runtime's per-thread error slot already holds, and say what was discarded.
+//
+// That slot is shared with every other GPU user in this process - CuPy, another SDFG, any library -
+// so a value left in it is NOT ours. Leaving it there makes the next DACE_GPU_CHECK-wrapped call
+// report someone else's failure as its own, which is misleading twice over: it blames an innocent
+// call, and it hides whoever actually failed.
+//
+// Called on entry to __dace_init_cuda AND on entry to every __program_<name> invocation, since
+// initialization happens once while contamination can arrive between any two calls.
+//
+// Only NON-STICKY errors can be discarded this way: a sticky one (illegal access, corrupted
+// context) survives gpuGetLastError() and is reported through the normal path by the next real
+// call. Reporting rather than throwing is deliberate - a pending error is by definition not this
+// SDFG's, and failing here would penalize the innocent SDFG this exists to protect.
+//
+// Must not touch __state->gpu_context: __dace_init_cuda calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;  // signature parity with the other exported entry points; see the note above
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
 }}
 
 // The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the

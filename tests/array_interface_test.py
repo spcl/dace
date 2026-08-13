@@ -1,7 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 
 import dace
+
+skip_arraylike_args_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion)')
 
 
 class ArrayWrapper:
@@ -14,6 +19,7 @@ class ArrayWrapper:
         return self.array.__array_interface__
 
 
+@skip_arraylike_args_on_nanobind
 def test_array_interface_input():
 
     @dace.program

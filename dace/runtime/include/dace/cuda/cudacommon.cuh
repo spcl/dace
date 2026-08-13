@@ -16,13 +16,18 @@ typedef cudaError_t gpuError_t;
 #define gpuGetErrorString cudaGetErrorString
 #endif
 
+// The context guard covers the calls checked during __dace_init_cuda before the context has been
+// constructed (the runtime warm-up allocation). The message is printed either way; only the
+// recording needs a context to record into.
 #define DACE_GPU_CHECK(err)                                               \
   do {                                                                    \
     gpuError_t errr = (err);                                              \
     if (errr != (gpuError_t)0) {                                          \
       printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
              gpuGetErrorString(errr), errr);                              \
-      __state->gpu_context->record_error(errr);                           \
+      if (__state->gpu_context) {                                         \
+        __state->gpu_context->record_error(errr);                         \
+      }                                                                   \
     }                                                                     \
   } while (0)
 
