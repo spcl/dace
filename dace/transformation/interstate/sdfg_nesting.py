@@ -199,6 +199,30 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if graph.in_degree(e.src) > 0:
                         return False
 
+        # Do not inline if an inner/outer connector pair disagrees on vector-ness.
+        # The current memlet reoffset does not scale scalar indices for vector elements,
+        # so inlining would access the wrong memory locations.
+        for edge in graph.in_edges(nested_sdfg):
+            if edge.data.is_empty():
+                continue
+            src = graph.memlet_path(edge)[0].src
+            if not isinstance(src, nodes.AccessNode):
+                continue
+            inner_dtype = nsdfg.arrays[edge.dst_conn].dtype
+            outer_dtype = sdfg.arrays[src.data].dtype
+            if isinstance(inner_dtype, dtypes.vector) != isinstance(outer_dtype, dtypes.vector):
+                return False
+        for edge in graph.out_edges(nested_sdfg):
+            if edge.data.is_empty():
+                continue
+            dst = graph.memlet_path(edge)[-1].dst
+            if not isinstance(dst, nodes.AccessNode):
+                continue
+            inner_dtype = nsdfg.arrays[edge.src_conn].dtype
+            outer_dtype = sdfg.arrays[dst.data].dtype
+            if isinstance(inner_dtype, dtypes.vector) != isinstance(outer_dtype, dtypes.vector):
+                return False
+
         return True
 
     def _remove_edge_path(self,
