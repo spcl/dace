@@ -115,11 +115,19 @@ def test_partial_is_thread_local_register(kind):
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_half2_tile_reduce_fires(kind):
-    """The within-thread half2->half fold is a ``TileReduce`` of width 2."""
+    """The within-thread half2->half fold is a ``TileReduce`` of width 2.
+
+    GPU K=1's default remainder strategy is ``branched_masked_tail``
+    (:class:`FuseBranchedTailRemainder`): a non-divisible ``N`` splits the map into a
+    mask-free interior body and a masked tail body, each carrying its OWN complete
+    tile-op sequence -- including its own within-thread fold -- reused verbatim (see
+    that pass's docstring). So a non-divisible extent fires TWO width-2 TileReduce
+    nodes, one per body, not one.
+    """
     sdfg = _vectorized(_PROGRAMS[kind][0])
     reds = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileReduce)]
-    assert len(reds) == 1 and list(reds[0].widths) == [2], \
-        f"expected one width-2 TileReduce; got {[r.widths for r in reds]}"
+    assert len(reds) == 2 and all(list(r.widths) == [2] for r in reds), \
+        f"expected two width-2 TileReduce nodes (mask-free body + masked-tail body); got {[r.widths for r in reds]}"
 
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))

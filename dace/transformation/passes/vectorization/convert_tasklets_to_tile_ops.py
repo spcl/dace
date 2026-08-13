@@ -2012,6 +2012,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if lib_node is not None:
             any_tile_in = False
             for e in inner_state.in_edges(lib_node):
+                # The gating predicate (``_mask``) is always tile-shape by construction and
+                # carries no data-operand kind -- counting it here widens a Scalar/Symbol-only
+                # op (e.g. a masked constant broadcast) just because it happens to be masked.
+                if e.dst_conn == "_mask":
+                    continue
                 if not isinstance(e.src, AccessNode):
                     continue
                 src_desc = sdfg.arrays.get(e.src.data)
