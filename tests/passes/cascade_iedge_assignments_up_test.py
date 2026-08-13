@@ -255,30 +255,39 @@ def test_conditional_branch_refuses_l5():
 
 
 # ----------------------------------------------------------------------
-# T6. Cross-NSDFG hoist (L6): v1 refuses, documenting future-work xfail
+# T6. Cross-NSDFG hoist (L6): v1 hoists within the inner SDFG, refuses to cross
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True,
-                   reason=('L6 NSDFG-boundary passthrough is deferred to a v2 of '
-                           'CascadeInterstateEdgeAssignmentsUp (see CASCADE_UP_DESIGN.md). '
-                           'v1 walks within one SDFG only.'))
-def test_cross_nsdfg_hoist_l6():
+def test_cross_nsdfg_hoist_l6_stops_at_boundary():
     """An assignment inside a NestedSDFG, whose rhs references an outer
-    symbol -- v2 will hoist past the NSDFG via ``symbol_mapping`` and
-    drop the now-shadowed inner declaration. v1 refuses."""
+    symbol -- v1 hoists it as far as legal WITHIN the inner SDFG (out of
+    ``inner_loop``, up to ``inner``'s own root) but refuses to cross the
+    NSDFG boundary into ``outer`` (L6: the ``parent_graph`` walk in
+    ``_find_destination`` stops once it leaves the owning SDFG). A v2 that
+    routes through ``symbol_mapping`` and drops the shadowed inner
+    declaration is future work; this pins the current, intended refusal."""
     outer = dace.SDFG('outer')
     outer.add_symbol('K', dace.int64)
+    outer.add_symbol('N', dace.int64)
     inner = dace.SDFG('inner')
     inner.add_symbol('K', dace.int64)
     inner.add_symbol('kp1', dace.int64)
+    inner.add_symbol('N', dace.int64)
     loop = _make_loop_with_iedge('inner_loop', 'kp1', 'K + 1')
     inner.add_node(loop, is_start_block=True)
     st = outer.add_state('st', is_start_block=True)
-    st.add_nested_sdfg(inner, inputs=set(), outputs=set(), symbol_mapping={'K': 'K'})
+    st.add_nested_sdfg(inner, inputs=set(), outputs=set(), symbol_mapping={'K': 'K', 'N': 'N'})
 
     moved = _apply(outer)
-    assert moved >= 1  # would-be: 1 (hoisted across the NSDFG boundary)
+    assert moved == 1  # cleared inner_loop, landed at inner's own root
+
+    assert not _assignments_inside_loops(inner), 'assignment did not clear inner_loop'
+    inner_root = [(lhs, rhs) for e in inner.edges() for lhs, rhs in e.data.assignments.items()]
+    assert ('kp1', 'K + 1') in inner_root, 'assignment did not land at the inner SDFG root'
+    outer_root = [(lhs, rhs) for e in outer.edges() for lhs, rhs in e.data.assignments.items()]
+    assert ('kp1', 'K + 1') not in outer_root, 'v1 must not cross the NSDFG boundary'
+    outer.validate()
 
 
 # ----------------------------------------------------------------------
