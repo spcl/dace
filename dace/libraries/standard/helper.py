@@ -46,7 +46,8 @@ def collapse_shape_and_strides(
     """Drop length-1 dimensions from a (subset, strides) pair.
 
     Surviving strides are scaled by the subset step (``stride * s``) to describe the access as a
-    view into the parent array.
+    view into the parent array. A tiled range (``begin:end:tile_stride:tile_size``) is split into
+    two dimensions so that the inner tile elements keep their contiguous stride.
 
     Lengths come from ``subset.size()``, which CEILS the step division. Flooring it instead
     under-counts every strided range whose extent is not a multiple of the step -- ``1:2*H:2``
@@ -58,8 +59,16 @@ def collapse_shape_and_strides(
     """
     collapsed_shape = []
     collapsed_strides = []
-    for length, (_b, _e, s), stride in zip(subset.size(), subset, strides):
-        if length != 1:
+    for length, (_b, _e, s), stride, tile_size in zip(subset.size(), subset, strides, subset.tile_sizes):
+        if length == 1:
+            continue
+        if tile_size != 1:
+            tile_count = dace.symbolic.simplify(length / tile_size)
+            collapsed_shape.append(tile_count)
+            collapsed_strides.append(stride * s)
+            collapsed_shape.append(tile_size)
+            collapsed_strides.append(stride)
+        else:
             collapsed_shape.append(length)
             collapsed_strides.append(stride * s)
     return collapsed_shape, collapsed_strides

@@ -279,7 +279,7 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
         sdfg.add_scalar(CURRENT_STREAM_NAME, dtypes.gpuStream_t, transient=False)
 
     state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
-    map_lengths = [s for s in in_subset.size() if s != 1]
+    map_lengths = [s for s in in_shape_collapsed if s != 1]
 
     return CopyExpansion(sdfg=sdfg,
                          state=state,
@@ -359,27 +359,11 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
     else:
         # Rank-mismatch reshape: 1-D walker over the total element count, per-side delinearization
-        # (_delinearized_index). Needs both endpoints packed same major order (both C or both
-        # Fortran) and contiguous subsets -- mixed C/F is a transpose; non-packed/non-contiguous
-        # has no flat order.
-        if not _both_packed_same_layout(inp, out):
-            raise ValueError(
-                f"MappedTasklet rank-mismatched copy ({tuple(in_shape)} -> {tuple(out_shape)}) requires "
-                f"both endpoints to be packed in the same major order (both C-contiguous or both "
-                f"Fortran-contiguous). Got src '{ctx.inp_name}' strides {tuple(inp.strides)} on shape "
-                f"{tuple(inp.shape)} and dst '{ctx.out_name}' strides {tuple(out.strides)} on shape "
-                f"{tuple(out.shape)}. Mixed layouts are transposes -- use a same-rank Tasklet copy instead.")
-        in_contig = ctx.in_subset.is_contiguous_subset(inp)
-        out_contig = ctx.out_subset.is_contiguous_subset(out)
-        if not (in_contig and out_contig):
-            raise ValueError(
-                f"MappedTasklet rank-mismatched copy ({tuple(in_shape)} -> {tuple(out_shape)}) requires "
-                f"contiguous subsets on both endpoints (the 1-D walker treats the data as a flat sequence). "
-                f"Got src subset {ctx.in_subset} (contiguous: {in_contig}) on shape {tuple(inp.shape)} and "
-                f"dst subset {ctx.out_subset} (contiguous: {out_contig}) on shape {tuple(out.shape)}.")
-        layout = 'C' if inp.is_packed_c_strides() else 'F'
-
-        total = ctx.in_subset.num_elements_exact()
+        # (_delinearized_index) using the collapsed shape of each side. The wrapper arrays carry
+        # the actual collapsed strides, so walking them in C-order reproduces the logical element
+        # order for any subset; this covers tiled ranges where one side splits into more dimensions
+        # than the other.
+        total = ctx.in_subset.num_elements()
         b_i_name = "__b_i"
         b_i = symbolic.symbol(b_i_name)
         map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
@@ -387,7 +371,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         def _side_access(arr_name, shape):
             if len(shape) == 1:
                 return f"{arr_name}[{b_i_name}]"
-            idx = _delinearized_index(b_i, shape, layout)
+            idx = _delinearized_index(b_i, shape, 'C')
             return f"{arr_name}[{','.join(sym2cpp(e) for e in idx)}]"
 
         inputs = {inner_in: dace.memlet.Memlet(_side_access(ctx.inp_name, in_shape))}
