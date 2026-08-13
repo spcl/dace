@@ -110,7 +110,12 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
     # region's parent graph, executed exactly once before the outer loop.
     count += _hoist_invariant_child_regions(loop)
 
-    # (2) Tasklet hoist in the body's start state. ConditionalBlocks and
+    # (2) A body the hoist above emptied gets its "hull" state here, before anything asks for the
+    # region's start block -- an empty region has none, and the query raises rather than answering.
+    if len(loop.nodes()) == 0:
+        loop.add_state(f"{loop.label}_licm_hull", is_start_block=True)
+
+    # (3) Tasklet hoist in the body's start state. ConditionalBlocks and
     # deeper-nested states are skipped (unconditional-execution gate).
     variant_syms = _variant_symbols_of_loop(loop)
     variant_data = _written_data_in_region(loop)
@@ -125,11 +130,6 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
             if not _hoist_tasklet_to_preheader(start, tasklet, preheader):
                 break
             count += 1
-
-    # (3) If the body is empty after hoisting, leave an empty "hull" state so
-    # the CFG remains well-formed.
-    if len(loop.nodes()) == 0:
-        loop.add_state(f"{loop.label}_licm_hull", is_start_block=True)
 
     return count
 
