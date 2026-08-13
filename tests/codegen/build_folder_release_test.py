@@ -48,6 +48,11 @@ def run_child(body: str, tmp_path, cache: str) -> str:
         """))
     roots = [str(pathlib.Path(dace.__file__).parent.parent), str(pathlib.Path(__file__).parent)]
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(roots))
+    # Config.get() lets a DACE_cache env var win over set_temporary() (dace/config.py), so a
+    # surrounding DACE_cache=... (CI pins one for the whole matrix leg) would silently override
+    # the ``cache`` argument above in the child. Same fix as custom_build_folder_test.py's
+    # ``unlaunched`` fixture.
+    env.pop('DACE_cache', None)
     out = subprocess.run([sys.executable, str(script)], check=True, capture_output=True, text=True, env=env)
     return out.stdout.strip()
 
@@ -93,7 +98,10 @@ def test_assigned_folder_is_kept(tmp_path):
     assert os.path.isdir(folder), 'dropped a folder the caller assigned'
 
 
-def test_disposable_predicate_follows_the_cache_policy(tmp_path):
+def test_disposable_predicate_follows_the_cache_policy(tmp_path, monkeypatch):
+    # A surrounding DACE_cache=... wins over set_temporary() below (dace/config.py Config.get()),
+    # so it must be cleared here or every policy would read back as whatever the env var says.
+    monkeypatch.delenv('DACE_cache', raising=False)
     sdfg = addone.to_sdfg(simplify=True)
     for policy, expected in (('unique', True), ('name', False), ('hash', False), ('single', False)):
         with dace.config.set_temporary('cache', value=policy):
