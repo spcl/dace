@@ -53,7 +53,6 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
                               arrays_to_replace: Set[str]):
     # Need to collect all views that depend on the arrays and add them to the set
     view_sets = _get_array_view_paths(sdfg, arrays_to_replace)
-    print(view_sets)
 
     for k, view_set in view_sets.items():
         arrays_to_replace = arrays_to_replace.union(view_set)
@@ -75,8 +74,10 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
                         new_replacements.add(ie.dst_conn)
                 for oe in state.out_edges(node):
                     if oe.data is not None and oe.data.data in arrays_to_replace:
-                        new_replacements.add(oe.dst_conn)
-                _change_fp_type_recursive(sdfg, src_fptype, dst_fptype, new_replacements)
+                        # The connector on an out edge belongs to the SOURCE, i.e. this node.
+                        new_replacements.add(oe.src_conn)
+                # Connectors name arrays of the NESTED SDFG, not of the enclosing one.
+                _change_fp_type_recursive(node.sdfg, src_fptype, dst_fptype, new_replacements)
 
 
 def change_fptype(sdfg: dace.SDFG,
