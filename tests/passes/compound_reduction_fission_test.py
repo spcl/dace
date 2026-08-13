@@ -114,9 +114,8 @@ def _delta_and_accumulate(a: dace.float64[N], b: dace.float64[N], s_out: dace.fl
     s_out[0] = s
 
 
-@pytest.mark.xfail(reason="Same as test_compound_body_splits_via_loop_fission: LoopFission "
-                   "should split the per-element write from the accumulator update.",
-                   strict=True)
+# The minimal shape splits: LoopFission separates the per-element write from the accumulator update.
+# The fuller TSVC s319 shape above still does not, which is what keeps that one xfail.
 def test_minimal_delta_then_accumulate_splits():
     sdfg = _delta_and_accumulate.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
