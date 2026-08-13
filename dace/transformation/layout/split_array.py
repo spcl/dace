@@ -298,6 +298,10 @@ class SplitArray(ppl.Pass):
                 new_subset_expr.append((b, e, s))
 
         new_name = f"{edge.data.data}_{'_'.join(map(str, new_name_expr))}"
+        # Mirror the descriptor rule above: a fully-split element is a length-1 array, so its
+        # memlet keeps one dimension. A rank-0 subset here fails validation against shape (1,).
+        if not new_subset_expr:
+            new_subset_expr = [(0, 0, 1)]
         return new_name, dace.subsets.Range(new_subset_expr)
 
     def _get_data_dependent_dims(
