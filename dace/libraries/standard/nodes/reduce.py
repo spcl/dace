@@ -97,6 +97,23 @@ class ExpandReducePure(pm.ExpandTransformation):
         axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         axes = [axis for axis in axes if axis in isqdim]
 
+        # The maps below are named ``_o<n>`` / ``_i<n>``. When a symbol of that name is already defined
+        # where this node sits -- a reduce nested inside a map over ``_o0``, which is what
+        # ReduceExpansion's out-transient path builds -- the inner map rebinds it, and the boundary
+        # memlet naming the OUTER symbol then reads the inner map's value. That is silent: every output
+        # element comes out as the first one. Suffix the names until they are free at this scope.
+        taken = {str(s) for s in state.symbols_defined_at(node).keys()}
+        suffix = ''
+        while any('_o%d%s' % (i, suffix) in taken or '_i%d%s' % (i, suffix) in taken
+                  for i in range(max(input_dims, output_dims) + 1)):
+            suffix += '_'
+
+        def oname(i: int) -> str:
+            return '_o%d%s' % (i, suffix)
+
+        def iname(i: int) -> str:
+            return '_i%d%s' % (i, suffix)
+
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
@@ -139,11 +156,11 @@ class ExpandReducePure(pm.ExpandTransformation):
 
             # Add initialization as a map
             init_state.add_mapped_tasklet('reduce_init', {
-                '_o%d' % i: '0:%s' % symstr(d)
+                oname(i): '0:%s' % symstr(d)
                 for i, d in enumerate(outedge.data.subset.size())
             }, {},
                                           '__out = %s' % node.identity,
-                                          {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in osqdim]))},
+                                          {'__out': dace.Memlet.simple('_out', ','.join([oname(i) for i in osqdim]))},
                                           external_edges=True)
         else:
             nstate = nsdfg.add_state()
@@ -156,27 +173,27 @@ class ExpandReducePure(pm.ExpandTransformation):
             input_subset = []
             for i in isqdim:
                 if i in axes:
-                    input_subset.append('_i%d' % ictr)
+                    input_subset.append(iname(ictr))
                     ictr += 1
                 else:
-                    input_subset.append('_o%d' % octr)
+                    input_subset.append(oname(octr))
                     octr += 1
 
             ome, omx = nstate.add_map('reduce_output', {
-                '_o%d' % i: '0:%s' % symstr(sz)
+                oname(i): '0:%s' % symstr(sz)
                 for i, sz in enumerate(outsubset.size())
             })
-            outm = dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
+            outm = dace.Memlet.simple('_out', ','.join([oname(i) for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = dace.Memlet.simple('_in', ','.join(input_subset))
         else:
             ome, omx = None, None
             outm = dace.Memlet.simple('_out', '0', wcr_str=node.wcr)
-            inmm = dace.Memlet.simple('_in', ','.join(['_i%d' % i for i in range(len(axes))]))
+            inmm = dace.Memlet.simple('_in', ','.join([iname(i) for i in range(len(axes))]))
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
         ime, imx = nstate.add_map('reduce_values', {
-            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            iname(i): '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
             for i, axis in enumerate(sorted(axes))
         })
 
@@ -233,6 +250,21 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         assert node.identity is not None
 
+        # Same naming hazard as in ExpandReducePure: a map named after a symbol already defined at this
+        # scope rebinds it, and the boundary memlet naming the outer one then reads the inner map's
+        # value -- silently, with every output element equal to the first.
+        taken = {str(sym) for sym in state.symbols_defined_at(node).keys()}
+        suffix = ''
+        while any('_o%d%s' % (i, suffix) in taken or '_i%d%s' % (i, suffix) in taken
+                  for i in range(max(input_dims, output_dims) + 1)):
+            suffix += '_'
+
+        def oname(i: int) -> str:
+            return '_o%d%s' % (i, suffix)
+
+        def iname(i: int) -> str:
+            return '_i%d%s' % (i, suffix)
+
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
@@ -259,17 +291,17 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         input_subset = []
         for i in isqdim:
             if i in axes:
-                input_subset.append('_i%d' % ictr)
+                input_subset.append(iname(ictr))
                 ictr += 1
             else:
-                input_subset.append('_o%d' % octr)
+                input_subset.append(oname(octr))
                 octr += 1
 
         ome, omx = nstate.add_map('reduce_output', {
-            '_o%d' % i: '0:%s' % symstr(sz)
+            oname(i): '0:%s' % symstr(sz)
             for i, sz in enumerate(outsubset.size())
         })
-        outm = dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))
+        outm = dace.Memlet.simple('_out', ','.join([oname(i) for i in range(output_dims)]))
         #wcr_str=node.wcr)
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
@@ -283,7 +315,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
         ime, imx = nstate.add_map('reduce_values', {
-            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            iname(i): '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
             for i, axis in enumerate(sorted(axes))
         },
                                   schedule=dtypes.ScheduleType.Sequential)
