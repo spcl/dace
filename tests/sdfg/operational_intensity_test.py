@@ -139,7 +139,7 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]
     }, 21 / (13 * 3 * 8)),
     'nested_reuse': (nested_reuse, 1024, 64, {
         'N': 1024
-    }, 2048 / (3 * 1024 * 8 + 128)),
+    }, 2048 / (3 * 1024 * 8 + 64)),
     'mmm': (mmm, 20, 16, {
         'N': 24
     }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
