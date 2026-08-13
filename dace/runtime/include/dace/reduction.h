@@ -30,7 +30,9 @@
 #endif
 #endif
 
-#ifdef __HIPCC__
+// __HIP_DEVICE_COMPILE__, not __HIPCC__: on the NVIDIA platform hip_common.h defines __HIPCC__ in
+// the host pass too, and the intrinsics below are __device__ only there.
+#ifdef __HIP_DEVICE_COMPILE__
 // HIP supports the same set of atomic ops as CUDA SM 6.0+
 #define DACE_USE_GPU_ATOMICS
 #define DACE_USE_GPU_DOUBLE_ATOMICS
