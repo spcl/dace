@@ -365,12 +365,12 @@ namespace dace
 // answers ``max() == lowest() == infinity() == T()``, i.e. ZERO -- so a consumer that seeds a
 // min/max reduction identity that way (``libraries/torch/dispatchers``) silently folds into zero
 // instead of failing. Values are the IEEE binary16 / bfloat16 ones.
-#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, MAXV, MINV, EPSV,    \
-                       DENV)                                                                                        \
+#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, HAS_INF, MAXV, MINV, \
+                       EPSV, DENV)                                                                                  \
     template <>                                                                                                     \
     struct numeric_limits<::dace::TYPE> {                                                                           \
         static constexpr bool is_specialized = true, is_signed = true, is_integer = false;                          \
-        static constexpr bool is_exact = false, has_infinity = true, has_quiet_NaN = true;                          \
+        static constexpr bool is_exact = false, has_infinity = HAS_INF, has_quiet_NaN = true;                         \
         static constexpr bool has_signaling_NaN = false, is_bounded = true, is_modulo = false;                      \
         static constexpr bool is_iec559 = IEC, traps = false, tinyness_before = false;                              \
         static constexpr int radix = 2, digits = DIGITS, digits10 = DIG10, max_digits10 = MAXDIG10;                 \
@@ -389,10 +389,14 @@ namespace dace
     }
 namespace std
 {
-    DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, 6.5504e+4f, 6.103515625e-05f, 9.765625e-04f,
+    DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, true, 6.5504e+4f, 6.103515625e-05f, 9.765625e-04f,
                    5.9604644775390625e-08f);
-    DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, false, 3.38953139e+38f, 1.17549435e-38f, 7.8125e-03f,
+    DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, false, true, 3.38953139e+38f, 1.17549435e-38f, 7.8125e-03f,
                    9.18354962e-41f);
+    DACE_LP_LIMITS(float8_e5m2, 3, 0, 1, -13, -4, 16, 4, false, true, 5.7344e+4f, 6.103515625e-05f, 2.5e-01f,
+                   1.52587890625e-05f);
+    DACE_LP_LIMITS(float8_e4m3fn, 4, 0, 2, -5, -2, 9, 2, false, false, 4.48e+2f, 1.5625e-02f, 1.25e-01f,
+                   1.953125e-03f);
 }
 #undef DACE_LP_LIMITS
 
@@ -402,6 +406,10 @@ static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) ==
               std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::max()) == 0x7B &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::denorm_min()) == 0x01, "e5m2 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::max()) == 0x7E &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::denorm_min()) == 0x01, "e4m3fn limits");
 #endif
 
 #endif  // __DACE_TYPES_H
