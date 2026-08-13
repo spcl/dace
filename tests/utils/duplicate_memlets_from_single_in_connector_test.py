@@ -73,7 +73,7 @@ def run_comparison(sdfg1, sdfg2, arrays, params):
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
 def test_jacobi2d(apply_only_if_subsets_not_equal: bool):
-    sdfg = jacobi2d.to_sdfg()
+    sdfg = jacobi2d.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
@@ -101,7 +101,7 @@ def test_jacobi2d(apply_only_if_subsets_not_equal: bool):
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
 def test_overlapping_access(apply_only_if_subsets_not_equal: bool):
-    sdfg = overlapping_access.to_sdfg()
+    sdfg = overlapping_access.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
@@ -124,7 +124,7 @@ def test_overlapping_access(apply_only_if_subsets_not_equal: bool):
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
 def test_non_overlapping_access(apply_only_if_subsets_not_equal: bool):
-    sdfg = non_overlapping_access.to_sdfg()
+    sdfg = non_overlapping_access.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
@@ -150,7 +150,7 @@ def test_non_overlapping_access(apply_only_if_subsets_not_equal: bool):
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
 def test_overlapping_access_with_previous_write(apply_only_if_subsets_not_equal: bool):
-    sdfg = overlapping_access_with_previous_write.to_sdfg()
+    sdfg = overlapping_access_with_previous_write.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
@@ -173,7 +173,7 @@ def test_overlapping_access_with_previous_write(apply_only_if_subsets_not_equal:
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
 def test_overlapping_access_with_intermediate_access_node(apply_only_if_subsets_not_equal: bool):
-    sdfg = overlapping_with_intermediate_access_node.to_sdfg()
+    sdfg = overlapping_with_intermediate_access_node.to_sdfg(simplify=True)
     sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
