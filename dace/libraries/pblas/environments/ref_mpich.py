@@ -15,7 +15,7 @@ class ScaLAPACKMPICH:
     cmake_libraries = ['libscalapack-mpich.so']
     cmake_files = []
 
-    headers = ["../include/scalapack.h"]
+    headers = ["mpi.h", "../include/scalapack.h"]
     state_fields = [
         "int __scalapack_context;", "int __scalapack_rank, __scalapack_size;",
         "int __scalapack_prows = 0, __scalapack_pcols = 0;", "int __scalapack_myprow = 0, __scalapack_mypcol = 0;",
@@ -34,7 +34,10 @@ class ScaLAPACKMPICH:
     }}\n
     """
     finalize_code = """
-    if (__state->__scalapack_grid_init) {{
+    // Cblacs_gridexit frees the grid communicator; illegal once MPI is finalized.
+    int __scalapack_mpi_finalized = 0;
+    MPI_Finalized(&__scalapack_mpi_finalized);
+    if (__state->__scalapack_grid_init && !__scalapack_mpi_finalized) {{
         Cblacs_gridexit(__state->__scalapack_context);
     }}
     // Cblacs_exit(__state->__int_zero);
