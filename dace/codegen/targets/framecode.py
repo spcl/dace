@@ -296,8 +296,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # calls. Declared rather than included, since it lives in the generated .cu.
         gpu_drain_decl = ''
         gpu_drain_call = ''
-        # getattr: a user-registered code generator need not define target_name.
-        if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
+        # getattr: a user-registered code generator need not define target_name. Both GPU generators
+        # define the drain in their .cu, so both get the per-call declaration.
+        if any(
+                getattr(target, 'target_name', None) in ('cuda', 'experimental_cuda')
+                for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')
             gpu_drain_call = '    __dace_gpu_drain_error(__state);\n'

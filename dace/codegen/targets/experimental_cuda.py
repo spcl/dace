@@ -995,9 +995,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
             pool_header = f'''
     {self.backend}MemPool_t mempool;
-    {self.backend}DeviceGetDefaultMemPool(&mempool, 0);
+    DACE_GPU_CHECK({self.backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
+    DACE_GPU_CHECK({self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold));
 '''
         # Depending on `max_concurrent_streams` we decide how to allocate the streams
         if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
@@ -1022,6 +1022,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 DACE_EXPORTED int __dace_init_experimental_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_experimental_cuda({sdfg_state_name} *__state);
 DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
 
 {other_globalcode}
 
@@ -1041,6 +1042,19 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
+    // every library handle share it. Which physical GPU is the process's business: the visible-
+    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
+    // fixed at codegen time cannot do that -- every rank shares one build.
+    const int __dace_device = 0;
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
+        return 4;
+    }}
+
+    __dace_gpu_drain_error(__state);
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
@@ -1048,6 +1062,7 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
 
+    // After the context exists: DACE_GPU_CHECK records into it.
     {pool_header}
 
     // Create {backend} streams and events
@@ -1081,6 +1096,19 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 
     delete __state->gpu_context;
     return __err;
+}}
+
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
 }}
 
 // The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
