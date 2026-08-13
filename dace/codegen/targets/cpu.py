@@ -1831,6 +1831,69 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
+    def _map_body_is_leaf(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """True if the map's body holds no inner Map and no NestedSDFG.
+
+        Deliberately NOT recursive: a NestedSDFG disqualifies on sight, whatever it holds. A
+        single state's dataflow (what ``all_nodes_between`` walks) cannot directly contain a
+        loop -- that is control flow, not a dataflow node -- so a NestedSDFG is the only place a
+        loop could be hiding in this map's body, and refusing every NestedSDFG catches it
+        without inspecting one. Errs toward NOT simd: a map this call can't clear is simply left
+        alone.
+        """
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return False
+        for n in state.all_nodes_between(map_entry, map_exit):
+            if isinstance(n, (nodes.MapEntry, nodes.NestedSDFG)):
+                return False
+        return True
+
+    def _map_has_minmax_wcr(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """True if any WCR out-edge of this map's exit is a ``min``/``max`` reduction.
+
+        Their reduction combine is a NaN-preserving compare/branch that vectorizers do not
+        reliably fold, so neither rule below stamps ``simd`` over one.
+        """
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return False
+        for iedge in state.in_edges(map_exit):
+            if iedge.data is None or iedge.data.wcr is None:
+                continue
+            if operations.detect_reduction_type(iedge.data.wcr) in (dtypes.ReductionType.Min, dtypes.ReductionType.Max):
+                return True
+        return False
+
+    def _map_wcr_is_simd_safe(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """True if every WCR out-edge of this map's exit is a safe target for ``omp simd``
+        (vacuously true if the map has no WCR output).
+
+        Safe means: the target subset does NOT depend on this map's own iteration variable (a
+        fixed accumulator, not a SCATTER like a histogram ``hist[bin(a[i])] += 1`` -- a genuine
+        cross-iteration aliasing hazard the compiler cannot see statically), and the op is not
+        ``min``/``max`` (see :func:`_map_has_minmax_wcr`). Used for the Sequential rule only --
+        a Sequential map's WCR write lowers to a plain, non-atomic ``wcr_fixed::reduce``, so a
+        scatter target is a genuine hazard here (unlike the CPU_Multicore atomic path).
+        """
+        if self._map_has_minmax_wcr(state, map_entry):
+            return False
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return True
+        map_params = set(map_entry.map.params)
+        for iedge in state.in_edges(map_exit):
+            if iedge.data is None or iedge.data.wcr is None:
+                continue
+            if iedge.data.subset is not None:
+                free = {str(s) for s in iedge.data.subset.free_symbols}
+                if free & map_params:
+                    return False  # scatter: target depends on this map's own iteration variable
+        return True
+
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -1907,6 +1970,18 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
 
+            # Innermost CPU_Multicore map (leaf body -- see ``_map_body_is_leaf``): stamp
+            # ``simd`` onto the existing ``parallel for`` / ``for`` pragma. A scatter WCR edge
+            # does not block this: CPU_Multicore always lowers a conflicted WCR write through
+            # ``wcr_fixed::reduce_atomic`` (``#pragma omp atomic`` under the hood), which
+            # composes with ``simd`` by design. ``min``/``max`` still blocks it -- see
+            # ``_map_wcr_is_simd_safe``.
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                    and Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps')
+                    and self._map_body_is_leaf(state_dfg, node) and not self._map_has_minmax_wcr(state_dfg, node)):
+                head, sep, rest = map_header.partition(' for')
+                map_header = f'{head}{sep} simd{rest}'
+
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
@@ -1954,6 +2029,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+                elif (i == len(node.map.range) - 1 and node.map.schedule == dtypes.ScheduleType.Sequential
+                      and Config.get_bool('compiler', 'cpu', 'simd_sequential_maps')
+                      and self._map_body_is_leaf(state_dfg, node) and self._map_wcr_is_simd_safe(state_dfg, node)):
+                    # Innermost dimension only -- ``#pragma omp simd`` must immediately precede
+                    # the ``for``. See ``simd_sequential_maps`` in config_schema.yml.
+                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
