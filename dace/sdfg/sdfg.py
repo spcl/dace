@@ -647,6 +647,14 @@ class SDFG(ControlFlowRegion):
         setter=_sdfg_build_folder_setter,
     )
 
+    @property
+    def build_folder_is_default(self) -> bool:
+        """Whether the build folder follows the ``cache`` policy rather than being assigned.
+
+        An assigned folder belongs to whoever assigned it, so nothing may reclaim it.
+        """
+        return self._build_folder is None
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
