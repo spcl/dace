@@ -72,10 +72,19 @@ def test_parallelize_runs_once_idempotent():
             C[i] = A[i] + B[i]
 
     sdfg = add.to_sdfg(simplify=True)
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 11  # composed stages
-    # Re-running is harmless (nothing left to parallelize).
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 11
+    # Compare against the pipeline's own composed-stage list rather than a hardcoded number: the
+    # list is what apply_pass actually iterates, so this stays correct across stage additions or
+    # removals instead of going stale (LoopToReduce's normalization split into an explicit
+    # WCRToAugAssign stage, moving the count from 11 to 12, and this assertion missed it).
+    expected_stages = len(ParallelizePipeline()._stages())
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == expected_stages
+    # Re-running is harmless (nothing left to parallelize) and reports the same count.
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == expected_stages
     sdfg.validate()
+
+    # Structural: the loop actually became a map, not just "some stages ran".
+    assert _num_loops(sdfg) == 0
+    assert _num_maps(sdfg) > 0
 
     A = np.random.default_rng(2).random(8)
     B = np.random.default_rng(3).random(8)
