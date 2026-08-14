@@ -27,7 +27,7 @@ import sympy
 from dace import properties, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
@@ -116,6 +116,45 @@ def _loop_depth(loop: LoopRegion) -> int:
         depth += 1
         graph = graph.parent_graph
     return depth
+
+
+def _body_references_symbol(region: ControlFlowRegion, name: str) -> bool:
+    """Whether ``name`` is a free symbol anywhere in ``region``'s own blocks/edges. Recurses into
+    conditional branches and nested regions; does NOT look at ``region``'s own header if it is
+    itself a loop (``LoopRegion.used_symbols`` already strips its own iterate as "defined", which
+    is the wrong question here -- this asks whether the BODY reads it)."""
+    for block in region.nodes():
+        if isinstance(block, SDFGState):
+            if name in block.used_symbols(all_symbols=True):
+                return True
+        elif isinstance(block, ConditionalBlock):
+            for cond, branch in block.branches:
+                if cond is not None and name in cond.get_free_symbols():
+                    return True
+                if _body_references_symbol(branch, name):
+                    return True
+        elif isinstance(block, ControlFlowRegion):
+            if _body_references_symbol(block, name):
+                return True
+    for e in region.edges():
+        if e.data is not None and name in e.data.used_symbols(all_symbols=True):
+            return True
+    return False
+
+
+def _unfusable_branchy_body(loop: LoopRegion) -> bool:
+    """Whether unrolling ``loop`` would clone identical, branch-separated bodies that
+    ``_local_state_fusion`` cannot re-merge.
+
+    Unrolling substitutes the iterate, so a body that never names it clones verbatim across
+    iterations; if that body is also branchy, the clones stay split across conditional-branch
+    states and local state fusion re-merges none of them (npbench ``crc16``: 11 states -> 46, no
+    map gained -- pure unroll cost with nothing to show for it). A body that DOES name the iterate
+    is worth unrolling even when branchy: substitution can fold the guard to a constant and prune
+    a whole branch."""
+    if not any(isinstance(b, ConditionalBlock) for b in loop.all_control_flow_blocks()):
+        return False
+    return not _body_references_symbol(loop, loop.loop_variable)
 
 
 def _local_state_fusion(sdfg: SDFG, region) -> int:
@@ -209,6 +248,8 @@ class ShortLoopUnroll(ppl.Pass):
                 trip = _constant_trip_count(loop, sdfg)
                 if trip is None or trip > self.unroll_limit:
                     continue
+                if _unfusable_branchy_body(loop):
+                    continue  # would clone a branchy body local fusion cannot re-merge; leave for LoopToMap
                 parent = loop.parent_graph
                 # Applicability is decided FIRST, on its own, so a refusal is distinguishable
                 # from a failure raised part-way through ``apply``. A refusal leaves the graph
