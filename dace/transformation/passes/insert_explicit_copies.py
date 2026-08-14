@@ -29,7 +29,13 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     :returns: the destination :class:`~dace.subsets.Range`.
     """
     dst_range = subsets.Range.from_array(dst_desc)
-    if symbolic.equal(src_subset.num_elements(), dst_range.num_elements()) is True:
+    # The two counts come from different sources (a parsed memlet against a descriptor shape), so the
+    # same symbol name can carry two instances and cancel-based equality answers None on expressions
+    # that are literally identical. Equalize first, or a symbolic reshape falls to ``src_subset`` and
+    # the copy lands at the wrong offset -- for ``A[1:N-1, 0:M]`` into ``At[N-2, M]``, one row past
+    # the end of ``At``.
+    src_count, dst_count = symbolic.equalize_symbols(src_subset.num_elements(), dst_range.num_elements())
+    if symbolic.equal(src_count, dst_count) is True:
         return dst_range
     return src_subset
 
