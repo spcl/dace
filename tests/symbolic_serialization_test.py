@@ -710,6 +710,28 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
 
 
+def test_a_float_symbolic_property_keeps_its_value_through_a_load():
+    """Loading sets every property again, and setting one used to re-parse it through ``str``.
+
+    ``str`` prints a 53-bit ``Float`` at 15 significant digits, so a value needing 17 came back as a
+    DIFFERENT double: the FFT node's ``factor`` of 1/21 loaded as 0.0476190476190476. The value is
+    checked, not only the JSON, because the wire text is written through ``float()`` and would have
+    hidden the rounding until the loaded SDFG was saved again.
+    """
+    sdfg = dace.SDFG('float_property_roundtrip')
+    sdfg.add_array('A', [21], dace.float64)
+    state = sdfg.add_state()
+    edge = state.add_edge(state.add_read('A'), None, state.add_write('A'), None, dace.Memlet('A[0:21]'))
+    edge.data.volume = 1 / 21
+
+    j1 = sdfg.to_json()
+    loaded = dace.SDFG.from_json(j1)
+    (loaded_edge, ) = list(loaded.states())[0].edges()
+
+    assert float(loaded_edge.data.volume) == 1 / 21
+    assert json.dumps(j1, sort_keys=True) == json.dumps(loaded.to_json(), sort_keys=True)
+
+
 def test_stale_version_stamp_with_dollar_escape_still_deserializes():
     """A `$name` escape can only come from a writer at/after the wire version that introduced it
     (see `DaceSympySerializer._print_Symbol`): a DaCe symbol name is a valid Python identifier, so

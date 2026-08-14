@@ -1264,7 +1264,9 @@ class SymbolicProperty(Property):
         if (val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        # A sympy number is a ``Number`` too, and re-parsing it through ``str`` ROUNDS it to 15
+        # significant digits -- loading an SDFG whose factor is 1/21 stored back a different double.
+        if isinstance(val, (Number, str)) and not isinstance(val, symbolic.SymbolicExpr):
             val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)

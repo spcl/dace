@@ -12,6 +12,7 @@ import pytest
 
 import dace
 from dace import serialize
+from dace.config import set_temporary
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 
@@ -19,12 +20,25 @@ def context():
     return {'version': dace.__version__}
 
 
-def test_an_unregistered_type_still_becomes_a_placeholder():
-    """The documented case, unchanged: this build cannot know the type, so keep the raw JSON."""
-    with pytest.warns(UserWarning, match='Failed to deserialize element'):
-        got = serialize.from_json({'type': 'TransformationFromTheFuture', 'attributes': {}}, context())
-    assert isinstance(got, serialize.SerializableObject)
-    assert got.typename == 'TransformationFromTheFuture'
+def test_an_unregistered_type_still_becomes_a_placeholder(monkeypatch):
+    """The documented case, unchanged: this build cannot know the type, so keep the raw JSON.
+
+    ``testing.deserialize_exception`` is the knob that turns this placeholder into a raise, and CI
+    exports it, so the ambient value would otherwise decide which of the two behaviours below runs.
+    Both are pinned and asserted here. The environment override wins over ``Config.set``, hence the
+    ``delenv``."""
+    unknown = {'type': 'TransformationFromTheFuture', 'attributes': {}}
+    monkeypatch.delenv('DACE_testing_deserialize_exception', raising=False)
+
+    with set_temporary('testing', 'deserialize_exception', value=False):
+        with pytest.warns(UserWarning, match='Failed to deserialize element'):
+            got = serialize.from_json(unknown, context())
+        assert isinstance(got, serialize.SerializableObject)
+        assert got.typename == 'TransformationFromTheFuture'
+
+    with set_temporary('testing', 'deserialize_exception', value=True):
+        with pytest.raises(KeyError, match='TransformationFromTheFuture'):
+            serialize.from_json(unknown, context())
 
 
 def test_a_registered_type_that_fails_to_parse_raises_where_it_failed():

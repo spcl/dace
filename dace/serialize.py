@@ -212,8 +212,9 @@ def from_json(obj, context=None, known_type=None):
         except Exception as ex:
             # A note rather than a rewrap: reconstructing the type would break every exception whose
             # constructor takes more than a message (InvalidSDFGError wants the SDFG and a block id),
-            # and callers already catch these by type.
-            ex.add_note(f'while deserializing a {t}')
+            # and callers already catch these by type. Not ``add_note``: that is 3.11+, and on 3.10 it
+            # raised an AttributeError here that replaced the parse failure it was annotating.
+            ex.__dict__.setdefault('__notes__', []).append(f'while deserializing a {t}')
             raise
 
     # No type was found, so treat this as a regular dictionary
