@@ -1047,5 +1047,27 @@ def test_iec_staging_keeps_memlet_named_inner_subset():
     np.testing.assert_array_equal(B[1], np.array([23.0, 33.0, 0.0, 0.0]))
 
 
+def test_iec_symbolic_reshape_targets_the_whole_destination():
+    """``A[1:N-1, 0:M]`` into a transient shaped ``[N-2, M]`` moves the whole destination, so the
+    derived side must be the destination's full range. The element counts are equal but can come
+    from two symbol instances of the same name, so a cancel-based comparison may answer None;
+    equalizing first keeps the comparison conclusive instead of relying on the ``is not False``
+    gate to paper over an unresolved symbol identity."""
+    N = dace.symbol("N", dtype=dace.int64)
+    M = dace.symbol("M", dtype=dace.int64)
+    sdfg = dace.SDFG("iec_symbolic_reshape")
+    sdfg.add_array("A", [N, M], dace.float32)
+    sdfg.add_transient("At", [N - 2, M], dace.float32)
+    st = sdfg.add_state("s")
+    st.add_edge(st.add_access("A"), None, st.add_access("At"), None, Memlet("A[1:N-1, 0:M]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 1
+    out_edges = [e for state in sdfg.states() for e in state.edges() if e.data.data == "At"]
+    assert len(out_edges) == 1
+    assert str(out_edges[0].data.subset) == "0:N - 2, 0:M"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
