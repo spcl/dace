@@ -43,8 +43,11 @@ def _device_function_code(inner: dace.SDFG, in_conns, out_conns, wirings, impl='
         else:
             state.add_memlet_path(nsdfg, exit_, access, src_conn=conn, memlet=dace.Memlet(data=oname, subset=sub))
 
-    dace.Config.set('compiler', 'cuda', 'implementation', value=impl)
-    return '\n'.join(o.code for o in sdfg.generate_code())
+    # Scoped, not a bare Config.set: the setting is process-global, so a bare set leaves the last
+    # parametrization ('legacy') selected for every later GPU-codegen test in the same worker, and
+    # those then assert on experimental-backend output that was never generated.
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value=impl):
+        return '\n'.join(o.code for o in sdfg.generate_code())
 
 
 def _device_function_signature(inner: dace.SDFG, in_conns, out_conns, wirings, impl='experimental') -> str:
