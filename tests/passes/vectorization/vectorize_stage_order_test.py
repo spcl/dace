@@ -2,7 +2,7 @@
 """Ordering invariants of the vectorizer pipeline, and its entry canonicalization.
 
 The canonicalize recipe used to own ``LowerITEToFpFactor`` and ``SplitTasklets``; the ordering
-constraints against them lived in ``tests/canonicalize/canonicalize_stage_order_test.py``. Both
+constraints against them lived in ``tests/canonicalize/canonicalize_pipeline_stage_order_test.py``. Both
 passes now live HERE, so the constraints do too -- otherwise they are asserted in a file where
 their subject no longer exists, which is a test that passes by skipping.
 """
