@@ -50,7 +50,8 @@ class LlamaWrapper(nn.Module):
                 use_cache=False,
                 position_embeddings=(cos, sin),
             )
-            hidden_states = layer_outputs[0]
+            # transformers >= 5 returns the hidden states directly, < 5 a tuple
+            hidden_states = layer_outputs[0] if isinstance(layer_outputs, tuple) else layer_outputs
 
         # Final layer norm
         hidden_states = self.model.model.norm(hidden_states)

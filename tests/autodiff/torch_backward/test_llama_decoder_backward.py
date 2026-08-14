@@ -39,8 +39,8 @@ class LlamaDecoderLayerWrapper(nn.Module):
             use_cache=False,
         )
 
-        # Return only the hidden states (first element of the tuple)
-        return outputs[0]
+        # transformers >= 5 returns the hidden states directly, < 5 a tuple
+        return outputs[0] if isinstance(outputs, tuple) else outputs
 
 
 @pytest.mark.xdist_group("large_ML_models")
