@@ -4,21 +4,6 @@ DaCe is an open-source project that accepts contributions from any individual or
 organization. Below are a set of guidelines that we try our best to follow during
 development and the code review process.
 
-## Simplicity first
-
-Never over-engineer when a simpler implementation works. Before writing a helper, class, config knob
-or pass, walk this ladder and stop at the first rung that fits:
-
-1. Does this need to exist? -> no: skip it (YAGNI)
-2. Already in this codebase? -> reuse it, don't rewrite
-3. Stdlib does it? -> use it
-4. Native platform feature? -> use it
-5. Installed dependency? -> use it
-6. One line? -> one line
-7. Only then: the minimum that works
-
-New code is a liability: it has to be read, maintained and debugged forever.
-
 ## Code Style
 
 We follow the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), with a few notable exceptions:
