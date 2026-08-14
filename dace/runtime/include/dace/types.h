@@ -318,10 +318,8 @@ namespace dace
 }
 
 #if !defined(__CUDACC__) && !defined(__HIPCC__)
-// ``std::numeric_limits`` for the 16-bit low-precision structs. Without these the PRIMARY template
-// answers ``max() == lowest() == infinity() == T()``, i.e. ZERO -- so a consumer that seeds a
-// min/max reduction identity that way (``libraries/torch/dispatchers``) silently folds into zero
-// instead of failing. Values are the IEEE binary16 / bfloat16 ones.
+// std::numeric_limits for the low-precision structs; unspecialized, max()/lowest()/infinity() are
+// all T() (zero), silently breaking a min/max reduction seeded from them. IEEE binary16 / bfloat16 values.
 #define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, MAXV, MINV, EPSV,    \
                        DENV)                                                                                        \
     template <>                                                                                                     \
@@ -353,8 +351,7 @@ namespace std
 }
 #undef DACE_LP_LIMITS
 
-// The finite bounds are the whole point of the specializations; pin their bit patterns so a typo in
-// a literal above cannot pass as a plausible-looking value.
+// Pin the bit patterns so a typo in a literal above can't pass as plausible.
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) == 0x7BFF &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
