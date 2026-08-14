@@ -861,7 +861,9 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{dtype.to_string()}'
 
-    default_assumptions = _default_assumptions_for_dtype(dtype)
+    # The INSTANCE's dtype: when it disagrees with the declared one, emitting the closure it already
+    # implies makes the round trip lossy.
+    default_assumptions = _default_assumptions_for_dtype(expr.dtype)
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
