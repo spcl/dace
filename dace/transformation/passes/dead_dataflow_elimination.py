@@ -228,8 +228,17 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         # their empty edges can express scope membership, not just ordering, and dropping one could
         # orphan the scope (e.g. a MapEntry feeding a live Tasklet through an empty dependency edge).
         if isinstance(node, nodes.AccessNode):
-            if any(e.dst not in dead_nodes for e in state.out_edges(node) if not e.data.is_empty()):
-                return False
+            for e in state.out_edges(node):
+                if e.dst in dead_nodes:
+                    continue
+                if not e.data.is_empty():
+                    return False
+                # An empty edge between two AccessNodes of the same data forwards the value through
+                # the shared descriptor; the destination is a real consumer even though no memlet
+                # carries the data. Treat it as live so an initializing access node is not removed
+                # while a sibling access node still reads the same data.
+                if isinstance(e.dst, nodes.AccessNode) and e.dst.data == node.data:
+                    return False
         elif any(succ not in dead_nodes for succ in state.successors(node)):
             return False
 

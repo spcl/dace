@@ -3002,7 +3002,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:
-            self._start_block = None
+            # The pin named the block just removed. Re-pin to the region's new unique entry:
+            # dropping it looks harmless because the getter falls back to source_nodes(), but that
+            # fallback never writes _start_block and to_json() serializes it, so a graph rewritten
+            # twice differs from the same graph rewritten once.
+            sources = self.source_nodes()
+            self._start_block = self.node_id(sources[0]) if len(sources) == 1 else None
         elif start_block is not None:
             self.start_block = self.node_id(start_block)
 
