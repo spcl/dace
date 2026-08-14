@@ -29,7 +29,10 @@ def addone(A: dace.float64[16]):
 
 
 def run_child(body: str, tmp_path, cache: str) -> str:
-    """Run ``body`` in a fresh interpreter under cache policy ``cache``, and return its stdout.
+    """Run ``body`` in a fresh interpreter under cache policy ``cache``, and return the folder it reports.
+
+    The LAST line, not all of stdout: ``DACE_testing_serialization=1`` prints ahead of the child's own
+    ``print(build_folder)``.
 
     Written to a file rather than passed to ``python -c``: the dace frontend reads a program's
     source back off disk, and there is none for ``-c``.
@@ -54,7 +57,8 @@ def run_child(body: str, tmp_path, cache: str) -> str:
     # ``unlaunched`` fixture.
     env.pop('DACE_cache', None)
     out = subprocess.run([sys.executable, str(script)], check=True, capture_output=True, text=True, env=env)
-    return out.stdout.strip()
+    lines = out.stdout.strip().splitlines()
+    return lines[-1] if lines else ''
 
 
 #: Compile, run, and report the folder the run used, so the parent can check it after the exit.
