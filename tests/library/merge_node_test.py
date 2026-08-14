@@ -113,10 +113,10 @@ def test_v2_all_array_2d():
     sdfg = _build_merge_sdfg("v2_2d", [n, m], [n, m], [n, m], [n, m])
 
     rng = np.random.default_rng(1)
-    t = np.asfortranarray(rng.standard_normal((n, m), dtype=np.float64))
-    f = np.asfortranarray(rng.standard_normal((n, m), dtype=np.float64))
-    mask = np.asfortranarray((rng.random((n, m)) > 0.5).astype(np.int32))
-    out = np.zeros((n, m), order="F", dtype=np.float64)
+    t = rng.standard_normal((n, m), dtype=np.float64)
+    f = rng.standard_normal((n, m), dtype=np.float64)
+    mask = (rng.random((n, m)) > 0.5).astype(np.int32)
+    out = np.zeros((n, m), dtype=np.float64)
     sdfg(t=t, f=f, mask=mask, out=out)
     np.testing.assert_array_equal(out, np.where(mask.astype(bool), t, f))
 
