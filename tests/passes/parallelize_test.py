@@ -157,9 +157,9 @@ def test_short_loop_unroll_refuses_unfusable_branchy_body() -> None:
                 B[0] = B[0] - A[m]
 
     @dace.program
-    def straight_line(x: dace.float64[1]):
+    def straight_line(A: dace.float64[1], B: dace.float64[1]):
         for _ in range(4):
-            x[0] = x[0] * 0.5
+            B[0] = A[0] * 0.5
 
     # Branchy AND the iterate is unused -> refused, and the refusal leaves the SDFG untouched.
     refused = bit_mix.to_sdfg(simplify=True)
