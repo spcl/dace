@@ -1023,7 +1023,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
-        for nstate in nsdfg.sdfg.states():
+        # Every state, including those inside control flow regions: a map body a
+        # frontend emitted may hold nothing but a ConditionalBlock, and looking
+        # only at the top level finds no accesses to refine there at all.
+        for nstate in nsdfg.sdfg.all_states():
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
                     continue
@@ -1119,7 +1122,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if nstate is not None and len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
-                    for ns in nsdfg.sdfg.states():
+                    for ns in nsdfg.sdfg.all_states():
                         ns.ranges = {}
                     from dace.sdfg.propagation import _annotate_loop_ranges
                     _annotate_loop_ranges(nsdfg.sdfg, [])
@@ -1185,7 +1188,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if aname in refined:
                     continue
                 # Refine internal memlets
-                for nstate in nsdfg.states():
+                for nstate in nsdfg.all_states():
                     for e in nstate.edges():
                         if e.data.data == aname:
                             e.data.subset.offset(refine.subset, True, indices)
