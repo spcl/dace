@@ -633,22 +633,31 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 self._current_state.add_edge(access_node, name, exit_node, in_connector_name, memlet)
             else:
                 assert isinstance(access_node, nodes.AccessNode)
-                edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
-                if (self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(access_node) == 1
-                        and not isinstance(edges[0].src, nodes.EntryNode)):
+                edges = self._current_state.in_edges(access_node)
+                if (self._current_state.out_degree(access_node) == 0 and edges
+                        and not any(isinstance(edge.src, nodes.EntryNode) for edge in edges)):
                     # this access_node is not used for anything else.
                     # let's remove it and add a direct connection instead --
                     # unless it is fed by the scope entry itself (a copy staged
                     # by _copy_out_of_scope), since collapsing that leaves an
                     # entry-to-exit data edge, which code generation cannot
                     # dispatch: neither end is a data node to copy between.
-                    assert len(edges) == 1
-                    self._current_state.add_memlet_path(edges[0].src,
-                                                        exit_node,
-                                                        src_conn=edges[0].src_conn,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=edges[0].data)
-                    self._current_state.remove_node(access_node)  # edge is remove automatically
+                    #
+                    # All of its writers, not just a single one: one node may
+                    # write several elements of one container through separate
+                    # connectors (``sum >> stats(1, ...)[0]`` alongside
+                    # ``ssq >> stats(1, ...)[1]``), and they share the exit's
+                    # one connector pair, exactly as the classic frontend wires
+                    # them. Keeping the access node instead put a second,
+                    # already conflict-resolved write between the tasklet and
+                    # the boundary, which resolved the same values twice.
+                    for edge in edges:
+                        self._current_state.add_memlet_path(edge.src,
+                                                            exit_node,
+                                                            src_conn=edge.src_conn,
+                                                            dst_conn=in_connector_name,
+                                                            memlet=edge.data)
+                    self._current_state.remove_node(access_node)  # edges are removed automatically
                 else:
                     self._current_state.add_memlet_path(access_node,
                                                         exit_node,
@@ -952,7 +961,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
             if isinstance(scope_node, nodes.EntryNode):
                 # copy the memlet since we already used it in the memlet path above
-                to_connect[memlet.data] = (access_node, copy.deepcopy(memlet))
+                to_connect[memlet.data] = (access_node, _combined_scope_write(to_connect.get(memlet.data), memlet))
                 continue
 
             if isinstance(scope_node, SDFG):
@@ -2399,6 +2408,37 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope,
 
 #############################################################################
 # SDFG content creation functions
+
+
+def _combined_scope_write(existing: Optional[tuple], memlet: Memlet) -> Memlet:
+    """
+    The write a dataflow scope's exit connector carries for one container,
+    given another write to it from inside the scope.
+
+    One node may write one container through SEVERAL output connectors: a map
+    body computing both a sum and a sum of squares writes ``stats[0]`` and
+    ``stats[1]`` from the same tasklet. Recording only the last of them gave
+    the exit connector ``stats[1]``, so half the dataflow reached the outside
+    and the rest was silently dropped.
+
+    :param existing: The (access node, memlet) already recorded for this
+                     container, if any.
+    :param memlet: The write to add.
+    :return: The write to record, covering both.
+    """
+    combined = copy.deepcopy(memlet)
+    if existing is None:
+        return combined
+    previous = existing[1]
+    if not isinstance(previous, Memlet) or previous.is_empty() or previous.data != combined.data:
+        return combined
+    union = subsets.union(previous.subset, combined.subset)
+    if union is None:
+        return combined  # Not expressible as one subset; the scope's own propagation widens it
+    combined.subset = union
+    combined.volume = previous.volume + combined.volume
+    combined.dynamic = previous.dynamic or combined.dynamic
+    return combined
 
 
 def _create_state_boundary(
