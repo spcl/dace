@@ -59,10 +59,12 @@ def is_start_block(graph, block) -> bool:
 def keep_start_block(graph, block) -> None:
     """Make ``block`` the region entry after a fusion removed the previous one. Skip pinning
     if ``block`` is already the sole (implicit) source -- an explicit pin there is a no-op
-    that later trips up index-set splitting.
+    that later trips up index-set splitting, so clear the stale pin instead.
     """
     sources = graph.source_nodes()
     if len(sources) == 1 and sources[0] is block:
+        graph._start_block = None
+        graph._cached_start_block = None
         return
     graph.start_block = graph.node_id(block)
 
