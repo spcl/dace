@@ -776,25 +776,29 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
             folder_mode = F.readline().strip()
         return folder_mode
     else:
-        # This is to check an old style folder, i.e. a cache folder that was generated before
-        #  the `FOLDER_MODE` file was introduced. We do some small sanity checks.
+        # This is to check an old style folder, i.e. a cache folder that was generated
+        #  before the `FOLDER_MODE` file was introduced. We do some small sanity checks.
+        # TODO: Investigate if we should check for `program.sdfgz` and if it is not
+        #   pressent assume that we just have some random folder.
         # TODO: Phase out this feature, after there are no old style caches.
-        found_sub_folder = False
-        for sub_folder in ["build", "map", "src", "include", "sample"]:
-            if (object_folder / sub_folder).is_dir():
-                found_sub_folder = True
-            elif found_sub_folder:
-                raise NotADirectoryError(f'Expected that folder ``{object_folder}`` contains ``{sub_folder}``')
+        maybe_an_old_style_folder = (object_folder / "build").is_dir()
+        for sub_folder in ["map", "src", "include", "sample"]:
+            if (object_folder / sub_folder).is_dir() != maybe_an_old_style_folder:
+                if probe:
+                    # TODO: This is an inconsistent folder, currently it is not an error
+                    #   but should it be one?
+                    return None
+                raise NotADirectoryError(f'The old-style folder ``{object_folder}`` is inconsistent.')
 
-        if found_sub_folder:
+        if maybe_an_old_style_folder:
             # All expected folders where found, so expect that this is a 'development' format folder.
             return "development"
         elif probe:
-            # None of the files where found. Thus this is probably an empty folder that just exist.
+            # None of the files where found and this is probe, so it is probably just an "empty" folder.
             return None
         else:
             # Up for discussion what to do here.
-            raise NotADirectoryError(f'``{object_folder}`` does not appear to be a valid build folder.')
+            raise NotADirectoryError(f'``{object_folder}`` does not appear to be a valid old-style build folder.')
 
 
 def get_binary_name(
@@ -805,15 +809,21 @@ def get_binary_name(
 ) -> pathlib.Path:
     """Returns the supposed location of the compiled library given the boundary conditions.
 
+    If folder mode is not explicitly given, then the function will use `get_folder_mode()`,
+    if this fails, then the `compiler.build_folder_mode` key is consulted.
+
     :param object_folder: The build folder of the SDFG, i.e. `sdfg.build_folder`.
     :param sdfg_name: The name of the SDFG, i.e. `sdfg.name`.
     :param lib_extension: The extension of the library, i.e. file extension.
                           If not given the config option `compiler.library_extension` is used.
-    :param folder_mode: The save mode for the build folder. If not given the config
-                        option `compiler.build_folder_mode` is used.
+    :param folder_mode: The mode of the build folder.
     """
     if lib_extension is None:
         lib_extension = Config.get('compiler', 'library_extension')
+
+    # First try `get_folder_mode()` if that failed, consult the configuration.
+    if folder_mode is None:
+        folder_mode = get_folder_mode(object_folder, probe=True)
     if folder_mode is None:
         folder_mode = Config.get('compiler', 'build_folder_mode')
 

@@ -2356,13 +2356,15 @@ def simplify_ext(expr):
 
     # Push expressions into both sides of min/max.
     # Example: Min(N, 4) + 1 => Min(N + 1, 5)
-    min_ab_plus_c, max_ab_plus_c, a, b, c = _cached_sympy_pattern()
-    matches = expr.match(min_ab_plus_c)
-    if matches is not None:
-        return sympy.Min(matches[a] + matches[c], matches[b] + matches[c])
-    matches = expr.match(max_ab_plus_c)
-    if matches is not None:
-        return sympy.Max(matches[a] + matches[c], matches[b] + matches[c])
+    # Guarded by a quick check if `expr` is an addition because matching is an expensive operation.
+    if expr.is_Add:
+        min_ab_plus_c, max_ab_plus_c, a, b, c = _cached_sympy_pattern()
+        matches = expr.match(min_ab_plus_c)
+        if matches is not None:
+            return sympy.Min(matches[a] + matches[c], matches[b] + matches[c])
+        matches = expr.match(max_ab_plus_c)
+        if matches is not None:
+            return sympy.Max(matches[a] + matches[c], matches[b] + matches[c])
     return expr
 
 
