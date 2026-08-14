@@ -303,15 +303,16 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
-                return entry.sdfg
+                return copy.deepcopy(entry.sdfg)
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
         if use_cache:
-            # Add to cache
+            # Add the pristine parsed SDFG to the cache; hand the caller a copy so
+            # any transformations they apply cannot corrupt the cached template.
             self._cache.add(cachekey, sdfg, None)
 
-        return sdfg
+        return copy.deepcopy(sdfg) if use_cache else sdfg
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
