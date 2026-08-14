@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, ci-fix ]
 
+env:
+  PYTHONHASHSEED: '0'
+
 jobs:
   linting:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"

@@ -8,6 +8,9 @@ on:
   merge_group:
     branches: [ main, ci-fix, romanc/stree-v2 ]
 
+env:
+  PYTHONHASHSEED: '0'
+
 defaults:
     run:
       shell: bash

@@ -8,6 +8,11 @@ on:
   merge_group:
     branches: [ main, ci-fix ]
 
+env:
+  # Unpinned, string-keyed set iteration order changes per run, and with it transformation order
+  # and codegen -- a red that reproduces on one runner and not the next is undebuggable.
+  PYTHONHASHSEED: '0'
+
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true

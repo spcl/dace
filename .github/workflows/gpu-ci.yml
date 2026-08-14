@@ -10,6 +10,7 @@ env:
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   DACE_compiler_cuda_implementation: legacy
+  PYTHONHASHSEED: '0'
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}

@@ -11,6 +11,7 @@ env:
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   # Force the experimental CUDA codegen for every test in this workflow.
   DACE_compiler_cuda_implementation: experimental
+  PYTHONHASHSEED: '0'
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}

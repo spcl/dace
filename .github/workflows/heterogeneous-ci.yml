@@ -13,6 +13,7 @@ env:
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  PYTHONHASHSEED: '0'
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
