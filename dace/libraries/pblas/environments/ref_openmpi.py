@@ -7,9 +7,11 @@ class ScaLAPACKOpenMPI:
     """ An environment for the reference ScaLAPACK library using OpenMPI. """
 
     cmake_minimum_version = None
-    cmake_packages = []
+    # mpi.h is not on the default include path (it lives under the OpenMPI package
+    # directory), so the MPI package must be resolved to get its header directory.
+    cmake_packages = ["MPI"]
     cmake_variables = {}
-    cmake_compile_flags = []
+    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_link_flags = ["-lscalapack-openmpi"]
     cmake_includes = []
     cmake_libraries = ['libscalapack-openmpi.so']
