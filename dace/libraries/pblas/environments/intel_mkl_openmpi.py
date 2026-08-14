@@ -16,10 +16,11 @@ class IntelMKLScaLAPACKOpenMPI:
     # typical Ubuntu installation on an AVX2 machine with OpenMPI.
 
     cmake_minimum_version = None
+    # mpi.h is not on the default include path (it lives under the OpenMPI package
+    # directory), so the MPI package must be resolved to get its header directory.
     cmake_packages = ["MPI"]
-    cmake_packages = []
     cmake_variables = {}
-    cmake_compile_flags = []
+    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_libraries = []
     cmake_files = []
 
