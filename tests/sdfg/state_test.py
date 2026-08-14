@@ -319,13 +319,15 @@ def test_start_block_survives_removal_of_another_block():
     assert serialized_start is None or serialized_start < cfg.number_of_nodes()
 
 
-def test_start_block_reset_when_start_block_removed():
+def test_start_block_repinned_when_start_block_removed():
     cfg, other, start = _make_ambiguous_start_region()
 
     cfg.remove_node(start)
 
-    assert cfg._start_block is None
+    # The removal leaves a single source, so the pin names it rather than being cleared: a cleared
+    # pin is not reconstructed by the getter and to_json would serialize the absence.
     assert cfg.start_block is other
+    assert cfg.node(cfg._start_block) is other
 
 
 if __name__ == '__main__':
@@ -341,4 +343,4 @@ if __name__ == '__main__':
     test_find_downstream_nodes()
     test_find_downstream_nodes_bloking()
     test_start_block_survives_removal_of_another_block()
-    test_start_block_reset_when_start_block_removed()
+    test_start_block_repinned_when_start_block_removed()

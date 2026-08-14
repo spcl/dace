@@ -40,12 +40,16 @@ def test_removing_an_earlier_node_keeps_the_start_block():
     assert start in sdfg.nodes()
 
 
-def test_removing_the_start_block_clears_it():
+def test_removing_the_start_block_repins_to_the_new_entry():
+    """Clearing the pin instead loses information ``to_json`` serializes: the getter falls back to
+    ``source_nodes()`` but never writes ``_start_block`` back, so the same graph rewritten twice
+    serializes differently."""
     sdfg = _sdfg_with_explicit_start()
     start = sdfg.start_block
     sdfg.remove_node(start)
-    assert sdfg._start_block is None
     assert start not in sdfg.nodes()
+    assert sdfg.node(sdfg._start_block) is sdfg.start_block
+    assert sdfg.start_block is sdfg.source_nodes()[0]
 
 
 def _ambiguous_sdfg() -> dace.SDFG:
