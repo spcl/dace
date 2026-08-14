@@ -204,6 +204,73 @@ def test_inline_renames_inner_connector_to_outer_array_name():
     assert np.allclose(out_inlined, expected, atol=1e-12)
 
 
+def _build_clashing_connector_names_sdfg() -> SDFG:
+    """Inner state holds a Reduce whose ``_in``/``_out`` connectors and a tasklet
+    whose ``res`` connector all collide with outer array names.
+    """
+    outer = SDFG('clashing_connectors')
+    outer.add_array('_in', [N], dtypes.float64)
+    outer.add_array('_out', [1], dtypes.float64)
+    outer.add_array('res', [1], dtypes.float64)
+    s = outer.add_state('main', is_start_block=True)
+
+    inner = SDFG('inner_clash')
+    inner.add_array('src', [N], dtypes.float64)
+    inner.add_array('dst', [1], dtypes.float64)
+    inner.add_array('acc', [1], dtypes.float64, transient=True)
+    ist = inner.add_state('inner_main', is_start_block=True)
+    red = ist.add_reduce('lambda a, b: a + b', None, 0.0)
+    red.add_in_connector('_in')
+    red.add_out_connector('_out')
+    ist.add_edge(ist.add_read('src'), None, red, '_in', Memlet('src[0:N]'))
+    acc_w = ist.add_write('acc')
+    ist.add_edge(red, '_out', acc_w, None, Memlet('acc[0]'))
+    scale = ist.add_tasklet('scale', {'res'}, {'y'}, 'y = res * 2.0')
+    ist.add_edge(ist.add_read('acc'), None, scale, 'res', Memlet('acc[0]'))
+    ist.add_edge(scale, 'y', ist.add_write('dst'), None, Memlet('dst[0]'))
+    inner.validate()
+
+    nsdfg_node = s.add_nested_sdfg(inner, {'src'}, {'dst'}, symbol_mapping={'N': 'N'})
+    s.add_edge(s.add_read('_in'), None, nsdfg_node, 'src', Memlet('_in[0:N]'))
+    s.add_edge(nsdfg_node, 'dst', s.add_write('res'), None, Memlet('res[0]'))
+    outer.validate()
+    return outer
+
+
+def test_inline_keeps_library_node_connectors_but_renames_tasklet_ones():
+    """Library-node connector names are an interface (schema parameters, BLAS
+    operands); the inline pass must not disambiguate them, while tasklet
+    connectors that shadow an outer array still have to be renamed.
+    """
+    sdfg = _build_clashing_connector_names_sdfg()
+    n = 10
+    rng = np.random.default_rng(0xBEEF)
+    a = rng.standard_normal(n).astype(np.float64)
+    expected = np.array([a.sum() * 2.0])
+
+    # No pre-inline baseline run here: codegen inlines through InlineSDFG, which does not
+    # disambiguate connectors, so the un-inlined graph does not compile with this clash.
+    _apply_inline(sdfg)
+
+    reduce_nodes = [(nd, parent) for nd, parent in sdfg.all_nodes_recursive() if isinstance(nd, nodes.LibraryNode)]
+    assert len(reduce_nodes) == 1
+    red, red_state = reduce_nodes[0]
+    assert set(red.in_connectors) == {'_in'}, 'library-node connectors must survive the inline unrenamed'
+    assert set(red.out_connectors) == {'_out'}
+    assert [e.dst_conn for e in red_state.in_edges(red)] == ['_in']
+    assert [e.src_conn for e in red_state.out_edges(red)] == ['_out']
+
+    tasklets = [nd for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, nodes.Tasklet)]
+    scale = next(t for t in tasklets if t.label == 'scale')
+    assert 'res' not in scale.in_connectors, 'tasklet connector shadowing outer array res must be renamed'
+    new_conn = next(iter(scale.in_connectors))
+    assert new_conn in scale.code.as_string
+
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(_in=a.copy(), _out=np.zeros(1, dtype=np.float64), res=out, N=n)
+    assert np.allclose(out, expected, atol=1e-12)
+
+
 def test_inline_refuses_inside_map_scope():
     """An NSDFG nested inside a Map scope must not be inlined."""
 
@@ -234,5 +301,6 @@ if __name__ == '__main__':
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
     test_inline_renames_inner_connector_to_outer_array_name()
+    test_inline_keeps_library_node_connectors_but_renames_tasklet_ones()
     test_inline_refuses_inside_map_scope()
     print('all ok')

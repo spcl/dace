@@ -30,16 +30,24 @@ def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
 
 
 def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None:
-    """Rename code-node connectors that clash with outer-scope names.
+    """Rename tasklet connectors that clash with outer-scope names.
 
-    After inlining, a tasklet or library-node connector whose name coincides
-    with an outer array, symbol, constant, or assignment target would fail
-    validation (and could confuse code generation). Rename such connectors
-    to fresh names and update the connecting edges and tasklet code.
+    After inlining, a tasklet connector whose name coincides with an outer
+    array, symbol, constant, or assignment target would fail validation (and
+    could confuse code generation). Rename such connectors to fresh names and
+    update the connecting edges and the tasklet code.
+
+    Library nodes are exempt: their connector names are part of the node's
+    interface (ONNX schema parameters, BLAS operand names), and expansions look
+    them up by name. Renaming one silently unbinds the node from its schema --
+    the name is not recoverable from connector order either, e.g. an ONNX Gemm
+    carries ``B, A, C`` against schema order ``A, B, C``. A library-node
+    connector is not emitted as an identifier at this point anyway: expansion
+    turns it into a nested-SDFG boundary, which has its own scope.
     """
     for nstate in nsdfg.states():
         for node in list(nstate.nodes()):
-            if not isinstance(node, (nodes.Tasklet, nodes.LibraryNode)):
+            if not isinstance(node, nodes.Tasklet):
                 continue
             used = set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             renames: Dict[str, str] = {}
@@ -56,11 +64,10 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None
             for edge in list(nstate.out_edges(node)):
                 if edge.src_conn in renames:
                     helpers.redirect_edge(nstate, edge, new_src_conn=renames[edge.src_conn])
-            if isinstance(node, nodes.Tasklet):
-                tasklet_replace_code(node, renames)
-                # tasklet_replace_code only rewrites symbols on the right-hand side;
-                # also rename connector names that appear as assignment targets.
-                node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
+            tasklet_replace_code(node, renames)
+            # tasklet_replace_code only rewrites symbols on the right-hand side;
+            # also rename connector names that appear as assignment targets.
+            node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
 @make_properties
