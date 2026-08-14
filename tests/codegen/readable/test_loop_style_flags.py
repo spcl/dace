@@ -66,11 +66,13 @@ def test_loop_bound_cmp_ne_on_unit_stride():
 
 
 def test_loop_bound_cmp_ne_supports_non_unit_stride():
-    """On a SEQUENTIAL strided map, `ne` normalises the bound to a value the counter actually lands on
-    (a naive `i != end + 1` would be stepped over and never terminate). Sequential because on an
-    OpenMP map a non-unit `!=` is illegal and falls back to `<` -- see test_openmp_strided_map."""
+    """On a non-OpenMP strided map, `ne` normalises the bound to a value the counter actually lands on
+    (a naive `i != end + 1` would be stepped over and never terminate). ``simd_sequential_maps`` is
+    disabled here so the Sequential map stays non-OpenMP and the non-canonical `!=` bound is legal.
+    On an OpenMP-scheduled map a non-unit `!=` falls back to `<` -- see test_openmp_strided_map."""
     sdfg = sequential_strided_sdfg()
-    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value='ne'):
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value='ne'), \
+         set_temporary('compiler', 'cpu', 'simd_sequential_maps', value=False):
         code = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
     lines = loop_lines(code)
     assert lines, 'no loop emitted'
@@ -90,8 +92,9 @@ def test_every_combination_runs_correctly(loop_index_type, loop_bound_cmp):
 
 
 def sequential_map_sdfg(name='seq_map', nmaps=1):
-    """Sequential maps (no OpenMP pragma), all using the parameter name `i` so sibling scoping is
-    exercised. `dace.map` schedules CPU_Multicore, which cannot hoist -- see the OpenMP test."""
+    """Sequential maps (all using the parameter name `i` so sibling scoping is exercised). With
+    ``simd_sequential_maps`` on, the innermost loop may be preceded by ``#pragma omp simd``; tests
+    that need a genuinely non-OpenMP sequential map disable the flag explicitly."""
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [N], dace.float64)
     outs = ['B', 'C'][:nmaps]
@@ -115,7 +118,10 @@ def generate_sdfg(sdfg, implementation='legacy', loop_decl_style='for_init'):
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
 def test_loop_decl_style_hoisted_on_a_sequential_map(implementation):
-    code = generate_sdfg(sequential_map_sdfg(), implementation, loop_decl_style='hoisted')
+    """Hoisted declarations are only legal when the loop is not under an OpenMP directive, so
+    ``simd_sequential_maps`` is disabled to keep the Sequential map non-OpenMP."""
+    with set_temporary('compiler', 'cpu', 'simd_sequential_maps', value=False):
+        code = generate_sdfg(sequential_map_sdfg(), implementation, loop_decl_style='hoisted')
     assert any(line.startswith('for (;') for line in loop_lines(code)), loop_lines(code)
     # The declaration moved ahead of the loop (emitted lines carry trailing ////__DACE debug comments).
     assert any(stripped.startswith('auto i = 0;')
@@ -141,10 +147,13 @@ def test_openmp_map_never_hoists():
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
 def test_hoisted_sibling_maps_do_not_collide(implementation):
     """Two sequential sibling maps both named `i`: hoisted declarations must stay bounded by each
-    map's scope, or the second is a redefinition. Compiling is the proof."""
+    map's scope, or the second is a redefinition. Compiling is the proof. ``simd_sequential_maps`` is
+    disabled so the declarations can be hoisted (an OpenMP pragma would force them back into the
+    ``for`` init clause)."""
     sdfg = sequential_map_sdfg('seq_siblings_%s' % implementation, nmaps=2)
     with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
-         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_decl_style', value='hoisted'):
+         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_decl_style', value='hoisted'), \
+         set_temporary('compiler', 'cpu', 'simd_sequential_maps', value=False):
         A = numpy.random.default_rng(0).random(24)
         B = numpy.zeros(24)
         C = numpy.zeros(24)

@@ -276,7 +276,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """
         if dynamic_map_inputs(state_dfg, node):  # emit memlet_definition declarations
             return True
-        if hoist_loop_decls(node):  # declares the induction variables ahead of the loop headers
+        if any(hoist_loop_decls(node, self._map_loop_will_have_openmp_pragma(sdfg, state_dfg, node, i))
+               for i in range(len(node.map.range))):  # declares the induction variables ahead of the loop headers
             return True
         if self.walk_plan_for(sdfg, state_dfg, node):  # declares the walking base pointers ahead of the loop
             return True

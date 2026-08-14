@@ -162,34 +162,37 @@ def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
     return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
-def hoist_loop_decls(node: nodes.MapEntry) -> bool:
+def hoist_loop_decls(node: nodes.MapEntry, will_have_openmp_pragma: bool = False) -> bool:
     """Whether this map's induction variables are declared ahead of their loops (``T i = begin; for (;
     ...)``) instead of in the for-statement's init clause, per ``codegen_params.loop_decl_style``.
 
-    Never for an OpenMP-scheduled map: the pragma must be immediately followed by a CANONICAL loop
-    whose init clause declares the induction variable, so hoisting leaves the pragma facing a
-    declaration and the compiler rejects it ("loop nest expected"). The knob therefore applies to
-    sequential maps only.
+    Never for a loop that will be immediately preceded by an OpenMP directive: the pragma must be
+    immediately followed by a CANONICAL loop whose init clause declares the induction variable, so
+    hoisting leaves the pragma facing a declaration and the compiler rejects it ("loop nest
+    expected"). The knob therefore applies to sequential loops that do not get an OpenMP ``simd``
+    pragma, and to the non-innermost loops of a Sequential map even when ``simd_sequential_maps`` is
+    on.
     """
     if Config.get('compiler', 'cpu', 'codegen_params', 'loop_decl_style') != 'hoisted':
         return False
-    return map_schedule_is_sequential(node)
+    return map_schedule_is_sequential(node) and not will_have_openmp_pragma
 
 
-def loop_exit_test(begin, end, skip, node: nodes.MapEntry) -> Tuple[str, str]:
+def loop_exit_test(begin, end, skip, node: nodes.MapEntry, will_have_openmp_pragma: bool = False) -> Tuple[str, str]:
     """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
 
     Every spelling covers the identical iteration space ``[begin, end]`` at stride ``skip``.
 
-    ``ne`` supports any stride on a SEQUENTIAL loop. A naive ``i != end + 1`` is only correct when the
+    ``ne`` supports any stride on a non-OpenMP loop. A naive ``i != end + 1`` is only correct when the
     stride divides the range -- otherwise the counter steps OVER that bound, never compares equal, and
     the loop does not terminate. So for a non-unit stride the bound is normalised to the first value
     the counter actually LANDS on at or past the end, ``begin + int_ceil(end + 1 - begin, skip) *
     skip``, which the induction variable is guaranteed to hit exactly.
 
-    On an OpenMP-scheduled map, ``ne`` is legal ONLY with a stride the compiler can see is +/-1: the
-    canonical loop form the pragma requires rejects ``!=`` otherwise (``g++``: "increment is not
-    constant 1 or -1 for '!=' condition"). A non-unit / symbolic stride there falls back to ``<``.
+    On a loop that will be immediately preceded by an OpenMP directive, ``ne`` is legal ONLY with a
+    stride the compiler can see is +/-1: the canonical loop form the pragma requires rejects ``!=``
+    otherwise (``g++``: "increment is not constant 1 or -1 for '!=' condition"). A non-unit / symbolic
+    stride there falls back to ``<``.
     """
     mode = Config.get('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp')
     if mode == 'le':
@@ -197,8 +200,7 @@ def loop_exit_test(begin, end, skip, node: nodes.MapEntry) -> Tuple[str, str]:
     if mode == 'ne':
         if symbolic.pystr_to_symbolic(skip) == 1:
             return '!=', sym2cpp(end + 1)
-        openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
-        if not openmp:
+        if not will_have_openmp_pragma:
             return '!=', sym2cpp(begin + symbolic.int_ceil(end + 1 - begin, skip) * skip)
     return '<', sym2cpp(end + 1)
 
@@ -3071,6 +3073,29 @@ class CPUCodeGen(TargetCodeGenerator):
             pragma = declare + '\n' + pragma
         return pragma
 
+    def _map_loop_will_have_openmp_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
+                                          loop_idx: int) -> bool:
+        """Whether the ``for`` loop at dimension ``loop_idx`` of ``map_entry`` will be immediately
+        preceded by an OpenMP directive. OpenMP canonical form requires the loop after the directive to
+        declare its induction variable in the init clause and to use ``<``/``>`` (or ``<=``/``>=``)
+        with a non-unit stride; callers use this predicate to suppress non-canonical rewrites.
+        """
+        schedule = map_entry.map.schedule
+        if schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+            return True
+        if schedule != dtypes.ScheduleType.Sequential:
+            return False
+        # ``simd_sequential_maps`` only applies to the innermost loop of a non-unrolled Sequential map.
+        if not Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
+            return False
+        if map_entry.map.unroll:
+            return False
+        if loop_idx != len(map_entry.map.range) - 1:
+            return False
+        # Delegates to the same safety test used by the actual pragma emitter; a non-None return
+        # means a ``#pragma omp simd`` will be written before the loop.
+        return self._sequential_simd_pragma(sdfg, state, map_entry) is not None
+
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -3246,23 +3271,30 @@ class CPUCodeGen(TargetCodeGenerator):
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
 
-                comparison, bound = loop_exit_test(begin, end, skip, node)
+                # Determine whether this loop will be immediately preceded by an OpenMP directive.
+                # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. Sequential maps
+                # may emit ``#pragma omp simd`` here for the innermost loop.
+                will_have_openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
+                                                         dtypes.ScheduleType.CPU_Persistent)
+                pragma = None
+                if (not will_have_openmp and not node.map.unroll and i == len(node.map.range) - 1
+                        and node.map.schedule == dtypes.ScheduleType.Sequential
+                        and Config.get_bool('compiler', 'cpu', 'simd_sequential_maps')):
+                    pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
+                    will_have_openmp = pragma is not None
+
+                comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)
                 init = '%s %s = %s' % (loop_index_ctype(), var, cpp.sym2cpp(begin))
-                if hoist_loop_decls(node):
+                if hoist_loop_decls(node, will_have_openmp):
                     # Declared ahead of the loop, so it outlives it -- the map's encapsulating scope is
                     # what bounds it (experimental keeps that brace when hoisting).
                     result.write('%s;\n' % init, cfg, state_id, node)
                     init = ''
-                if (not node.map.unroll and i == len(node.map.range) - 1
-                        and node.map.schedule == dtypes.ScheduleType.Sequential
-                        and Config.get_bool('compiler', 'cpu', 'simd_sequential_maps')):
-                    # ``#pragma omp simd`` must immediately precede the ``for`` -- written last,
-                    # after any hoisted declaration above. ``None`` means this call could not
-                    # prove the loop safe (inner map/NestedSDFG body, or an uncovered WCR edge)
-                    # -- see ``simd_sequential_maps`` in config_schema.yml.
-                    pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
-                    if pragma is not None:
-                        result.write(pragma, cfg, state_id, node)
+                if pragma is not None:
+                    # ``#pragma omp simd`` must immediately precede the ``for``. ``None`` means this
+                    # call could not prove the loop safe (inner map/NestedSDFG body, or an uncovered
+                    # WCR edge) -- see ``simd_sequential_maps`` in config_schema.yml.
+                    result.write(pragma, cfg, state_id, node)
                 result.write(
                     "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),
                     cfg,
