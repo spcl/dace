@@ -60,8 +60,7 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None
                 tasklet_replace_code(node, renames)
                 # tasklet_replace_code only rewrites symbols on the right-hand side;
                 # also rename connector names that appear as assignment targets.
-                node.code = CodeBlock(token_replace_dict(node.code.as_string, renames),
-                                      language=node.code.language)
+                node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
 @make_properties

@@ -155,7 +155,6 @@ def test_lift_einsum_mttkrp():
 
 def test_lift_einsum_reduce():
     from dace.libraries.standard.nodes.reduce import Reduce
-    from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
     @dace.program
@@ -180,7 +179,6 @@ def test_lift_einsum_reduce():
 
 def test_lift_einsum_reduce_partial():
     from dace.libraries.standard.nodes.reduce import Reduce
-    from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
     @dace.program
