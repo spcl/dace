@@ -211,6 +211,16 @@ _DTYPE_KIND_RANKS = {'b': 0, 'i': 1, 'u': 1, 'f': 2, 'c': 3}
 SYMBOLIC_INTRINSICS = frozenset(
     {'ceiling', 'ceil', 'floor', 'int_ceil', 'int_floor', 'sqrt', 'Min', 'Max', 'Abs', 'Mod', 'round'})
 
+#: Python BUILTINS the symbolic parser also has a counterpart for, mapped to
+#: the builtin itself, that counterpart's name, and the arity it applies at.
+#: Unlike the names above these are real functions, and over runtime operands
+#: they are ordinary elementwise calls (``min(A, B)``). Over operands at least
+#: one of which is symbolic they are not:
+#: ``dace.map[i * 32:min(N, (i + 1) * 32)]`` is a symbolic bound, and lowering
+#: it as a call materializes the bound into a scalar the map then has to read
+#: back as a dynamic range.
+BUILTIN_SYMBOLIC_INTRINSICS = {'min': (min, 'Min', 2), 'max': (max, 'Max', 2), 'abs': (abs, 'Abs', 1)}
+
 
 def _weak_scalar_rank(operand: 'Inferred') -> Optional[int]:
     """
@@ -721,17 +731,31 @@ class InferenceService:
         the call is not one.
 
         Restricted to an UNRESOLVABLE callee: a name the program actually
-        binds (``numpy.floor``, the builtin ``min``) is a real function with
-        its own registry lowering, and only the names left for the symbolic
-        parser to resolve belong here.
+        binds (``numpy.floor``) is a real function with its own registry
+        lowering, and only the names left for the symbolic parser to resolve
+        belong here. The exception is a handful of BUILTINS the symbolic parser
+        also knows (:data:`BUILTIN_SYMBOLIC_INTRINSICS`), which are symbolic
+        only when an operand already is — over constants alone the interpreter
+        answers, and over data the registry does.
         """
-        if callee is not None or qualname not in SYMBOLIC_INTRINSICS or node.keywords:
+        if node.keywords:
+            return None
+        builtin = BUILTIN_SYMBOLIC_INTRINSICS.get(qualname)
+        if builtin is not None and callee in (None, builtin[0]):
+            _, name, arity = builtin
+            if len(node.args) != arity:
+                return None  # e.g. ``min(sequence)``, which is not Min at all
+        elif callee is None and qualname in SYMBOLIC_INTRINSICS:
+            builtin, name = None, qualname
+        else:
             return None
         try:
             operands = [self.infer(argument) for argument in node.args]
         except UnsupportedFeatureError:
             return None
         if not operands or any(operand.kind not in ('constant', 'symbolic') for operand in operands):
+            return None
+        if builtin is not None and not any(operand.kind == 'symbolic' for operand in operands):
             return None
         # Built from the operands' VALUES rather than by re-parsing the source
         # text: an argument hoisted into an ANF temporary (``__anf0 = N / 32``)
@@ -740,7 +764,7 @@ class InferenceService:
         # value back.
         arguments = ', '.join(str(operand.value) for operand in operands)
         try:
-            return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(f'{qualname}({arguments})'))
+            return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(f'{name}({arguments})'))
         except Exception:
             return None
 
@@ -1436,8 +1460,9 @@ class InferenceService:
 
         Parsing the source text mints fresh default-typed symbols for every
         name, so free symbols are substituted with their known context values:
-        the recorded symbolic values of materialized ANF scalar temps, and the
-        registered (correctly typed) symbol objects for program symbols.
+        the recorded symbolic values of materialized ANF scalar temps, the
+        compile-time values of names bound to one, and the registered
+        (correctly typed) symbol objects for program symbols.
         """
         expr = symbolic.pystr_to_symbolic(astutils.unparse(node))
         if not hasattr(expr, 'free_symbols'):
@@ -1451,6 +1476,17 @@ class InferenceService:
                 if value is not None:
                     replacements[free_symbol] = value
                     continue
+            if binding is not None and binding.kind == 'constant':
+                # A name bound to a compile-time value IS that value. An ANF
+                # temporary is the common case: canonicalization splits a map
+                # bound into ``__anf0 = i + 1; __anf1 = __anf0 * 32``, and
+                # taking the second from its text alone keeps ``__anf0``, a
+                # name nothing declares. It survived into the finished SDFG,
+                # where SDFG.arglist raised ``KeyError: '__anf0'``.
+                value = self.context.constant_values[name]
+                if symbolic.issymbolic(value) or isinstance(value, numbers.Number):
+                    replacements[free_symbol] = value
+                continue
             registered = self.context.symbols.get(name)
             if registered is None:
                 # Symbols of inlined callees resolve through their globals
