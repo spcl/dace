@@ -586,6 +586,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     environments = {
         PyTorch.full_class_path(),
     }
+    bwd_sdfg = None
     if module.backward:
         compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
         compiled_sdfgs = [compiled, compiled_bwd] if compiled_bwd is not None else [compiled]
@@ -615,26 +616,24 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
                          f"Torch{module.sdfg_name}",
                          environments=environments)
 
-    torch_module_build_path = os.path.join('.dacecache', base_libname)
-    parts = os.path.normpath(compiled.filename).split(os.sep)
-    sdfg_folder_name = parts[parts.index('.dacecache') + 1]
-
-    # Treat the case where a hash is added to the SDFG folder dir
-    backward_sdfg_folder_name = f"{compiled.sdfg.name}_backward_{sdfg_folder_name.removeprefix(compiled.sdfg.name + '_')}" if sdfg_folder_name != compiled.sdfg.name else f"{compiled.sdfg.name}_backward"
+    # Ask each SDFG where it was built. build_folder honours default_build_folder, cache and
+    # cache_distaware; a literal '.dacecache' misses the folder whenever any of them is not default.
+    fwd_build_path = compiled.sdfg.build_folder
+    bwd_build_path = bwd_sdfg.build_folder if bwd_sdfg is not None else None
+    torch_module_build_path = os.path.join(dace.sdfg.sdfg.build_folder_root(), base_libname)
     compiler.generate_program_folder(None, [program], torch_module_build_path)
 
-    include_path = os.path.abspath(os.path.join('.dacecache', sdfg_folder_name, "include"))
-    include_path_bwd = os.path.abspath(os.path.join('.dacecache', backward_sdfg_folder_name, "include"))
+    include_path = os.path.abspath(os.path.join(fwd_build_path, "include"))
+    include_path_bwd = os.path.abspath(os.path.join(bwd_build_path, "include")) if bwd_build_path else None
     dace_include_path = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
     dace_include_onnx = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
     dace_include_blas = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
 
-    code_path = os.path.join('.dacecache', sdfg_folder_name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
-    code_path_bwd = os.path.join('.dacecache', backward_sdfg_folder_name, "src", "cpu",
-                                 f"{compiled.sdfg.name}_backward.cpp")
-    torch_code_path = os.path.join('.dacecache', base_libname, "src", "cpu", f"{base_libname}.cpp")
+    code_path = os.path.join(fwd_build_path, "src", "cpu", f"{compiled.sdfg.name}.cpp")
+    code_path_bwd = os.path.join(bwd_build_path, "src", "cpu", f"{bwd_sdfg.name}.cpp") if bwd_build_path else None
+    torch_code_path = os.path.join(torch_module_build_path, "src", "cpu", f"{base_libname}.cpp")
 
-    sources = [p for p in [code_path, torch_code_path, code_path_bwd] if os.path.exists(p)]
+    sources = [p for p in [code_path, torch_code_path, code_path_bwd] if p and os.path.exists(p)]
 
     pid = os.getpid()
     salt = hashlib.sha1(("".join(sources)).encode("utf-8")).hexdigest()[:8]
@@ -685,7 +684,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
         extra_include_paths=[
             p for p in {
                 include_path,
-                include_path_bwd if os.path.exists(include_path_bwd) else None,
+                include_path_bwd if include_path_bwd and os.path.exists(include_path_bwd) else None,
                 dace_include_path,
                 dace_include_blas,
                 dace_include_onnx,
