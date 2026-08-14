@@ -8,6 +8,7 @@ from numbers import Integral
 import os
 import json
 from hashlib import md5, sha256
+import pathlib
 import random
 import shutil
 import sys
@@ -148,10 +149,64 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
+def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
+    """Returns the path to the build cache folder for ``sdfg``.
+
+    If the build folder was explicitly set it is returned. If not set, then the function
+    will derive the root through ``build_folder_root()``, i.e. from the configuration keys
+    ``default_build_folder`` and ``cache_distaware``, and name the folder inside it according
+    to the configuration key ``cache``.
+    It is also important that retrieving the folder through this function does not set
+    the build folder in the SDFG.
+
+    :note: This function is used as getter for the ``SDFG.build_folder`` property, do not use directly.
+    :note: It is unspecific if the path is absolute or not.
+    """
+    if getattr(sdfg, "_build_folder", None) is not None:
+        return sdfg._build_folder
+    cache_config = Config.get('cache')
+    base_folder = build_folder_root()
+    if cache_config == 'single':
+        # Always use the same directory, overwriting any other program,
+        # preventing parallelism and caching of multiple programs, but
+        # saving space and potentially build time
+        return os.path.join(base_folder, 'single_cache')
+    elif cache_config == 'hash':
+        # Any change to the SDFG will result in a new cache folder
+        md5_hash = md5(str(sdfg.to_json()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'unique':
+        # Base name on location in memory, so no caching is possible between
+        # processes or subsequent invocations
+        md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'name':
+        # Overwrites previous invocations, and can clash with other programs
+        # if executed in parallel in the same working directory
+        return os.path.join(base_folder, sdfg.name)
+    else:
+        raise ValueError(f'Unknown cache configuration: {cache_config}')
+
+
+def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: Union[str, None, pathlib.Path]) -> None:
+    if new_build_folder is None:
+        sdfg._build_folder = None
+    elif isinstance(new_build_folder, (str, pathlib.Path)):
+        sdfg._build_folder = str(new_build_folder)
+        if len(sdfg._build_folder) == 0:
+            raise ValueError(
+                f'Passed the empty string as new build folder to SDFG "{sdfg.name}", to clear it use `None`.')
+    else:
+        raise TypeError(
+            f'Can not assign "{new_build_folder}" ({type(new_build_folder).__name__}) as new build folder to SDFG "{sdfg.name}".'
+        )
+
+
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
+    Can also parse a None check of the form `array is [not] None`.
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
@@ -162,10 +217,16 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 
     for subnode in ast.walk(node):
         if isinstance(subnode, ast.Subscript):
-            data = astutils.rname(subnode.value)
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif (isinstance(subnode, ast.Compare) and len(subnode.ops) == 1
+              and isinstance(subnode.ops[0], (ast.Is, ast.IsNot)) and len(subnode.comparators) == 1
+              and isinstance(subnode.comparators[0], ast.Constant) and subnode.comparators[0].value is None):
+            # Parsing `array is [not] None`
+            data = astutils.rname(subnode.left)
+            if data in arrays:
+                result.append(mm.Memlet.from_array(data, arrays[data]))
         elif include_scalars and isinstance(subnode, ast.Name):
             data = astutils.rname(subnode)
             if data in arrays and isinstance(arrays[data], dace.data.Scalar):
@@ -516,8 +577,16 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
-    # Explicitly-set build folder, or None to derive it from the configuration
-    _build_folder = None
+    build_folder = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        desc='Returns the path to the build cache folder for SDFG. For a in dept '
+        'description see ``_sdfg_build_folder_getter()``.',
+        serialize_if=lambda sdfg: sdfg._build_folder is not None,
+        getter=_sdfg_build_folder_getter,
+        setter=_sdfg_build_folder_setter,
+    )
 
     def __init__(self,
                  name: str,
@@ -1239,38 +1308,6 @@ class SDFG(ControlFlowRegion):
         # Avoid import loop
         from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
         return s2t.as_schedule_tree(self, in_place=in_place)
-
-    @property
-    def build_folder(self) -> str:
-        """ Returns a relative path to the build cache folder for this SDFG. """
-        if self._build_folder is not None:
-            return self._build_folder
-        cache_config = Config.get('cache')
-        base_folder = build_folder_root()
-        if cache_config == 'single':
-            # Always use the same directory, overwriting any other program,
-            # preventing parallelism and caching of multiple programs, but
-            # saving space and potentially build time
-            return os.path.join(base_folder, 'single_cache')
-        elif cache_config == 'hash':
-            # Any change to the SDFG will result in a new cache folder
-            md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'unique':
-            # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invocations
-            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'name':
-            # Overwrites previous invocations, and can clash with other programs
-            # if executed in parallel in the same working directory
-            return os.path.join(base_folder, self.name)
-        else:
-            raise ValueError(f'Unknown cache configuration: {cache_config}')
-
-    @build_folder.setter
-    def build_folder(self, newfolder: str):
-        self._build_folder = newfolder
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
