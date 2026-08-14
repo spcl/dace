@@ -177,7 +177,7 @@ def _run_inputs(kind, nval):
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_runs_exact_multiblock(kind):
-    import cupy
+    cupy = pytest.importorskip("cupy")
     sdfg = _vectorized(_PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_run_{kind}"
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
