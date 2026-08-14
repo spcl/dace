@@ -1080,8 +1080,9 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
         if isinstance(tree_edge.src, nd.NestedSDFG):
             return False
         src = tree_edge.src
-        if isinstance(src, nd.LibraryNode) and 'beta' in type(src).__properties__:
-            if not symbolic.equal_valued(0, src.beta):
+        if isinstance(src, nd.LibraryNode):
+            beta = getattr(src, 'beta', None)
+            if beta is not None and not symbolic.equal_valued(0, beta):
                 return False
     return covers_full_extent(edge.data.get_dst_subset(edge, state), desc)
 
