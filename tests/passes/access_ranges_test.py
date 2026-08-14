@@ -43,16 +43,22 @@ def test_simple_ranges():
     assert len(ranges['B']) == 1
     assert next(iter(ranges['B'])).src_subset == dace.subsets.Range([(0, 19, 1), (0, 19, 1)])
 
-    # Construct read/write memlets
-    memlet1 = dace.Memlet('A[0:N, 0:N]')
-    memlet1._is_data_src = False
-    memlet2 = dace.Memlet('A[1:21, 1:21] -> [0:20, 0:20]')
-    memlet2._is_data_src = False
-    memlet3 = dace.Memlet('A[0, 0]')
-    memlet4 = dace.Memlet('A[0, 0]')
-    memlet4._is_data_src = False
+    # A copy memlet may name EITHER endpoint as its ``data``, putting the other
+    # side in ``other_subset`` -- both spellings describe the same copy, and
+    # which one a given frontend emits is not what this pass is about. Compare
+    # what each access says about A: the range touched, and in which direction.
+    def side_of(memlet: dace.Memlet, name: str):
+        if memlet.data == name:
+            return str(memlet.subset), not memlet._is_data_src
+        return str(memlet.other_subset), memlet._is_data_src
 
-    assert ranges['A'] == {memlet1, memlet2, memlet3, memlet4}
+    assert {side_of(memlet, 'A')
+            for memlet in ranges['A']} == {
+                ('0:N, 0:N', True),
+                ('1:21, 1:21', True),
+                ('0, 0', False),
+                ('0, 0', True),
+            }
 
 
 if __name__ == '__main__':
