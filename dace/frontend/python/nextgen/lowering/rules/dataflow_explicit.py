@@ -27,7 +27,7 @@ keyword arguments and land on the emitted :class:`~dace.sdfg.nodes.Tasklet`'s
 """
 import ast
 import copy
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -351,6 +351,24 @@ def _reject_symbol_memlet_target(target: ast.expr, state: LoweringState, stateme
         raise DaceSyntaxError(None, statement, 'Symbolic variables cannot be used as memlet targets')
 
 
+def _stored_names(target: ast.expr) -> Iterator[ast.Name]:
+    """
+    The names an assignment target actually stores into.
+
+    Not every name under a target is one: ``b[i] = ...`` stores into ``b`` and
+    READS ``i``. Walking the whole target reported the index too, so an
+    explicit tasklet writing an element of an array connector at the map
+    parameter was rejected for "storing into" that parameter.
+    """
+    if isinstance(target, ast.Name):
+        yield target
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            yield from _stored_names(element)
+    elif isinstance(target, (ast.Subscript, ast.Attribute, ast.Starred)):
+        yield from _stored_names(target.value)
+
+
 def _validate_tasklet_body(code_statements: List[ast.stmt], in_memlets: Dict[str, Memlet],
                            out_memlets: Dict[str, Memlet], state: LoweringState) -> None:
     """
@@ -381,8 +399,8 @@ def _validate_tasklet_body(code_statements: List[ast.stmt], in_memlets: Dict[str
             elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
                 targets = [node.target]
             for target in targets:
-                for name in ast.walk(target):
-                    if not isinstance(name, ast.Name) or name.id in connectors:
+                for name in _stored_names(target):
+                    if name.id in connectors:
                         continue
                     if _names_a_symbol(name.id, state):
                         raise DaceSyntaxError(
