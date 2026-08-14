@@ -504,6 +504,26 @@ def _create_einsum_internal(sdfg: SDFG,
                 if str(s) not in sym_mapping:
                     sym_mapping[str(s)] = s
         nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, sym_mapping)
+        # InlineSDFG composes inner and outer memlets by coordinate-wise offsetting. That is
+        # only valid when the nested SDFG's array shape matches the outer array shape. If the
+        # GEMM view permutes dimensions (e.g., an outer [B, M, 1] reinterpreted as [B, 1, M]),
+        # inlining would produce an out-of-bounds memlet. Keep such nested SDFGs as calls.
+        def _is_permutation(s1, s2):
+            if len(s1) != len(s2):
+                return False
+            s2 = list(s2)
+            for a in s1:
+                for i, b in enumerate(s2):
+                    if a == b:
+                        del s2[i]
+                        break
+                else:
+                    return False
+            return True
+        if (_is_permutation(nsdfg.arrays['X'].shape, a.desc(sdfg).shape)
+                or _is_permutation(nsdfg.arrays['Y'].shape, b.desc(sdfg).shape)
+                or _is_permutation(nsdfg.arrays['Z'].shape, c.desc(sdfg).shape)):
+            nsdfg_node.no_inline = True
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))
