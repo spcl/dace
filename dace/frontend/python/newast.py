@@ -412,9 +412,11 @@ def add_indirection_subgraph(sdfg: SDFG,
                         toreplace = 'index_' + fname + '_' + str(len(accesses[fname]) - 1)
 
                     if direct_assignment:
-                        # newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
-                        newsubset[dimidx] = r.subs(expr, toreplace)
-                        r = newsubset[dimidx]
+                        # A point range keeps its (begin, end, step) shape. Writing the substituted
+                        # bound back on its own left a bare expression where the subset holds
+                        # tuples -- the malformed state the tuple check above exists to survive.
+                        r = r.subs(expr, toreplace)
+                        newsubset[dimidx] = (r, r, newsubset[dimidx][2])
                     else:
                         rng = list(newsubset[dimidx])
                         rng[i] = rng[i].subs(expr, toreplace)

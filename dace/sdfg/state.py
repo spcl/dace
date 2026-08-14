@@ -1734,9 +1734,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
@@ -1812,9 +1814,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(
@@ -2932,15 +2936,35 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
             for n in node.all_control_flow_blocks():
-                n.sdfg = self.sdfg
+                n.sdfg = sdfg
+            # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
+            # reports 0 -- the same id as the root and as every other unregistered region.
+            # Appending instead would assign positions in insertion order while this assigns
+            # them in tree order, so the next reset would silently renumber.
+            self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
             start_block = is_start_state
 
         if start_block:
-            self.start_block = len(self.nodes()) - 1
+            self._start_block = len(self.nodes()) - 1
             self._cached_start_block = node
+
+    def remove_node(self, node):
+        # `_start_block` is an index into the node list, so any removal invalidates it:
+        # the indices of later nodes shift down, leaving it pointing at a different block
+        # or past the end. Re-resolve it by identity around the removal.
+        if self._start_block is not None:
+            start_block = self.node(self._start_block)
+        else:
+            start_block = None
+        super().remove_node(node)
+        self._cached_start_block = None
+        if start_block is node:
+            self._start_block = None
+        elif start_block is not None:
+            self.start_block = self.node_id(start_block)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
@@ -3869,6 +3893,12 @@ class ConditionalBlock(AbstractControlFlowRegion):
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
+        # A branch is reached only through this list, never through ``nodes()``, so the generic
+        # ``add_node`` bookkeeping never runs for it: propagate the SDFG into the branch and
+        # invalidate here instead. Without this the branch's blocks keep ``sdfg is None``.
+        for n in branch.all_control_flow_blocks():
+            n.sdfg = self.sdfg
+        self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]

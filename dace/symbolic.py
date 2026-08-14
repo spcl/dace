@@ -1,8 +1,8 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import contextlib
 from collections import Counter
-from functools import lru_cache
+from functools import lru_cache, cache
 import sympy
 import threading
 import pickle
@@ -1134,6 +1134,8 @@ class int_floor(sympy.Function):
         if y.is_Number:
             if y == 1:
                 return x
+            if y == -1:
+                return -x
             # Exact division is not a rounding operation at all -- return the quotient itself, so the
             # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
             quotient = x / y
@@ -1513,6 +1515,23 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
+@cache
+def _cached_sympy_pattern():
+    """
+    Cache sympy pattern for `min(a, b) + c`  and `max(a, b) + c`.
+
+    Those patterns are (surprisingly) costly to create. Since they are pattern (similar to a regex),
+    they can be constructed once and then re-used in subsequent calls. Greatly reduces the overhead
+    of `simplify_ext()`  (see below).
+    """
+    a = sympy.Wild('a')
+    b = sympy.Wild('b')
+    c = sympy.Wild('c')
+    min_pattern = sympy.Min(a, b) + c
+    max_pattern = sympy.Max(a, b) + c
+    return min_pattern, max_pattern, a, b, c
+
+
 def simplify_ext(expr):
     """
     An extended version of simplification with expression fixes for sympy.
@@ -1522,18 +1541,18 @@ def simplify_ext(expr):
     """
     if not isinstance(expr, sympy.Basic):
         return expr
-    a = sympy.Wild('a')
-    b = sympy.Wild('b')
-    c = sympy.Wild('c')
 
     # Push expressions into both sides of min/max.
     # Example: Min(N, 4) + 1 => Min(N + 1, 5)
-    dic = expr.match(sympy.Min(a, b) + c)
-    if dic:
-        return sympy.Min(dic[a] + dic[c], dic[b] + dic[c])
-    dic = expr.match(sympy.Max(a, b) + c)
-    if dic:
-        return sympy.Max(dic[a] + dic[c], dic[b] + dic[c])
+    # Guarded by a quick check if `expr` is an addition because matching is an expensive operation.
+    if expr.is_Add:
+        min_ab_plus_c, max_ab_plus_c, a, b, c = _cached_sympy_pattern()
+        matches = expr.match(min_ab_plus_c)
+        if matches is not None:
+            return sympy.Min(matches[a] + matches[c], matches[b] + matches[c])
+        matches = expr.match(max_ab_plus_c)
+        if matches is not None:
+            return sympy.Max(matches[a] + matches[c], matches[b] + matches[c])
     return expr
 
 
@@ -1775,6 +1794,20 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+def _construct_function_uncached(func, *args, **kwargs):
+    # Construct without SymPy's ``@cacheit`` constructor caches (both
+    # ``Function.__new__`` and ``Application.__new__`` are cached, and ``eval``
+    # implementations re-enter them): DaCe symbol equality ignores dtype, so a
+    # cache entry built from an equal-named, different-dtype symbol would
+    # silently substitute that symbol into the result. Symbol-free arguments
+    # hash soundly and keep the regular (evaluating) constructors.
+    if (isinstance(func, type) and issubclass(func, sympy.core.function.Application)
+            and not (set(kwargs) - {'evaluate'}) and not kwargs.get('evaluate', False)
+            and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)):
+        return sympy.Basic.__new__(func, *args)
+    return func(*args, **kwargs)
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1878,7 +1911,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return sympy.Mod(a, b, evaluate=False)
+        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
 
     @staticmethod
     def _unary_minus(a):
@@ -1891,13 +1924,13 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.Div: _binop_div,
         ast.Pow: _binop_pow,
         ast.Mod: _binop_mod,
-        ast.FloorDiv: lambda a, b: int_floor(a, b),
+        ast.FloorDiv: lambda a, b: _construct_function_uncached(int_floor, a, b),
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,
         ast.USub: _unary_minus,
-        ast.Not: lambda a: sympy.Not(a),
-        ast.Invert: lambda a: bitwise_invert(a),
+        ast.Not: lambda a: _construct_function_uncached(sympy.Not, a),
+        ast.Invert: lambda a: _construct_function_uncached(bitwise_invert, a),
     }
     _comparators = {
         ast.Eq: sympy.Eq,
@@ -1999,20 +2032,22 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.op, ast.And):
             result = values[0]
             for value in values[1:]:
-                result = AND(result, value)
+                result = _construct_function_uncached(AND, result, value)
             return result
         result = values[0]
         for value in values[1:]:
-            result = OR(result, value)
+            result = _construct_function_uncached(OR, result, value)
         return result
 
     def visit_Compare(self, node):
         if len(node.ops) != 1 or len(node.comparators) != 1:
             raise NotImplementedError('Chained comparisons are not supported in symbolic deserialization')
-        return self._comparators[type(node.ops[0])](self.visit(node.left), self.visit(node.comparators[0]))
+        return _construct_function_uncached(self._comparators[type(node.ops[0])], self.visit(node.left),
+                                            self.visit(node.comparators[0]))
 
     def visit_IfExp(self, node):
-        return IfExpr(self.visit(node.test), self.visit(node.body), self.visit(node.orelse))
+        return _construct_function_uncached(IfExpr, self.visit(node.test), self.visit(node.body),
+                                            self.visit(node.orelse))
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
@@ -2062,9 +2097,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return _cast_symbolic_value(args[0], func)
 
         kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
-        if kwargs:
-            return func(*args, **kwargs)
-        return func(*args)
+        return _construct_function_uncached(func, *args, **kwargs)
 
     def visit_Attribute(self, node):
         if isinstance(node.value, ast.Name) and node.value.id == 'dace':
@@ -2072,7 +2105,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 return getattr(dtypes, node.attr)
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
-        return Attr(self.visit(node.value), symbol(node.attr))
+        return _construct_function_uncached(Attr, self.visit(node.value), symbol(node.attr))
 
     def generic_visit(self, node):
         raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
@@ -2100,7 +2133,7 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
         return TypedConstant(value, dtype=dtype)
     # Non-constant composite expressions are preserved as explicit casts so they
     # can round-trip even when no constant/symbol dtype rewrite is possible.
-    return sympy.Function(f'dace.{dtype.to_string()}')(value)
+    return _construct_function_uncached(sympy.Function(f'dace.{dtype.to_string()}'), value)
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
