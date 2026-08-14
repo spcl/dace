@@ -346,9 +346,13 @@ class typeclass(object):
             typename = 'bool'
         elif wrapped_type is type(None):
             wrapped_type = None
-        elif wrapped_type is Float:
+        elif isinstance(wrapped_type, type) and issubclass(wrapped_type, Float):
             wrapped_type = float
-        elif wrapped_type is Integer:
+        elif isinstance(wrapped_type, type) and issubclass(wrapped_type, Integer):
+            # Subclasses, not just the class itself: sympy gives the small
+            # integers classes of their own (``Integer(1)`` is a ``One``,
+            # ``Integer(0)`` a ``Zero``), so an exact-identity test missed
+            # exactly the constants a folded expression most often produces.
             wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
