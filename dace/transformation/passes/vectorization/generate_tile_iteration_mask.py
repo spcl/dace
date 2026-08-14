@@ -165,11 +165,16 @@ class GenerateTileIterationMask(ppl.Pass):
         # ``global_ubs`` reference outer-scope loop bounds (e.g. ``kfdia``). A
         # bound symbol the body NSDFG doesn't otherwise use (unlike a shape symbol
         # like ``klev``) must be threaded in, else the TileMaskGen tasklet fails to
-        # compile (``'kfdia' was not declared``).
+        # compile (``'kfdia' was not declared``). ``iter_vars`` are the surrounding
+        # map's iteration variables and must be threaded for the same reason: the
+        # generated mask references them and, after FuseBranchedTailRemainder folds
+        # the body into a separate function, that function needs them as parameters.
         # Ordered: this decides the order the symbols are added to the nested SDFG.
+        iter_syms = dict.fromkeys(spec.iter_vars)
         ub_syms = dict.fromkeys(
             sorted(str(s) for ub in spec.global_ubs for s in symbolic.pystr_to_symbolic(str(ub)).free_symbols))
-        thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, ub_syms, parent_sdfg)
+        all_syms = iter_syms | ub_syms
+        thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, all_syms, parent_sdfg)
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
