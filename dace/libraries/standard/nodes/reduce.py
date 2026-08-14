@@ -640,7 +640,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
         from dace.codegen.prettycode import CodeIOStream
-        from dace.codegen.targets.cpp import unparse_cr_split
+        from dace.codegen.targets.cpp import unparse_cr_split, mangle_dace_state_struct_name
 
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
@@ -781,15 +781,18 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # status rather than dropping it: CUB reads a null workspace as "only report the size", so a
         # failed query leaves the size unset and a failed allocation hands back a null pointer -- and
         # either turns the reduction below into a silent no-op that leaves the output untouched.
-        # The function RETURNS the status instead of checking it, because the check macro needs
-        # ``__state``, which this function has no reason to take; the caller below checks it.
+        # ``__state`` is threaded in (the caller already has it) so the query can go through the
+        # standard ``DACE_GPU_CHECK`` -- which only records, never returns -- so the early ``return``
+        # right after it is what actually stops a failed query from reaching CUB with a null workspace.
+        state_t = mangle_dace_state_struct_name(sdfg)
         cuda_globalcode.write("""
-DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
-cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state);
+cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state)
 {{
     size_t _cub_needed = 0;
-    cudaError_t _cub_status = cub::{reduce_type}::{kname}(nullptr, _cub_needed,
-                                input, output, {reduce_range_use}{redop}, stream);
+    cudaError_t _cub_status;
+    DACE_GPU_CHECK(_cub_status = cub::{reduce_type}::{kname}(nullptr, _cub_needed,
+                                input, output, {reduce_range_use}{redop}, stream));
     if (_cub_status != cudaSuccess) return _cub_status;
     void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream, &_cub_status);
     if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : cudaErrorMemoryAllocation;
@@ -803,16 +806,18 @@ cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range
                    reduce_range_def=reduce_range_def,
                    reduce_range_use=reduce_range_use,
                    kname=kname,
-                   redop=reduce_op))
+                   redop=reduce_op,
+                   state_t=state_t))
 
         # Write reduction function definition in caller file
         host_globalcode.write(
             """
-DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state);
         """.format(id=idstr,
                    reduce_range_def=reduce_range_def,
                    intype=input_data.dtype.ctype,
-                   outtype=output_data.dtype.ctype), state.parent_graph, state_id, node)
+                   outtype=output_data.dtype.ctype,
+                   state_t=state_t), state.parent_graph, state_id, node)
 
         # Storage-aware tasklet connector names. A device-writable output returns the tasklet
         # directly, so its connectors must be the outer ``_in`` / ``_out`` the node exposes. A host
@@ -826,8 +831,8 @@ DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output,
 
         # Call reduction function where necessary
         host_localcode.write(
-            'DACE_GPU_CHECK(__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream));'.format(
-                id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
+            'DACE_GPU_CHECK(__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream, __state));'.
+            format(id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
 
         # Make tasklet
         tnode = dace.nodes.Tasklet('reduce', {tin: dace.pointer(input_data.dtype)},
