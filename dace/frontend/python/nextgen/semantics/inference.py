@@ -1531,6 +1531,10 @@ class InferenceService:
         boolean_result = isinstance(node, _BOOLEAN_OPS)
         data_operands = [op for op in operands if op.is_data]
         if not data_operands:
+            if isinstance(node, ast.BoolOp):
+                index = self._boolop_decider_index(node, operands)
+                if index is not None:
+                    return operands[index]
             # Purely symbolic/constant expression
             return Inferred(kind='symbolic', value=self._symbolic_expression(node))
 
@@ -1561,6 +1565,54 @@ class InferenceService:
             # never written.
             return Inferred(kind='data', descriptor=data.Scalar(result_dtype))
         return Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape)))
+
+    def boolop_decider(self, node: ast.BoolOp) -> Optional[ast.expr]:
+        """
+        The OPERAND expression an ``and``/``or`` over compile-time operands
+        yields, or None when this is not decidable here.
+
+        Lowering asks this to rewrite the expression before it is unparsed into
+        a tasklet: see :meth:`_boolop_decider_index` for why the source text
+        does not survive the trip.
+        """
+        try:
+            operands = [self.infer(value) for value in node.values]
+        except UnsupportedFeatureError:
+            return None
+        if any(operand.is_data or operand.kind not in ('constant', 'symbolic') for operand in operands):
+            return None
+        index = self._boolop_decider_index(node, operands)
+        return None if index is None else node.values[index]
+
+    def _boolop_decider_index(self, node: ast.BoolOp, operands: List['Inferred']) -> Optional[int]:
+        """
+        Which operand of an ``and``/``or`` over compile-time operands decides
+        it, following Python's own semantics, or None when an operand's
+        truthiness is not decidable here.
+
+        ``and``/``or`` are not boolean-valued in Python: they yield the OPERAND
+        that decided the result. ``N or False`` is ``N``, and a program
+        returning it expects the number, not a 1. Parsing the expression
+        symbolically instead answers with a sympy boolean -- ``Or(N, False)``
+        reduces to "N is nonzero" -- and unparsing the source text into a
+        tasklet means C++'s ``||``, which yields 1. The classic frontend lands
+        on Python's operator too: ``sympy.Or`` refuses a non-boolean operand,
+        and its fallback is ``eval('l or r')``.
+
+        :param node: The boolean operation.
+        :param operands: Its already-inferred operands, in source order.
+        :return: The deciding operand's index, or None.
+        """
+        decides = isinstance(node.op, ast.Or)
+        for index, operand in enumerate(operands[:-1]):
+            try:
+                truthy = bool(operand.value)
+            except TypeError:
+                # A sympy relational has no truth value until it is solved.
+                return None
+            if truthy is decides:
+                return index
+        return len(operands) - 1
 
     def _infer_registry_operator(self, node: ast.expr, operands: List['Inferred']) -> Optional['Inferred']:
         """

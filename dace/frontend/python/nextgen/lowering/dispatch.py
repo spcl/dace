@@ -174,10 +174,35 @@ def lower_computation(target: DataAccess,
         if _lower_registry_operator(target, value, statement, state):
             return
         value = _materialize_attribute_reads(value, state)
+        value = _fold_compile_time_boolops(value, state)
         rewritten = static_values.materialize_operands(value, state)
         elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)
     except UnsupportedFeatureError as reason:
         fallback_to_callback(statement, state, reason)
+
+
+def _fold_compile_time_boolops(value: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Replace every ``and``/``or`` over compile-time operands with the operand
+    that decides it.
+
+    Python's ``or`` yields a VALUE, not a truth: ``N or False`` is ``N``. The
+    same text unparsed into a tasklet is C++'s ``||``, which yields 1, so a
+    program returning ``N or False`` returned 1 instead of the number. Only the
+    compile-time case folds; over data operands ``or`` is the elementwise
+    logical operator the elementwise mechanism already emits correctly.
+    """
+
+    class _Folder(ast.NodeTransformer):
+
+        def visit_BoolOp(self, node: ast.BoolOp) -> ast.expr:
+            folded = self.generic_visit(node)
+            if not isinstance(folded, ast.BoolOp):
+                return folded
+            decider = state.inference.boolop_decider(folded)
+            return folded if decider is None else decider
+
+    return ast.fix_missing_locations(_Folder().visit(astutils.copy_tree(value)))
 
 
 def _materialize_attribute_reads(value: ast.expr, state: LoweringState) -> ast.expr:
