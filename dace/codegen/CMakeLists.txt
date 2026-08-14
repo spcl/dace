@@ -200,6 +200,9 @@ string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}"
 string(REPLACE " " ";" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}")
 foreach(PACKAGE_NAME ${DACE_ENV_PACKAGES})
   find_package(${PACKAGE_NAME} REQUIRED)
+  if(PACKAGE_NAME STREQUAL "MPI")
+    list(APPEND DACE_LIBS MPI::MPI_CXX)
+  endif()
 endforeach()
 # Un-escape and expand environment arguments, now that packages have been found
 foreach(VAR_NAME DACE_ENV_INCLUDES DACE_ENV_LIBRARIES DACE_ENV_COMPILE_FLAGS
