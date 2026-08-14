@@ -34,11 +34,12 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
 ``Array`` needs a 1-element numpy buffer.
 """
+import itertools
 import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
-from dace import Memlet, properties, subsets
+from dace import Memlet, dtypes, properties, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -280,6 +281,31 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(other.data)
         return blocked
 
+    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> Set[str]:
+        """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
+        rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
+        or a GPU-scheduled map that uses the buffer as a multi-thread collective."""
+        blocked: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if not isinstance(node, nodes.AccessNode):
+                    continue
+                arr = sdfg.arrays.get(node.data)
+                if not isinstance(arr, dace.data.Array):
+                    continue
+                for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
+                    nb = edge.src if edge.dst is node else edge.dst
+                    if isinstance(nb, nodes.LibraryNode):
+                        blocked.add(node.data)
+                        break
+                    if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
+                        blocked.add(node.data)
+                        break
+                    if (isinstance(nb, (nodes.MapEntry, nodes.MapExit)) and nb.map.schedule in dtypes.GPU_SCHEDULES):
+                        blocked.add(node.data)
+                        break
+        return blocked
+
     def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
                      apply_filter: bool) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
@@ -313,7 +339,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient arrays (top level only).
         :returns: Names of the descriptors that are now scalar-referenced in the body.
         """
-        blocked = self._blocked_sources(sdfg)
+        blocked = self._blocked_sources(sdfg) | self._blocked_by_unscalarizable_neighbors(sdfg)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
