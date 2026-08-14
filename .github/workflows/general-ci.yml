@@ -473,8 +473,7 @@ jobs:
   # Job id was "test" in graph-backend-ci.yml; renamed to "graph-backend" only because General Tests
   # already owns "test". Everything else is verbatim.
   graph-backend:
-    # Temporarily disabled while the extended CI is being repaired; it runs the whole suite a
-    # second time under rustworkx and every red there is a duplicate of a General Tests red.
+    # Off while extended CI is repaired: duplicates every General Tests red under rustworkx.
     if: false
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -503,8 +502,7 @@ jobs:
 
   # --- Integration Tests (was integration-ci.yml) ---
   cloudsc-e2e:
-    # Temporarily disabled while the extended CI is being repaired: 330 min budget, and it was
-    # cancelled by the first failing shard on every recent run anyway.
+    # Off while extended CI is repaired: 330 min budget, cancelled by the first failing shard anyway.
     if: false
     runs-on: ubuntu-latest
     timeout-minutes: 330
