@@ -59,7 +59,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, data, dtypes, properties
+from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -201,16 +201,32 @@ class ResolveWriteConflicts(ppl.Pass):
 def enclosing_parallel_params(state: SDFGState, node: nodes.Node) -> Set[str]:
     """The parameters of every parallel scope enclosing a node: map parameters,
     and a consume scope's processing-element index."""
-    params: Set[str] = set()
+    return set(enclosing_parallel_ranges(state, node).keys())
+
+
+def enclosing_parallel_ranges(state: SDFGState, node: nodes.Node) -> Dict[str, Optional[Tuple]]:
+    """
+    The parameters of every parallel scope enclosing a node, mapped to the
+    ``(begin, end, step)`` range each iterates over.
+
+    A consume scope's processing-element index has no such range (the number of
+    processing elements is a runtime property), so it maps to None.
+
+    :param state: The state holding the node.
+    :param node: The node whose enclosing scopes to walk.
+    :return: Parameter name to its range, outermost scope last.
+    """
+    ranges: Dict[str, Optional[Tuple]] = {}
     entry = state.entry_node(node)
     while entry is not None:
         if isinstance(entry, nodes.MapEntry):
-            params.update(entry.map.params)
+            for param, rng in zip(entry.map.params, entry.map.range):
+                ranges[param] = rng
         elif isinstance(entry, nodes.ConsumeEntry):
             if entry.consume.pe_index:
-                params.add(entry.consume.pe_index)
+                ranges[entry.consume.pe_index] = None
         entry = state.entry_node(entry)
-    return params
+    return ranges
 
 
 def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge[Memlet]]:
@@ -230,7 +246,8 @@ def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge
             inner = state.memlet_path(edge)[0]
             if isinstance(inner.src, nodes.EntryNode):
                 continue  # A pass-through read, not a write produced in this scope
-            params = enclosing_parallel_params(state, inner.src)
+            ranges = enclosing_parallel_ranges(state, inner.src)
+            params = set(ranges.keys())
             if not params:
                 continue
             # A write arriving from a view carries the view's whole window, so
@@ -238,14 +255,14 @@ def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge
             written = _write_subsets(inner, state)
             if not written:
                 continue
-            if all(_partitions(subset, params) for subset in written):
+            if all(_partitions(subset, params, ranges) for subset in written):
                 continue  # Partitioned: iterations write disjoint elements
             # A nested SDFG's connector memlet covers the whole container until
             # propagation narrows it, so the per-iteration subset is only
             # visible inside. Ask there before calling it a collision.
             if isinstance(inner.src, nodes.NestedSDFG):
                 nested = _nested_write_subsets(inner.src, inner.src_conn)
-                if nested and all(_partitions(nested_subset, params) for nested_subset in nested):
+                if nested and all(_partitions(nested_subset, params, ranges) for nested_subset in nested):
                     continue
             if isinstance(sdfg.arrays.get(node.data), data.Stream):
                 # A stream is concurrent by construction: every push appends,
@@ -513,21 +530,99 @@ def _reference_targets(sdfg: SDFG) -> Set[str]:
     return targets
 
 
-def _partitions(subset, params: Set[str]) -> bool:
-    """Whether a write subset varies with every enclosing parallel parameter,
-    so that distinct iterations touch distinct elements.
+def _partitions(subset, params: Set[str], ranges: Optional[Dict[str, Optional[Tuple]]] = None) -> bool:
+    """
+    Whether a write subset touches a distinct element in every iteration of the
+    enclosing parallel scopes.
 
-    .. note::
-       Varying with every parameter is necessary but NOT sufficient. The real
-       question is whether the index expression is injective over the COMBINED
-       iteration domain. ``A[2*i:2*i+3] += 1`` lowers to the single-element
-       write ``A[__i0 + 2*i]`` over ``i`` and the inner ``__i0`` in [0,3); each
-       parameter separates on its own, yet ``(i=0,__i0=2)`` and ``(i=1,__i0=0)``
-       both write index 2. Deciding this needs the parameters' RANGES, which
-       this predicate is not given. See wcr_atomic_test's overlapping cases.
+    Varying with every parameter is necessary but not sufficient: the index
+    expression has to be injective over the COMBINED iteration domain.
+    ``A[2*i:2*i+3] += 1`` lowers to the single-element write ``A[__i0 + 2*i]``
+    over ``i`` and the inner ``__i0`` in [0,3); each parameter separates on its
+    own, yet ``(i=0, __i0=2)`` and ``(i=1, __i0=0)`` both write index 2. Where
+    the parameters' ranges are known and each of them indexes exactly one
+    dimension, that dimension is checked for injectivity outright
+    (:func:`_separates`); otherwise -- a parameter spread over several
+    dimensions (``A[i, i]``), or a range that is not available -- only the
+    necessary condition is checked, as before.
+
+    :param subset: The subset written.
+    :param params: The enclosing parallel scopes' parameters.
+    :param ranges: Those parameters' ranges, where known.
+    :return: True if distinct iterations are known to write distinct elements.
     """
     free_symbols = {str(symbol) for symbol in subset.free_symbols}
-    return all(param in free_symbols for param in params)
+    if not all(param in free_symbols for param in params):
+        return False
+    if not ranges:
+        return True
+
+    # Which dimension each parameter indexes. A parameter that reaches more than
+    # one dimension is left to the caller's necessary condition above.
+    dimensions: Dict[str, List[int]] = {param: [] for param in params}
+    for index, dimension in enumerate(subset):
+        names = {str(symbol) for element in dimension for symbol in symbolic.pystr_to_symbolic(element).free_symbols}
+        for param in names & params:
+            dimensions[param].append(index)
+    if any(len(indices) != 1 for indices in dimensions.values()):
+        return True
+
+    per_dimension: Dict[int, Set[str]] = {}
+    for param, (index, ) in ((param, indices) for param, indices in dimensions.items()):
+        per_dimension.setdefault(index, set()).add(param)
+    return all(_separates(subset[index], together, ranges) for index, together in per_dimension.items())
+
+
+def _separates(dimension, params: Set[str], ranges: Dict[str, Optional[Tuple]]) -> bool:
+    """
+    Whether one dimension of a write subset takes a distinct value in every
+    iteration of the parameters indexing it.
+
+    The written extent of the dimension is affine in those parameters,
+    ``base + sum(coefficient * param)``. Ordering the terms by the granularity
+    at which they move (``|coefficient| * step``), each term separates the
+    iterations the finer terms cannot only if it moves further than everything
+    below it spans in total -- the same reason a positional number system does
+    not alias. ``__i0 + 2*i`` fails it: ``i`` moves by 2, while ``__i0`` already
+    spans 2.
+
+    Anything not decidable this way -- a non-affine index, a symbolic
+    coefficient or bound, an unknown range -- answers False, which costs a
+    conflict resolution that may not have been needed rather than missing one
+    that was.
+
+    :param dimension: The dimension's ``(begin, end, step)`` range.
+    :param params: The parameters indexing it.
+    :param ranges: Every parameter's own ``(begin, end, step)`` range.
+    :return: True if the dimension is known to separate the iterations.
+    """
+    begin, end, _ = dimension
+    begin = symbolic.pystr_to_symbolic(begin)
+    if symbolic.simplify(symbolic.pystr_to_symbolic(end) - begin) != 0:
+        return False  # Writes a whole window per iteration, not one element
+
+    terms = []
+    for param in params:
+        parameter_range = ranges.get(param)
+        if parameter_range is None:
+            return False
+        symbol = symbolic.symbol(param)
+        coefficient = symbolic.simplify(begin.diff(symbol))
+        if coefficient.free_symbols or symbolic.simplify(begin.diff(symbol, 2)) != 0:
+            return False  # Not affine in this parameter, or a symbolic weight
+        lower, upper, step = (symbolic.simplify(value) for value in parameter_range)
+        span = symbolic.simplify(abs(coefficient) * (upper - lower))
+        granularity = symbolic.simplify(abs(coefficient) * step)
+        if granularity == 0:
+            return False
+        terms.append((granularity, span))
+
+    covered = 0
+    for granularity, span in sorted(terms, key=lambda term: (symbolic.issymbolic(term[0]), str(term[0]))):
+        if not (symbolic.simplify(granularity - covered) > 0) == True:  # noqa: E712 -- sympy tri-state
+            return False
+        covered = symbolic.simplify(covered + span)
+    return True
 
 
 def _nested_write_subsets(node: nodes.Node, connector: Optional[str]) -> List:
@@ -535,6 +630,12 @@ def _nested_write_subsets(node: nodes.Node, connector: Optional[str]) -> List:
     The subsets a nested SDFG writes to the container behind one of its output
     connectors, as seen from the inside — where the enclosing map's parameters
     are in scope, so a per-iteration write is recognizable as one.
+
+    Read off the INNERMOST edge of each write path, for the same reason
+    :func:`_conflicting_writes` does: the edge arriving at the access node has
+    already been widened to the inner scope's whole range (or is still a
+    whole-array placeholder), which is exactly the information this function
+    exists to look past.
     """
     if not isinstance(node, nodes.NestedSDFG) or connector is None:
         return []
@@ -544,7 +645,9 @@ def _nested_write_subsets(node: nodes.Node, connector: Optional[str]) -> List:
             if access.data != connector:
                 continue
             for in_edge in state.in_edges(access):
-                result.extend(_write_subsets(in_edge, state))
+                if in_edge.data.is_empty():
+                    continue
+                result.extend(_write_subsets(state.memlet_path(in_edge)[0], state))
     return result
 
 
@@ -988,14 +1091,23 @@ def _apply_composed_resolution(state: SDFGState, edge: MultiConnectorEdge[Memlet
     subtly wrong and impossible to notice until code generation.
     """
     writer: nodes.Tasklet = edge.src
+    scope = state.entry_node(writer)
     # Sources the contribution still needs must survive the teardown below,
     # connectors included -- pruning one and re-attaching to it would leave the
     # edge pointing at a connector that no longer exists.
     reused = {(id(source_edge.src), source_edge.src_conn) for _, source_edge in composed.inputs}
+    # Drop what the contribution does not need first, while the edges it does
+    # need still hold the writer inside its scope: pruning walks the scope dict
+    # outwards, and a writer with no incoming edge at all is exactly what makes
+    # that dict underivable.
+    keep = [in_edge for in_edge in state.in_edges(writer) if (id(in_edge.src), in_edge.src_conn) in reused]
     for in_edge in list(state.in_edges(writer)):
+        if (id(in_edge.src), in_edge.src_conn) in reused:
+            continue
         state.remove_edge(in_edge)
-        if (id(in_edge.src), in_edge.src_conn) not in reused:
-            _prune_dangling_read(state, in_edge)
+        _prune_dangling_read(state, in_edge)
+    for in_edge in keep:
+        state.remove_edge(in_edge)
     for connector in list(writer.in_connectors):
         writer.remove_in_connector(connector)
 
@@ -1008,6 +1120,33 @@ def _apply_composed_resolution(state: SDFGState, edge: MultiConnectorEdge[Memlet
 
     for path_edge in state.memlet_path(edge):
         path_edge.data.wcr = composed.combiner
+
+    _keep_inside_scope(state, writer, scope)
+
+
+def _keep_inside_scope(state: SDFGState, node: nodes.Node, scope: Optional[nodes.EntryNode]) -> None:
+    """
+    Re-attach a node that dropping its self-read left with no incoming edge.
+
+    A node inside a scope must be reachable from the scope entry. With
+    in-degree zero it is a graph-level source node instead, so ``scope_dict()``
+    never places it inside the scope and gives up ("Leftover nodes in queue"),
+    taking memlet propagation and code generation down with it. This is not
+    hypothetical for an accumulation whose only input was the accumulator:
+    ``A[0] += 1`` inside a map contributes a constant, so folding the read into
+    the conflict resolution leaves the tasklet with nothing feeding it.
+
+    An empty (control-only) edge restores the containment without reintroducing
+    the read the resolution just removed.
+
+    :param state: The state holding the node.
+    :param node: The node whose reads were dropped.
+    :param scope: The node's enclosing scope entry, read BEFORE the edges were
+                  removed, or None if it was at state level (nothing to do).
+    """
+    if scope is None or state.in_degree(node) > 0:
+        return
+    state.add_nedge(scope, node, Memlet())
 
 
 def _extract_combiner(state: SDFGState, edge: MultiConnectorEdge[Memlet],
@@ -1096,6 +1235,9 @@ def _apply_conflict_resolution(state: SDFGState, edge: MultiConnectorEdge[Memlet
     read = self_reads[0]
     writer = edge.src
     accumulator = read.dst_conn
+    # Captured before the teardown below: entry_node() reads the scope dict,
+    # which an orphaned node is exactly what breaks.
+    scope = state.entry_node(writer)
 
     for path_edge in state.memlet_path(edge):
         path_edge.data.wcr = combiner
@@ -1109,6 +1251,9 @@ def _apply_conflict_resolution(state: SDFGState, edge: MultiConnectorEdge[Memlet
     # (up to the scope entry, where other consumers may still need it).
     state.remove_edge(read)
     writer.remove_in_connector(accumulator)
+    # Before pruning, which reads the scope dict as it unwinds and so needs the
+    # graph well-formed again.
+    _keep_inside_scope(state, writer, scope)
     _prune_dangling_read(state, read)
 
 
@@ -1133,10 +1278,15 @@ def _prune_dangling_read(state: SDFGState, read: MultiConnectorEdge[Memlet]) -> 
         if any(out.src_conn == read.src_conn for out in state.out_edges(source)):
             return  # Still feeding something else inside the scope
         incoming = [e for e in state.in_edges(source) if e.dst_conn == 'IN_' + read.src_conn[4:]]
+        scope = state.entry_node(source)
         source.remove_out_connector(read.src_conn)
         for in_edge in incoming:
             state.remove_edge(in_edge)
             source.remove_in_connector(in_edge.dst_conn)
+            # Nested scopes unwind together: dropping the read can leave THIS
+            # entry with nothing feeding it, and the recursion below reads the
+            # scope dict, so repair it before descending.
+            _keep_inside_scope(state, source, scope)
             # The read may have been routed through several enclosing scopes;
             # each one now has a connector pair with nothing behind it, which
             # memlet propagation trips over ("no internal edge for this

@@ -220,8 +220,12 @@ def test_aug_assign_state_fission_map():
     sdfg = sdfg_aug_assign_state_fission.to_sdfg()
     sdfg.simplify()
 
-    applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
-    assert applied == 2
+    # Every iteration of the last two maps updates A[0], so these are true write
+    # conflicts and the frontend's own conflict resolution already turned both
+    # into conflict-resolved writes -- leaving AugAssignToWCR nothing to do.
+    writes = [edge for state in sdfg.states() for edge in state.edges() if edge.data.data == 'A' and edge.data.wcr]
+    assert len(writes) == 4  # tasklet -> map exit -> access node, twice
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
 
 
 def test_free_map_permissive():
