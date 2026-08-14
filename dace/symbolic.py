@@ -2,7 +2,7 @@
 import ast
 import contextlib
 from collections import Counter
-from functools import lru_cache
+from functools import lru_cache, cache
 import math
 import sympy
 import threading
@@ -2323,6 +2323,23 @@ def sympy_divide_fix(expr):
     return nexpr
 
 
+@cache
+def _cached_sympy_pattern():
+    """
+    Cache sympy pattern for `min(a, b) + c`  and `max(a, b) + c`.
+
+    Those patterns are (surprisingly) costly to create. Since they are pattern (similar to a regex),
+    they can be constructed once and then re-used in subsequent calls. Greatly reduces the overhead
+    of `simplify_ext()`  (see below).
+    """
+    a = sympy.Wild('a')
+    b = sympy.Wild('b')
+    c = sympy.Wild('c')
+    min_pattern = sympy.Min(a, b) + c
+    max_pattern = sympy.Max(a, b) + c
+    return min_pattern, max_pattern, a, b, c
+
+
 def simplify_ext(expr):
     """
     An extended version of simplification with expression fixes for sympy.
@@ -2336,18 +2353,16 @@ def simplify_ext(expr):
             expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
-    a = sympy.Wild('a')
-    b = sympy.Wild('b')
-    c = sympy.Wild('c')
 
     # Push expressions into both sides of min/max.
     # Example: Min(N, 4) + 1 => Min(N + 1, 5)
-    dic = expr.match(sympy.Min(a, b) + c)
-    if dic:
-        return sympy.Min(dic[a] + dic[c], dic[b] + dic[c])
-    dic = expr.match(sympy.Max(a, b) + c)
-    if dic:
-        return sympy.Max(dic[a] + dic[c], dic[b] + dic[c])
+    min_ab_plus_c, max_ab_plus_c, a, b, c = _cached_sympy_pattern()
+    matches = expr.match(min_ab_plus_c)
+    if matches is not None:
+        return sympy.Min(matches[a] + matches[c], matches[b] + matches[c])
+    matches = expr.match(max_ab_plus_c)
+    if matches is not None:
+        return sympy.Max(matches[a] + matches[c], matches[b] + matches[c])
     return expr
 
 
