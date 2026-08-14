@@ -272,6 +272,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if pedge is not None:
                         node = pedge.src if reverse else pedge.dst
 
+                        # Do not remove scope entry/exit nodes: they are part of the
+                        # surrounding graph and may still be needed by other edges. Return
+                        # the connecting edge instead so the caller can reconnect the
+                        # outer source/sink to the inlined subgraph.
+                        if isinstance(node, (nodes.EntryNode, nodes.ExitNode)):
+                            result.append(pedge)
+                            continue
+
                         # Keep track of edges on the other end of these nodes,
                         # they will be used to reconnect to first/last
                         # occurrence of access nodes in the inlined subgraph.
