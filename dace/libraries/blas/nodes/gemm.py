@@ -616,6 +616,13 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             code,
             language=dace.dtypes.Language.CPP,
         )
+        # ExpandTransformation.apply() only tags the NestedSDFG WRAPPER this expansion returns
+        # with cls.environments, not the tasklet doing the actual cuBLAS/rocBLAS call inside it.
+        # Codegen dispatch collects environments per CodeNode it visits, so this is harmless while
+        # the wrapper survives -- but if the nested SDFG is ever inlined, the tasklet becomes a
+        # bare node in the parent state and silently loses the header/link requirement. Tag it
+        # directly so it carries its own requirement independent of the wrapper.
+        tasklet.environments = {env.full_class_path() for env in cls.environments}
 
         # cuBLAS/rocBLAS read and write C in place through a single pointer, so the expansion is
         # ALWAYS wrapped in a nested SDFG: a bare tasklet cannot carry `_c` as both an in- and an
