@@ -22,7 +22,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.utils import prod
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.common import closure_constant_descriptor, interpreter_callable
+from dace.frontend.python.common import (closure_array_identities, closure_constant_descriptor, interpreter_callable)
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -259,9 +259,13 @@ def _prepare_callee(
             state.context.constants.setdefault(constant_name, (descriptor, value))
             state.context.folded_constants.add(constant_name)
     # External arrays the callee references bind inside its inline scope,
-    # deduplicated by qualified name across the whole program
+    # deduplicated by resolved array object across the whole program: the
+    # callee's own reference name and qualified name are both relative to the
+    # callee (``self.q`` means a different array in every object it inlines).
+    identities = closure_array_identities(closure)
     for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():
-        container = state.context.register_closure_array(reference_name, qualified_name, descriptor)
+        container = state.context.register_closure_array(reference_name, qualified_name, descriptor,
+                                                         identities.get(reference_name))
         parameter_bindings[reference_name] = container
 
     # Lowering mutates the body (early-return restructuring, annotation

@@ -325,6 +325,25 @@ class SDFGClosure:
                 self.array_mapping[id(cb)] = new_name
 
 
+def closure_array_identities(closure: SDFGClosure) -> Dict[str, int]:
+    """
+    The identity (``id()``) of the array object behind each closure-array
+    reference name, inverting the closure's own ``array_mapping``.
+
+    Neither of the names a closure array carries identifies it: the qualified
+    name and the mangled reference name are both relative to the program that
+    resolved them, so ``self.q`` (and its ``__g_self_q``) names a different
+    array in every object it is resolved against. Consumers that merge closures
+    from several programs need the object itself to tell references apart.
+
+    :param closure: The resolved closure.
+    :return: Mapping from closure-array reference name to object identity.
+             Names whose object preprocessing did not record are absent.
+    """
+    names = set(closure.closure_arrays.keys())
+    return {name: identity for identity, name in closure.array_mapping.items() if name in names}
+
+
 def interpreter_callable(function: Any) -> Any:
     """
     The callable to bind for a preprocessing-detected callback.

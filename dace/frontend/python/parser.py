@@ -1126,8 +1126,9 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             if descriptor is not None:
                 constants[name] = (descriptor, value)
 
+        identities = pycommon.closure_array_identities(closure)
         closure_arrays = {
-            name: (qualname, desc)
+            name: (qualname, desc, identities.get(name))
             for name, (qualname, desc, _, _) in closure.closure_arrays.items() if name not in removed_args
         }
 

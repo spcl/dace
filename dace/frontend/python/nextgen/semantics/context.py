@@ -211,8 +211,14 @@ class ProgramContext:
 
         #: Closure-array containers by source qualified name, so an external
         #: array referenced from multiple (nested) programs maps to a single
-        #: repository container.
+        #: repository container. Only a fallback for references that arrive
+        #: without a resolved object; see :meth:`register_closure_array`.
         self.closure_containers: Dict[str, str] = {}
+
+        #: Closure-array containers by resolved array object identity, the
+        #: authoritative key: two objects can share both the qualified name and
+        #: the mangled reference name (``self.q`` on two different objects).
+        self.closure_identities: Dict[int, str] = {}
 
         #: Prefix applied to materialized return containers (empty at top level,
         #: set by :meth:`inline_scope` while lowering an inlined callee).
@@ -427,19 +433,28 @@ class ProgramContext:
             return None
         return self.static_values.get(source_name)
 
-    def register_closure_array(self, name: str, qualified_name: str, descriptor: data.Data) -> str:
+    def register_closure_array(self,
+                               name: str,
+                               qualified_name: str,
+                               descriptor: data.Data,
+                               identity: Optional[int] = None) -> str:
         """
-        Register an external (closure) array, deduplicated by its source
-        qualified name so every reference to the same external array — including
-        from inlined callees — shares one repository container.
+        Register an external (closure) array so every reference to the same
+        external array — including from inlined callees — shares one repository
+        container.
 
-        .. note::
-           The qualified name does not always identify an array uniquely: two
-           different objects reached through the same field expression share it
-           (``self.q`` in both ``ObjA`` and ``ObjB``) and, once inlined, also
-           share the mangled reference name ``__g_self_q``, so the two collapse
-           onto one container. See ``test_nested_objects`` and
-           ``preparse_test::test_nested_objects_same_name``.
+        References are deduplicated by ``identity``: the ``id()`` of the array
+        object preprocessing resolved, taken from the closure's own
+        ``array_mapping``. Neither of the two names is a reliable substitute.
+        Two different objects reached through the same field expression share
+        the qualified name (``self.q`` in both ``ObjA`` and ``ObjB``) and, once
+        inlined, also share the mangled reference name ``__g_self_q``, so
+        name-based deduplication collapses them onto one container and the
+        callee silently reads the caller's array (``test_nested_objects``,
+        ``preparse_test::test_nested_objects_same_name``). Conversely, the same
+        array reaches nested closures under names that need not match at all.
+        Qualified names are still the fallback for references that arrive
+        without a resolved object.
 
         Preprocessing injects top-level closure arrays into the argument
         types, so the container may already exist under this exact
@@ -451,23 +466,33 @@ class ProgramContext:
         scratch space and must not become a program argument, so the
         descriptor's own flag is honoured rather than overwritten.
 
+        :param name: The mangled reference name the preprocessed AST uses.
+        :param qualified_name: The Python expression the array was resolved
+                               from, e.g. ``self.q``.
+        :param descriptor: The array's data descriptor.
+        :param identity: ``id()`` of the resolved array object, if known.
         :return: The repository container name.
         """
         transient = bool(getattr(descriptor, 'transient', False))
 
-        if qualified_name in self.closure_containers:
+        if identity is not None and identity in self.closure_identities:
+            return self.closure_identities[identity]
+        if identity is None and qualified_name in self.closure_containers:
             return self.closure_containers[qualified_name]
+
         if self.containers.get(name) is descriptor:
-            self.closure_containers[qualified_name] = name
-            return name
-        if name in self.closure_containers.values():
+            actual_name = name
+        elif identity is None and name in self.closure_containers.values():
             # The same external array reaches nested closures under different
             # qualified names; the mangled reference name encodes the source
             # expression and is stable across closures.
-            self.closure_containers[qualified_name] = name
-            return name
-        actual_name = self.add_container(name, descriptor, transient=transient)
-        self.closure_containers[qualified_name] = actual_name
+            actual_name = name
+        else:
+            actual_name = self.add_container(name, descriptor, transient=transient)
+
+        self.closure_containers.setdefault(qualified_name, actual_name)
+        if identity is not None:
+            self.closure_identities[identity] = actual_name
         return actual_name
 
     def add_constant_container(self, name: str, descriptor: data.Data, value: Any) -> str:

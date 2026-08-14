@@ -39,7 +39,7 @@ def build_schedule_tree(name: str,
                         callback_mapping: Optional[Dict[str, str]] = None,
                         callbacks: Optional[Dict[str, Any]] = None,
                         arg_names: Optional[Sequence[str]] = None,
-                        closure_arrays: Optional[Dict[str, Tuple[str, data.Data]]] = None,
+                        closure_arrays: Optional[Dict[str, Tuple[str, data.Data, Optional[int]]]] = None,
                         debug: bool = False) -> tn.ScheduleTreeRoot:
     """
     Build a verified schedule tree from a preprocessed Python program AST.
@@ -59,7 +59,8 @@ def build_schedule_tree(name: str,
     :param arg_names: Ordered argument names.
     :param closure_arrays: External arrays referenced by the program, as a
                            mapping from the preprocessed reference name to
-                           (source qualified name, descriptor). Registered as
+                           (source qualified name, descriptor, identity of the
+                           resolved array object or None). Registered as
                            non-transient containers.
     :param debug: If True, runs extra verification between pipeline passes.
     :return: A verified :class:`ScheduleTreeRoot`.
@@ -78,8 +79,8 @@ def build_schedule_tree(name: str,
         name: interpreter_callable(function)
         for name, function in (callbacks or {}).items()
     })
-    for reference_name, (qualified_name, descriptor) in (closure_arrays or {}).items():
-        container = context.register_closure_array(reference_name, qualified_name, descriptor)
+    for reference_name, (qualified_name, descriptor, identity) in (closure_arrays or {}).items():
+        container = context.register_closure_array(reference_name, qualified_name, descriptor, identity)
         context.bind(reference_name, container)
 
     # Stage 2.5: speculatively pre-parse nested @dace.program callees in
