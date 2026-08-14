@@ -487,19 +487,9 @@ class GenericSMemlet(SeparableMemletPattern):
             # Support for affine expressions with a negative multiplier
             firstindex = pos_firstindex
             lastindex = pos_lastindex
-            a = sympy.Wild('a', exclude=self.params)
-            b = sympy.Wild('b', exclude=self.params)
-            if result_begin is None:
-                matches = rb.match(a * self.params[idx] + b)
-            else:
-                matches = result_begin.match(a * self.params[idx] + b)
-            if matches and (matches[a] < 0) == True:
+            if self._negative_affine_transform(rb if result_begin is None else result_begin, idx):
                 firstindex = neg_firstindex
-            if result_end is None:
-                matches = re.match(a * self.params[idx] + b)
-            else:
-                matches = result_end.match(a * self.params[idx] + b)
-            if matches and (matches[a] < 0) == True:
+            if self._negative_affine_transform(re if result_end is None else result_end, idx):
                 lastindex = neg_lastindex
 
             if result_begin is None:
@@ -515,6 +505,26 @@ class GenericSMemlet(SeparableMemletPattern):
         result_tile = 1
 
         return (result_begin, result_end, result_skip, result_tile)
+
+    def _negative_affine_transform(self, expr: sympy.Basic, idx: int) -> bool:
+        """Returns true iff the expression matches an affine transformation with a negative multiplier."""
+        if not _maybe_affine_transform(expr):
+            return False
+
+        a = sympy.Wild('a', exclude=self.params)
+        b = sympy.Wild('b', exclude=self.params)
+        match = expr.match(a * self.params[idx] + b)
+
+        return match is not None and match[a] < 0 == True
+
+
+def _maybe_affine_transform(expr: sympy.Basic) -> bool:
+    """Quickly judge whether the given expression might be an affine tranformation.
+
+    Used as a guard before actually trying to sympy.match() affine transformation
+    coefficients. Matching is kind of slow compared to checking a couple
+    properties."""
+    return expr.is_Add and expr.args[0].is_Mul
 
 
 def _subexpr(dexpr, repldict):
