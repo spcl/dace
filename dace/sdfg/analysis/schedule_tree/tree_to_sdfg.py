@@ -15,6 +15,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
                              LoopRegion, NamedRegion, ReturnBlock, SDFGState)
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
+from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.passes.write_conflict_resolution import ResolveWriteConflicts
 
 
@@ -1493,14 +1494,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 # differ in dtype, emit an ill-typed copy.
                 pass
             elif result != node.target:
-                # The replacement allocated its own result container: copy it
-                # into the frontend-declared target (simplify collapses the
-                # copy). The copy goes into a fresh state so it orders after
-                # the replacement's own writes.
-                self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
-                state = self._current_state
-                state.add_nedge(state.add_read(result), state.add_write(node.target),
-                                Memlet.from_array(result, sdfg.arrays[result]))
+                # The replacement allocated its own result container. Give that
+                # container the frontend-declared name where the two describe
+                # the same storage, so the value is produced where the program
+                # asked for it; otherwise copy it across in a fresh state, which
+                # orders after the replacement's own writes.
+                if not self._adopt_replacement_result(result, node, sdfg):
+                    self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
+                    state = self._current_state
+                    state.add_nedge(state.add_read(result), state.add_write(node.target),
+                                    Memlet.from_array(result, sdfg.arrays[result]))
             # else: an in-place-mutating replacement (e.g. a pure-side-effect
             # method call) returned its own target unchanged — the mutation
             # already landed in the right place, so there's nothing to copy.
@@ -1510,6 +1513,60 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
                                                      self._pending_interstate_assignments())
+
+    def _adopt_replacement_result(self, result: str, node: tn.ReplacementCallNode, sdfg: SDFG) -> bool:
+        """
+        Rename a replacement's own result container to the frontend-declared
+        target, and report whether that was possible.
+
+        The alternative -- copying the result into the target -- leaves a copy
+        the rest of the pipeline has to undo, and it does not always manage:
+        ``ArrayElimination`` refuses a view written by a ``Reduce``, so
+        ``tmp = dace.reduce(...)`` kept a whole-array view of ``tmp`` sitting
+        between the reduction and every consumer. Passes that read the graph's
+        SHAPE then see a different program than the one written -- subgraph
+        enumeration counts the extra access node, and fusion cannot see through
+        it -- and codegen materializes a copy nothing asked for.
+
+        Only for a target that is this statement's own declaration and holds
+        nothing yet: a preexisting name may already have been read, and a
+        non-transient is the caller's storage, whose identity the program
+        depends on. The two descriptors must also agree on what they describe,
+        since after this the target IS the result's descriptor.
+
+        :return: True if the result was renamed, in which case no copy is
+                 needed.
+        """
+        target = node.target
+        if target is None or node.target_preexisting or target not in sdfg.arrays or result not in sdfg.arrays:
+            return False
+        target_desc, result_desc = sdfg.arrays[target], sdfg.arrays[result]
+        if not target_desc.transient or not result_desc.transient:
+            return False
+        if type(target_desc) is not type(result_desc):
+            return False
+        if (list(target_desc.shape) != list(result_desc.shape) or target_desc.dtype != result_desc.dtype
+                or target_desc.storage != result_desc.storage):
+            return False
+        # The declaration must be untouched: an access node or a memlet naming
+        # it means something already reads or writes the container, and the
+        # rename would silently redirect that to the replacement's storage.
+        for block in sdfg.all_control_flow_blocks():
+            if isinstance(block, SDFGState):
+                if any(access.data == target for access in block.data_nodes()):
+                    return False
+                if any(edge.data.data == target for edge in block.edges()):
+                    return False
+        if any(target in edge.data.free_symbols for edge in sdfg.all_interstate_edges()):
+            return False
+        # A view binding recorded against either name is a relationship between
+        # two containers that the rename would leave dangling.
+        if any(name in (target, result) or binding.source in (target, result)
+               for name, binding in self._view_bindings.items()):
+            return False
+        sdfg.remove_data(target, validate=False)
+        replace_datadesc_names(sdfg, {result: target})
+        return True
 
     def _release_declared_descriptor(self, target: Optional[str], sdfg: SDFG) -> None:
         """
