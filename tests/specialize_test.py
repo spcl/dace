@@ -1,4 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import re
+
 import numpy as np
 
 import dace as dp
@@ -41,14 +43,24 @@ def test_constant_specialization():
     spec_sdfg.validate()
     ##########################################################################
 
-    code_nonspec = spec_sdfg.generate_code()
+    # Specialization is visible in the entry signature: N and M are runtime parameters before it
+    # and compile-time constants after. Asserting that instead of a copy-template spelling keeps
+    # the test valid for both CPU generators -- only the legacy one emits ``CopyND ... Dynamic``.
+    entry = re.compile(r'void __program_spectest_internal\([^)]*\)')
 
-    assert 'Dynamic' in code_nonspec[0].code
+    code_nonspec = spec_sdfg.generate_code()
+    sig_nonspec = entry.search(code_nonspec[0].code)
+    assert sig_nonspec is not None
+    assert re.search(r'\bN\b', sig_nonspec.group(0)) and re.search(r'\bM\b', sig_nonspec.group(0))
 
     spec_sdfg.specialize(dict(N=n, M=m))
     code_spec = spec_sdfg.generate_code()
 
-    assert 'Dynamic' not in code_spec[0].code
+    sig_spec = entry.search(code_spec[0].code)
+    assert sig_spec is not None
+    assert not re.search(r'\bN\b', sig_spec.group(0)) and not re.search(r'\bM\b', sig_spec.group(0))
+    assert re.search(r'constexpr\s+\w+\s+N\s*=\s*%d' % n, code_spec[0].code)
+    assert re.search(r'constexpr\s+\w+\s+M\s*=\s*%d' % m, code_spec[0].code)
 
     func = spec_sdfg.compile()
     func(A=input, B=output, N=n, M=m)
