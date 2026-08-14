@@ -303,6 +303,20 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
                         return False
 
+            # Same-data access nodes exchange values through the DESCRIPTOR, not an edge, so
+            # out-edges alone cannot decide deadness: only a proven full overwrite hides this write.
+            if node.data in access_set[0]:
+                readers = [
+                    o for o in state.data_nodes()
+                    if o is not node and o.data == node.data and o not in dead_nodes and any(
+                        not e.data.is_empty() for e in state.out_edges(o)) and not any(
+                            ap.writes_whole_array(state, e, desc) for e in state.in_edges(o))
+                ]
+                # An upstream reader runs BEFORE this write and cannot observe it.
+                upstream = sdutil.find_upstream_nodes(node, state) if readers else ()
+                if any(r not in upstream for r in readers):
+                    return False
+
             # If it is a stream and is read somewhere in the state, it may be popped after pushing
             if isinstance(desc, data.Stream) and node.data in access_set[0]:
                 return False
