@@ -27,6 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
+from dace.autodiff.utils import init_grad
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
@@ -136,8 +137,8 @@ class ReverseReduce(BackwardImplementation):
         nsdfg_inputs = {rev_input_conn_name}
 
         if is_extremal:
-            extremal_conn_name = f"input_{type_name}"
-            extremal_idx_conn_name = f"input_{type_name}_idx"
+            extremal_conn_name = f"input_{type_name}_val"
+            extremal_idx_conn_name = f"input_{type_name}_arr"
             sdfg.add_array(extremal_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
             sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
             nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
@@ -156,6 +157,13 @@ class ReverseReduce(BackwardImplementation):
             count_state = sdfg.add_state(f"count_{type_name}_{id(forward_node)}")
             grad_state = sdfg.add_state(f"grad_{type_name}_{id(forward_node)}")
             sdfg.add_edge(count_state, grad_state, dace.InterstateEdge())
+
+            # The count array is transient inside this nested SDFG. When the nested
+            # SDFG is invoked repeatedly (e.g. from the reversed loop/map of a maxpool),
+            # the array may be allocated once and reused, so `setzero` on the access
+            # node is not enough: we must explicitly zero it at the start of every
+            # invocation before accumulating per-window/extremum counts.
+            init_grad(count_arr_name, sdfg, count_state)
 
             # State 1: Count matching elements
             count_memlet = Memlet.simple(count_arr_name,
