@@ -1398,6 +1398,24 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
             pass
 
 
+def _view_side_subset(explicit: Optional[subsets.Subset], view: data.View) -> subsets.Subset:
+    """
+    The view's own side of a view edge.
+
+    A view edge may be written one-sided: it names the VIEWED array and the
+    window the view covers (``A[2:8]``), leaving the view's side implicit. The
+    implicit side is the view's whole extent — exactly what the two-sided form
+    spells out as ``B[0:6] -> A[2:8]``.
+
+    :param explicit: The view side of the memlet, if the edge carries one.
+    :param view: The view's descriptor.
+    :return: The view's side of the edge, explicit or derived.
+    """
+    if explicit is not None:
+        return explicit
+    return subsets.Range.from_array(view)
+
+
 def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     """ Checks whether a View of an Array is a slice or not. """
     # Explicitly fail in case of Views with more dimensions than the Array.
@@ -1477,7 +1495,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         # Get edge e1 and extract subsets for the Array and View
         e = graph.edges_between(in_array, out_array)[0]
         a_subset = e.data.get_src_subset(e, graph)
-        v_subset = e.data.get_dst_subset(e, graph)
+        v_subset = _view_side_subset(e.data.get_dst_subset(e, graph), out_desc)
 
         # Make sure the memlet covers the removed View.
         # NOTE: Since we assume that the View is a slice of the Array, the
@@ -1521,7 +1539,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         # a_subset, v1_subset = _validate_subsets(e1, sdfg.arrays)
         a_subset = e1.data.get_src_subset(e1, graph)
-        v1_subset = e1.data.get_dst_subset(e1, graph)
+        v1_subset = _view_side_subset(e1.data.get_dst_subset(e1, graph), out_desc)
 
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(in_desc, out_desc)
@@ -1627,7 +1645,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
         # Get edge e1 and extract subsets for the Array and View
         e = graph.edges_between(in_array, out_array)[0]
-        v_subset = e.data.get_src_subset(e, graph)
+        v_subset = _view_side_subset(e.data.get_src_subset(e, graph), in_desc)
         a_subset = e.data.get_dst_subset(e, graph)
 
         # Make sure the memlet covers the removed View.
@@ -1670,7 +1688,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
         # Get edge e1 and extract subsets for the Array and View
         e1 = graph.edges_between(in_array, out_array)[0]
-        v1_subset = e1.data.get_src_subset(e1, graph)
+        v1_subset = _view_side_subset(e1.data.get_src_subset(e1, graph), in_desc)
         a_subset = e1.data.get_dst_subset(e1, graph)
 
         # Split the dimensions of A to sliced and non-viewed

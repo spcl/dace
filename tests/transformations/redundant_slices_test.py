@@ -28,7 +28,7 @@ def test_read_slice():
     sdfg = jacobi1d_half.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
-        warnings.Warn("Incorrect number of Views detected. Please ensure that "
+        warnings.warn("Incorrect number of Views detected. Please ensure that "
                       "the test is compatible with this DaCe version.")
     sdfg.apply_transformations_repeated(RedundantReadSlice)
     num_views_after = _count_views(sdfg)
@@ -45,7 +45,7 @@ def test_read_slice2():
     sdfg = jacobi1d_half2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
-        warnings.Warn("Incorrect number of Views detected. Please ensure that "
+        warnings.warn("Incorrect number of Views detected. Please ensure that "
                       "the test is compatible with this DaCe version.")
     sdfg.apply_transformations_repeated(RedundantReadSlice)
     num_views_after = _count_views(sdfg)
@@ -62,7 +62,7 @@ def test_write_slice():
     sdfg = write_slice.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
-        warnings.Warn("Incorrect number of Views detected. Please ensure that "
+        warnings.warn("Incorrect number of Views detected. Please ensure that "
                       "the test is compatible with this DaCe version.")
     sdfg.apply_transformations_repeated(RedundantWriteSlice)
     num_views_after = _count_views(sdfg)
@@ -83,7 +83,7 @@ def test_write_slice2():
     sdfg = write_slice2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
-        warnings.Warn("Incorrect number of Views detected. Please ensure that "
+        warnings.warn("Incorrect number of Views detected. Please ensure that "
                       "the test is compatible with this DaCe version.")
     sdfg.apply_transformations_repeated(RedundantWriteSlice)
     num_views_after = _count_views(sdfg)
