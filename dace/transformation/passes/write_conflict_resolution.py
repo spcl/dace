@@ -597,25 +597,31 @@ def _separates(dimension, params: Set[str], ranges: Dict[str, Optional[Tuple]]) 
     :return: True if the dimension is known to separate the iterations.
     """
     begin, end, _ = dimension
-    begin = symbolic.pystr_to_symbolic(begin)
-    if symbolic.simplify(symbolic.pystr_to_symbolic(end) - begin) != 0:
-        return False  # Writes a whole window per iteration, not one element
+    try:
+        begin = symbolic.pystr_to_symbolic(begin)
+        if symbolic.simplify(symbolic.pystr_to_symbolic(end) - begin) != 0:
+            return False  # Writes a whole window per iteration, not one element
 
-    terms = []
-    for param in params:
-        parameter_range = ranges.get(param)
-        if parameter_range is None:
-            return False
-        symbol = symbolic.symbol(param)
-        coefficient = symbolic.simplify(begin.diff(symbol))
-        if coefficient.free_symbols or symbolic.simplify(begin.diff(symbol, 2)) != 0:
-            return False  # Not affine in this parameter, or a symbolic weight
-        lower, upper, step = (symbolic.simplify(value) for value in parameter_range)
-        span = symbolic.simplify(abs(coefficient) * (upper - lower))
-        granularity = symbolic.simplify(abs(coefficient) * step)
-        if granularity == 0:
-            return False
-        terms.append((granularity, span))
+        terms = []
+        for param in params:
+            parameter_range = ranges.get(param)
+            if parameter_range is None:
+                return False
+            symbol = symbolic.symbol(param)
+            coefficient = symbolic.simplify(begin.diff(symbol))
+            if coefficient.free_symbols or symbolic.simplify(begin.diff(symbol, 2)) != 0:
+                return False  # Not affine in this parameter, or a symbolic weight
+            lower, upper, step = (symbolic.simplify(value) for value in parameter_range)
+            span = symbolic.simplify(abs(coefficient) * (upper - lower))
+            granularity = symbolic.simplify(abs(coefficient) * step)
+            if granularity == 0:
+                return False
+            terms.append((granularity, span))
+    except (AttributeError, TypeError, ValueError):
+        # An index sympy will not do arithmetic on: a runtime negative index
+        # carries a comparison (``py_mod``'s ``i < 0``) into the subset, and a
+        # relational has no derivative. Undecidable, which answers False.
+        return False
 
     covered = 0
     for granularity, span in sorted(terms, key=lambda term: (symbolic.issymbolic(term[0]), str(term[0]))):
