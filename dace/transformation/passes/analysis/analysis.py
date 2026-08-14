@@ -1061,6 +1061,9 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
     * a dynamic edge -- the write may not happen at all;
     * a write handed out of a ``NestedSDFG`` connector -- the outer subset is a propagated
       over-approximation of what the body actually writes, so it proves nothing;
+    * a write from a ``LibraryNode`` with a non-zero ``beta`` property (BLAS-style accumulate
+      nodes: Gemm/Gemv/Symm/Syrk/Einsum...) -- it folds onto the output's PRIOR value in place,
+      with no explicit read edge to show it, so the write is a read-modify-write like a WCR one;
     * a subset that does not provably span the whole extent (:func:`covers_full_extent`).
 
     The whole memlet tree is checked, not just the outer edge: a map that writes ``A[0:N]`` in
@@ -1075,6 +1078,9 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
         if tree_edge.data.wcr is not None or tree_edge.data.dynamic:
             return False
         if isinstance(tree_edge.src, nd.NestedSDFG):
+            return False
+        beta = getattr(tree_edge.src, 'beta', None)
+        if beta is not None and not symbolic.equal_valued(0, beta):
             return False
     return covers_full_extent(edge.data.get_dst_subset(edge, state), desc)
 

@@ -470,5 +470,51 @@ def test_wcr_accumulator_is_refused():
     assert 'tmp' not in fully_overwritten_arrays(accum)
 
 
+def _beta_libnode_sdfg(beta):
+    """A minimal SDFG: a BLAS-style ``LibraryNode`` (``Einsum``, standing in for the whole
+    Gemm/Gemv/Symm/... family that carries the same ``beta`` property) writes the full extent of
+    a transient with the given ``beta``. No incoming edge represents the fold -- exactly what
+    ``LiftEinsum`` emits: the node's own expansion reads-then-writes the output buffer in place.
+    """
+    import dace.libraries.blas as blas
+    sdfg = dace.SDFG('array_fission_beta_libnode')
+    sdfg.add_array('a', (M, ), dace.float64)
+    sdfg.add_array('tmp', (M, ), dace.float64, transient=True)
+    state = sdfg.add_state()
+    a = state.add_read('a')
+    out = state.add_access('tmp')
+    node = blas.Einsum('einsum')
+    node.beta = beta
+    node.einsum_str = 'i->i'
+    node.add_in_connector('_in')
+    node.add_out_connector('_out')
+    state.add_edge(a, None, node, '_in', dace.Memlet(f'a[0:{M}]'))
+    state.add_edge(node, '_out', out, None, dace.Memlet(f'tmp[0:{M}]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_beta_accumulate_libnode_is_refused():
+    """Negative: a ``LibraryNode`` that folds onto its output's PRIOR value through a non-zero
+    ``beta`` property (the whole BLAS accumulate family -- Gemm/Gemv/Symm/Syrk/Einsum) is a
+    read-modify-write with NO explicit read edge to show it, unlike a WCR memlet. Missing this
+    let ``ArrayFission`` version a ``LiftEinsum``-produced accumulator (k2mm's chained-matmul
+    intermediate) into two unrelated containers -- the zero-init writer and the accumulate
+    writer -- so the accumulate read uninitialized memory instead of the zeroed value."""
+    sdfg = _beta_libnode_sdfg(beta=1.0)
+    assert 'tmp' not in fully_overwritten_arrays(sdfg)
+    before = sdfg.to_json()
+    renamed = PrivatizeArrays().apply_pass(sdfg, {})['ArrayFission']
+    assert not renamed, f'a beta-accumulate libnode write was versioned: {dict(renamed)}'
+    assert sdfg.to_json() == before
+
+
+def test_zero_beta_libnode_is_still_a_full_overwrite():
+    """Positive control: ``beta=0`` (the overwrite case, e.g. ``gemm_ovr``/``gemv``) is a genuine
+    full write with no implicit read, so the fix above must not over-refuse it."""
+    sdfg = _beta_libnode_sdfg(beta=0.0)
+    assert 'tmp' in fully_overwritten_arrays(sdfg)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
