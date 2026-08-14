@@ -257,8 +257,12 @@ class AffineSMemlet(SeparableMemletPattern):
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
 
-        # Special case: i:i+stride for a begin:end:stride range
-        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
+        # Special case: i:i+stride for a begin:end:stride range. The multiplier must be one:
+        # for a single-element access ``(re - rb + 1)`` is 1, so with a unit map stride the length
+        # test below is trivially true, and ``a*i`` starting at a zero map begin also passes the
+        # ``result_begin`` test. Returning the map range verbatim then drops the multiplier, which
+        # UNDER-approximates the write set (``C[2*i]`` over ``i=0:N`` became ``C[0:N]``).
+        if (self.multiplier == 1 and node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
             return (node_rb, node_re, 1, 1)
 
         # Experimental

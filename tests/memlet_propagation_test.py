@@ -135,8 +135,41 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
         raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' + str(outer_out.subset))
 
 
+def test_strided_write_keeps_the_multiplier():
+    """``C[2 * i]`` covers every second element, not the first ``N``.
+
+    A single-element access has ``re - rb + 1 == 1``, which equals the stride of a unit-stride map
+    range, and ``2 * i`` at a zero map begin starts where the map range starts. Both halves of the
+    ``i:i+stride`` special case in :class:`~dace.sdfg.propagation.AffineSMemlet` therefore hold for
+    an access it was never meant to cover, and returning the map range verbatim drops the
+    multiplier -- an under-approximated write set, which is unsound.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def strided_write(A: dace.float64[2 * N], C: dace.float64[2 * N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[2 * i]
+                c >> C[2 * i]
+                c = a
+
+    sdfg = strided_write.to_sdfg(simplify=False)
+    propagate_memlets_sdfg(sdfg)
+
+    state = next(s for s in sdfg.states() if any(isinstance(n, dace.sdfg.nodes.MapExit) for n in s.nodes()))
+    out = next(e.data for e in state.edges() if isinstance(e.src, dace.sdfg.nodes.MapExit)
+               and isinstance(e.dst, dace.sdfg.nodes.AccessNode) and e.dst.data == 'C')
+
+    assert out.subset.ranges == [(0, 2 * N - 2, 2)], out.subset
+    assert out.subset.num_elements() == N, out.subset.num_elements()
+    # The written elements must be inside the propagated set; the bug put 2*N-2 outside it.
+    assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]))
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
+    test_strided_write_keeps_the_multiplier()

@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Input-data generation and run-and-compare helpers for the inlined CloudSC
-kernel in ``tests/corpus/cloudsc.py``, for end-to-end numerical tests.
+kernel in ``tests/corpus/cloudsc/cloudsc.py``, for end-to-end numerical tests.
 
 The inlined ``cloudsc_py`` program requires no callbacks, so it compiles and
 runs standalone. These helpers build a runnable SDFG, generate a

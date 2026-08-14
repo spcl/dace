@@ -1,3 +1,10 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Inlined CloudSC (ECMWF dwarf-p-cloudsc) cloud microphysics kernel as a single ``dace.program``.
+
+Callback-free and self-contained, so ``cloudsc_py.to_sdfg()`` yields a large, wide, deeply nested
+SDFG that compiles and runs standalone. Input data generation lives in
+``generate_data_for_cloudsc.py``.
+"""
 import numpy as np
 import dace
 from pathlib import Path
