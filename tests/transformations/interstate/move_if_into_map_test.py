@@ -329,6 +329,87 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     np.testing.assert_allclose(a_out, expected, rtol=1e-5, atol=1e-6)
 
 
+def test_move_if_into_map_with_an_implicit_region_entry():
+    """The placeholder cleanup drops the pre-state that fed the conditional, which leaves it
+    isolated -- so the region has two sources and its entry stops being derivable. A graph that
+    carries an explicit pin answers anyway; canonicalized output leaves the entry implicit, and
+    then the same question has to be asked before the isolation, not after it."""
+    from dace import memlet as mm
+    from dace.properties import CodeBlock
+    from dace.sdfg import SDFG
+    from dace.sdfg.state import ControlFlowRegion
+
+    N_sym = dace.symbol("N")
+
+    inner = SDFG("implicit_entry_inner")
+    inner.add_array("a_in", [1], dace.float64)
+    inner.add_array("a_out", [1], dace.float64)
+    is_ = inner.add_state("s", is_start_block=True)
+    it = is_.add_tasklet("doub", {"x"}, {"y"}, "y = x * 2")
+    is_.add_edge(is_.add_read("a_in"), None, it, "x", mm.Memlet("a_in[0]"))
+    is_.add_edge(it, "y", is_.add_write("a_out"), None, mm.Memlet("a_out[0]"))
+
+    mid = SDFG("implicit_entry_mid")
+    mid.add_array("A_in", [N_sym], dace.float64)
+    mid.add_array("A_out", [N_sym], dace.float64)
+    mid.add_symbol("jb", dace.int32)
+
+    pre = mid.add_state("pre", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    mid.add_node(cb)
+    # Unconditional and assignment-free: this is the edge whose removal isolates ``pre``.
+    mid.add_edge(pre, cb, dace.InterstateEdge())
+
+    branch_body = ControlFlowRegion("branch", sdfg=mid)
+    cb.add_branch(CodeBlock("(jb == 1)"), branch_body)
+    bstate = branch_body.add_state("branch_state", is_start_block=True)
+    me, mx = bstate.add_map("jc_map", {"jc": "0:N"})
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_a")
+    mx.add_out_connector("OUT_a")
+    ns = bstate.add_nested_sdfg(inner, {"a_in"}, {"a_out"})
+    bstate.add_edge(bstate.add_read("A_in"), None, me, "IN_a", mm.Memlet("A_in[0:N]"))
+    bstate.add_edge(me, "OUT_a", ns, "a_in", mm.Memlet("A_in[jc]"))
+    bstate.add_edge(ns, "a_out", mx, "IN_a", mm.Memlet("A_out[jc]"))
+    bstate.add_edge(mx, "OUT_a", bstate.add_write("A_out"), None, mm.Memlet("A_out[0:N]"))
+
+    outer = SDFG("implicit_entry_outer")
+    outer.add_array("A_in", [N_sym], dace.float64)
+    outer.add_array("A_out", [N_sym], dace.float64)
+    ostate = outer.add_state("outer_state", is_start_block=True)
+    OE, OX = ostate.add_map("jb_map", {"jb": "0:2"})
+    OE.add_in_connector("IN_A_in")
+    OE.add_out_connector("OUT_A_in")
+    OX.add_in_connector("IN_A_out")
+    OX.add_out_connector("OUT_A_out")
+    mid_node = ostate.add_nested_sdfg(mid, {"A_in"}, {"A_out"})
+    ostate.add_edge(ostate.add_read("A_in"), None, OE, "IN_A_in", mm.Memlet("A_in[0:N]"))
+    ostate.add_edge(OE, "OUT_A_in", mid_node, "A_in", mm.Memlet("A_in[0:N]"))
+    ostate.add_edge(mid_node, "A_out", OX, "IN_A_out", mm.Memlet("A_out[0:N]"))
+    ostate.add_edge(OX, "OUT_A_out", ostate.add_write("A_out"), None, mm.Memlet("A_out[0:N]"))
+
+    # What canonicalize leaves behind: one source, so the entry is derivable and not stored.
+    mid._start_block = None
+    mid._cached_start_block = None
+    outer.validate()
+
+    applied = outer.apply_transformations_repeated(MoveIfIntoMap)
+    assert applied == 1, applied
+    outer.validate()
+
+    moved = next(g for g in outer.all_sdfgs_recursive() if g.name.startswith("implicit_entry_mid"))
+    assert "pre" not in {b.label for b in moved.nodes()}, "the isolated placeholder was left behind"
+    assert moved.start_block in moved.nodes()
+    assert moved.start_block is moved.source_nodes()[0]
+
+    N_val = 5
+    a_in = np.arange(N_val, dtype=np.float64).copy()
+    a_out = np.full(N_val, -1.0, dtype=np.float64)
+    outer(A_in=a_in, A_out=a_out, N=N_val)
+    np.testing.assert_allclose(a_out, 2 * a_in, rtol=1e-5, atol=1e-6)
+
+
 if __name__ == "__main__":
     test_move_if_into_map_basic()
     test_move_if_into_map_symbolic_condition()
@@ -336,4 +417,5 @@ if __name__ == "__main__":
     test_move_if_into_map_no_apply_missing_inner_map()
     test_move_if_into_map_no_apply_else_branch()
     test_move_if_into_map_no_race_with_upstream_symbol_assignment()
+    test_move_if_into_map_with_an_implicit_region_entry()
     print("All tests passed.")

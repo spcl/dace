@@ -446,8 +446,10 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         # Ask BEFORE the add: a derivable entry is left implicit, and ``add_node`` attaches
         # ``new_branch_state`` unwired, so until the rewiring lands the region has two source
-        # blocks and the getter raises.
-        was_start = enclosing_sdfg.start_block is cond_block
+        # blocks and the getter raises. The placeholder cleanup below reads the same answer:
+        # by then the emptied pre-states are isolated, which is the same ambiguity.
+        start_before = enclosing_sdfg.start_block
+        was_start = start_before is cond_block
 
         new_branch_state = copy.deepcopy(branch_state)
         enclosing_sdfg.add_node(new_branch_state, ensure_unique_name=True)
@@ -559,12 +561,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             if sym in enclosing_sdfg.symbols and not _still_references(enclosing_sdfg, sym):
                 enclosing_sdfg.remove_symbol(sym)
 
-        # Drop empty placeholder pre-states that are no longer reachable.
-        #
-        # The start block is captured ONCE, before any removal: ``start_block``
-        # resolves a cached node *index*, and removing a node invalidates it --
-        # reading the property again mid-loop raises ``NodeNotFoundError``.
-        start_before = enclosing_sdfg.start_block if enclosing_sdfg.nodes() else None
+        # Drop empty placeholder pre-states that are no longer reachable. The entry was captured
+        # ONCE up top: the pin is a node *index*, so every removal invalidates it, and comparing
+        # by identity is what survives that.
         removed_start = False
         for s in states_to_try_remove:
             if (s in enclosing_sdfg.nodes() and s.is_empty() and enclosing_sdfg.in_degree(s) == 0
