@@ -40,6 +40,17 @@ def test_removing_an_earlier_node_keeps_the_start_block():
     assert start in sdfg.nodes()
 
 
+def test_reordering_the_nodes_moves_the_pin_with_the_block():
+    """A permutation moves the pinned block without moving the index, so the pin would name
+    whichever block landed in that slot -- and ``to_json`` writes the index."""
+    sdfg = _sdfg_with_explicit_start()
+    start = sdfg.start_block
+    sdfg.reorder_nodes(list(reversed(sdfg.nodes())))
+    assert sdfg._start_block == len(sdfg.nodes()) - 1
+    assert sdfg.node(sdfg._start_block) is start
+    assert sdfg.start_block is start
+
+
 def test_removing_the_start_block_repins_to_the_new_entry():
     """Clearing the pin instead loses information ``to_json`` serializes: the getter falls back to
     ``source_nodes()`` but never writes ``_start_block`` back, so the same graph rewritten twice

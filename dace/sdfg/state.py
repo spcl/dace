@@ -3011,6 +3011,15 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         elif start_block is not None:
             self.start_block = self.node_id(start_block)
 
+    def reorder_nodes(self, order):
+        # `_start_block` is an index too, so a permutation moves the pinned block out from under
+        # it. Re-resolve by identity, like `remove_node` does.
+        start_block = self.node(self._start_block) if self._start_block is not None else None
+        super().reorder_nodes(order)
+        self._cached_start_block = None
+        if start_block is not None:
+            self._start_block = self.node_id(start_block)
+
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
