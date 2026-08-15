@@ -284,7 +284,11 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> Set[str]:
         """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
         rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
-        or a GPU-scheduled map that uses the buffer as a multi-thread collective."""
+        or a GPU-scheduled map that uses the buffer as a multi-thread collective.
+
+        For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
+        (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
+        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
         blocked: Set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
@@ -301,9 +305,17 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                     if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
                         blocked.add(node.data)
                         break
-                    if (isinstance(nb, (nodes.MapEntry, nodes.MapExit)) and nb.map.schedule in dtypes.GPU_SCHEDULES):
+                    if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:
+                        # Block arrays that feed the map entry (node -> MapEntry) or that live inside the
+                        # map body and receive an input from the entry (MapEntry -> node).
                         blocked.add(node.data)
                         break
+                    if isinstance(nb, nodes.MapExit) and nb.map.schedule in dtypes.GPU_SCHEDULES:
+                        # Block only partials that feed the map exit from inside the body (node -> MapExit).
+                        # A MapExit -> outside edge is a normal output and may be scalarized.
+                        if edge.src is node:
+                            blocked.add(node.data)
+                            break
         return blocked
 
     def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
