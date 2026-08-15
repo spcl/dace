@@ -477,10 +477,17 @@ class DaceProgram(pycommon.SDFGConvertible):
         kwargs.update(arg_mapping)
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
+        # Auto-optimization turns THIS call's symbol values into constants, so the artifact it
+        # produces is only valid for them. The cache key carries argument types, not values, so an
+        # entry made from such an SDFG would be handed back for every later value.
+        specialized = False
+
         if self.recreate_sdfg:
             # Invoke auto-optimization as necessary
             if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
+                constants = set(sdfg.constants_prop.keys())
                 sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
+                specialized = bool(sdfg.constants_prop.keys() - constants)
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
@@ -492,9 +499,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                 binaryobj = sdfg.compile(validate=self.validate)
 
             # Recreate key and add to cache
-            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
-                                            constant_args)
-            self._cache.add(cachekey, sdfg, binaryobj)
+            if not specialized:
+                cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys,
+                                                self.closure_constant_keys, constant_args)
+                self._cache.add(cachekey, sdfg, binaryobj)
 
             # Call SDFG
             result = binaryobj(**sdfg_args)
