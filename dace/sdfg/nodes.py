@@ -1068,6 +1068,13 @@ class Map(object):
                               default=0,
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    nowait = Property(dtype=bool,
+                      default=False,
+                      desc="Drop the implicit barrier at the end of the Map's OpenMP worksharing "
+                      "loop. Only meaningful for a CPU_Multicore Map nested in a CPU_Persistent "
+                      "scope, which is the only case that lowers to a bare `omp for`; ignored "
+                      "elsewhere, since `nowait` is not valid on a combined `parallel for`",
+                      serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,

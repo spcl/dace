@@ -1595,7 +1595,12 @@ class SDFG(ControlFlowRegion):
 
         # Add global free symbols used in the generated code to scalar arguments
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
+        # OMP_MAX_THREADS is resolved by the code generator, never passed in -- see
+        # dtypes.OMP_MAX_THREADS_SYMBOL.
+        scalar_args.update({
+            k: dt.Scalar(self.symbols[k])
+            for k in free_symbols if not k.startswith('__dace') and k != dtypes.OMP_MAX_THREADS_SYMBOL
+        })
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -1614,7 +1619,7 @@ class SDFG(ControlFlowRegion):
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
-            for k in sorted(free_symbols) if not k.startswith('__dace'))
+            for k in sorted(free_symbols) if not k.startswith('__dace') and k != dtypes.OMP_MAX_THREADS_SYMBOL)
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,

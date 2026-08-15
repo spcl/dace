@@ -257,7 +257,10 @@ namespace dace
 
     // OpenMP has no built-in reduction over a class type; declare the float set (no bitwise ops)
     // for each. '-' combines with '+=' (initial - sum), matching OpenMP's '-' reduction for float.
-    #ifdef _OPENMP
+    // nvc++ rejects user-defined `declare reduction` ("not supported in NVIDIA subset"). These
+    // cover only the low-precision class types, so skipping them costs nvc++ builds nothing that
+    // float/double reductions need -- and without the skip nvc++ cannot compile any CPU target.
+    #if defined(_OPENMP) && !defined(__NVCOMPILER_MAJOR__) && !defined(__PGIC__)
     #define DACE_LP_OMP_RED(T)                                                                                              \
         DACE_PRAGMA(omp declare reduction(+ : T : omp_out += omp_in) initializer(omp_priv = T(0.0f)))                        \
         DACE_PRAGMA(omp declare reduction(- : T : omp_out += omp_in) initializer(omp_priv = T(0.0f)))                        \
