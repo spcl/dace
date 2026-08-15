@@ -35,7 +35,8 @@ import numpy as np
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.sdfg.state import ControlFlowRegion
+from dace.transformation.passes.canonicalize.pipeline import _build_stages, canonicalize
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -112,7 +113,21 @@ def test_units_that_report_a_change_without_making_one_are_exactly_the_known_set
         f'fixed (delete the entry): {sorted(set(_REPORTS_CHANGE_WITHOUT_MUTATING) - reported)}')
 
 
+def test_canonicalize_leaves_derivable_region_entries_implicit():
+    """The guard stage runs last and pins its own entry. A pin on a region that has a single
+    source is redundant, but ``to_json`` writes it, so a run that pins and a run that does not
+    serialize differently even though the graphs agree."""
+    sdfg = _kernel.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    pinned = [
+        r.label for r in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(r, ControlFlowRegion) and len(r.source_nodes()) == 1 and r._start_block is not None
+    ]
+    assert not pinned, f'regions carrying a redundant explicit entry: {pinned}'
+
+
 if __name__ == '__main__':
     test_no_unit_mutates_on_a_second_application()
+    test_canonicalize_leaves_derivable_region_entries_implicit()
     test_units_that_report_a_change_without_making_one_are_exactly_the_known_set()
     print("OK")

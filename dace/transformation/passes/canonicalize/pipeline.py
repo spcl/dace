@@ -9,7 +9,10 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dace import SDFG, properties
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.array_elimination import ArrayElimination
@@ -1932,6 +1935,17 @@ def canonicalize(sdfg: SDFG,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting,
                              dump_dir=dump_dir).apply_pass(sdfg, {})
+    # The guard stage runs last, so nothing cleans up after it: on kernels whose old entry was
+    # empty it leaves a redundant empty state between guard and body, which a second canonicalize
+    # then removes -- a difference that is only in run 1.
+    EmptyStateElimination().apply_pass(sdfg, {})
+    DeadStateElimination().apply_pass(sdfg, {})
+    # A pin is redundant once a region has a single source, and passes set it inconsistently, so
+    # the same SDFG can serialize two different ``start_block`` values. Leave the entry implicit.
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(region, ControlFlowRegion) and len(region.source_nodes()) == 1:
+            region._start_block = None
+            region._cached_start_block = None
     # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer
     # WCR accumulators of a parallel map -> ``reduction(op:A[0:n])`` instead of per-element
     # atomics; complex via ``declare reduction``). Off by default elsewhere; only provably
