@@ -237,6 +237,13 @@ if(DACE_ENABLE_HIP)
   set(CMAKE_HIP_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
+  # The same need as CUDA above, device code calling host constexpr functions, but the flag is
+  # nvcc's. On the NVIDIA platform HIP compiles with nvcc and needs it by name; clang-based hipcc
+  # permits those calls already and rejects the flag as unknown, so only one platform gets it.
+  if(CMAKE_HIP_PLATFORM STREQUAL "nvidia")
+    string(APPEND CMAKE_HIP_FLAGS " --expt-relaxed-constexpr")
+  endif()
+
   # Get local AMD architectures
   if (DEFINED LOCAL_HIP_ARCHITECTURES)
     message(STATUS "Use cached HIP architectures: '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
