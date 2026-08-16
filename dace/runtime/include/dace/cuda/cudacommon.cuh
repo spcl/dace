@@ -33,6 +33,19 @@ typedef cudaError_t gpuError_t;
 #define DACE_GPU_ERROR(err) (err)
 #endif
 
+// For the runtime calls DaCe's own headers make outside any generated function, where there is no
+// __state to record into. The result is still reported: these calls return an error type declared
+// nodiscard, and dropping it hides a failed allocation until whatever reads the memory produces
+// wrong numbers.
+#define DACE_GPU_CHECK_NO_STATE(err)                                      \
+  do {                                                                    \
+    gpuError_t errr = (err);                                              \
+    if (errr != (gpuError_t)0) {                                          \
+      printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
+             gpuGetErrorString(errr), errr);                              \
+    }                                                                     \
+  } while (0)
+
 // The context guard covers the calls checked during __dace_init_cuda before the context has been
 // constructed (the runtime warm-up allocation). The message is printed either way; only the
 // recording needs a context to record into.
