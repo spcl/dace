@@ -106,6 +106,27 @@ def test_v2_all_array_pointwise():
     np.testing.assert_array_equal(out, np.where(mask.astype(bool), t, f))
 
 
+def _provenance_report(got, expected, **operands) -> str:
+    """Every wrong cell, and WHERE its value came from.
+
+    A wrong result is either a value the kernel had no business reading -- so the read address is
+    off -- or a write that never happened, leaving the caller's zero. Naming the operand and index
+    each wrong value actually occupies separates those two, which the default
+    ``assert_array_equal`` message cannot: it prints five indices and truncates the arrays.
+    """
+    lines = [f'{np.count_nonzero(got != expected)} / {got.size} cells wrong']
+    for idx in zip(*np.nonzero(got != expected)):
+        value = got[idx]
+        source = 'never written (still the caller zero)' if value == 0 else 'not in any operand'
+        for oname, operand in operands.items():
+            where = np.nonzero(operand == value)
+            if where[0].size:
+                source = f'{oname}{tuple(int(c[0]) for c in where)}'
+                break
+        lines.append(f'  out{tuple(int(i) for i in idx)} = {value!r} <- {source}, wanted {expected[idx]!r}')
+    return '\n'.join(lines)
+
+
 def test_v2_all_array_2d():
     """``MERGE`` on a 2-D pointwise shape — verifies the iteration
     domain matches the output's shape across rank > 1."""
@@ -118,7 +139,8 @@ def test_v2_all_array_2d():
     mask = (rng.random((n, m)) > 0.5).astype(np.int32)
     out = np.zeros((n, m), dtype=np.float64)
     sdfg(t=t, f=f, mask=mask, out=out)
-    np.testing.assert_array_equal(out, np.where(mask.astype(bool), t, f))
+    expected = np.where(mask.astype(bool), t, f)
+    assert np.array_equal(out, expected), _provenance_report(out, expected, t=t, f=f)
 
 
 # ---------------------------------------------------------------------------
