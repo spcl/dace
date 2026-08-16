@@ -273,12 +273,13 @@ jobs:
       matrix:
         include:
           - cell: vectorization-npbench-polybench
-            # Everything except the two TSVC corpora, which are cell 2.
+            # The vectorization unit tests plus the npbench / polybench canonicalize-then-vectorize
+            # corpora -- everything except the two TSVC corpora, which are cell 2.
             paths: >-
               tests/passes/vectorization
               --ignore=tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
               --ignore=tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
-          - cell: vectorization-tsvc
+          - cell: canon-vectorization-tsvc
             paths: >-
               tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
               tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
