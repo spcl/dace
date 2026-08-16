@@ -370,6 +370,25 @@ def nest_sdfg_control_flow(sdfg: SDFG):
             sdfg.reset_cfg_list()
 
 
+def _demote_dangling_views(state: SDFGState) -> None:
+    """Demote every ``View`` descriptor in ``state``'s SDFG whose access nodes have lost the edge
+    that binds them to the data they view.
+
+    A View is only meaningful next to the viewed data: ``get_view_edge`` picks the viewing edge
+    out of the access node's edges, and validation rejects a View node it cannot pick one for.
+    Nesting a subgraph moves the view in while its viewing edge stays outside -- a frontend
+    reshape (``A_0`` viewing ``A[0:M, 0:N, 0:N, 0:M]`` as ``A_0[0:M**2*N**2]``) feeding a map that
+    ``tile_wcrs`` extracts is exactly that shape -- so inside the body the node is a plain array
+    parameter and its descriptor has to say so.
+    """
+    sdfg = state.sdfg
+    for node in state.data_nodes():
+        desc = sdfg.arrays.get(node.data)
+        if not isinstance(desc, data.View) or utils.get_view_edge(state, node) is not None:
+            continue
+        sdfg.arrays[node.data] = desc.as_structure() if isinstance(desc, data.StructureView) else desc.as_array()
+
+
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
@@ -605,6 +624,8 @@ def nest_state_subgraph(sdfg: SDFG,
             if not full_data and edge.data.subset is not None:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
+
+    _demote_dangling_views(nstate)
 
     # Add nested SDFG node to the input state. Ordered: these become the node's in/out
     # CONNECTORS, so a hash-ordered set here reorders the nested SDFG's interface.
