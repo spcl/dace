@@ -135,7 +135,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        # ``not loop2x_libnodes``: the Syrk/Symm MKL parametrizations moved to the loop2x-libnodes
+        # ``not loop2x_libnodes``: the Syrk/Symm MKL parametrizations moved to the libnode-loop2x-transformations
         # runner, which now installs oneAPI MKL itself. Running them here too would double the
         # 104 compile-heavy cases.
         pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl and not loop2x_libnodes"
@@ -272,13 +272,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - cell: c1-npbench-polybench
+          - cell: vectorization-npbench-polybench
             # Everything except the two TSVC corpora, which are cell 2.
             paths: >-
               tests/passes/vectorization
               --ignore=tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
               --ignore=tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
-          - cell: c2-tsvc
+          - cell: vectorization-tsvc
             paths: >-
               tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
               tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
@@ -347,7 +347,7 @@ jobs:
           -m "corpus and not gpu and not long and not sequential and not perf and not mpi"
 
   # --- Loop-to-X and new library nodes (was loop2x-libnodes-ci.yml) ---
-  loop2x-libnodes:
+  libnode-loop2x-transformations:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     timeout-minutes: 90
