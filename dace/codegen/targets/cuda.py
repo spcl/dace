@@ -1868,12 +1868,18 @@ void __dace_runkernel_{fname}({fargs})
             node)
 
         if is_persistent:
+            # The attribute enumerator is not a backend-prefixed spelling of one name: CUDA calls it
+            # cudaDevAttrMultiProcessorCount, HIP calls it hipDeviceAttributeMultiprocessorCount.
+            # Concatenating the backend gives an identifier HIP does not declare.
+            sm_count_attr = ('hipDeviceAttributeMultiprocessorCount'
+                             if self.backend == 'hip' else 'cudaDevAttrMultiProcessorCount')
             self._localcode.write('''
 int dace_number_SMs;
-DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0));
+DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {sm_count_attr}, 0));
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 '''.format(fraction=Config.get('compiler', 'cuda', 'persistent_map_SM_fraction'),
                            occupancy=Config.get('compiler', 'cuda', 'persistent_map_occupancy'),
+                           sm_count_attr=sm_count_attr,
                            backend=self.backend))
 
         if create_grid_barrier:
