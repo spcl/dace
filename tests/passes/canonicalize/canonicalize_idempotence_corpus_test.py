@@ -180,6 +180,7 @@ _NOT_A_FIXED_POINT: Dict[Tuple[str, str], str] = {
     ('tsvc', 's3111_d_single'): '.attributes._arrays.sum_val_plus_a_slice | run1:PRESENT | run2:ABSENT',
     ('tsvc', 's31111_d_single'): '.attributes._arrays.partial_plus_a_slice_1 | run1:PRESENT | run2:ABSENT',
     ('tsvc', 's3112_d_single'): '.attributes._arrays.sum | run1:PRESENT | run2:ABSENT',
+    ('tsvc', 's3113_d_single'): ".nodes[2].nodes[0].type | run1:'MapEntry' | run2:'AccessNode'",
     ('tsvc', 's312_d_single'): '.attributes._arrays.prod_0 | run1:ABSENT | run2:PRESENT',
     ('tsvc', 's313_d_single'): '.attributes._arrays.a_slice_times_b_slice | run1:PRESENT | run2:ABSENT',
     ('tsvc', 's315_d_single'): '.edges[0].attributes.data.attributes.assignments | run1:PRESENT | run2:ABSENT',
