@@ -460,10 +460,11 @@ def nest_state_subgraph(sdfg: SDFG,
                       if id(e) not in subgraph_edge_ids and e.data.data is not None
                       and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode)))
     subgraph_transients = {}
-    for data in data_in_subgraph:
-        datadesc = sdfg.arrays[data]
-        if datadesc.transient and data not in other_nodes:
-            subgraph_transients[data] = None
+    # ``dname``, not ``data``: the module is imported under that name and is read further down.
+    for dname in data_in_subgraph:
+        datadesc = sdfg.arrays[dname]
+        if datadesc.transient and dname not in other_nodes:
+            subgraph_transients[dname] = None
 
     # All transients of edges between code nodes are also added to nested graph
     for edge in subgraph.edges():
@@ -504,17 +505,43 @@ def nest_state_subgraph(sdfg: SDFG,
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
+
+    def add_boundary_descriptor(name: str, subset: Subset) -> str:
+        """Give the nested SDFG a descriptor for the connector carrying ``name``, and return the
+        name it got.
+
+        A View is a view only next to the data it views: the parent holds the ``views`` edge, and
+        it is the parent that resolves the view before the memlet ever reaches this connector. So
+        the connector is a plain array of the subset it carries; a ``View`` copied in here would be
+        one with nothing to view -- an access node whose only edge runs to a code node, which
+        ``get_view_edge`` cannot resolve and validation rejects.
+
+        The demoted descriptor gets a name of its OWN. Inlining merges the nested descriptors back
+        into the parent by name, so leaving this one called ``C_0`` would carry the plain array
+        over the parent's ``C_0`` view and invalidate the ``views`` edge still hanging off it. The
+        caller threads the returned name through the connector and its memlets, so a fresh one
+        costs nothing and keeps the parent's view intact.
+        """
+        desc = sdfg.arrays[name]
+        demoted = isinstance(desc, data.View)
+        if isinstance(desc, data.StructureView):
+            desc = desc.as_structure()
+        elif demoted:
+            desc = desc.as_array()
+        else:
+            desc = copy.deepcopy(desc)
+        desc.transient = False
+        if not full_data:
+            desc.shape = subset.size()
+        return nsdfg.add_datadesc(f'{name}_arr' if demoted else name, desc, find_new_name=True)
+
     global_subsets: Dict[str, Tuple[str, Subset]] = {}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
         name = edge.data.data
         if name not in global_subsets:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            new_name = add_boundary_descriptor(edge.data.data, edge.data.subset)
             global_subsets[name] = (new_name, edge.data.subset)
         else:
             new_name, subset = global_subsets[name]
@@ -530,11 +557,7 @@ def nest_state_subgraph(sdfg: SDFG,
             continue
         name = edge.data.data
         if name not in global_subsets:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            new_name = add_boundary_descriptor(edge.data.data, edge.data.subset)
             global_subsets[name] = (new_name, edge.data.subset)
         else:
             new_name, subset = global_subsets[name]
@@ -629,11 +652,11 @@ def nest_state_subgraph(sdfg: SDFG,
         if name in reconnected_in:
             continue
         if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+            memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
-        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
+            memlet = copy.deepcopy(edge.data)
+            memlet.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, memlet)
         reconnected_in[name] = None
 
     for edge in outputs:
@@ -645,12 +668,12 @@ def nest_state_subgraph(sdfg: SDFG,
         if name in reconnected_out:
             continue
         if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+            memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
-        data.wcr = edge.data.wcr
-        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
+            memlet = copy.deepcopy(edge.data)
+            memlet.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        memlet.wcr = edge.data.wcr
+        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, memlet)
         reconnected_out[name] = None
 
     # Connect access nodes to internal input/output data as necessary

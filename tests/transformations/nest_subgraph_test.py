@@ -373,6 +373,42 @@ def test_symbol_needing_an_incoming_value_stays_an_argument():
     assert np.array_equal(A, reference)
 
 
+def test_view_on_the_boundary_is_nested_as_an_array():
+    """A View feeding the subgraph from outside becomes a plain array inside the nested SDFG.
+
+    A View is a view only next to the data it views: the ``views`` edge stays in the parent, which
+    resolves it before the memlet ever reaches the nested SDFG's connector. Carrying the View class
+    across the boundary leaves an access node whose single edge runs to a code node, which
+    ``get_view_edge`` cannot resolve -- validation rejects it as an ambiguous View edge.
+    """
+    sdfg = dace.SDFG('view_boundary')
+    sdfg.add_array('A', [4, 4], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_view('A_flat', [16], dace.float64)
+    state = sdfg.add_state()
+
+    a = state.add_access('A')
+    view = state.add_access('A_flat')
+    state.add_edge(a, None, view, 'views', dace.Memlet('A[0:4, 0:4] -> [0:16]'))
+    tasklet = state.add_tasklet('copy', {'i'}, {'o'}, 'o = i * 2.0')
+    state.add_edge(view, None, tasklet, 'i', dace.Memlet('A_flat[0]'))
+    state.add_edge(tasklet, 'o', state.add_access('B'), None, dace.Memlet('B[0]'))
+
+    # Only the tasklet: the view and its ``views`` edge stay outside, so the tasklet's read crosses
+    # the boundary and has to be given a descriptor of its own.
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, [tasklet]))
+    sdfg.validate()
+
+    inner = [nsdfg.sdfg.arrays[c] for c in nsdfg.in_connectors]
+    assert inner, 'the boundary read should have produced an input connector'
+    assert not any(isinstance(desc, dace.data.View) for desc in inner)
+
+    A = np.arange(16, dtype=np.float64).reshape(4, 4)
+    B = np.zeros(16, dtype=np.float64)
+    sdfg(A=A, B=B)
+    assert B[0] == 0.0
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -387,3 +423,4 @@ if __name__ == '__main__':
     test_region_local_transient_is_not_exported_as_a_connector()
     test_region_local_transient_read_by_an_outside_edge_stays_a_connector()
     test_symbol_needing_an_incoming_value_stays_an_argument()
+    test_view_on_the_boundary_is_nested_as_an_array()

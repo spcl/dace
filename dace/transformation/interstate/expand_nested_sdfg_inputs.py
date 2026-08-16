@@ -258,6 +258,13 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     inner_sdfg: SDFG = nsdfg_node.sdfg
     inner_sdfg.remove_data(inner_name, validate=False)
     copy_desc = copy.deepcopy(desc)
+    # A View is a view only next to the data it views: the ``views`` edge stays in the outer state,
+    # which resolves it before the memlet reaches this connector. Carrying the View class inward
+    # leaves an access node with nothing to view, which validation rejects as an ambiguous edge.
+    if isinstance(copy_desc, data.StructureView):
+        copy_desc = copy_desc.as_structure()
+    elif isinstance(copy_desc, data.View):
+        copy_desc = copy_desc.as_array()
     copy_desc.transient = False
     if outer_name not in inner_sdfg.arrays:
         inner_sdfg.add_datadesc(outer_name, copy_desc)
