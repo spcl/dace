@@ -29,7 +29,6 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
                 out = a * in_x
 
 
-@pytest.mark.gpu
 #: GPU_ThreadBlock_Dynamic lowers through the CUDA warp intrinsics, which HIP has only on its NVIDIA
 #: platform. Detected rather than assumed from the backend: a HIP build is not automatically an AMD
 #: one, and on the AMD platform the code generator raises NotImplementedError by design -- a skip is
@@ -37,6 +36,7 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
 dynamic_block_maps_unsupported = (common.get_gpu_backend() == 'hip' and common.get_hip_platform() == 'amd')
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(dynamic_block_maps_unsupported,
                     reason='dynamic thread-block maps are unsupported on the HIP AMD platform')
 def test_persistent_dynamic_map():
