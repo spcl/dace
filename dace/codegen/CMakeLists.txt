@@ -279,6 +279,14 @@ if(DACE_ENABLE_HIP)
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
 
+  # On the NVIDIA platform hip::host carries the ROCm include directory and nothing else, so a host
+  # translation unit that reaches hip_runtime.h lands in nvidia_detail/ and fails to find
+  # cuda_runtime.h. nvcc adds the toolkit implicitly; the host compiler has to be told.
+  if(CMAKE_HIP_PLATFORM STREQUAL "nvidia")
+    find_package(CUDAToolkit REQUIRED)
+    set(DACE_LIBS ${DACE_LIBS} CUDA::cudart)
+  endif()
+
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
