@@ -272,7 +272,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - cell: vectorization-npbench-polybench
+          - cell: canon-vectorization-npbench
             # The vectorization unit tests plus the npbench / polybench canonicalize-then-vectorize
             # corpora -- everything except the two TSVC corpora, which are cell 2.
             paths: >-
