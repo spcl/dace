@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
 from dace.sdfg.state import LoopRegion
@@ -19,8 +18,8 @@ def canonicalize_index_symbols(*index_groups: list[list[Union[tuple, None]]]) ->
 
     Reads and writes come from different edges, so a non-itervar symbol (e.g. an outer loop
     variable) can show up as two distinct sympy instances of the same name (one plain, one
-    assumption-flavored). sp.Min/sp.Max/subtraction over such pairs then never cancels, even
-    though they denote the same value.
+    assumption-flavored). Min/Max/subtraction over such pairs then never cancels, even though they
+    denote the same value.
     """
     slots = [(edge_indices, i) for group in index_groups for edge_indices in group
              for i, entry in enumerate(edge_indices) if entry is not None]
@@ -198,8 +197,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         indices = list()
         itervar = loop.loop_variable
         itersym = symbolic.pystr_to_symbolic(itervar)
-        a = sp.Wild("a", exclude=[itersym])
-        b = sp.Wild("b", exclude=[itersym])
+        a = symbolic.sympy.Wild("a", exclude=[itersym])
+        b = symbolic.sympy.Wild("b", exclude=[itersym])
 
         for rb, re, _ in subset.ndrange():
             # Constant-index subsets carry plain Python ints, which have no .match.
@@ -290,11 +289,11 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 continue
 
             # Get the minimum read index and maximum write index
-            read_lb = sp.Min(*[i[1] for i in dim_read_indices])
-            read_ub = sp.Max(*[i[1] for i in dim_read_indices])
-            write_ub = sp.Max(*[i[1] for i in dim_write_indices])
-            uncond_write_lb = sp.Min(*[i[1] for i in dim_uncond_write_indices])
-            uncond_write_ub = sp.Max(*[i[1] for i in dim_uncond_write_indices])
+            read_lb = symbolic.sympy.Min(*[i[1] for i in dim_read_indices])
+            read_ub = symbolic.sympy.Max(*[i[1] for i in dim_read_indices])
+            write_ub = symbolic.sympy.Max(*[i[1] for i in dim_write_indices])
+            uncond_write_lb = symbolic.sympy.Min(*[i[1] for i in dim_uncond_write_indices])
+            uncond_write_ub = symbolic.sympy.Max(*[i[1] for i in dim_uncond_write_indices])
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
@@ -330,7 +329,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
             # Take maximum from previous accesses into account
             try:
-                k = sp.Max(span, max_indices[dim])
+                k = symbolic.sympy.Max(span, max_indices[dim])
                 not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
@@ -578,8 +577,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_rd = pystr_to_symbolic("0")
             for (a, b), s in zip(rd, sdfg.arrays[array_name].strides):
                 new_rd += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_rd.match(a * itervar + b)
             if m is None:
                 return
@@ -591,8 +590,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_wr = pystr_to_symbolic("0")
             for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
                 new_wr += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
             if m is None:
                 return
@@ -604,8 +603,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_wr = pystr_to_symbolic("0")
             for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
                 new_wr += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
             if m is None:
                 return

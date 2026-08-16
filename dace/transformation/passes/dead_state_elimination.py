@@ -1,7 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import collections
-import sympy as sp
 from typing import List, Optional, Set, Tuple, Union
 
 from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
@@ -212,8 +211,8 @@ class DeadStateElimination(ppl.Pass):
         # Evaluate condition
         return self._is_definitely_true(edge.condition_sympy(), sdfg)
 
-    def _is_definitely_true(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == True or cond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
+    def _is_definitely_true(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        if cond == True or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanFalse(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays
@@ -232,8 +231,8 @@ class DeadStateElimination(ppl.Pass):
         # Evaluate condition
         return self._is_definitely_false(edge.condition_sympy(), sdfg)
 
-    def _is_definitely_false(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == False or cond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
+    def _is_definitely_false(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        if cond == False or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanTrue(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays
