@@ -78,6 +78,24 @@ def _nested_map_sdfg(name: str, outer_schedule, inner_schedule):
     return sdfg
 
 
+def _multidim_leaf_map_sdfg(name: str, schedule, collapse: int = 1):
+    """One map over two dimensions -- a single MapEntry emitting a two-deep loop nest,
+    ``B[i,j] = A[i,j] + 1``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [4, 4], dace.float64)
+    sdfg.add_array('B', [4, 4], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:4', j='0:4'), schedule=schedule)
+    me.map.collapse = collapse
+    t = state.add_tasklet('t', {'a'}, {'o'}, 'o = a + 1.0')
+    a_acc = state.add_access('A')
+    b_acc = state.add_access('B')
+    state.add_memlet_path(a_acc, me, t, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(t, mx, b_acc, src_conn='o', memlet=dace.Memlet('B[i, j]'))
+    sdfg.validate()
+    return sdfg
+
+
 def _map_with_uninlinable_nested_sdfg(name: str, schedule):
     """A map whose body is a NestedSDFG carrying a real ``LoopRegion`` -- not flattenable by the
     experimental generator's pre-codegen inlining sweep, so both generators must see it as-is."""
@@ -138,6 +156,33 @@ def test_multicore_leaf_gets_parallel_for_simd(impl):
     assert any(p.startswith('#pragma omp parallel for') and 'simd' in p for p in pragmas), pragmas
     # The clause is on the SAME directive, not a second pragma.
     assert not any(p == '#pragma omp simd' for p in pragmas), pragmas
+
+
+@pytest.mark.parametrize('impl', IMPLS)
+def test_multicore_multidim_leaf_gets_no_simd(impl):
+    """The pragma binds to the loop right after it, so on a two-dimensional map ``simd`` would
+    ask for outer-loop vectorization of a nest instead of the element-wise vectorization it is
+    written for."""
+    with temporary_config():
+        Config.set('compiler', 'cpu', 'implementation', value=impl)
+        sdfg = _multidim_leaf_map_sdfg('mc_2d_' + impl, dtypes.ScheduleType.CPU_Multicore)
+        pragmas = _pragmas(sdfg)
+    outer = [p for p in pragmas if 'parallel' in p]
+    assert len(outer) == 1, pragmas
+    assert 'simd' not in outer[0], pragmas
+
+
+@pytest.mark.parametrize('impl', IMPLS)
+def test_multicore_collapsed_multidim_leaf_gets_simd(impl):
+    """``collapse(2)`` makes the directive's associated loops reach the innermost one, so the
+    clause is well-defined again."""
+    with temporary_config():
+        Config.set('compiler', 'cpu', 'implementation', value=impl)
+        sdfg = _multidim_leaf_map_sdfg('mc_2d_coll_' + impl, dtypes.ScheduleType.CPU_Multicore, collapse=2)
+        pragmas = _pragmas(sdfg)
+    outer = [p for p in pragmas if 'parallel' in p]
+    assert len(outer) == 1, pragmas
+    assert 'simd' in outer[0] and 'collapse(2)' in outer[0], pragmas
 
 
 @pytest.mark.parametrize('impl', IMPLS)

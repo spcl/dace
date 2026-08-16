@@ -3185,6 +3185,13 @@ class CPUCodeGen(TargetCodeGenerator):
             # OFF leaves omp_reductions empty, so no reduction(op:var) clause is emitted and the
             # WCR write below takes the plain atomic path (correct but contended) instead of
             # privatize-and-tree-reduce.
+            # A ``for`` pragma binds to the loop right after it, so on a multi-dimensional map the
+            # ``simd`` clause below would land on the OUTERMOST loop and ask for outer-loop
+            # vectorization of a nest, not the element-wise vectorization it is written for. Only
+            # stamp it when the pragma's associated loops reach the innermost one -- the same rule
+            # ``_map_loop_will_have_openmp_pragma`` already applies on the Sequential path.
+            simd_reaches_innermost = (len(node.map.range) == 1 or node.map.collapse >= len(node.map.range))
+
             omp_reductions = []
             if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
                     and emits_tree_reductions(self.experimental_codegen)):
@@ -3196,7 +3203,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         declares.append(declare)
                 # ``simd`` too: the clause already sanctions reassociation inside the combining op, so
                 # vector partials are legal. No min/max, per ``dace/runtime/include/dace/reduction.h``.
-                if omp_reductions and all(op not in ('min', 'max') for op, _ct, _dn, _dec in omp_reductions):
+                if (omp_reductions and simd_reaches_innermost
+                        and all(op not in ('min', 'max') for op, _ct, _dn, _dec in omp_reductions)):
                     head, sep, rest = map_header.partition(' for')
                     map_header = f'{head}{sep} simd{rest}'
                 # ``declare reduction`` directives must be in scope before the pragma; emit
@@ -3212,7 +3220,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # an uncovered WCR through ``wcr_fixed::reduce_atomic`` (``#pragma omp atomic``
             # under the hood -- see reduction.h), which composes with ``simd`` by design.
             if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and ' simd' not in map_header
-                    and Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps')
+                    and simd_reaches_innermost and Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps')
                     and self._map_body_is_leaf(state_dfg, node)
                     and all(op not in ('min', 'max')
                             for op, _ct, _dn, _dec in self._collect_omp_reductions(sdfg, state_dfg, node))):
