@@ -627,7 +627,9 @@ namespace dace {
     struct warpReduce {
         static DACE_DFI T reduce(T v)
         {
-            for (int i = 1; i < 32; i = i * 2)
+            // ``warpSize``, not 32: it is a built-in on both platforms and states the width the
+            // hardware actually has, instead of restating an assumption this header cannot check.
+            for (int i = 1; i < warpSize; i = i * 2)
                 v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
             return v;
         }

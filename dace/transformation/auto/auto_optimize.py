@@ -350,7 +350,10 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # link against, cuBLAS is. Keying on the backend alone asks for a library the platform
             # does not have.
             if get_hip_platform() == 'nvidia':
-                return ['cuBLAS', 'GPUAuto', 'pure']
+                # The NVIDIA platform IS the CUDA toolkit, so its libraries are the ones present:
+                # cuBLAS, cuSolverDn and CUB all ship with it. cuTENSOR does not -- it is a separate
+                # package -- so it stays out of the list here even though the CUDA path lists it.
+                return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:
             return ['GPUAuto', 'pure']
