@@ -426,13 +426,18 @@ def test_native_incremental_rebuild_and_invalidation(tmp_path):
 
         # (b) a changed header must invalidate the objects (touch the generated include, not a repo
         # file, so the test never mutates the source tree).
-        generated_header = glob.glob(os.path.join(program_folder, 'include', '*.h'))
-        assert generated_header, 'expected a generated include header'
+        # EVERY header, not glob()[0]: the folder holds both hash.h, which the generated source
+        # includes, and <program>.h, which only a consumer of the built library does. glob order is
+        # readdir order, so picking one touched the dependency here and the non-dependency on a CI
+        # runner, where nothing was stale and nothing rebuilt.
+        generated_headers = glob.glob(os.path.join(program_folder, 'include', '*.h'))
+        assert generated_headers, 'expected a generated include header'
         # Newer than every product by a wide margin, not by one second: a Makefile generator compares
         # timestamps at the granularity the filesystem reports, and on a runner whose objects landed
         # inside the same second the header is stamped into, "one second later" is not newer at all.
         touched = max(stamps.values()) + 10
-        os.utime(generated_header[0], (touched, touched))
+        for header in generated_headers:
+            os.utime(header, (touched, touched))
         compiler.configure_and_compile(program_folder)
         objects = [p for p in stamps if p.endswith('.o')]
         for obj in objects:
