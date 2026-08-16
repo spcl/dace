@@ -20,6 +20,12 @@ def refuse_broadcast_batches(node, state, sdfg) -> None:
     no single stride expresses, so such a call would read past the end of the smaller operand.
     The pure expansion handles it by indexing that dimension at 0.
 
+    Refused on the dimensions where broadcasting is what the pairing MEANS: one side provably 1,
+    or the two provably different. Two dimensions whose equality is merely unprovable -- distinct
+    symbols, ``a: [B, M, K] @ b: [L, K, N]`` -- are not a broadcast. numpy pairs those only when
+    they are equal at run time, the same thing the frontend assumed when it gave the result its
+    batch shape; refusing them sends every symbolically-batched matmul to a failed expansion.
+
     :param node: The library node being expanded.
     :param state: The state the node lives in.
     :param sdfg: The SDFG the state belongs to.
@@ -32,7 +38,10 @@ def refuse_broadcast_batches(node, state, sdfg) -> None:
     offset = len(batch_a) - len(batch_b)
     paired = zip(batch_a[offset:], batch_b) if offset >= 0 else zip(batch_a, batch_b[-offset:])
     for d0, d1 in paired:
-        if equal(d0, d1) is not True:
+        same = equal(d0, d1)
+        if same is True:
+            continue
+        if same is False or equal(d0, 1) is True or equal(d1, 1) is True:
             raise ValueError(f'{type(node).__name__} cannot broadcast batch dimensions {batch_a} against {batch_b}: '
                              'this expansion walks a fixed batch stride. Use the "pure" implementation, or '
                              'materialize both operands at the same batch shape.')
