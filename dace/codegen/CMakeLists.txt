@@ -237,10 +237,11 @@ if(DACE_ENABLE_HIP)
   set(CMAKE_HIP_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
-  # The same need as CUDA above, device code calling host constexpr functions, but the flag is
-  # nvcc's. On the NVIDIA platform HIP compiles with nvcc and needs it by name; clang-based hipcc
-  # permits those calls already and rejects the flag as unknown, so only one platform gets it.
-  if(CMAKE_HIP_PLATFORM STREQUAL "nvidia")
+  # HIP does not need this flag; nvcc does. With HIP_PLATFORM=nvidia the HIP language's compiler is
+  # nvcc, which then applies its own rule against device code calling host constexpr functions --
+  # the same rule the CUDA branch above works around. Keyed on the compiler rather than the
+  # platform: clang-based hipcc permits those calls already and rejects the flag as unknown.
+  if(CMAKE_HIP_COMPILER_ID STREQUAL "NVIDIA")
     string(APPEND CMAKE_HIP_FLAGS " --expt-relaxed-constexpr")
   endif()
 
