@@ -908,7 +908,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         isqdim = insubset.squeeze()
         raw_input_data = sdfg.arrays[inedge.data.data]
         raw_output_data = sdfg.arrays[outedge.data.data]
-        warp_size = 64 if common.get_gpu_backend() == 'hip' else 32
+        warp_size = common.get_gpu_warp_size()
 
         in_type = raw_input_data.dtype
 

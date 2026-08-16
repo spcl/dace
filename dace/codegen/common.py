@@ -125,6 +125,16 @@ def get_hip_platform() -> str:
     return 'nvidia' if os.environ.get('HIP_PLATFORM', 'amd').lower() in ('nvidia', 'nvcc') else 'amd'
 
 
+def get_gpu_warp_size() -> int:
+    """Lanes per warp / wavefront on the hardware the GPU backend targets: 64 on AMD, 32 on NVIDIA.
+
+    A HIP build is not automatically an AMD one. On HIP's NVIDIA platform the code runs on NVIDIA
+    hardware, where a warp is 32 lanes -- assuming 64 there makes a warp-level reduction read lanes
+    that do not exist and quietly return the wrong sum.
+    """
+    return 64 if get_gpu_backend() == 'hip' and get_hip_platform() == 'amd' else 32
+
+
 def get_gpu_backend() -> str:
     """
     Returns the currently-selected GPU backend. If automatic,

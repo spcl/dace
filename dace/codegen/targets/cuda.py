@@ -2435,8 +2435,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         callsite_stream.write('{', cfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-            if self.backend == 'hip':
-                raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
+            # The platform, not the backend: what this lowering needs is the CUDA warp intrinsics,
+            # which HIP's NVIDIA platform has (nvcc compiles it, so __CUDACC__ is set and
+            # cooperative_groups is available). Only the AMD platform is actually unsupported.
+            if self.backend == 'hip' and common.get_hip_platform() == 'amd':
+                raise NotImplementedError('Dynamic thread-block maps on the HIP AMD platform are '
+                                          'currently unsupported')
             if len(scope_map.params) > 1:
                 raise ValueError('Only one-dimensional maps are supported for dynamic block map schedule (got %d)' %
                                  len(scope_map.params))
