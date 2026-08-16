@@ -42,6 +42,21 @@ runs:
         pip install ${{ inputs.pip-packages }}
         pip install -e ".[${{ inputs.extras }}]"
 
+    - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
+      shell: bash
+      run: |
+        # The hosted image's default is GCC 13, whose auto-vectorizer mislowers the select the
+        # readable code generator emits: it reuses the low-half lane mask for the high-half
+        # vmaskmovpd, so the upper half of each vector reads back as zeros. That is a silent wrong
+        # answer -- it surfaced as merge_node's 2-D case losing exactly its columns 4-7, and only on
+        # runners whose CPU let the vectorizer take that path. Fixed in GCC 14. dace warns about it
+        # at emission time (codegen.common.warn_if_cxx_miscompiles_inline_selects); here we simply
+        # build with a compiler that does not have the bug.
+        sudo apt-get install -y g++-14
+        echo "CXX=g++-14" >> $GITHUB_ENV
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "DACE_compiler_cpu_executable=$(command -v g++-14)" >> $GITHUB_ENV
+
     - name: Install codecov uploader
       if: inputs.codecov == 'true'
       shell: bash

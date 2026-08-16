@@ -182,6 +182,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     :return: List of code objects that correspond to files to compile.
     """
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
+    from dace.codegen.common import warn_if_cxx_miscompiles_inline_selects
+
+    # Before anything is emitted: the compiler that will build it is a property of the machine, not
+    # of this SDFG, and the failure it causes is a silent wrong number much later.
+    warn_if_cxx_miscompiles_inline_selects()
 
     if validate:
         sdfg.validate()

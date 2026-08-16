@@ -131,6 +131,39 @@ def cpp_standard() -> str:
     return str(max(standard, 20))
 
 
+#: GCC releases whose auto-vectorizer mislowers a select whose operands are loaded inline. It builds
+#: the lane mask for one operand by sign-extending the low half of an int32 compare and then reuses
+#: that same mask for the high-half ``vmaskmovpd``, which zeroes the lanes it believes are masked
+#: off. A ``mask[i] ? t[i] : f[i]`` over int32/float64 therefore returns zeros for the upper half of
+#: every vector -- a silent wrong answer, not a crash. Reproduced on 13.3.0 at ``-O3`` with any
+#: vectorizing ``-march``; ``-fno-tree-vectorize`` avoids it and GCC 14 fixed it.
+_MISCOMPILING_GCC_MAJORS = (13, )
+
+
+def warn_if_cxx_miscompiles_inline_selects() -> None:
+    """Warn when the configured host compiler is a release known to miscompile the inlined select
+    the readable code generator emits.
+
+    Checked here, at emission time, rather than left to the build: the pattern is emitted for every
+    ``a if c else b`` tasklet, the wrong answer is silent, and by the time a test compares numbers
+    there is nothing left pointing at the toolchain. The lowering itself is correct C++ and stays as
+    it is -- what is reported is the compiler.
+    """
+    from dace.codegen import compiler_family  # Avoid import loop
+    if config.Config.get('compiler', 'cpu', 'implementation') != 'experimental_readable':
+        return  # classic codegen keeps the operands in connector locals, so the pattern never forms
+    executable = compiler_family.host_compiler()
+    if compiler_family.detect(executable) != 'gnu':
+        return
+    version = compiler_family.detect_version(executable)
+    if version is None or version[0] not in _MISCOMPILING_GCC_MAJORS:
+        return
+    warnings.warn(f'Host C++ compiler {executable} is GCC {".".join(str(v) for v in version)}, whose '
+                  'auto-vectorizer mislowers a masked select and silently returns zeros for the upper '
+                  'half of each vector. Build with GCC 14 or newer, or add -fno-tree-vectorize to '
+                  'compiler.cpu.args.')
+
+
 def emits_tree_reductions(experimental: bool) -> bool:
     """Whether a WCR accumulator folds into a tree reduction rather than a per-thread atomic.
 
