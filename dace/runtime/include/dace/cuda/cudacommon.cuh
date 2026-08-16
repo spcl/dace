@@ -24,6 +24,15 @@ typedef cudaError_t gpuError_t;
 #define gpuEventSynchronize cudaEventSynchronize
 #endif
 
+// CUB and the CUDA runtime return cudaError_t even when DaCe's error type is HIP's. On the NVIDIA
+// platform hipError_t is a distinct enum reached through this conversion, so a CUDA-API result has
+// to pass through it before DACE_GPU_CHECK can take it. Everywhere else the two already agree.
+#if defined(__HIP_PLATFORM_NVIDIA__)
+#define DACE_GPU_ERROR(err) hipCUDAErrorTohipError(err)
+#else
+#define DACE_GPU_ERROR(err) (err)
+#endif
+
 // The context guard covers the calls checked during __dace_init_cuda before the context has been
 // constructed (the runtime warm-up allocation). The message is printed either way; only the
 // recording needs a context to record into.

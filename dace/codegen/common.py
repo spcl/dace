@@ -113,6 +113,18 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
 
 
 @lru_cache()
+def get_hip_platform() -> str:
+    """Which platform HIP compiles for: ``'amd'`` (the default) or ``'nvidia'``.
+
+    HIP itself keys this on the ``HIP_PLATFORM`` environment variable, and hipcc/CMake read the same
+    one, so DaCe asks it rather than inventing a second switch. Only meaningful when the GPU backend
+    is HIP. On the NVIDIA platform HIP is a header layer over the CUDA toolkit, so the AMD libraries
+    (rocBLAS, rocPRIM) are absent while the CUDA ones are present -- a choice keyed on the backend
+    alone gets that backwards.
+    """
+    return 'nvidia' if os.environ.get('HIP_PLATFORM', 'amd').lower() in ('nvidia', 'nvcc') else 'amd'
+
+
 def get_gpu_backend() -> str:
     """
     Returns the currently-selected GPU backend. If automatic,
