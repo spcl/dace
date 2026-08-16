@@ -12,7 +12,6 @@ import ctypes.util
 import glob
 import os
 import subprocess
-import time
 
 import numpy as np
 import pytest
@@ -429,7 +428,11 @@ def test_native_incremental_rebuild_and_invalidation(tmp_path):
         # file, so the test never mutates the source tree).
         generated_header = glob.glob(os.path.join(program_folder, 'include', '*.h'))
         assert generated_header, 'expected a generated include header'
-        os.utime(generated_header[0], (time.time() + 1, time.time() + 1))
+        # Newer than every product by a wide margin, not by one second: a Makefile generator compares
+        # timestamps at the granularity the filesystem reports, and on a runner whose objects landed
+        # inside the same second the header is stamped into, "one second later" is not newer at all.
+        touched = max(stamps.values()) + 10
+        os.utime(generated_header[0], (touched, touched))
         compiler.configure_and_compile(program_folder)
         objects = [p for p in stamps if p.endswith('.o')]
         for obj in objects:
