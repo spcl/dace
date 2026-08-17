@@ -91,8 +91,7 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 free = OrderedSet()
                 for rb, re, _ in outer.ndrange():
                     for expr in (rb, re):
-                        if hasattr(expr, 'free_symbols'):
-                            free |= set(expr.free_symbols)
+                        free |= OrderedSet(symbolic.pystr_to_symbolic(expr).free_symbols)
                 if itersym not in free:
                     continue
                 if not _check_range(outer, a, itersym, b, step):
@@ -330,8 +329,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # Loops containing break, continue, or returns may not be turned into a map.
         for blk in self.loop.all_control_flow_blocks():
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
-                if not permissive:
-                    return False
+                return False
 
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
@@ -472,8 +470,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     free = OrderedSet()
                     for rb, re_, _ in src_subset.ndrange():
                         for expr in (rb, re_):
-                            if hasattr(expr, 'free_symbols'):
-                                free |= set(expr.free_symbols)
+                            free |= OrderedSet(symbolic.pystr_to_symbolic(expr).free_symbols)
                     if itersym not in free:
                         continue
                     if not _check_range(src_subset, a, itersym, b, step) and not permissive:
