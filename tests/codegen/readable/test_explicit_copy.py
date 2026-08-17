@@ -45,15 +45,24 @@ def test_on_is_the_default():
     assert default == generate('experimental_readable', 'on')
 
 
-def test_legacy_ignores_the_flag():
-    """ Legacy never enters the readable pipeline, so its output is byte-identical across the flag. """
-    assert generate('legacy', 'on') == generate('legacy', 'off')
+def test_legacy_honours_the_flag():
+    """ Legacy runs the lowering too: it is a correctness step, not a readability one.
+
+    An implicit copy edge is a write no node performs, so an empty memlet ordering that write has
+    nothing to point at. Giving the copy a node is what makes the constraint reach it, which is why
+    this is not gated on the generator.
+    """
+    on = generate('legacy', 'on')
+    assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind on legacy'
+    assert 'memcpy' in on, 'the contiguous copy should lower to memcpy on legacy too'
+    assert 'dace::CopyND' in generate('legacy', 'off'), 'off should keep the implicit CopyND lowering'
 
 
+@pytest.mark.parametrize('implementation', ['experimental_readable', 'legacy'])
 @pytest.mark.parametrize('explicit_copy', ['on', 'off'])
-def test_both_settings_compile_and_run(explicit_copy):
-    """ Either setting must produce the same, correct numbers. """
-    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'), \
+def test_both_settings_compile_and_run(implementation, explicit_copy):
+    """ Either setting must produce the same, correct numbers, on either generator. """
+    with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
          set_temporary('compiler', 'cpu', 'codegen_params', 'explicit_copy', value=explicit_copy):
         A = numpy.random.rand(N)
         B = numpy.zeros(N)
@@ -115,7 +124,8 @@ if __name__ == '__main__':
     test_on_replaces_copynd_in_readable()
     test_off_keeps_copynd_in_readable()
     test_on_is_the_default()
-    test_legacy_ignores_the_flag()
-    test_both_settings_compile_and_run('on')
-    test_both_settings_compile_and_run('off')
+    test_legacy_honours_the_flag()
+    for implementation in ('experimental_readable', 'legacy'):
+        test_both_settings_compile_and_run(implementation, 'on')
+        test_both_settings_compile_and_run(implementation, 'off')
     test_self_copy_direction_matches_legacy()
