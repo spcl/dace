@@ -10,6 +10,7 @@ falls back to a full CMake build.
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -143,6 +144,7 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
     except OSError:
         return False
     write_compile_commands(compiles, build_folder)
+    write_rebuild_script(compiles + ordered, build_folder)
     return True
 
 
@@ -155,6 +157,24 @@ def write_compile_commands(compiles: Sequence[Dict[str, str]], build_folder: str
     database = [{key: entry[key] for key in ('directory', 'command', 'file')} for entry in compiles]
     with open(os.path.join(build_folder, 'compile_commands.json'), 'w') as fh:
         json.dump(database, fh, indent=2)
+
+
+def write_rebuild_script(entries: Sequence[Dict[str, str]], build_folder: str) -> None:
+    """Write ``rebuild.sh``, which recompiles this program in place.
+
+    A replayed build never runs CMake, so the build folder holds no ``CMakeCache.txt``
+    and no generator makefile: ``cmake --build .`` there fails with "could not load
+    cache". Editing a generated kernel and rebuilding it -- the whole numerical-
+    debugging loop -- otherwise means replaying ``compile_commands.json`` by hand.
+    The commands are already ordered compiles-then-links by :func:`replay`.
+    """
+    path = os.path.join(build_folder, 'rebuild.sh')
+    lines = ['#!/bin/sh', '# Written by DaCe: recompile this program after editing its generated sources.', 'set -e']
+    for entry in entries:
+        lines.append(f"(cd {shlex.quote(entry.get('directory') or build_folder)} && {entry['command']})")
+    with open(path, 'w') as fh:
+        fh.write('\n'.join(lines) + '\n')
+    os.chmod(path, 0o755)
 
 
 def clear(build_folder: str) -> None:
