@@ -88,11 +88,7 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                     return False
                 outer = copy.deepcopy(src_subset)
                 outer.replace(repl)
-                free = OrderedSet()
-                for rb, re, _ in outer.ndrange():
-                    for expr in (rb, re):
-                        free |= OrderedSet(symbolic.pystr_to_symbolic(expr).free_symbols)
-                if itersym not in free:
+                if itersym not in outer.free_symbols:
                     continue
                 if not _check_range(outer, a, itersym, b, step):
                     return False
@@ -117,12 +113,9 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 
 
 def _affine_coeffs(expr, itersym):
-    """Return ``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine.
-
-        The derivative is ``a`` (still naming ``itersym`` above degree one, which is the
-        degree test) and the value at zero is ``b``; ``expand`` + ``coeff`` hung on tiled
-        indices.
-    """
+    """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
+    value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
+    ``itersym`` is the degree test."""
     e = symbolic.pystr_to_symbolic(expr)
     if not e.is_polynomial(itersym):
         return None
@@ -142,12 +135,9 @@ def _same_injective_index(idx1, idx2, itersym) -> bool:
 
 
 def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
-    """True iff ``idx1`` at any iteration can never equal ``idx2`` at any iteration.
-
-        Over the counter ``t`` (``i == start + step*t``), ``A1*t1 + B1 == A2*t2 + B2`` is
-        solvable iff ``gcd(A1, A2)`` divides ``B2 - B1``; ranging over all integers is
-        conservative, hence sound.
-    """
+    """True iff ``idx1`` at any iteration can never equal ``idx2`` at any iteration. Over the
+    counter ``t`` (``i == start + step*t``), ``A1*t1 + B1 == A2*t2 + B2`` is solvable iff
+    ``gcd(A1, A2)`` divides ``B2 - B1``; ranging ``t`` over all integers is conservative."""
     f1 = _affine_coeffs(idx1, itersym)
     f2 = _affine_coeffs(idx2, itersym)
     if f1 is None or f2 is None:
@@ -164,8 +154,6 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     B1 = a1 * start_s + b1
     B2 = a2 * start_s + b2
     diff = sp.expand(B2 - B1)
-    if A1 == 0 and A2 == 0:
-        return diff.is_number and diff != 0
     # A symbolic step or start leaves ``A_k`` symbolic, and the gcd criterion undecidable.
     if not (A1.is_Integer and A2.is_Integer):
         return False
@@ -234,12 +222,10 @@ def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, iter
 
 def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym,
                                      varying: OrderedSet[str]) -> bool:
-    """Prove two point subsets of one container collide only when their iterations coincide.
-
-        With ``itersym`` replaced by ``p`` and ``q``, rationals ``lam_d`` with
-        ``sum_d lam_d * (sub1[d]|p - sub2[d]|q) == p - q`` certify it for every parameter
-        value; this is what catches transposes (``cov[i,j]`` vs ``cov[j,i]``).
-    """
+    """Prove two point subsets of one container collide only when their iterations coincide:
+    with ``itersym`` replaced by ``p`` and ``q``, rationals ``lam_d`` with
+    ``sum_d lam_d * (sub1[d]|p - sub2[d]|q) == p - q`` certify it for every parameter value.
+    Catches transposes (``cov[i,j]`` vs ``cov[j,i]``)."""
     nd1 = list(sub1.ndrange())
     nd2 = list(sub2.ndrange())
     if len(nd1) != len(nd2) or len(nd1) == 0:
@@ -361,9 +347,8 @@ class LoopToMap(xf.MultiStateTransformation):
         if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
             return True
 
-        # The dominator-heavy sort below is a no-op without interstate assignments.
-        symbols_that_may_be_used: Set[str] = {itervar}
-        used_before_assignment: Set[str] = set()
+        symbols_that_may_be_used: OrderedSet[str] = OrderedSet([itervar])
+        used_before_assignment: OrderedSet[str] = OrderedSet()
         if any(e.data.assignments for block in self.loop.all_control_flow_blocks()
                for e in block.parent_graph.out_edges(block)):
             in_order_loop_blocks = list(
@@ -376,14 +361,16 @@ class LoopToMap(xf.MultiStateTransformation):
                         assigned_in_branch = OrderedSet()
                         for inner in body.all_control_flow_blocks():
                             for ie in inner.parent_graph.out_edges(inner):
-                                assigned_in_branch |= set(ie.data.assignments.keys())
+                                assigned_in_branch |= OrderedSet(ie.data.assignments.keys())
                         per_branch.append(assigned_in_branch)
                     if per_branch:
-                        symbols_that_may_be_used |= set.intersection(*per_branch)
+                        # OrderedSet, so intersect through its own API -- ``set.intersection``
+                        # is an unbound descriptor and raises on anything but a ``set``.
+                        symbols_that_may_be_used |= per_branch[0].intersection(*per_branch[1:])
 
                 # ``read_symbols()`` misses the block's own dataflow reads, which come first.
                 try:
-                    block_reads = {str(s) for s in block.free_symbols}
+                    block_reads = OrderedSet(str(s) for s in block.free_symbols)
                 except Exception:
                     block_reads = OrderedSet()
                 used_before_assignment |= (block_reads - symbols_that_may_be_used)
@@ -391,7 +378,6 @@ class LoopToMap(xf.MultiStateTransformation):
                     read_symbols = e.data.read_symbols()
                     read_symbols -= symbols_that_may_be_used
                     used_before_assignment |= read_symbols
-                    # If symbol was read before it is assigned, the loop cannot be parallel
                     assigned_symbols = OrderedSet()
                     for k, v in e.data.assignments.items():
                         try:
@@ -467,11 +453,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     src_subset = e.data.get_src_subset(e, state)
                     if src_subset is None:
                         continue
-                    free = OrderedSet()
-                    for rb, re_, _ in src_subset.ndrange():
-                        for expr in (rb, re_):
-                            free |= OrderedSet(symbolic.pystr_to_symbolic(expr).free_symbols)
-                    if itersym not in free:
+                    if itersym not in src_subset.free_symbols:
                         continue
                     if not _check_range(src_subset, a, itersym, b, step) and not permissive:
                         return False
