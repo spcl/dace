@@ -958,6 +958,47 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
 
 
+def test_mapped_symbol_the_child_does_not_declare():
+    """A parent node maps a symbol its nested SDFG never declares -- what other passes leave behind
+    (``move_loop_into_map``, ``condition_map_interchange``, ``map_fission`` and this pass all write
+    ``symbol_mapping`` entries without a matching declaration).  Applying here inside that SDFG
+    types the new loop body off exactly that mapping, so an undeclared entry used to raise
+    ``KeyError`` instead of transforming.  Seen on QE ``vexx_bp_k_gpu`` as ``KeyError: 'jcurr'``.
+    """
+    inner = dace.SDFG("inner")
+    inner.add_array("A", (20, ), dace.float64)
+
+    loop = LoopRegion("loop", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    wt = body.add_tasklet("wt", {}, {"o"}, "o = 1.0")
+    body.add_edge(wt, "o", body.add_write("A"), None, dace.Memlet("A[i]"))
+
+    sdfg = dace.SDFG("l2m_mapped_but_undeclared")
+    sdfg.add_array("A", (20, ), dace.float64)
+    sdfg.add_symbol("k", dace.int32)
+    state = sdfg.add_state("main", is_start_block=True)
+    nnode = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(nnode, "A", state.add_write("A"), None, dace.Memlet("A[0:20]"))
+    nnode.symbol_mapping["k"] = dace.symbol("k")
+    assert "k" not in inner.symbols, "the mapping entry must be the undeclared one under test"
+
+    assert sdfg.apply_transformations_repeated(LoopToMap, permissive=True) == 1
+
+    bodies = [
+        node for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.NestedSDFG) and node.sdfg.name.startswith("loop_body")
+    ]
+    assert len(bodies) == 1, f"expected one lifted loop body (got {len(bodies)})"
+    for node in bodies:
+        undeclared = node.symbol_mapping.keys() - node.sdfg.symbols.keys() - node.in_connectors.keys()
+        assert not undeclared, f"{node.sdfg.name}: mapped without a declared type: {sorted(undeclared)}"
+    assert bodies[0].sdfg.symbols["k"] == dace.int32, "the carried-in symbol kept its type"
+
+    sdfg.validate()
+    sdfg.compile()
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -1000,3 +1041,4 @@ if __name__ == "__main__":
     test_nested_sdfg_nested_loop()
     test_stride_symbol_propagated_to_nested_sdfg()
     test_dynamic_write_slab_separated_by_iteration_var()
+    test_mapped_symbol_the_child_does_not_declare()
