@@ -288,20 +288,6 @@ required:
                     All stack allocated arrays (i.e. StorageType.Register) with
                     size larger than this will be allocated on the heap.
 
-            vla_symbolic_registers:
-                type: bool
-                default: true
-                title: Emit runtime-sized Register arrays as C++ VLAs
-                description: >
-                    A StorageType.Register array whose size is symbolic cannot be a fixed-size
-                    stack array, so it is normally spilled to a heap new/delete[] pair per
-                    enclosing loop iteration. With this on it is emitted as a C++ variable-length
-                    array instead, matching Fortran automatic-array semantics (runtime-sized,
-                    stack-allocated) without specializing the size symbol. VLAs are a compiler
-                    extension in C++ (supported by g++, clang++ and nvc++) and live on the
-                    thread's stack, so a parallel region holding many of them needs OMP_STACKSIZE
-                    raised. Compile with -Wno-vla to silence the extension warning.
-
             extra_cmake_args:
                 type: str
                 default: ''

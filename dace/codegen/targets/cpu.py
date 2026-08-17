@@ -19,31 +19,21 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-def _use_vla(desc: data.Data, arrsize, sdfg: SDFG, declared: bool, lifetime) -> bool:
-    """Whether a runtime-sized ``Register`` array becomes a C++ VLA instead of a heap ``new``.
-
-    C++ has no standard VLA, so DaCe has always spilled these to ``new``/``delete[]`` -- one
-    allocator round trip per enclosing loop iteration, where Fortran's automatic arrays
-    (``REAL :: Z(KLON,KLEV)``) cost nothing. g++, clang++ and nvc++ all accept VLAs as an
-    extension, which recovers the Fortran semantics without specializing the size symbol away.
-
-    Opt-in, and refused for anything a VLA cannot express: a VLA is defined at its declaration
-    (so a split declare/allocate is out) and dies with its block (so any lifetime that outlives
-    the scope is out).
+def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
+    """ Whether a symbolically-sized register array is emitted as a stack variable-length array,
+        which GCC, Clang and NVHPC all accept. A VLA is defined at its declaration and dies with
+        its block, so a split declare/allocate and any lifetime that outlives the block keep the
+        heap. Allocation and deallocation both ask here so they cannot disagree.
     """
-    if not Config.get_bool('compiler', 'vla_symbolic_registers'):
-        return False
-    if desc.storage != dtypes.StorageType.Register or declared:
-        return False
-    if lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State):
-        return False
-    return bool(symbolic.issymbolic(arrsize, sdfg.constants)) and desc.start_offset == 0
+    return (nodedesc.storage == dtypes.StorageType.Register and not declared
+            and symbolic.issymbolic(arrsize, sdfg.constants) and lifetime
+            in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:
@@ -124,11 +114,6 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals = cppunparse.CPPLocals()
         # Scope depth (for defining locals)
         self._ldepth = 0
-
-        # Arrays `allocate_array` emitted as VLAs. Recorded rather than re-derived, so
-        # `deallocate_array` cannot pair a stack array with a `delete[]` if the two predicates
-        # ever drift apart.
-        self._vla_arrays: Set[str] = set()
 
         # Keep nested SDFG schedule when descending into it
         self._toplevel_schedule = None
@@ -433,7 +418,8 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
-        use_vla = _use_vla(nodedesc, arrsize, sdfg, declared, top_lifetime)
+
+        variable_length_arrays = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime, declared)
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -511,17 +497,13 @@ class CPUCodeGen(TargetCodeGenerator):
             define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and not use_vla and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not variable_length_arrays) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
-                if symbolic.issymbolic(arrsize, sdfg.constants):
-                    warnings.warn('Variable-length array %s with size %s '
-                                  'detected and was allocated on the heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
-                elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
+                if (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
@@ -550,30 +532,27 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
-            # A VLA is left unadorned unless the descriptor actually asks for an alignment:
-            #  padding all 82 of them to 64 B would waste the resource a VLA is scarcest in.
-            #  The fixed-size form keeps 64 as its default, but reads the property when it is set
-            #  (the convention the heap path above already follows).
-            if use_vla:
-                align = f'  DACE_ALIGN({nodedesc.alignment})' if nodedesc.alignment > 0 else ''
-            else:
-                align = f'  DACE_ALIGN({64 if nodedesc.alignment == 0 else nodedesc.alignment})'
-            # A VLA cannot carry an `= {0}` initializer; memset is the only zeroing form, and it
-            #  is what the heap path above already does for the same request.
-            init = '' if use_vla else ' = {0}'
+            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment.
+            alignment = '' if variable_length_arrays else '  DACE_ALIGN(64)'
+            if node.setzero and not variable_length_arrays:
+                declaration_stream.write(
+                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
+                    cfg,
+                    state_id,
+                    node,
+                )
+                define_var(name, DefinedType.Pointer, ctypedef)
+                return
             declaration_stream.write(
-                "%s %s[%s]%s%s;\n" %
-                (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), align, init if node.setzero else ''),
+                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                 cfg,
                 state_id,
                 node,
             )
-            if node.setzero and use_vla:
+            if node.setzero:
                 allocation_stream.write(
                     "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
                     state_id, node)
-            if use_vla:
-                self._vla_arrays.add(alloc_name)
             define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -630,23 +609,18 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
-        if self._dispatcher.declared_arrays.has(alloc_name):
+        declared = self._dispatcher.declared_arrays.has(alloc_name)
+        if declared:
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
-
-        # A VLA is reclaimed when its scope exits; freeing that pointer would be UB. The decision
-        #  is read back from `allocate_array` rather than recomputed, so the two sides cannot
-        #  disagree and produce either a leak or a free of stack memory.
-        if alloc_name in self._vla_arrays:
-            self._vla_arrays.discard(alloc_name)
-            return
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
-                  (symbolic.issymbolic(arrsize, sdfg.constants) or
+                  ((symbolic.issymbolic(arrsize, sdfg.constants)
+                    and not stack_variable_length_array(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator
