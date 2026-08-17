@@ -1305,10 +1305,12 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edge.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp',
+            # `tmp` is a generic name minted into a graph whose connectors this transformation did
+            # not choose, which is exactly the case that needs the connector-avoiding minter: an
+            # array named after an existing connector is a graph validation rejects.
+            scal_name, scal_desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'),
                                                    sdfg.arrays[self.output.data].dtype,
-                                                   transient=True,
-                                                   find_new_name=True)
+                                                   transient=True)
             state.add_edge(in_access, None, new_tasklet, '__in1', copy.deepcopy(edge.data))
             state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, edge.data)
@@ -1321,10 +1323,12 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp',
+            # `tmp` is a generic name minted into a graph whose connectors this transformation did
+            # not choose, which is exactly the case that needs the connector-avoiding minter: an
+            # array named after an existing connector is a graph validation rejects.
+            scal_name, scal_desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'),
                                                    sdfg.arrays[self.output.data].dtype,
-                                                   transient=True,
-                                                   find_new_name=True)
+                                                   transient=True)
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
             state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)

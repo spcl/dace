@@ -1378,11 +1378,10 @@ class LoopToMap(xf.MultiStateTransformation):
                 src_conn, dst_conn = '__out', '__inp'
             else:
                 desc = sdfg.arrays[src]
-                tname, _ = sdfg.add_transient('tmp',
-                                              e.data.src_subset.size(),
-                                              desc.dtype,
-                                              desc.storage,
-                                              find_new_name=True)
+                # Generic name into a graph with connectors this pass did not choose -- see
+                # SDFG.find_new_name_avoiding_connectors.
+                tname, _ = sdfg.add_transient(sdfg.find_new_name_avoiding_connectors('tmp'), e.data.src_subset.size(),
+                                              desc.dtype, desc.storage)
                 t = body.add_access(tname)
                 src_conn, dst_conn = None, None
             # Endpoints must come from ``e``; ``n1``/``n2`` here are the leftover values of the
