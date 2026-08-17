@@ -34,8 +34,9 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
 ``Array`` needs a 1-element numpy buffer.
 """
+import itertools
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import Memlet, properties, subsets
@@ -65,8 +66,88 @@ def _rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
     return expr
 
 
-def _descriptor_is_read(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
+#: A bare identifier, not preceded by a word character or ``.`` -- the same anchoring ``_rewrite_refs``
+#: uses, so what counts as a reference here is exactly what gets rewritten there.
+_IDENT_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)')
+
+#: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
+CodeSlotRewriter = Callable[[str], str]
+
+
+def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
+    """Apply ``rewrite`` to every slot of ``sdfg`` that names a descriptor as source TEXT rather than
+    through a memlet: interstate-edge assignments and conditions, ``ConditionalBlock`` branch guards,
+    ``LoopRegion`` init / update / condition statements, and ``NestedSDFG.symbol_mapping`` values.
+
+    Shared by every pass that swaps a descriptor between ``Scalar`` and length-1 ``Array`` form: the
+    slots to visit are a property of the SDFG state machine, not of the direction of the swap, so only
+    the per-slot string transform differs between callers.
+
+    Scoped to ``sdfg`` alone -- it does NOT descend into nested SDFGs, because which inner descriptor
+    a rewritten outer name corresponds to is pass-specific (connector matching vs. a transient-only
+    rule), and a blind descent would rewrite an unrelated inner descriptor that merely shares the name.
+
+    :param sdfg: SDFG whose code slots are rewritten in place.
+    :param rewrite: maps a slot's source text to its replacement.
+    """
+    for edge in sdfg.all_interstate_edges():
+        ise = edge.data
+        if ise is None:
+            continue
+        for key, value in list(ise.assignments.items()):
+            if isinstance(value, str):
+                ise.assignments[key] = rewrite(value)
+        if isinstance(ise.condition, CodeBlock):
+            ise.condition = CodeBlock(rewrite(ise.condition.as_string), ise.condition.language)
+
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, ConditionalBlock):
+            for branch in block.branches:
+                # Mutate the CodeBlock rather than reassigning the entry: ``add_branch`` appends a
+                # list but ``remove_branch`` rebuilds them as tuples, so assignment raises there.
+                if isinstance(branch[0], CodeBlock):
+                    branch[0].as_string = rewrite(branch[0].as_string)
+        elif isinstance(block, LoopRegion):
+            # init/update are optional -- a ``while`` LoopRegion has only the condition.
+            if isinstance(block.init_statement, CodeBlock):
+                block.init_statement = CodeBlock(rewrite(block.init_statement.as_string), block.init_statement.language)
+            if isinstance(block.update_statement, CodeBlock):
+                block.update_statement = CodeBlock(rewrite(block.update_statement.as_string),
+                                                   block.update_statement.language)
+            if isinstance(block.loop_condition, CodeBlock):
+                block.loop_condition = CodeBlock(rewrite(block.loop_condition.as_string), block.loop_condition.language)
+
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            for key, value in list(node.symbol_mapping.items()):
+                text = value if isinstance(value, str) else str(value)
+                rewritten = rewrite(text)
+                if rewritten != text:
+                    node.symbol_mapping[key] = rewritten
+
+
+def _control_flow_reads(sdfg: SDFG) -> Set[str]:
+    """Descriptor names ``sdfg`` reads from control flow: gate conditions, loop bounds, assignment RHS.
+
+    Staging repoints those references to the scalar, so they are reads for the copy-in decision even
+    though no AccessNode exists -- without this a gate scalar is declared, read and never written.
+    """
+    names: Set[str] = set()
+
+    def collect(src: str) -> str:
+        names.update(_IDENT_RE.findall(src))
+        return src
+
+    rewrite_code_slots(sdfg, collect)
+    return names
+
+
+def _descriptor_is_read(sdfg: SDFG, name: str, cf_reads: Set[str]) -> bool:
+    """True if ``name`` is read anywhere in ``sdfg``, through dataflow or through control flow."""
+    if name in cf_reads:
+        return True
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
@@ -200,6 +281,43 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(other.data)
         return blocked
 
+    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> Set[str]:
+        """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
+        rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
+        or a GPU-scheduled map that uses the buffer as a multi-thread collective.
+
+        For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
+        (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
+        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
+        blocked: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if not isinstance(node, nodes.AccessNode):
+                    continue
+                arr = sdfg.arrays.get(node.data)
+                if not isinstance(arr, dace.data.Array):
+                    continue
+                for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
+                    nb = edge.src if edge.dst is node else edge.dst
+                    if isinstance(nb, nodes.LibraryNode):
+                        blocked.add(node.data)
+                        break
+                    if isinstance(nb, nodes.Tasklet) and nb.language != dace.dtypes.Language.Python:
+                        blocked.add(node.data)
+                        break
+                    if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dace.dtypes.GPU_SCHEDULES:
+                        # Block arrays that feed the map entry (node -> MapEntry) or that live inside the
+                        # map body and receive an input from the entry (MapEntry -> node).
+                        blocked.add(node.data)
+                        break
+                    if isinstance(nb, nodes.MapExit) and nb.map.schedule in dace.dtypes.GPU_SCHEDULES:
+                        # Block only partials that feed the map exit from inside the body (node -> MapExit).
+                        # A MapExit -> outside edge is a normal output and may be scalarized.
+                        if edge.src is node:
+                            blocked.add(node.data)
+                            break
+        return blocked
+
     def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
                      apply_filter: bool) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
@@ -230,7 +348,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient arrays (top level only).
         :returns: Names of the descriptors that are now scalar-referenced in the body.
         """
-        blocked = self._blocked_sources(sdfg)
+        blocked = self._blocked_sources(sdfg) | self._blocked_by_unscalarizable_neighbors(sdfg)
+        cf_reads = _control_flow_reads(sdfg)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -251,7 +370,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, arr_name)
+                is_read = _descriptor_is_read(sdfg, arr_name, cf_reads)
                 is_written = _descriptor_is_written(sdfg, arr_name)
                 # An unreferenced signature array has nothing to stage, and one already staged would
                 # only gain a second copy hop -- skipping both keeps re-application a true no-op.
@@ -290,21 +409,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         for n in (edge.src, edge.dst)):
                     mem.other_subset = subsets.Range.from_string('0')
 
-        for edge in sdfg.all_interstate_edges():
-            edge.data.assignments = {k: _rewrite_refs(v, rename) for k, v in edge.data.assignments.items()}
-        for node in sdfg.all_control_flow_blocks():
-            if isinstance(node, ConditionalBlock):
-                for cond, _body in node.branches:
-                    if isinstance(cond, CodeBlock):
-                        cond.as_string = _rewrite_refs(cond.as_string, rename)
-        for node in sdfg.all_control_flow_regions():
-            if isinstance(node, LoopRegion):
-                cond = node.loop_condition
-                src = _rewrite_refs(cond.as_string if isinstance(cond, CodeBlock) else str(cond), rename)
-                if isinstance(cond, CodeBlock):
-                    cond.as_string = src
-                else:
-                    node.loop_condition = CodeBlock(src, dace.dtypes.Language.Python)
+        rewrite_code_slots(sdfg, lambda src: _rewrite_refs(src, rename))
 
         # Wire copy-in / copy-out for the staged non-transients. One shared start/sink state holds all.
         if staged:
@@ -399,6 +504,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient scalars (top level only).
         :returns: Names of the descriptors that are now array-referenced in the body.
         """
+        cf_reads = _control_flow_reads(sdfg)
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
 
@@ -419,7 +525,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, name)
+                is_read = _descriptor_is_read(sdfg, name, cf_reads)
                 is_written = _descriptor_is_written(sdfg, name)
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
