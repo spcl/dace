@@ -7,7 +7,8 @@ import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
-                                            auto_dispatch, collapse_shape_and_strides, is_parallel_cpu_transfer_size)
+                                            auto_dispatch, collapse_shape_and_strides, is_in_parallel_scope,
+                                            is_parallel_cpu_transfer_size)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
@@ -121,13 +122,16 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
         return 'MappedTasklet'
 
     # Host CPU-resident: same-shape/contiguous/same-layout below the parallel-transfer threshold
-    # is one MemcpyCPU; otherwise falls through to a parallel MappedTasklet.
+    # is one MemcpyCPU; otherwise falls through to a parallel MappedTasklet. The threshold only
+    # applies where the copy runs once: inside a parallel map the mapped form is sequentialized to
+    # an element loop, which is strictly worse than the single call at any size.
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = (len(inp.shape) == len(out.shape)
                   and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
     if ({inp.storage, out.storage} <= host_storages and same_shape and in_subset.is_contiguous_subset(inp)
             and out_subset.is_contiguous_subset(out) and _both_packed_same_layout(inp, out)
-            and not is_parallel_cpu_transfer_size(in_subset.num_elements())):
+            and not (is_parallel_cpu_transfer_size(in_subset.num_elements())
+                     and not is_in_parallel_scope(node, parent_state))):
         return 'MemcpyCPU'
 
     gpu = dtypes.StorageType.GPU_Global
@@ -299,6 +303,8 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
     elif inp.storage in GPU_RESIDENT_STORAGES or out.storage in GPU_RESIDENT_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
     else:
+        # Default, not Sequential, inside an enclosing map: SCOPEDEFAULT_SCHEDULE already resolves a
+        # map nested in a CPU_Multicore one to single-threaded.
         schedule = dtypes.ScheduleType.Default
 
     ctx.sdfg.schedule = dtypes.ScheduleType.Default

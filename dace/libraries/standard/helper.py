@@ -5,6 +5,7 @@ from typing import Callable, List, Tuple
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
+from dace.sdfg.scope import is_in_scope
 
 # Both legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
@@ -53,6 +54,20 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> b
         return int(dace.symbolic.simplify(num_elements)) >= threshold
     except (TypeError, ValueError):
         return True
+
+
+def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
+    """True when a multi-threaded map encloses this transfer, so the mapped form would open one
+    OpenMP region per entry instead of one for the whole transfer.
+
+    ``Default`` counts: an unresolved enclosing map becomes ``CPU_Multicore`` at the top level.
+
+    :param node: the transfer library node.
+    :param parent_state: state containing ``node``.
+    :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
+    """
+    return is_in_scope(parent_state.sdfg, parent_state, node,
+                       [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default])
 
 
 def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
