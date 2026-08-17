@@ -141,8 +141,11 @@ def _has_outer_carry(subset, iv: str) -> bool:
                 e = symbolic.pystr_to_symbolic(str(expr))
             except Exception:
                 return True  # unparseable -> assume the worst
-            if iv_sym in e.free_symbols:
-                if symbolic.simplify(e - iv_sym) != 0:
+            # Equalized: e is reparsed here while iv_sym is minted from the name, so membership by
+            # identity misses the dependence and reports the index as independent of the loop.
+            e, iv = symbolic.equalize_symbols_across(e, iv_sym)
+            if iv in e.free_symbols:
+                if symbolic.simplify(e - iv) != 0:
                     return True
     return False
 

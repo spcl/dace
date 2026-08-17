@@ -453,6 +453,10 @@ def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symb
     sympy cannot differentiate (``int_floor`` and friends) refuses, so the audit fails closed.
     """
     try:
+        # diff goes through symbol IDENTITY: a loop var minted from its name differentiates to 0
+        # against an expression carrying another instance, which reads as "equal partials" and
+        # lets the rewrite through. Equalize so the partials are taken w.r.t. what ex holds.
+        ex, i_sym, ii_sym = symbolic.equalize_symbols_across(ex, i_sym, ii_sym)
         return symbolic.simplify(sympy.diff(ex, i_sym) - sympy.diff(ex, ii_sym)) == 0
     except (TypeError, ValueError, AttributeError, NotImplementedError):
         return False

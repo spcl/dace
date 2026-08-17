@@ -15,7 +15,7 @@ from enum import Enum
 from typing import List, Optional, Tuple
 
 from dace import subsets
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
 
 
 @dataclass(frozen=True)
@@ -172,6 +172,8 @@ def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
     :returns: The affine coefficient of ``var_sym`` inside the structured
         function (e.g. ``2`` for ``int_floor(2*i, 2)``), else ``None``.
     """
+    # membership, subs and the coeff walk below all go through identity; equalize first
+    b_sym, var_sym = equalize_symbols_across(b_sym, var_sym)
     if var_sym not in b_sym.free_symbols:
         return None
     subtrees = [s for s in _structured_subtrees(b_sym) if var_sym in s.free_symbols]

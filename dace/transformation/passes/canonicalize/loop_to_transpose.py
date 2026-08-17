@@ -182,6 +182,10 @@ def _axis_affine(idx, loop_var_syms):
     ``(loop_var_sym, coeff, off)`` if ``idx`` is affine in EXACTLY one loop
     variable (``coeff*v + off``, ``coeff`` a positive integer constant, ``off``
     loop-variable-free), else ``None``."""
+    # Equalized first: membership, diff and the subtraction below all go through symbol IDENTITY,
+    # and the loop variable reaches here as a different instance than the one inside idx. Unequalized,
+    # diff silently returns 0 and the offset check below misses a loop variable it must reject.
+    idx, *loop_var_syms = symbolic.equalize_symbols_across(idx, *loop_var_syms)
     used = [v for v in loop_var_syms if v in idx.free_symbols]
     if len(used) != 1:
         return None

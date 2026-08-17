@@ -417,6 +417,8 @@ class LoopToStreamCompaction(ppl.Pass):
                 assigned[name] = assigned.get(name, 0) + 1
                 expr = symbolic.pystr_to_symbolic(rhs)
                 sym = symbolic.pystr_to_symbolic(name)
+                # membership and the subtraction both go through identity, so equalize first
+                expr, sym = symbolic.equalize_symbols_across(expr, sym)
                 if sym not in expr.free_symbols:
                     continue
                 bumps.append((name, symbolic.simplify(expr - sym), inside))
@@ -541,7 +543,10 @@ class LoopToStreamCompaction(ppl.Pass):
         for begin, end, step in subset.ranges:
             if symbolic.simplify(begin - end) != 0 or symbolic.simplify(step - 1) != 0:
                 return False
-            here = [var for var in loop_vars if var in begin.free_symbols]
+            # local, not a rebind of loop_vars: this runs per range, and re-equalizing the outer list
+            # against a different begin each time could change which instance is kept.
+            begin, *here_vars = symbolic.equalize_symbols_across(begin, *loop_vars)
+            here = [var for var in here_vars if var in begin.free_symbols]
             if not here:
                 continue
             if len(here) != 1:
@@ -552,7 +557,8 @@ class LoopToStreamCompaction(ppl.Pass):
             if not lead.is_Integer or lead == 0:
                 return False
             carried.append(here[0])
-        return all(sum(1 for var in carried if var == outer) == 1 for outer in loop_vars)
+        # by name: carried holds equalized instances, loop_vars the originals
+        return all(sum(1 for var in carried if str(var) == str(outer)) == 1 for outer in loop_vars)
 
     def affine_cursor_probe(self, loop: LoopRegion, sdfg: SDFG, cursor: str, step: symbolic.SymbolicType,
                             levels: Tuple[NestLevel, ...]) -> bool:

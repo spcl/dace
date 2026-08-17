@@ -1157,6 +1157,8 @@ class ArgMaxLift(ppl.Pass):
             lv = symbolic.pystr_to_symbolic(loop_var)
         except Exception:  # pragma: no cover -- defensive parse guard
             return None
+        # membership and .coeff both go through identity; equalize before either
+        idx, lv = symbolic.equalize_symbols_across(idx, lv)
         if lv not in idx.free_symbols:
             return None
         # Linear-in-``lv`` decomposition: idx == base + coeff*lv with neither
