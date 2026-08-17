@@ -1372,11 +1372,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
+        # MPI-related stuff. ``process_grids`` is a PROPERTY that rebuilds a dict by scanning every
+        # descriptor in the SDFG, so reading it inside the comprehension re-scanned once per variable:
+        # |variables| x |arrays| per access, and this property is read while parsing every statement.
+        process_grids = self.sdfg.process_grids
+        result.update({v: process_grids[v] for k, v in self.variables.items() if v in process_grids})
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
