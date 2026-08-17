@@ -13,7 +13,6 @@ import warnings
 import pytest
 
 from dace.codegen import common, compiler_family
-from dace.config import set_temporary
 
 #: What each family predefines. The probe reads these macros rather than the ``--version`` banner:
 #: invoked as ``c++`` a GCC banner never names its vendor. clang defines ``__GNUC__`` too, which is
@@ -53,25 +52,28 @@ def test_detect_version_is_none_when_unidentifiable(tmp_path):
 @pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
 @pytest.mark.parametrize(('name', 'macros', 'expected'), [('wgcc13', GCC_13, True), ('wgcc15', GCC_15, False),
                                                           ('wclang18', CLANG_18, False)])
-def test_warning_fires_only_for_the_miscompiling_gcc(tmp_path, name, macros, expected):
-    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
-        with set_temporary('compiler', 'cpu', 'executable', value=_stub_compiler(tmp_path, name, macros)):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter('always')
-                common.warn_if_cxx_miscompiles_inline_selects()
+def test_warning_fires_only_for_the_miscompiling_gcc(tmp_path, monkeypatch, name, macros, expected):
+    # Pinned through the environment rather than set_temporary: a DACE_* variable outranks the
+    # configuration, and the CI images export DACE_compiler_cpu_executable to keep GCC 13 out of the
+    # build -- so set_temporary left the stub unprobed and this asked the runner's own compiler.
+    monkeypatch.setenv('DACE_compiler_cpu_implementation', 'experimental_readable')
+    monkeypatch.setenv('DACE_compiler_cpu_executable', _stub_compiler(tmp_path, name, macros))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        common.warn_if_cxx_miscompiles_inline_selects()
     assert bool([w for w in caught if 'vectorizer' in str(w.message)]) == expected
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
-def test_no_warning_for_the_classic_generator(tmp_path):
+def test_no_warning_for_the_classic_generator(tmp_path, monkeypatch):
     """The classic generator keeps the operands in connector locals, so the inlined select -- the
     only shape the bug is known to hit -- is never emitted and the compiler is not the user's
     problem."""
-    with set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
-        with set_temporary('compiler', 'cpu', 'executable', value=_stub_compiler(tmp_path, 'cgcc13', GCC_13)):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter('always')
-                common.warn_if_cxx_miscompiles_inline_selects()
+    monkeypatch.setenv('DACE_compiler_cpu_implementation', 'legacy')
+    monkeypatch.setenv('DACE_compiler_cpu_executable', _stub_compiler(tmp_path, 'cgcc13', GCC_13))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        common.warn_if_cxx_miscompiles_inline_selects()
     assert not [w for w in caught if 'vectorizer' in str(w.message)]
 
 
