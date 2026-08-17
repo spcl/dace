@@ -18,6 +18,7 @@ import pytest
 
 import dace
 from dace.libraries.blas import Symm
+from dace.memlet import Memlet
 
 M, N = dace.symbol("M"), dace.symbol("N")
 
@@ -161,6 +162,31 @@ def test_symm_runtime_coeffs(impl, side, uplo, beta_input):
         kwargs["beta"] = np.array([beta])
     sdfg(**kwargs)
     assert np.allclose(Cwork, ref, rtol=1e-11, atol=1e-13), f"maxdiff {np.max(np.abs(Cwork - ref))}"
+
+
+def test_validate_accepts_reparsed_symbol_instances():
+    """A same-named dim reaching Symm.validate as two distinct sympy instances (one
+    operand's dace.int32 shape vs another's dace.int64 shape) must compare equal by
+    name -- and a genuine shape mismatch must still be rejected."""
+    Ma, Mb = dace.symbol("M", dace.int32), dace.symbol("M", dace.int64)
+    Na, Nb = dace.symbol("N", dace.int32), dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("symm_validate_symbol_identity")
+    sdfg.add_array("A", [Ma, Mb], dace.float64)
+    sdfg.add_array("B", [Ma, Na], dace.float64)
+    sdfg.add_array("C", [Mb, Nb], dace.float64)
+    state = sdfg.add_state()
+    node = Symm("symm", side="L")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("B"), None, node, "_b", Memlet.from_array("B", sdfg.arrays["B"]))
+    state.add_edge(node, "_c", state.add_write("C"), None, Memlet.from_array("C", sdfg.arrays["C"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["B"].shape = (Ma, dace.symbol("P", dace.int32))
+    b_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_b")
+    b_edge.data = Memlet.from_array("B", sdfg.arrays["B"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
 
 
 if __name__ == "__main__":

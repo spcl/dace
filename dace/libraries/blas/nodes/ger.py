@@ -7,7 +7,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.sdfg.nodes import LibraryNode
 import dace.library as library
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace import data as dt, memlet as mm, subsets as sbs
+from dace import data as dt, memlet as mm, subsets as sbs, symbolic
 import dace
 import copy
 
@@ -272,7 +272,7 @@ class Ger(LibraryNode):
         if len(size_y) != 1:
             raise ValueError("y must be a vector")
 
-        if size_a[0] != size_x[0] or size_a[1] != size_y[0]:
+        if symbolic.inequal_symbols(size_a[0], size_x[0]) or symbolic.inequal_symbols(size_a[1], size_y[0]):
             raise ValueError("Input vectors x and y (outer product) must match with the matrix A dimensions.")
 
         out_edges = state.out_edges(self)

@@ -15,7 +15,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import memlet as mm, SDFG, SDFGState
+from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -181,7 +181,7 @@ class Scal(dace.sdfg.nodes.LibraryNode):
         dims_out = sq_out.squeeze()
         if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
             raise ValueError("SCAL only supported on 1-D arrays")
-        if sq_in.num_elements() != sq_out.num_elements():
+        if symbolic.inequal_symbols(sq_in.num_elements(), sq_out.num_elements()):
             raise ValueError("SCAL: input and output must be the same length")
         stride_x = desc_x.strides[dims_in[0]]
         stride_res = desc_res.strides[dims_out[0]]

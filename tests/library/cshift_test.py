@@ -118,6 +118,29 @@ def test_cshift_validate_rejects_mismatched_shapes():
         node.validate(bad, state)
 
 
+def test_cshift_validate_accepts_reparsed_symbol_instances():
+    """A same-named dim reaching CShift.validate as two distinct sympy instances (one
+    array's dace.int32 shape vs another's dace.int64 shape) must compare equal by
+    name -- and a genuine shape mismatch must still be rejected."""
+    N32 = dace.symbol("N", dace.int32)
+    N64 = dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("cshift_validate_symbol_identity")
+    sdfg.add_array("v", [N32], dace.float64)
+    sdfg.add_array("out", [N64], dace.float64)
+    state = sdfg.add_state()
+    node = CShift("cshift", dim=1)
+    state.add_node(node)
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["out"].shape = (dace.symbol("P", dace.int32), )
+    out_edge = next(e for e in state.out_edges(node) if e.src_conn == "_out")
+    out_edge.data = dace.Memlet.from_array("out", sdfg.arrays["out"])
+    with pytest.raises(ValueError, match="input shape .* != output shape"):
+        node.validate(sdfg, state)
+
+
 def test_cshift_pure_expansion_requires_shift():
     """The pure expansion fails loud when ``shift`` was never set -- a
     fabricated fallback symbol would leak as an unbound free symbol the

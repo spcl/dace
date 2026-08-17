@@ -6,7 +6,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace import data as dt, memlet as mm, SDFG, SDFGState
+from dace import data as dt, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers
 from .. import environments
@@ -235,10 +235,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if len(size) != 1:
             raise ValueError("axpy only supported on 1-dimensional arrays")
 
-        if size != in_memlets[1].subset.size():
+        if not symbolic.shapes_equal(size, in_memlets[1].subset.size()):
             raise ValueError("Inputs to axpy must have equal size")
 
-        if size != out_memlet.subset.size():
+        if not symbolic.shapes_equal(size, out_memlet.subset.size()):
             raise ValueError("Output of axpy must have same size as input")
 
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None):

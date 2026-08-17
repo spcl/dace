@@ -17,7 +17,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import memlet as mm, SDFG, SDFGState
+from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -145,7 +145,7 @@ class Copy(dace.sdfg.nodes.LibraryNode):
         dims_out = sq_out.squeeze()
         if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
             raise ValueError("COPY only supported on 1-D arrays")
-        if sq_in.num_elements() != sq_out.num_elements():
+        if symbolic.inequal_symbols(sq_in.num_elements(), sq_out.num_elements()):
             raise ValueError("COPY input and output must be the same size")
         if desc_x.dtype.base_type != desc_y.dtype.base_type:
             raise TypeError(f"COPY dtype mismatch: {desc_x.dtype} vs {desc_y.dtype}")

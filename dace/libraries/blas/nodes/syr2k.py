@@ -15,7 +15,7 @@ correct reference lowering that likewise writes only the ``uplo`` triangle.
 """
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, properties
+from dace import SDFG, SDFGState, memlet as mm, properties, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (add_coeff_arrays, add_triangular_tasklet, beta_scale_state,
@@ -278,13 +278,13 @@ class Syr2k(dace.sdfg.nodes.LibraryNode):
         ashape, bshape, cshape = info["_a"][1], info["_b"][1], info["_c"][1]
         if len(ashape) != 2 or len(bshape) != 2 or len(cshape) != 2:
             raise ValueError("Syr2k operands must be matrices")
-        if cshape[0] != cshape[1]:
+        if symbolic.inequal_symbols(cshape[0], cshape[1]):
             raise ValueError(f"Syr2k: C must be square, got {cshape}")
-        if list(ashape) != list(bshape):
+        if not symbolic.shapes_equal(ashape, bshape):
             raise ValueError(f"Syr2k: A shape {ashape} must equal B shape {bshape}")
         # trans='N': A is (N,K) -> rows must match C; trans='T': A is (K,N) -> cols must.
         want = ashape[0] if self.trans == "N" else ashape[1]
-        if want != cshape[0]:
+        if symbolic.inequal_symbols(want, cshape[0]):
             raise ValueError(f"Syr2k: A dimension {want} must match C's order {cshape[0]}")
 
 

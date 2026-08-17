@@ -12,6 +12,8 @@ from dace.libraries.standard.memory import aligned_ndarray
 from dace.memlet import Memlet
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 
+import pytest
+
 
 def pure_graph(implementation, dtype, veclen):
 
@@ -82,6 +84,34 @@ def run_ger(target: str,
         print("Validation successful.")
 
     return sdfg
+
+
+def test_validate_accepts_reparsed_symbol_instances():
+    """The same-named dim reaching Ger.validate as two distinct sympy instances (a
+    descriptor built at one dtype, a memlet built at another) must compare equal by
+    name, not by sympy identity -- and a genuine size mismatch must still be rejected."""
+    M32 = dace.symbol("M", dace.int32)
+    M64 = dace.symbol("M", dace.int64)
+    N = dace.symbol("N", dace.int32)
+    sdfg = dace.SDFG("ger_validate_symbol_identity")
+    sdfg.add_array("A", [M32, N], dace.float64)
+    sdfg.add_array("x", [M64], dace.float64)
+    sdfg.add_array("y", [N], dace.float64)
+    sdfg.add_array("res", [M32, N], dace.float64)
+    state = sdfg.add_state()
+    node = blas.Ger("ger")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_A", Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("x"), None, node, "_x", Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(state.add_read("y"), None, node, "_y", Memlet.from_array("y", sdfg.arrays["y"]))
+    state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["x"].shape = (dace.symbol("P", dace.int32), )
+    x_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_x")
+    x_edge.data = Memlet.from_array("x", sdfg.arrays["x"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
 
 
 def test_ger_pure():

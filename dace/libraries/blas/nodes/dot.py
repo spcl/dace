@@ -7,7 +7,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -240,7 +240,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         stride_x = desc_x.strides[sqdims1[0]]
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
-        if squeezed1.num_elements() != squeezed2.num_elements():
+        if symbolic.inequal_symbols(squeezed1.num_elements(), squeezed2.num_elements()):
             raise ValueError('Size mismatch in inputs')
 
         return (desc_x, stride_x), (desc_y, stride_y), desc_res, n

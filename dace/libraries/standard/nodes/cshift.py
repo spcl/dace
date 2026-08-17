@@ -22,7 +22,7 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
+from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 
@@ -151,7 +151,7 @@ class CShift(dace.sdfg.nodes.LibraryNode):
         rank = len(desc_x.shape)
         if not (1 <= self.dim <= rank):
             raise ValueError(f"CShift: dim={self.dim} out of range for rank-{rank} input")
-        if list(desc_out.shape) != list(desc_x.shape):
+        if not symbolic.shapes_equal(desc_out.shape, desc_x.shape):
             raise ValueError(f"CShift: input shape {list(desc_x.shape)} != output shape {list(desc_out.shape)}")
         return desc_x, desc_out, self.dim - 1
 

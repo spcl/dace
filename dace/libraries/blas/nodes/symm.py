@@ -17,7 +17,7 @@ from copy import deepcopy as dc
 
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, dtypes, memlet as mm, properties
+from dace import SDFG, SDFGState, dtypes, memlet as mm, properties, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.symbolic import symstr
@@ -377,14 +377,14 @@ class Symm(dace.sdfg.nodes.LibraryNode):
         (ad, ashape, _), (bd, bshape, _), (cd, cshape, _) = _symm_operands(self, state, sdfg)
         if len(ashape) != 2 or len(bshape) != 2 or len(cshape) != 2:
             raise ValueError("Symm operands must be matrices")
-        if ashape[0] != ashape[1]:
+        if symbolic.inequal_symbols(ashape[0], ashape[1]):
             raise ValueError(f"Symm: A must be square, got {ashape}")
         # side L: A is (M,M), contraction M; side R: A is (N,N), contraction N.
         want = cshape[0] if self.side == "L" else cshape[1]
-        if ashape[0] != want:
+        if symbolic.inequal_symbols(ashape[0], want):
             raise ValueError(f"Symm: A dimension {ashape[0]} must match C's "
                              f"{'row' if self.side == 'L' else 'column'} dim {want}")
-        if list(bshape) != list(cshape):
+        if not symbolic.shapes_equal(bshape, cshape):
             raise ValueError(f"Symm: B shape {bshape} must equal C shape {cshape}")
 
 

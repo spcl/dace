@@ -21,6 +21,7 @@ import pytest
 
 import dace
 from dace.libraries.blas import Syr2k, Syrk
+from dace.memlet import Memlet
 
 # Sentinel written into the non-referenced triangle of C: BLAS must not touch it.
 UNTOUCHED = -12345.0
@@ -230,6 +231,52 @@ def test_opposite_triangle_untouched(kind, impl, uplo):
     sdfg(**kwargs)
     assert np.array_equal(Cwork[other], np.full(len(other[0]), UNTOUCHED)), \
         "the non-referenced triangle of C was modified"
+
+
+def test_syrk_validate_accepts_reparsed_symbol_instances():
+    """A same-named dim reaching Syrk.validate as two distinct sympy instances (one
+    array's dace.int32 shape vs another's dace.int64 shape) must compare equal by
+    name -- and a genuine shape mismatch must still be rejected."""
+    Na, Nb = dace.symbol("N", dace.int32), dace.symbol("N", dace.int64)
+    K = dace.symbol("K", dace.int32)
+    sdfg = dace.SDFG("syrk_validate_symbol_identity")
+    sdfg.add_array("A", [Na, K], dace.float64)
+    sdfg.add_array("C", [Na, Nb], dace.float64)
+    state = sdfg.add_state()
+    node = Syrk("syrk", trans="N")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(node, "_c", state.add_write("C"), None, Memlet.from_array("C", sdfg.arrays["C"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["C"].shape = (Na, dace.symbol("P", dace.int32))
+    c_edge = next(e for e in state.out_edges(node) if e.src_conn == "_c")
+    c_edge.data = Memlet.from_array("C", sdfg.arrays["C"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
+
+
+def test_syr2k_validate_accepts_reparsed_symbol_instances():
+    """Same two checks as Syrk above, on Syr2k.validate's A/B/C triple."""
+    Na, Nb = dace.symbol("N", dace.int32), dace.symbol("N", dace.int64)
+    Ka, Kb = dace.symbol("K", dace.int32), dace.symbol("K", dace.int64)
+    sdfg = dace.SDFG("syr2k_validate_symbol_identity")
+    sdfg.add_array("A", [Na, Ka], dace.float64)
+    sdfg.add_array("B", [Na, Kb], dace.float64)
+    sdfg.add_array("C", [Nb, Nb], dace.float64)
+    state = sdfg.add_state()
+    node = Syr2k("syr2k", trans="N")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("B"), None, node, "_b", Memlet.from_array("B", sdfg.arrays["B"]))
+    state.add_edge(node, "_c", state.add_write("C"), None, Memlet.from_array("C", sdfg.arrays["C"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["B"].shape = (Na, dace.symbol("P", dace.int32))
+    b_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_b")
+    b_edge.data = Memlet.from_array("B", sdfg.arrays["B"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
 
 
 if __name__ == "__main__":
