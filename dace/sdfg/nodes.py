@@ -1075,6 +1075,10 @@ class Map(object):
                       "scope, which is the only case that lowers to a bare `omp for`; ignored "
                       "elsewhere, since `nowait` is not valid on a combined `parallel for`",
                       serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_simd = Property(dtype=bool,
+                        default=False,
+                        desc="Vectorize the innermost loop with an OpenMP simd clause",
+                        serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,

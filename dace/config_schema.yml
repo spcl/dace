@@ -340,6 +340,16 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    simd_maps:
+                        type: bool
+                        default: true
+                        title: Vectorize innermost CPU maps with OpenMP simd
+                        description: >
+                            Runs ``MarkSIMDMaps`` before code generation, which sets
+                            ``Map.omp_simd`` on the innermost Sequential and CPU_Multicore maps
+                            whose body holds no further loop or map. Set false to emit no
+                            ``simd`` clause; maps already carrying ``omp_simd`` still render it.
+
                     openmp_sections:
                         type: bool
                         default: false
@@ -348,72 +358,6 @@ required:
                             If set to true, multiple connected components will
                             generate "#pragma omp parallel sections" code around
                             them.
-
-                    simd_sequential_maps:
-                        type: bool
-                        default: true
-                        title: Emit "#pragma omp simd" on an innermost Sequential map loop
-                        description: >
-                            Escape hatch: set false to drop back to no ``simd`` on Sequential
-                            maps.
-
-                            Only an INNERMOST Sequential map qualifies: its body
-                            (``cpu.py``'s ``_map_body_is_leaf``) must hold no inner Map and no
-                            NestedSDFG. This is deliberately not a recursive check -- a
-                            NestedSDFG disqualifies on sight, whatever it holds, because a
-                            single state's dataflow cannot directly contain a loop (loops are
-                            control flow, not a dataflow node), so a NestedSDFG is the only
-                            place a loop could be hiding in the body and refusing every one of
-                            them catches it without inspecting it. An OUTER sequential map
-                            wrapping an inner map never gets this pragma, regardless of the flag.
-
-                            A leaf Sequential map is, by the SDFG map contract, data-parallel
-                            across its own iterations (the same contract that makes it legal to
-                            schedule as ``CPU_Multicore`` instead -- ``Sequential`` is a CPU
-                            specialization, not a different contract; a genuine loop-carried
-                            recurrence belongs in an interstate loop, not a ``Map``). So a leaf
-                            Sequential map with NO write-conflict-resolution (WCR) output is
-                            provably safe to vectorize: ``omp simd`` on it is a no-op assertion,
-                            not a gamble.
-
-                            A WCR output is where this call can still refuse
-                            (``_map_wcr_is_simd_safe``). A WCR write is safe under ``simd`` only
-                            if its target subset does NOT depend on this map's own iteration
-                            variable (a fixed accumulator, not a SCATTER like a histogram
-                            ``hist[bin(a[i])] += 1``) and the op is not ``min``/``max`` (their
-                            reduction combine is a NaN-preserving compare/branch that vectorizers
-                            do not reliably fold). A Sequential map's WCR write lowers to a
-                            plain, non-atomic ``wcr_fixed::reduce`` (no thread to race against),
-                            so a scatter target under ``simd`` is a genuine cross-iteration
-                            aliasing hazard the compiler cannot see statically: ``simd`` asserts
-                            no such hazard exists and licenses the compiler to trust that
-                            assertion over its own analysis, exactly like ``#pragma ivdep``. If
-                            two SIMD lanes land on the same bin, blind vectorization can silently
-                            drop one lane's increment -- a wrong answer, no error. So an unsafe
-                            WCR edge here withholds the pragma entirely.
-
-                    simd_innermost_multicore_maps:
-                        type: bool
-                        default: true
-                        title: Emit "#pragma omp parallel for simd" on an innermost CPU_Multicore map
-                        description: >
-                            Escape hatch: set false to drop back to a plain ``parallel for`` /
-                            ``for`` (inside an enclosing ``CPU_Persistent`` region) with no
-                            ``simd`` clause.
-
-                            Same leaf test as ``simd_sequential_maps`` (``_map_body_is_leaf``): no
-                            inner Map, no NestedSDFG, checked non-recursively for the same reason.
-                            A CPU_Multicore map that is NOT a leaf (wraps an inner map, or a
-                            NestedSDFG that may hold a loop) keeps its plain ``parallel for``.
-
-                            Unlike the Sequential case, a scatter WCR edge does NOT withhold the
-                            pragma here: CPU_Multicore lowers a conflicted WCR write through
-                            ``wcr_fixed::reduce_atomic``, which is ``#pragma omp atomic`` under
-                            the hood (see reduction.h) -- an idiom that composes correctly with an
-                            enclosing ``simd`` loop by design (the usual SIMD histogram/
-                            scatter-add pattern), unlike the Sequential path's plain non-atomic
-                            write. ``min``/``max`` is still excluded, same NaN-combine reasoning
-                            as above.
 
                     parallel_transfer_min_elements:
                         type: int
