@@ -1,16 +1,31 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests aliasing analysis. """
+import re
+
 import pytest
 import dace
 from dace import config
 
 AliasedArray = dace.data.Array(dace.float64, (20, ), may_alias=True)
 
-# These tests count literal "__restrict__" occurrences, one per nested-SDFG call boundary kept
-# in the generated code. Only the legacy generator keeps each dace.program as its own call with
-# its own pointer parameter; experimental_readable inlines connectors and indexes the outer array
-# directly (see compiler.cpu.implementation docs), so the count is generator-specific. Same pin
-# used by cpp_test.py's test_ndcopy_to_strided_copy_declines_broadcast_source for the same reason.
+# These tests count "__restrict__" on PARAMETERS, one per nested-SDFG call boundary kept in the
+# generated code. Only the legacy generator keeps each dace.program as its own call with its own
+# pointer parameter; experimental_readable inlines connectors and indexes the outer array directly
+# (see compiler.cpu.implementation docs), so the count is generator-specific. Same pin used by
+# cpp_test.py's test_ndcopy_to_strided_copy_declines_broadcast_source for the same reason.
+
+# A pointer bound straight to one of the arrays below, as the lifted copy nodes emit it.
+BOUND_TO_ARRAY = re.compile(r'__restrict__\s+\w+\s*=\s*&?(?:a|b|c)\b')
+
+
+def restrict_at_call_boundaries(code: str) -> int:
+    """Count ``__restrict__`` on function parameters only.
+
+    Lifting an implicit copy to a ``CopyLibraryNode`` also declares ``__restrict__`` LOCAL pointers
+    for its endpoints, and those are not call boundaries -- counting raw occurrences would make these
+    tests read the copy lowering rather than the restrict propagation they exist to pin.
+    """
+    return sum(line.count('__restrict__') for line in code.splitlines() if '(' in line and '=' not in line)
 
 
 @pytest.mark.parametrize('may_alias', (False, True))
@@ -25,9 +40,12 @@ def test_simple_program(may_alias):
         code = tester.to_sdfg().generate_code()[0]
 
     if may_alias:
-        assert code.clean_code.count('__restrict__') == 0
+        assert restrict_at_call_boundaries(code.clean_code) == 0
+        # The locals a lifted copy binds to an aliased array must not be marked either -- two
+        # restrict pointers into the same buffer is undefined behaviour, not a missed count.
+        assert not BOUND_TO_ARRAY.search(code.clean_code)
     else:
-        assert code.clean_code.count('__restrict__') >= 3
+        assert restrict_at_call_boundaries(code.clean_code) >= 3
 
 
 def test_multi_nested():
@@ -48,7 +66,7 @@ def test_multi_nested():
         code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
-    assert code.clean_code.count('__restrict__') == 4  # = [__program, tester, interim, nested]
+    assert restrict_at_call_boundaries(code.clean_code) == 4  # = [__program, tester, interim, nested]
 
 
 def test_inference():
@@ -70,7 +88,7 @@ def test_inference():
 
     # Restrict keyword should never show up in "nested", since arrays are aliased,
     # but should show up in [__program, tester, interim]
-    assert code.clean_code.count('__restrict__') == 3
+    assert restrict_at_call_boundaries(code.clean_code) == 3
 
 
 @pytest.mark.parametrize('may_alias', (False, True))
