@@ -196,6 +196,14 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                     break
     elif backend == 'hip':
         libpath = ctypes.util.find_library('amdhip64')
+        if not libpath:
+            # HIP's NVIDIA platform has no runtime library of its own: every hip* entry point is an
+            # inline wrapper in the headers, and the runtime underneath is CUDA's. Its codes agree
+            # too -- the only two hipCUDAErrorTohipError renumbers are texture errors, and DaCe
+            # emits no texture API.
+            libpath = ctypes.util.find_library('cudart')
+            if libpath:
+                backend = 'cuda'
     else:
         raise RuntimeError(f'Cannot obtain GPU runtime library for backend {backend}')
 
