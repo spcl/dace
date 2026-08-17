@@ -1344,6 +1344,15 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_scalar:
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
+                          and not isinstance(desc.dtype, dtypes.opaque)):
+                        # Scalar source feeding a pointer-typed connector (e.g. an external-call
+                        # marshal reading a staged scalar). The connector's pointer type wins over
+                        # the source's scalar ctypedef, and the address has to be taken. Skip for
+                        # opaque dtypes (MPI_Comm / MPI_Request / cuda handles): the value is already
+                        # a pointer-like handle, so address-of adds an indirection the libnode call
+                        # does not expect.
+                        result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
                     else:
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
