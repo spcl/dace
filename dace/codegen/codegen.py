@@ -173,6 +173,31 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
             node.no_inline = False
 
 
+def lower_implicit_copies(sdfg: SDFG) -> None:
+    """Lift implicit copies to :class:`CopyLibraryNode` instances and expand them.
+
+    An implicit copy edge is a write that no node performs, so nothing can be ordered against it: an
+    empty memlet constraining that write has no node to point at once the copy is emitted inline.
+    Lifting the copy to a node gives the write an owner, which is why both generators run this.
+
+    Expansion is restricted to the nodes this created -- ``RewriteCopyForLayout`` needs the shared
+    pass's other callers unexpanded.
+    """
+    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
+    from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    # These copies are BORN here, after every optimization band has run, so the CPU specialization
+    # verdict on them has to be taken here too: a copy an enclosing map or loop re-enters must not open
+    # a parallel region per entry (npbench stockham_fft enters one 349,525 times), and a sequential
+    # contiguous one is a single memcpy. Host-resident transfers only, so a GPU graph passing through
+    # is untouched.
+    SpecializeCpuTransfers().apply_pass(sdfg, {})
+    sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode))
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -283,22 +308,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND; expand
-        # only these nodes -- RewriteCopyForLayout needs the shared pass's other callers unexpanded.
+        # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND. Runs
+        # inside this branch so the readable pipeline's order is unchanged: the scalar normalization
+        # above must precede it, the readability rewrites below must follow it.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
-            from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-            from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
-            from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-            InsertExplicitCopies().apply_pass(sdfg, {})
-            # These copies are BORN here, after every optimization band has run, so the CPU
-            # specialization verdict on them has to be taken here too: a copy an enclosing map or
-            # loop re-enters must not open a parallel region per entry (npbench stockham_fft enters
-            # one 349,525 times), and a sequential contiguous one is a single memcpy. Host-resident
-            # transfers only, so a GPU graph passing through is untouched.
-            SpecializeCpuTransfers().apply_pass(sdfg, {})
-            sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode))
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
+            lower_implicit_copies(sdfg)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
         # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization
         # pass and belongs in the caller's pipeline, before WCR memlets exist: by codegen time an
@@ -321,6 +335,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         cuda_args = config.Config.get('compiler', 'cuda', 'args')
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
+
+    elif config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
+        # The classic generator gets the same lowering. It emits an implicit copy edge inline, with no
+        # node to hang a happens-before edge on, so a copy that must follow another write was free to
+        # move ahead of it.
+        lower_implicit_copies(sdfg)
 
     # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in
     # simplify) so SymPy's power laws can still fold Pow expressions beforehand.

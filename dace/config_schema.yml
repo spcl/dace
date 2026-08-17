@@ -1021,9 +1021,9 @@ required:
                                 default: 'on'
                                 title: Lower implicit copies through explicit CopyLibraryNodes
                                 description: >
-                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
-                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
-                                    enters that block, so its output stays byte-identical for every value).
+                                    Applies to: BOTH CPU generators. Giving an implicit copy a node of
+                                    its own is what an empty memlet ordering that write can point at, so
+                                    this is a correctness lowering, not a readability choice.
 
                                     Whether an implicit copy is lifted to an explicit
                                     :class:`~dace.libraries.standard.nodes.copy_node.CopyLibraryNode`
