@@ -89,6 +89,14 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
+#: Reserved symbol resolved by the CPU code generator, never by the caller. An SDFG that uses it
+#: gets ``int OMP_MAX_THREADS = omp_get_max_threads();`` at the top of each generated function
+#: body, and the symbol is kept out of ``arglist``/``init_signature`` so it reaches neither the
+#: exported ``__program_*`` nor ``__dace_init_*`` signature. Use it as the stride of a
+#: thread-strided map: the enclosing ``CPU_Persistent`` scope is then emitted with
+#: ``num_threads(OMP_MAX_THREADS)``, so the real team size cannot diverge from the stride.
+OMP_MAX_THREADS_SYMBOL = 'OMP_MAX_THREADS'
+
 
 class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """

@@ -282,11 +282,25 @@ required:
 
             max_stack_array_size:
                 type: int
-                default: 65536
+                default: 262144
                 title: Max stack-allocated array size (bytes)
                 description: >
                     All stack allocated arrays (i.e. StorageType.Register) with
                     size larger than this will be allocated on the heap.
+
+            vla_symbolic_registers:
+                type: bool
+                default: true
+                title: Emit runtime-sized Register arrays as C++ VLAs
+                description: >
+                    A StorageType.Register array whose size is symbolic cannot be a fixed-size
+                    stack array, so it is normally spilled to a heap new/delete[] pair per
+                    enclosing loop iteration. With this on it is emitted as a C++ variable-length
+                    array instead, matching Fortran automatic-array semantics (runtime-sized,
+                    stack-allocated) without specializing the size symbol. VLAs are a compiler
+                    extension in C++ (supported by g++, clang++ and nvc++) and live on the
+                    thread's stack, so a parallel region holding many of them needs OMP_STACKSIZE
+                    raised. Compile with -Wno-vla to silence the extension warning.
 
             extra_cmake_args:
                 type: str
@@ -551,6 +565,26 @@ required:
                             Enables Synchronous Debugging mode, where each library call
                             is followed by full-device synchronization and error checking.
                         default: false
+
+                    emit_synchronization:
+                        type: bool
+                        title: Emit GPU synchronization calls in generated code
+                        description: >
+                            If enabled (default), the CUDA/HIP code generator emits host-side
+                            synchronization: the presynchronization before a host op that
+                            follows GPU-produced data, the end-of-state stream synchronize, the
+                            cross-stream event record/wait pairs, the dynamic map-input event
+                            synchronize, the syncdebug device synchronize, and the device
+                            synchronize in __dace_exit. If disabled, none of those are emitted;
+                            copies, kernel launches and device-side barriers (__syncthreads, grid
+                            barriers) are unaffected. Combine with max_concurrent_streams = -1 so
+                            every kernel and asynchronous op is issued on the default stream,
+                            where single-stream ordering makes inter-kernel synchronization
+                            redundant. Disabling makes the generated program rely entirely on
+                            synchronization the SDFG carries explicitly (e.g. a manually inserted
+                            sync tasklet) for any GPU-to-host read that must observe the result of
+                            prior GPU work -- such a read is otherwise left unprotected.
+                        default: true
 
                     libs:
                         type: str

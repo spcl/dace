@@ -1048,7 +1048,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             new_inter_name: str = f"__map_fusion_{inter_name}"
 
             # Now generate the intermediate data container.
-            if len(new_inter_shape) == 0:
+            # A single-element intermediate is a scalar no matter how many size-one dimensions
+            #  the producer subset carried; emitting it as e.g. `(1, 1, 1)` costs a heap
+            #  allocation per Map iteration (a `cudaMalloc`/`cudaFree` pair inside GPU kernels).
+            if all(dim_size == 1 for dim_size in new_inter_shape):
                 assert pre_exit_edge.data.subset.num_elements() == 1
                 is_scalar = True
                 new_inter_name, new_inter_desc = sdfg.add_scalar(

@@ -697,6 +697,15 @@ class ScalarWriteShadowScopes(ppl.Pass):
                               OrderedSet[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
             anames = sdfg.arrays.keys()
+            # ``AccessSets`` returns ONE flat dict spanning every nested SDFG, whereas
+            # ``idom_dict`` and ``access_nodes`` here belong to THIS SDFG alone.  A name
+            # that exists in both this SDFG and a nested one would otherwise push a nested
+            # block through this SDFG's dominator tree, where it has no entry (KeyError).
+            # Each nested SDFG gets its own turn in the enclosing loop, so scoping the scan
+            # to this SDFG's own blocks loses nothing.  With no nested SDFG this is exactly
+            # the old iteration, in the same order: ``AccessSets`` fills its dict by walking
+            # ``all_control_flow_blocks()`` per SDFG.
+            own_blocks = [b for b in sdfg.all_control_flow_blocks() if b in access_sets]
             for desc in sdfg.arrays:
                 desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())
                 for state in desc_states_with_nodes:
@@ -705,8 +714,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                             access_sets)
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
-                for block, accesses in access_sets.items():
-                    if desc in accesses[0]:
+                for block in own_blocks:
+                    if desc in access_sets[block][0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames

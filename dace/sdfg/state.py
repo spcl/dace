@@ -2665,6 +2665,17 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
+    omp_parallel_region = Property(dtype=bool,
+                                   default=False,
+                                   desc="Emit this region's body inside a single '#pragma omp parallel'. Every "
+                                   "CPU_Multicore Map in it -- including maps nested inside a ConditionalBlock, which "
+                                   "no Map scope can reach -- then lowers to a worksharing '#pragma omp for' instead "
+                                   "of its own 'parallel for', so the team is forked once for the region rather than "
+                                   "once per map. ``SDFG`` inherits this, so setting it there wraps a whole routine. "
+                                   "Declared here rather than on ``ControlFlowRegion`` because this is the "
+                                   "``make_properties`` class in the chain: declaring it on a subclass would "
+                                   "re-register it for ``SDFG`` and raise PropertyError")
+
     def __init__(self,
                  label: str = '',
                  sdfg: Optional['SDFG'] = None,
@@ -2945,10 +2956,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # It may already be out of range on entry (e.g. from deserialization); bounds-check it.
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:

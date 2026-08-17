@@ -19,10 +19,31 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def _use_vla(desc: data.Data, arrsize, sdfg: SDFG, declared: bool, lifetime) -> bool:
+    """Whether a runtime-sized ``Register`` array becomes a C++ VLA instead of a heap ``new``.
+
+    C++ has no standard VLA, so DaCe has always spilled these to ``new``/``delete[]`` -- one
+    allocator round trip per enclosing loop iteration, where Fortran's automatic arrays
+    (``REAL :: Z(KLON,KLEV)``) cost nothing. g++, clang++ and nvc++ all accept VLAs as an
+    extension, which recovers the Fortran semantics without specializing the size symbol away.
+
+    Opt-in, and refused for anything a VLA cannot express: a VLA is defined at its declaration
+    (so a split declare/allocate is out) and dies with its block (so any lifetime that outlives
+    the scope is out).
+    """
+    if not Config.get_bool('compiler', 'vla_symbolic_registers'):
+        return False
+    if desc.storage != dtypes.StorageType.Register or declared:
+        return False
+    if lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State):
+        return False
+    return bool(symbolic.issymbolic(arrsize, sdfg.constants)) and desc.start_offset == 0
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:
@@ -103,6 +124,11 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals = cppunparse.CPPLocals()
         # Scope depth (for defining locals)
         self._ldepth = 0
+
+        # Arrays `allocate_array` emitted as VLAs. Recorded rather than re-derived, so
+        # `deallocate_array` cannot pair a stack array with a `delete[]` if the two predicates
+        # ever drift apart.
+        self._vla_arrays: Set[str] = set()
 
         # Keep nested SDFG schedule when descending into it
         self._toplevel_schedule = None
@@ -407,6 +433,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
+        use_vla = _use_vla(nodedesc, arrsize, sdfg, declared, top_lifetime)
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -484,7 +511,7 @@ class CPUCodeGen(TargetCodeGenerator):
             define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
+              or (nodedesc.storage == dtypes.StorageType.Register and not use_vla and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
@@ -523,21 +550,30 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
-            if node.setzero:
-                declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
-                    cfg,
-                    state_id,
-                    node,
-                )
-                define_var(name, DefinedType.Pointer, ctypedef)
-                return
+            # A VLA is left unadorned unless the descriptor actually asks for an alignment:
+            #  padding all 82 of them to 64 B would waste the resource a VLA is scarcest in.
+            #  The fixed-size form keeps 64 as its default, but reads the property when it is set
+            #  (the convention the heap path above already follows).
+            if use_vla:
+                align = f'  DACE_ALIGN({nodedesc.alignment})' if nodedesc.alignment > 0 else ''
+            else:
+                align = f'  DACE_ALIGN({64 if nodedesc.alignment == 0 else nodedesc.alignment})'
+            # A VLA cannot carry an `= {0}` initializer; memset is the only zeroing form, and it
+            #  is what the heap path above already does for the same request.
+            init = '' if use_vla else ' = {0}'
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s %s[%s]%s%s;\n" %
+                (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), align, init if node.setzero else ''),
                 cfg,
                 state_id,
                 node,
             )
+            if node.setzero and use_vla:
+                allocation_stream.write(
+                    "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                    state_id, node)
+            if use_vla:
+                self._vla_arrays.add(alloc_name)
             define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -598,6 +634,13 @@ class CPUCodeGen(TargetCodeGenerator):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
+
+        # A VLA is reclaimed when its scope exits; freeing that pointer would be UB. The decision
+        #  is read back from `allocate_array` rather than recomputed, so the two sides cannot
+        #  disagree and produce either a leak or a free of stack memory.
+        if alloc_name in self._vla_arrays:
+            self._vla_arrays.discard(alloc_name)
+            return
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
@@ -1306,14 +1349,17 @@ class CPUCodeGen(TargetCodeGenerator):
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
-                            # Pointer reference
-                            result += "{} {} = {};".format(ctypedef, local_name, expr)
+                            # Pointer reference. ``ctypedef`` may already carry
+                            # ``__restrict__``; don't append a second one.
+                            _restrict = "" if "__restrict__" in ctypedef else "__restrict__ "
+                            result += "{} {}{} = {};".format(ctypedef, _restrict, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        _restrict = "" if "__restrict__" in memlet_type else "__restrict__ "
+                        result += "{} {}{} = {};".format(memlet_type, _restrict, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
@@ -1584,7 +1630,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 except KeyError:
                     defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
-                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
+                # ``may_alias`` marks a descriptor deliberately reachable through another
+                # pointer; promising no-alias on this out-connector would be a miscompile.
+                restrict = '' if (isinstance(desc, data.Array) and desc.may_alias) else '__restrict__ '
+                callsite_stream.write(f'{cdtype.ctype} {restrict}{edge.src_conn} = {base_ptr};', cfg, state_id,
+                                      src_node)
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
@@ -1832,21 +1882,48 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _map_body_is_leaf(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-        """True if the map's body holds no inner Map and no NestedSDFG.
+        """True if the map's body holds no Map and no loop, at ANY depth.
 
-        Deliberately NOT recursive: a NestedSDFG disqualifies on sight, whatever it holds. A
-        single state's dataflow (what ``all_nodes_between`` walks) cannot directly contain a
-        loop -- that is control flow, not a dataflow node -- so a NestedSDFG is the only place a
-        loop could be hiding in this map's body, and refusing every NestedSDFG catches it
-        without inspecting one. Errs toward NOT simd: a map this call can't clear is simply left
-        alone.
+        A NestedSDFG no longer disqualifies on sight: it is opened and cleared when it
+        transitively holds neither. That matters because a Fortran-frontend map body is an
+        outlined ``loop_body`` NestedSDFG even when it is straight-line dataflow.
+
+        A single state's dataflow cannot contain a loop -- that is control flow -- but that stops
+        being true one step inside a NestedSDFG, where a loop takes TWO forms: an explicit
+        ``LoopRegion``, and a back edge in a plain state machine. Both disqualify; a
+        ``ConditionalBlock`` does not, since it lowers to an ``if`` the vectorizer masks.
+
+        Errs toward NOT simd: anything this call cannot positively clear returns False, including
+        a NestedSDFG with no payload and a self-referential one (refused rather than recursed).
         """
+        import networkx as nx
+
+        from dace.sdfg.state import LoopRegion
+
+        def nsdfg_is_loop_and_map_free(sd: SDFG, seen: set[int]) -> bool:
+            if id(sd) in seen:
+                return False
+            seen.add(id(sd))
+            for cfr in sd.all_control_flow_regions():  # this SDFG only; nesting handled below
+                if isinstance(cfr, LoopRegion) or not nx.is_directed_acyclic_graph(cfr.nx):
+                    return False
+            for st in sd.all_states():
+                for n in st.nodes():
+                    if isinstance(n, nodes.MapEntry):
+                        return False
+                    if isinstance(n, nodes.NestedSDFG) and (n.sdfg is None
+                                                            or not nsdfg_is_loop_and_map_free(n.sdfg, seen)):
+                        return False
+            return True
+
         try:
             map_exit = state.exit_node(map_entry)
         except (KeyError, StopIteration):
             return False
         for n in state.all_nodes_between(map_entry, map_exit):
-            if isinstance(n, (nodes.MapEntry, nodes.NestedSDFG)):
+            if isinstance(n, nodes.MapEntry):
+                return False
+            if isinstance(n, nodes.NestedSDFG) and (n.sdfg is None or not nsdfg_is_loop_and_map_free(n.sdfg, set())):
                 return False
         return True
 
@@ -1935,19 +2012,43 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP header
             in_persistent = False
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
-                in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                # Either an enclosing CPU_Persistent Map scope, or an enclosing ControlFlowRegion
+                # flagged ``omp_parallel_region``. The latter cannot be seen from here -- a Map
+                # node has no path to the regions above it -- so the control-flow generator sets a
+                # flag on the frame while it emits the wrapped body.
+                in_persistent = (is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                                 or getattr(self._frame, 'in_region_parallel', False))
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
-                    # TODO(later): barriers and map_header += " nowait"
+                    if node.map.nowait:
+                        map_header += " nowait"
                 else:
+                    # ``nowait`` is a worksharing clause: on the COMBINED `parallel for` emitted
+                    # here it is invalid OpenMP, and the implicit barrier being dropped is the one
+                    # at the end of the parallel region, which cannot be dropped at all. Refuse
+                    # loudly rather than emit code the compiler will reject (or worse, accept).
+                    if node.map.nowait:
+                        raise ValueError(f"Map {node.map.label} has nowait=True but is not nested in a "
+                                         f"CPU_Persistent scope, so it lowers to a combined '#pragma omp "
+                                         f"parallel for', where 'nowait' is invalid OpenMP")
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
+                # omp_get_max_threads() is the PROSPECTIVE team size; with OMP_DYNAMIC=true the
+                # region may be handed fewer threads. A thread-strided map whose stride is
+                # OMP_MAX_THREADS would then skip blocks -- a silent wrong answer. Forcing the team
+                # size makes stride and team provably equal.
+                if dtypes.OMP_MAX_THREADS_SYMBOL in {str(s) for s in sdfg.used_symbols(all_symbols=True)}:
+                    map_header += f" num_threads({dtypes.OMP_MAX_THREADS_SYMBOL})"
 
-            # OpenMP schedule properties
-            if not in_persistent:
+            # OpenMP schedule properties. ``schedule`` is a worksharing-loop clause, so it is valid
+            # on a bare ``omp for`` just as it is on a combined ``parallel for`` -- it must NOT be
+            # dropped inside an enclosing parallel region, or the region-parallel shape would
+            # silently lose the schedule. ``num_threads`` is a parallel-region clause and stays
+            # gated: on an ``omp for`` it is invalid.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -1963,6 +2064,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     schedule += ")"
                     map_header += schedule
 
+            if not in_persistent:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 
