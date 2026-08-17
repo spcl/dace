@@ -248,6 +248,23 @@ def test_outlined_body_is_opened_not_refused(payload, leaf):
     assert outer.map.omp_simd is leaf
 
 
+def test_the_mark_survives_a_round_trip():
+    """The pass marks Sequential maps too, so the property has to serialize for them -- otherwise
+    a save/load between the pass and code generation silently drops the clause."""
+    sdfg = dace.SDFG('roundtrip_seq_simd')
+    sdfg.add_array('a', (8, ), dace.float64)
+    sdfg.add_array('b', (8, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('m', {'i': '0:8'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp * 2.0', {'o': dace.Memlet('b[i]')},
+                             schedule=dtypes.ScheduleType.Sequential,
+                             external_edges=True)
+    next(n for _, n in entries(sdfg)).map.omp_simd = True
+
+    restored = dace.SDFG.from_json(sdfg.to_json())
+    assert all(n.map.omp_simd for _, n in entries(restored))
+
+
 def test_config_switch_suppresses_the_clause():
     """The escape hatch keeps the pass out of code generation entirely."""
 
@@ -275,4 +292,5 @@ if __name__ == '__main__':
     for name, is_leaf in (('straight', True), ('nested', True), ('loopregion', False), ('backedge', False), ('map',
                                                                                                              False)):
         test_outlined_body_is_opened_not_refused(name, is_leaf)
+    test_the_mark_survives_a_round_trip()
     test_config_switch_suppresses_the_clause()
