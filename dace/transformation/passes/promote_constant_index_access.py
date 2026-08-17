@@ -827,9 +827,11 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     return True
                 if len(memlet.subset.ranges) != len(slot.ranges):
                     return True
-                # ``Range.intersects`` returns True/False/None (indeterminate). Conservative
-                # default: any non-False answer means we cannot rule out overlap.
-                result = memlet.subset.intersects(slot)
+                # The module-level helper, not ``Range.intersects``: the method RAISES on a bound
+                # SymPy will not decide, while the helper folds that into the same ``None`` it
+                # already answers for indeterminate. Conservative default: any non-False answer
+                # means we cannot rule out overlap.
+                result = subsets.intersects(memlet.subset, slot)
                 if result is not False:
                     return True
         return False
