@@ -64,6 +64,19 @@ jobs:
     - name: Install OpenMPI
       run: pip install openmpi
 
+    # Duplicated from .github/actions/setup-dace rather than taken from it: this job checks dace out
+    # into a subdirectory and installs pyFV3 before dace on purpose, which the action's fused install
+    # step would undo. Only the compiler selection is needed here.
+    - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
+      run: |
+        # GCC 13's auto-vectorizer mislowers the select the readable code generator emits: it reuses
+        # the low-half lane mask for the high-half vmaskmovpd, so the upper half of each vector reads
+        # back as zeros. A silent wrong answer, fixed in GCC 14.
+        sudo apt-get install -y g++-14
+        echo "CXX=g++-14" >> $GITHUB_ENV
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "DACE_compiler_cpu_executable=$(command -v g++-14)" >> $GITHUB_ENV
+
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
