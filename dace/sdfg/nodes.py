@@ -1039,7 +1039,7 @@ class Map(object):
     omp_simd = Property(dtype=bool,
                         default=False,
                         desc="Vectorize the innermost loop with an OpenMP simd clause",
-                        serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+                        serialize_if=lambda m: m.omp_simd)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,

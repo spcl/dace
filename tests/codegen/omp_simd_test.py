@@ -142,6 +142,48 @@ def test_multicore_reduction_keeps_the_clause_and_the_value():
     assert np.allclose(out[0], a.sum())
 
 
+def test_unexpanded_library_node_withholds_the_clause():
+    """A library node in the body expands to a Map after this pass has run, and an
+    ``omp parallel for`` lexically inside a simd region is not valid OpenMP."""
+    sdfg = dace.SDFG('library_node_body')
+    sdfg.add_array('a', (8, 16), dace.float64)
+    sdfg.add_array('out', (8, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    entry, exit_node = state.add_map('outer', {'i': '0:8'}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    red = state.add_reduce('lambda x, y: x + y', None, 0)
+    state.add_memlet_path(state.add_read('a'), entry, red, memlet=dace.Memlet('a[i, 0:16]'))
+    state.add_memlet_path(red, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'))
+    sdfg.validate()
+
+    mark(sdfg)
+    assert not any(n.map.omp_simd for _, n in entries(sdfg))
+
+    a = np.random.rand(8, 16)
+    out = np.zeros(8)
+    sdfg(a=a, out=out)
+    assert np.allclose(out, a.sum(axis=1))
+
+
+def test_tasklet_carrying_a_directive_withholds_the_clause():
+    """The OpenMP Reduce expansion writes ``#pragma omp parallel for`` into the tasklet body, and
+    that construct is illegal inside a simd region."""
+    sdfg = dace.SDFG('directive_in_tasklet')
+    sdfg.add_array('a', (8, ), dace.float64)
+    sdfg.add_array('b', (8, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('carries_a_pragma', {'i': '0:8'}, {'inp': dace.Memlet('a[i]')},
+                             '#pragma omp parallel for\nfor (int k = 0; k < 1; ++k) o = inp;',
+                             {'o': dace.Memlet('b[i]')},
+                             schedule=dtypes.ScheduleType.CPU_Multicore,
+                             language=dace.Language.CPP,
+                             external_edges=True)
+    sdfg.validate()
+
+    mark(sdfg)
+    assert not any(n.map.omp_simd for _, n in entries(sdfg))
+    assert ' simd' not in sdfg.generate_code()[0].clean_code
+
+
 def double_tasklet(state) -> None:
     """``b_out[0] = a_in[0] * 2`` as plain dataflow."""
     t = state.add_tasklet('nt', {'a': None}, {'b': None}, 'b = a * 2.0')
@@ -206,6 +248,23 @@ def test_outlined_body_is_opened_not_refused(payload, leaf):
     assert outer.map.omp_simd is leaf
 
 
+def test_the_mark_survives_a_round_trip():
+    """The pass marks Sequential maps too, so the property has to serialize for them -- otherwise
+    a save/load between the pass and code generation silently drops the clause."""
+    sdfg = dace.SDFG('roundtrip_seq_simd')
+    sdfg.add_array('a', (8, ), dace.float64)
+    sdfg.add_array('b', (8, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('m', {'i': '0:8'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp * 2.0', {'o': dace.Memlet('b[i]')},
+                             schedule=dtypes.ScheduleType.Sequential,
+                             external_edges=True)
+    next(n for _, n in entries(sdfg)).map.omp_simd = True
+
+    restored = dace.SDFG.from_json(sdfg.to_json())
+    assert all(n.map.omp_simd for _, n in entries(restored))
+
+
 def test_config_switch_suppresses_the_clause():
     """The escape hatch keeps the pass out of code generation entirely."""
 
@@ -228,7 +287,10 @@ if __name__ == '__main__':
     for wcr_target in ('hist[i]', 'hist[0]'):
         test_sequential_wcr_withholds_the_clause(wcr_target)
     test_multicore_reduction_keeps_the_clause_and_the_value()
+    test_unexpanded_library_node_withholds_the_clause()
+    test_tasklet_carrying_a_directive_withholds_the_clause()
     for name, is_leaf in (('straight', True), ('nested', True), ('loopregion', False), ('backedge', False), ('map',
                                                                                                              False)):
         test_outlined_body_is_opened_not_refused(name, is_leaf)
+    test_the_mark_survives_a_round_trip()
     test_config_switch_suppresses_the_clause()
