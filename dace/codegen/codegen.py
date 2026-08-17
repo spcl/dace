@@ -210,6 +210,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     if config.Config.get_bool('compiler', 'cpu', 'explicit_copy'):
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         InsertExplicitCopies().apply_pass(sdfg, {})
+        # The nodes just inserted carry no inferred connector types, and the expansion below reads
+        # them to decide pointer vs. value. Storage defaults above already hold.
+        infer_types.infer_connector_types(sdfg)
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()

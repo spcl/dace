@@ -813,11 +813,13 @@ def unparse_cr(sdfg, wcr_ast, dtype):
 
 
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
+    # Both ends of the path count: a host tasklet that only WRITES GPU memory needs the stream just
+    # as much as one that reads it. Same rule as the stream-retention walk in ``cuda.py``.
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if ((isinstance(path[0].src, nodes.AccessNode)
-             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
-            return True
+        for endpoint in (path[0].src, path[-1].dst):
+            if isinstance(endpoint, nodes.AccessNode) and endpoint.desc(sdfg).storage is dtypes.StorageType.GPU_Global:
+                return True
     return False
 
 

@@ -1287,6 +1287,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
+        # A pointer connector bound to a variable defined as a scalar takes its ADDRESS. Emitting
+        # the bare name instead declares a pointer and initializes it from a value; `define_out_memlet`
+        # already does this for the write side, so only the read side was inconsistent.
+        if not is_scalar and var_type == DefinedType.Scalar:
+            expr = '&' + expr
+            ctypedef = ctypedef + '*'
+
         defined = None
 
         if var_type in (DefinedType.Scalar, DefinedType.Pointer):

@@ -29,6 +29,32 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     return src_subset
 
 
+def _competing_writer(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> bool:
+    """True if another edge into ``target`` writes a region of ``name`` that may overlap ``subset``.
+
+    Nothing in the graph orders two writes to the same region that reach a node on separate edges:
+    plain copy-edge codegen emits a copy when its SOURCE access node is visited, so the copy lands
+    before every other consumer of that node. Lifting the copy to a node of its own re-sorts it
+    against the competing write, which silently swaps which value survives (measured on npbench
+    ``vadv``: a dead ``dcol`` write moved after the tasklet that supersedes it). Where the order
+    cannot be shown to be irrelevant, leave the copy implicit.
+
+    :param state: the state holding ``target``.
+    :param target: the node the copy writes through (access node, or map exit when staging out).
+    :param edge: the copy edge itself, excluded from the scan.
+    :param name: data name the copy writes.
+    :param subset: region the copy writes.
+    :returns: ``True`` when a possibly-overlapping competing write exists.
+    """
+    for other in state.in_edges(target):
+        if other is edge or other.data.is_empty() or other.data.data != name:
+            continue
+        other_subset = other.data.get_dst_subset(other, state) or other.data.subset
+        if subsets.intersects(other_subset, subset) is not False:
+            return True
+    return False
+
+
 def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: nodes.Node) -> None:
     """Repeat onto ``libnode`` the ordering edges that sequenced writes to ``written``.
 
@@ -148,6 +174,14 @@ class InsertExplicitCopies(ppl.Pass):
             if dst_subset is None:
                 dst_subset = _derive_matching_dst_subset(src_subset, dst_desc)
 
+            # A copy of zero elements moves nothing, and plain copy-edge codegen emits nothing for
+            # it. Lifting it would put a node in the state that has no work to do.
+            if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
+                continue
+
+            if _competing_writer(state, dst_node, edge, dst_name, dst_subset):
+                continue
+
             in_memlet = Memlet(data=src_name, subset=copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
             out_memlet = Memlet(data=dst_name, subset=copy.deepcopy(dst_subset))
@@ -159,6 +193,9 @@ class InsertExplicitCopies(ppl.Pass):
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)
+            # Instrumentation providers decide a copy edge's instrumentation from the state it is in
+            # (``on_copy_begin``); as a node the copy needs its own setting to stay measured.
+            libnode.instrument = state.instrument
 
             state.remove_edge(edge)
             state.add_node(libnode)
@@ -228,6 +265,8 @@ class InsertExplicitCopies(ppl.Pass):
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
             outer_subset = outer_memlet.get_dst_subset(edge, state) or outer_memlet.subset
+            if _competing_writer(state, edge.dst, edge, outer.data, outer_subset):
+                return False
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
@@ -241,9 +280,12 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
+        if stage_in and _competing_writer(state, inner_node, edge, inner_node.data, inner_subset):
+            return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
         libnode = CopyLibraryNode(name=label)
+        libnode.instrument = state.instrument
         state.add_node(libnode)
         if stage_in:
             map_node = edge.src

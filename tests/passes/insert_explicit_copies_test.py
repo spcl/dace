@@ -1156,5 +1156,63 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
 
 
+def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
+    """Nothing orders two writes to one region that reach a node on separate edges. Plain copy-edge
+    codegen emits the copy when its SOURCE access node is visited, so it lands before the tasklet
+    that supersedes it; lifting it to a node would re-sort it after and flip which write survives."""
+    sdfg = dace.SDFG("competing_writer")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    a = state.add_access("A")
+    b = state.add_access("B")
+    tasklet = state.add_tasklet("supersede", {"i"}, {"o"}, "o = i + 1.0")
+    state.add_nedge(a, b, Memlet("A[0:4] -> [0:4]"))
+    state.add_edge(a, None, tasklet, "i", Memlet("A[0]"))
+    state.add_edge(tasklet, "o", b, None, Memlet("B[0]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert not lifted, "a copy competing with another write to B was lifted"
+
+
+def test_zero_element_copy_is_not_lifted():
+    """A copy that moves nothing needs no node: plain copy-edge codegen emits nothing for it."""
+    sdfg = dace.SDFG("zero_element_copy")
+    for name in "AB":
+        sdfg.add_array(name, [20, 20], dace.float64, transient=True)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[2:17, 2:2] -> [2:18, 3:3]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert state.number_of_nodes() == 2
+    assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+
+
+def test_lifted_copy_inherits_the_state_instrumentation():
+    """Providers read a copy edge's instrumentation off the state it lives in (``on_copy_begin``);
+    as a node the copy carries its own setting, or it drops out of the report."""
+    sdfg = dace.SDFG("instrumented_copy")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.instrument = dace.InstrumentationType.GPU_TX_MARKERS
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[0:4] -> [0:4]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(lifted) == 1
+    assert lifted[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
+
+    sdfg.expand_library_nodes()
+    expanded = [n for n in state.nodes() if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG))]
+    assert len(expanded) == 1
+    assert expanded[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

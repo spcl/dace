@@ -27,17 +27,26 @@ def collapse_shape_and_strides(
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
+    A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
+    single (length, stride) pair expresses -- it expands into two dims: the step count at
+    ``stride * step``, then the tile at ``stride``.
+
     :param subset: The access range, one ``(begin, end, step)`` per dimension.
     :param strides: The parent array strides, aligned with ``subset``.
     :returns: ``(collapsed_shape, collapsed_strides)`` with singletons removed.
     """
     collapsed_shape = []
     collapsed_strides = []
-    for (b, e, s), stride in zip(subset, strides):
-        length = (e + 1 - b) // s
+    # ``Range.size()`` already folds the tile in (``tile * ceiling((e + 1 - b) / step)``); dividing
+    # it back out is exact and avoids re-deriving a per-dim count formula that could drift from it.
+    for (_, _, s), stride, tile, dim_size in zip(subset, strides, subset.tile_sizes, subset.size()):
+        length = dim_size / tile
         if length != 1:
             collapsed_shape.append(length)
             collapsed_strides.append(stride * s)
+        if tile != 1:
+            collapsed_shape.append(tile)
+            collapsed_strides.append(stride)
     return collapsed_shape, collapsed_strides
 
 
