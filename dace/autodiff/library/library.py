@@ -4,7 +4,6 @@ Dace library for autodiff
 
 Includes the BackwardPass library node, and the replacements for the python frontend
 """
-from typing import Dict, Set
 
 import dace
 import dace.library
@@ -144,12 +143,12 @@ class BackwardPass(nodes.LibraryNode):
         " buffer need to be with write-conflict-resolution. Note: this field is automatically populated upon expansion."
     )
 
-    def __init__(self, name, given_gradients: Dict[str, str], *args, **kwargs):
+    def __init__(self, name, given_gradients: dict[str, str], *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.given_gradients = given_gradients
         self.required_gradients = {}
 
-    def outer_names_given_gradients(self, state: SDFGState) -> Set[str]:
+    def outer_names_given_gradients(self, state: SDFGState) -> set[str]:
         """
         Returns the names of the arrays that are passed as given gradients.
         """
