@@ -25,12 +25,15 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize) -> bool:
+def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime) -> bool:
     """ Whether a symbolically-sized register array is emitted as a stack variable-length array,
-        which GCC, Clang and NVHPC all accept. Allocation and deallocation both ask here so they
-        cannot disagree.
+        which GCC, Clang and NVHPC all accept. A VLA dies with its block, so only the lifetimes
+        that end there qualify; the others are declared elsewhere and keep the heap. Allocation
+        and deallocation both ask here so they cannot disagree.
     """
-    return (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))
+    return (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants)
+            and lifetime
+            in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:
@@ -416,7 +419,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
-        variable_length_arrays = stack_variable_length_array(sdfg, nodedesc, arrsize)
+        variable_length_arrays = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime)
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -614,9 +617,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap or (nodedesc.storage == dtypes.StorageType.Register and (
-            (symbolic.issymbolic(arrsize, sdfg.constants) and not stack_variable_length_array(sdfg, nodedesc, arrsize))
-                or (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  ((symbolic.issymbolic(arrsize, sdfg.constants)
+                    and not stack_variable_length_array(sdfg, nodedesc, arrsize, nodedesc.lifetime)) or
+                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator
                 # delete[]. The direct operator call skips destructors and relies on the new-expression

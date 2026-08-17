@@ -63,6 +63,37 @@ def test_constant_sized_register_array_is_unchanged():
     assert np.allclose(b, a + 1.0)
 
 
+def test_global_lifetime_keeps_the_heap():
+    """A VLA dies with its block, but a Global array is declared outside it -- codegen emits the
+    program-level pointer for it, so the local declaration must not shadow that."""
+    sdfg = dace.SDFG('vla_global_lifetime')
+    sdfg.add_array('a', (N, ), dace.float64)
+    sdfg.add_array('b', (N, ), dace.float64)
+    sdfg.add_transient('tmp', (N, ),
+                       dace.float64,
+                       storage=dace.StorageType.Register,
+                       lifetime=dace.AllocationLifetime.Global)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('copy', {'i': '0:N'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp + 1.0', {'o': dace.Memlet('tmp[i]')},
+                             external_edges=True)
+    state2 = sdfg.add_state_after(state, 'out')
+    state2.add_mapped_tasklet('back', {'i': '0:N'}, {'inp': dace.Memlet('tmp[i]')},
+                              'o = inp', {'o': dace.Memlet('b[i]')},
+                              external_edges=True)
+    sdfg.validate()
+
+    code = sdfg.generate_code()[0].clean_code
+    assert 'double tmp[N];' not in code, code
+    assert 'new' in code
+
+    a = np.random.rand(8)
+    b = np.zeros(8)
+    sdfg(a=a, b=b, N=8)
+    assert np.allclose(b, a + 1.0)
+
+
 if __name__ == '__main__':
     test_symbolic_register_array_stays_on_the_stack()
     test_constant_sized_register_array_is_unchanged()
+    test_global_lifetime_keeps_the_heap()
