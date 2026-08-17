@@ -1126,6 +1126,92 @@ def test_mapped_symbol_the_child_does_not_declare():
     sdfg.compile()
 
 
+def test_read_and_write_confined_to_one_iteration():
+    """syrk shape: iteration ``i`` reads and writes row ``i``. The same injective index in both
+    subsets confines the overlap to a single iteration, where the map body keeps program order, so
+    the loop is DOALL. Without the same-iteration check the read-after-write refuses it."""
+
+    @dace.program
+    def syrk_like(C: dace.float64[20, 20], A: dace.float64[20]):
+        for i in range(20):
+            C[i, 0:i + 1] += A[i]
+
+    sdfg = syrk_like.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap, permissive=True) == 1
+
+    C = np.zeros((20, 20))
+    A = np.arange(20, dtype=np.float64)
+    ref = np.zeros((20, 20))
+    for i in range(20):
+        ref[i, 0:i + 1] += A[i]
+    sdfg(C=C, A=A)
+    assert np.allclose(C, ref)
+
+
+def test_strided_read_and_write_never_alias():
+    """Step-2 loop writing evens and reading odds: the linear-Diophantine test over the strided
+    iteration counter proves the two index sets never meet, so there is no carried RAW. The
+    propagate+intersect fallback ignores the stride and refuses this."""
+
+    @dace.program
+    def strided(A: dace.float64[40]):
+        for i in range(2, 40, 2):
+            A[i] = A[i - 1] * 2.0
+
+    sdfg = strided.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap, permissive=True) == 1
+
+    A = np.arange(40, dtype=np.float64)
+    ref = A.copy()
+    for i in range(2, 40, 2):
+        ref[i] = ref[i - 1] * 2.0
+    sdfg(A=A)
+    assert np.allclose(A, ref)
+
+
+def test_row_local_overlapping_columns():
+    """Read and write overlap column-wise but stay on the row the iteration owns. Propagating over
+    the loop makes the two sets overlap, so only the same-iteration check (identical injective index
+    in the row dimension) can accept this."""
+
+    @dace.program
+    def row_local(C: dace.float64[20, 20]):
+        for i in range(20):
+            C[i, 1:20] = C[i, 0:19] + 1.0
+
+    sdfg = row_local.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap, permissive=True) == 1
+
+    C = np.arange(400, dtype=np.float64).reshape(20, 20).copy()
+    ref = C.copy()
+    for i in range(20):
+        ref[i, 1:20] = ref[i, 0:19] + 1.0
+    sdfg(C=C)
+    assert np.allclose(C, ref)
+
+
+def test_transposed_read_and_write_alias_only_in_one_iteration():
+    """TSVC s114's inner shape: the iteration variable lands in a different dimension of the read
+    than of the write, so no single dimension settles it. The collision system still proves an alias
+    forces the two iterations to coincide (here only at ``j == 3``), which is loop-independent."""
+
+    @dace.program
+    def transposed(aa: dace.float64[20, 20], bb: dace.float64[20, 20]):
+        for j in range(20):
+            aa[3, j] = aa[j, 3] + bb[3, j]
+
+    sdfg = transposed.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap, permissive=True) == 1
+
+    aa = np.arange(400, dtype=np.float64).reshape(20, 20).copy()
+    bb = np.ones((20, 20))
+    ref = aa.copy()
+    for j in range(20):
+        ref[3, j] = ref[j, 3] + bb[3, j]
+    sdfg(aa=aa, bb=bb)
+    assert np.allclose(aa, ref)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
