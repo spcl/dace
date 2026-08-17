@@ -13,6 +13,8 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import MapExpansion
 
+OMP_DIRECTIVE = '#pragma omp'
+
 
 def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """ True if the map's body holds no Map and no loop, at any depth.
@@ -32,22 +34,30 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
                 return False
         for st in sdfg.all_states():
             for n in st.nodes():
-                if isinstance(n, nodes.MapEntry):
+                if not node_is_loop_free(n, seen):
                     return False
-                if isinstance(n, nodes.NestedSDFG) and (n.sdfg is None or not loop_and_map_free(n.sdfg, seen)):
-                    return False
+        return True
+
+    def node_is_loop_free(n: nodes.Node, seen: Set[int]) -> bool:
+        if isinstance(n, nodes.MapEntry):
+            return False
+        # A library node still to be expanded is undecidable here: its expansion routinely
+        # lowers to a Map, and an ``omp parallel for`` inside a simd region does not compile.
+        if isinstance(n, nodes.LibraryNode):
+            return False
+        # Neither does a directive the tasklet brings itself -- the OpenMP Reduce expansion
+        # writes ``#pragma omp parallel for`` straight into the tasklet body.
+        if isinstance(n, nodes.Tasklet):
+            return OMP_DIRECTIVE not in n.code.as_string
+        if isinstance(n, nodes.NestedSDFG):
+            return n.sdfg is not None and loop_and_map_free(n.sdfg, seen)
         return True
 
     try:
         map_exit = state.exit_node(map_entry)
     except (KeyError, StopIteration):
         return False
-    for n in state.all_nodes_between(map_entry, map_exit):
-        if isinstance(n, nodes.MapEntry):
-            return False
-        if isinstance(n, nodes.NestedSDFG) and (n.sdfg is None or not loop_and_map_free(n.sdfg, set())):
-            return False
-    return True
+    return all(node_is_loop_free(n, set()) for n in state.all_nodes_between(map_entry, map_exit))
 
 
 def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
