@@ -41,6 +41,12 @@ if TYPE_CHECKING:
 #: and position-independent code, which CMake already adds itself for a shared library.
 HOST_FLAGS_NOT_FORWARDED = frozenset({'-Wall', '-Wextra', '-fPIC'})
 
+#: Pinned-host allocation is not a backend-prefixed spelling of one name. HIP does carry
+#: ``hipMallocHost``/``hipFreeHost``, but they are deprecated aliases and, unlike CUDA's, are
+#: declared to take a plain ``void**`` rather than a template parameter.
+PINNED_ALLOC = {'cuda': 'cudaMallocHost', 'hip': 'hipHostMalloc'}
+PINNED_FREE = {'cuda': 'cudaFreeHost', 'hip': 'hipHostFree'}
+
 
 def forwarded_host_args() -> List[str]:
     """The host flags a ``.cu`` or ``.hip`` translation unit has to be built with as well.
@@ -726,7 +732,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write('DACE_GPU_CHECK(%s((void**)&%s, %s));\n' %
+                               (PINNED_ALLOC[self.backend], dataname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
@@ -860,7 +867,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+            callsite_stream.write('DACE_GPU_CHECK(%s(%s));\n' % (PINNED_FREE[self.backend], dataname), cfg, state_id,
+                                  node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
