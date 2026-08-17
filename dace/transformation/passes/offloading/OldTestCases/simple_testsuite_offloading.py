@@ -12,6 +12,9 @@ Usage:
 import pytest
 import numpy as np
 import dace
+import importlib
+import sys
+from pathlib import Path
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from dace.transformation import pass_pipeline as ppl
@@ -85,7 +88,6 @@ def scalar_to_gpu_sdfg():
     sdfg.validate()
     return sdfg
 
-
 def conditional_branch_map_sdfg():
     """
     Frontend-built SDFG with:
@@ -108,6 +110,7 @@ def conditional_branch_map_sdfg():
     sdfg = conditional_branch_program.to_sdfg()
     sdfg.validate()
     return sdfg
+
 
 def scalar_to_gpu_within_loop_sdfg(num_iters: int = 4):
     """
@@ -222,7 +225,6 @@ def nested_sdfg():
     sdfg = nested_kernel_program.to_sdfg()
     sdfg.validate()
     return sdfg
-
 
 def kernel_sdfg():
     TS = dace.symbol("TS")
@@ -801,7 +803,6 @@ def test_len1_array_init():
     )
 
 
-@pytest.mark.current
 @pytest.mark.gpu_offload
 def test_reduce_to_array():
     sdfg = reduce_to_array_sdfg()
@@ -832,18 +833,106 @@ def test_reduce_to_scalar():
         orig_out,
         new_out,
     )
+
+@pytest.mark.gpu_offload
+def test_nbody():
+    workspace_root = Path(__file__).resolve().parents[6]
+    dace_repo_root = workspace_root / "dace"
+    npbench_repo_root = workspace_root / "npbench"
+    for repo_path in (dace_repo_root, npbench_repo_root):
+        repo_path_str = str(repo_path)
+        if repo_path_str not in sys.path:
+            sys.path.insert(0, repo_path_str)
+
+    nbody_module = importlib.import_module("npbench.benchmarks.nbody.nbody_dace")
+    init_module = importlib.import_module("npbench.benchmarks.nbody.nbody")
+
+    N, t_end, dt, softening, G = 25, 2.0, 0.05, 0.1, 1.0
+    mass, pos, vel, Nt = init_module.initialize(N, t_end, dt)
+
+    sdfg = nbody_module.nbody.to_sdfg()
+    orig_KE = np.zeros(Nt + 1, dtype=np.float64)
+    new_KE = np.zeros(Nt + 1, dtype=np.float64)
+
+    sdfg.view()
+
+    run_numerical_offloading_test(
+        sdfg,
+        {
+            "mass": mass.copy(),
+            "pos": pos.copy(),
+            "vel": vel.copy(),
+            "dt": np.float64(dt),
+            "G": np.float64(G),
+            "softening": np.float64(softening),
+            "N": np.int64(N),
+            "Nt": np.int64(Nt),
+            "__return_1": np.zeros(Nt + 1, dtype=np.float64),
+        },
+        orig_KE,
+        new_KE,
+        result_name="__return_0",
+    )
+
+    
     
 # ============================================================================
-# Fixtures and Helpers
+# Thesis Picture Graphs
 # ============================================================================
+def simple_image():
+    sdfg = dace.SDFG("scalar_to_gpu_sdfg")
+    # Arrays
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    # States + transition
+    s2 = sdfg.add_state("state", is_start_block=True)
+    # s2: use A inside a map, write to out
+    a_s2 = s2.add_access("A")
+    out_s2 = s2.add_access("B")
+    me, mx = s2.add_map("m", dict(i="0:10"))
+    t2 = s2.add_tasklet("tasklet", {"a"}, {"y"}, "y = a * 2")
+    s2.add_memlet_path(a_s2, me, t2, memlet=dace.Memlet("A[i]"), dst_conn="a")
+    s2.add_memlet_path(t2, mx, out_s2, memlet=dace.Memlet("B[i]"), src_conn="y")
+    sdfg.validate()
+    return sdfg
 
-@pytest.fixture
-def cleanup_sdfgs():
-    """Fixture to ensure SDFG cleanup between tests."""
-    yield
-    # Any cleanup logic here if needed
-    pass
 
+def conditional_image():
+    @dace.program
+    def conditional_branch_program(inp: dace.float64[5], out: dace.float64[5], flag: dace.int32):
+        if flag > 0:
+            for i in dace.map[0:5]:
+                inp[i] = inp[i] + 1.0
+        else:
+            inp[0] = inp[0] - 1.0
+
+    sdfg = conditional_branch_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+def loop_image():
+    @dace.program
+    def example(A: dace.float64[16], B: dace.float64[16],res:dace.float64) -> dace.float64:
+        for i in dace.map[0:16]:
+            B[i] += A[i]
+        return np.sum(B)
+
+    sdfg = example.to_sdfg(simplify=True)
+    return sdfg
+
+
+def nodes_image():
+    @dace.program
+    def example(A: dace.float64[3], flag: dace.int32):
+        for i in range(3):
+            if flag > 0:
+                A[i] += 1.0
+            else:
+                A[i] -= 1.0
+
+    sdfg = example.to_sdfg(simplify=True)
+    sdfg.validate()
+    return sdfg
 
 # ============================================================================
 # Conftest-style marker registration (if running standalone)
@@ -861,9 +950,9 @@ if __name__ == "__main__":
     
     # Run with: python testsuite_offloading.py
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
-    pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
+    #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
-    """
+
     import importlib
     import sys
     from pathlib import Path
@@ -873,12 +962,13 @@ if __name__ == "__main__":
     if str(npbench_repo_root) not in sys.path:
         sys.path.insert(0, str(npbench_repo_root))
 
-    module = importlib.import_module("npbench.benchmarks.azimint_hist.azimint_hist_dace")
-    sdfg = module.azimint_hist.to_sdfg()
+    module = importlib.import_module("npbench.benchmarks.azimint_naive.azimint_naive_dace")#"npbench.benchmarks.polybench.symm.symm_dace")
+    sdfg = module.azimint_naive.to_sdfg()
     sdfg.view()
-    OtA().apply_pass(sdfg, {})
     sdfg.validate()
+    print("is valid")
+    OtA().apply_pass(sdfg, {})
+    print("done")
+    sdfg.validate()
+    print("offl is valid")
     sdfg.view()
-    """
-    
-    

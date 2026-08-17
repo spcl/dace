@@ -172,7 +172,9 @@ class OffloadToAccelerator(ppl.Pass):
         :return: Some object if pass was applied, or None if nothing changed.
         """
         if SHOW_SDFGS: sdfg.view(filename=f"input_sdfg")
+
         
+        self.cache_scopes(sdfg)
         #try:
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
@@ -192,12 +194,70 @@ class OffloadToAccelerator(ppl.Pass):
         """
         # step 2:
         # make as many scalars as possible, as few len1-arrays as heuristically necessary
-        self.decide_length1_array_or_scalar_FPI(sdfg)
+        #self.decide_length1_array_or_scalar_FPI(sdfg)
 
-        # step 3: copy analysis -> IR stores analysis results
-        if VERBOSE: print("--- Analysis---")
-        sdfgIR = self.sdfg_to_IR(sdfg)
+        for _ in range(3):
+            # step 2: copy analysis -> IR stores analysis results
+            if VERBOSE: print("--- Analysis---")
+            self.hybrid_states = set()
+            sdfgIR = self.sdfg_to_IR(sdfg)
 
+            # step 3: resolve hybrid states 
+            if self.hybrid_states:
+                new_maps = set()
+                for state in self.hybrid_states:
+                    new_maps |= self.make_size1_map_wrappers(sdfg, state)
+
+                # run mapfusion
+                # TODO ask Yakup how to use this properly -> new_maps
+                mapfusion_pass = FullMapFusion(
+                    strict_dataflow=True,
+                    perform_vertical_map_fusion=True,
+                    perform_horizontal_map_fusion=True,
+                )
+                mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
+                mapfusion_pipeline.apply_pass(sdfg, {})
+
+            # step 4: assign scalars / len1-arrays correctly
+            all_scalars : set[str]= {data_name for data_name in sdfg.arrays if self._is_scalar(data_name, sdfg)}
+            all_len1arrays : set[str]= {data_name for data_name in sdfg.arrays if self._is_length1_array(data_name, sdfg)}        
+            gpu_written = set()
+            for state in sdfg.states():
+                for node in state.nodes():
+                    if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and self.has_GPU_schedule(node):
+                        gpu_written |= self.get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
+
+            #print("gpu_written:", gpu_written)
+            to_len1_arrays = all_scalars & gpu_written
+            to_scalars = all_len1arrays - gpu_written
+            to_scalars = {name for name in to_scalars if not name.startswith("__return")} # __return must always be by reference in case CPU/GPU reads results back
+            if to_len1_arrays:
+                print("to_len1_arrays", to_len1_arrays)
+                ConvertScalarsToLengthOneArrays(
+                    recursive=True,
+                    preserve_abi=True,
+                    filter=to_len1_arrays,
+                ).apply_pass(sdfg, {})
+            
+            if to_scalars:
+                print("to_scalars", to_scalars)
+                ConvertLengthOneArraysToScalars(
+                    recursive=True,
+                    preserve_abi=True,
+                    filter=to_scalars,
+                ).apply_pass(sdfg, {})
+
+            # rerun IR if anything has changed
+            if to_len1_arrays or to_scalars or self.hybrid_states: # sdfg has been changed
+                self.cache_scopes(sdfg)
+                continue # repeat phases 2 - 4
+            
+            break # else IR is correct for current sdfg, go on to next step
+
+        else:
+            raise RuntimeError("Passes 2-4 were repeated 3 times without conclusive result.")
+
+        
         # TODO: remove eventually
         def assert_no_scalars(node:OffloadingIRNode):
             scalars = {data_name for data_name in node.gpu_set | node.cpu_set if self._is_scalar(data_name, sdfg)}
@@ -215,25 +275,27 @@ class OffloadToAccelerator(ppl.Pass):
         #    print(e)
         #    sdfg.view(filename=f"output_sdfg")
 
-
-    # helper for testing, usually internal details are not exposed
-    def get_IR(self, sdfg):
-        self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
-        self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
-        return self.sdfg_to_IR(sdfg)
-
+    def cache_scopes(self, sdfg):
+        self.cached_scopes = {}
+        for state in sdfg.states():
+            self.cached_scopes[state] = state.scope_dict() 
+    
     ### STEP 1 ###
     def set_toplevel_to_GPU(self, sdfg: SDFG, type:Type):
         assert type in (nodes.MapEntry, nodes.MapExit, nodes.LibraryNode)
 
         for state in sdfg.states():
-            scope_dict = state.scope_dict() 
+            scope_dict = self.cached_scopes[state] if state in self.cached_scopes else None # None -> within nested SDFGs
 
             for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    self.set_toplevel_to_GPU(node.sdfg, type)
+                    continue
+
                 if not isinstance(node, type): # filter
                     continue
                     
-                if scope_dict[node] is None: # toplevel node -> change schedule
+                if scope_dict and node in scope_dict and scope_dict[node] is None: # toplevel node -> change schedule
                     if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
                         node.map.schedule = dtypes.ScheduleType.GPU_Device
 
@@ -420,7 +482,7 @@ class OffloadToAccelerator(ppl.Pass):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # TODO Q: how not to hardcode?
             
             # get all nodes within this map's scope
-            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
+            map_nodes = [n for n, parent in self.cached_scopes[state].items() if parent is map_entry]
            
             # input & output nodes
             input_and_output = self.get_data_used_by_incoming_access_nodes(sdfg, state, map_entry) | self.get_data_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
@@ -510,7 +572,12 @@ class OffloadToAccelerator(ppl.Pass):
 
         # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU
         overlap = gpu_set & cpu_set
-        if overlap and not recursive_call:
+        if overlap:
+            self.hybrid_states.add(state)
+            gpu_set |= cpu_set
+            cpu_set = set()
+ 
+        """if overlap and not recursive_call:
             self.make_size1_map_wrappers(sdfg, state)
 
             resolved = False
@@ -521,8 +588,9 @@ class OffloadToAccelerator(ppl.Pass):
             if not resolved:
                 sdfg.view()
                 raise NotImplementedError(f"Unable to resolve with size1 wrappers: This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
-                
-            """#OLD BEHAVIOUR
+                """
+
+        """#OLD BEHAVIOUR
             def set_to_gpu(type, nodes):
                 has_gpu_node = False
                 for node in nodes:
@@ -684,7 +752,6 @@ class OffloadToAccelerator(ppl.Pass):
 
     def _parse_to_IR(self, sdfg:SDFG, cfr:ControlFlowRegion, curr_node:OffloadingIRNode) -> OffloadingIRNode:
         # NOTE to self: ControlFlowRegion inherits from ControlFlowBlock
-        
         block : ControlFlowBlock
         for block in cfr.bfs_nodes():
 
@@ -724,7 +791,7 @@ class OffloadToAccelerator(ppl.Pass):
 
                 # if else
                 if isinstance(block, ConditionalBlock):
-                    cond_block : LoopRegion = block
+                    cond_block : ConditionalBlock = block
 
                     # branch condition
                     meta_data_node : OffloadingIRNode = None
@@ -1420,6 +1487,15 @@ class OffloadToAccelerator(ppl.Pass):
             state.add_edge(last_access, None, map_exit, in_conn, internal_memlet)
             state.add_edge(map_exit, out_conn, outside_access, None, external_memlet)
 
+    def _store_output_scalars_on_GPU(self, sdfg:SDFG, state: SDFGState, map_exit: nodes.MapExit) -> None:
+        for edge in state.out_edges(map_exit):
+            if not edge or not isinstance(edge.dst, nodes.AccessNode):
+                continue
+            access = edge.dst
+            if access.data and self._is_scalar(access.data, sdfg):
+                if DEBUG_SIZE1_MAPS: print("found output scalar: ", access.data)
+                sdfg.arrays[access.data].storage = dtypes.StorageType.GPU_Global
+
     def make_size1_map_wrappers(self, sdfg:SDFG, state:SDFGState):
         # top level GPU nodes partition the graph
 
@@ -1464,16 +1540,12 @@ class OffloadToAccelerator(ppl.Pass):
 
                 # Ensure all map inputs are also outputs to avoid dace erroneusly labeling them as constants
                 self._forward_input_only_map_data(state, map_entry, map_exit)
-                
-        # run mapfusion
-        # TODO ask Yakup how to use this properly -> new_maps
-        """mapfusion_pass = FullMapFusion(
-            strict_dataflow=True,
-            perform_vertical_map_fusion=True,
-            perform_horizontal_map_fusion=True,
-        )
-        mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
-        mapfusion_pipeline.apply_pass(sdfg, {})"""
+
+                # Avoid illegal copy from gpu_device scheduled map to (by default) cpu_heap stored scalar: make all write scalars gpu_global
+                self._store_output_scalars_on_GPU(sdfg, state, map_exit)
+
+        return new_maps
+        
 
    
 ################################################################
