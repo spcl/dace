@@ -611,7 +611,7 @@ def _concat(visitor: ProgramVisitor,
         for i, d in enumerate(descs[1:]):
             other_shape = list(d.shape)
             other_shape[axis] = 0
-            if other_shape != first_shape:
+            if not symbolic.shapes_equal(other_shape, first_shape):
                 raise ValueError(f'Array shapes do not match at index {i}')
 
     shape[axis] = sum(desc.shape[axis] for desc in descs)
@@ -698,7 +698,7 @@ def _stack(visitor: ProgramVisitor,
     descs = [sdfg.arrays[a] for a in arrays]
     shape = descs[0].shape
     for i, d in enumerate(descs[1:]):
-        if d.shape != shape:
+        if not symbolic.shapes_equal(d.shape, shape):
             raise ValueError(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
 
     if axis > len(shape):

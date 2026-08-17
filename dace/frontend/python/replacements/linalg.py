@@ -60,7 +60,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
-        res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
+        # Equalize first: the two dims can reach here as different sympy instances of one name,
+        # which symbolic.equal cannot decide and reports as a spurious inconclusive mismatch.
+        # pystr_to_symbolic also converts a plain int dim, which equalize_symbols_across itself
+        # does not accept (it indexes .free_symbols on its arguments).
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[-1])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[-2])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
@@ -83,7 +89,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
 
-        res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[-1])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
@@ -96,7 +104,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
 
-        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[0])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
@@ -109,7 +119,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
-        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[0])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
@@ -205,7 +217,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
     if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
         raise NotImplementedError
 
-    if arr_a.shape[0] != arr_b.shape[0]:
+    if symbolic.inequal_symbols(arr_a.shape[0], arr_b.shape[0]):
         raise SyntaxError()
 
     if op_out:
@@ -341,7 +353,9 @@ def _tensordot(pv: 'ProgramVisitor',
         raise ValueError("Axes for right tensor are out-of-bounds.")
     if len(left_axes) != len(right_axes):
         raise ValueError("The input tensors must have the same number of contracting modes.")
-    if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
+    left_dims = [arr_a.shape[l] for l in left_axes]
+    right_dims = [arr_b.shape[r] for r in right_axes]
+    if not symbolic.shapes_equal(left_dims, right_dims):
         raise ValueError("The input tensors' contracting modes must have the same length.")
 
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]

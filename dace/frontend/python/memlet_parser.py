@@ -8,7 +8,7 @@ from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
+from dace.symbolic import pystr_to_symbolic, shapes_equal, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
@@ -162,7 +162,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 # Boolean array indexing
                 if len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(array.shape):
+                if not shapes_equal(desc.shape, array.shape):
                     raise IndexError(f'Invalid indexing into array "{dim.id}". '
                                      'Shape of boolean index must match original array.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
