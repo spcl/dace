@@ -362,8 +362,8 @@ class LoopToMap(xf.MultiStateTransformation):
             return True
 
         # The dominator-heavy sort below is a no-op without interstate assignments.
-        symbols_that_may_be_used: Set[str] = {itervar}
-        used_before_assignment: Set[str] = set()
+        symbols_that_may_be_used: OrderedSet[str] = OrderedSet([itervar])
+        used_before_assignment: OrderedSet[str] = OrderedSet()
         if any(e.data.assignments for block in self.loop.all_control_flow_blocks()
                for e in block.parent_graph.out_edges(block)):
             in_order_loop_blocks = list(
@@ -376,14 +376,16 @@ class LoopToMap(xf.MultiStateTransformation):
                         assigned_in_branch = OrderedSet()
                         for inner in body.all_control_flow_blocks():
                             for ie in inner.parent_graph.out_edges(inner):
-                                assigned_in_branch |= set(ie.data.assignments.keys())
+                                assigned_in_branch |= OrderedSet(ie.data.assignments.keys())
                         per_branch.append(assigned_in_branch)
                     if per_branch:
-                        symbols_that_may_be_used |= set.intersection(*per_branch)
+                        # OrderedSet, so intersect through its own API -- ``set.intersection``
+                        # is an unbound descriptor and raises on anything but a ``set``.
+                        symbols_that_may_be_used |= per_branch[0].intersection(*per_branch[1:])
 
                 # ``read_symbols()`` misses the block's own dataflow reads, which come first.
                 try:
-                    block_reads = {str(s) for s in block.free_symbols}
+                    block_reads = OrderedSet(str(s) for s in block.free_symbols)
                 except Exception:
                     block_reads = OrderedSet()
                 used_before_assignment |= (block_reads - symbols_that_may_be_used)
