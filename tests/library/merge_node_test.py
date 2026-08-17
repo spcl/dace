@@ -254,3 +254,41 @@ def test_fortran_layout_scalar_broadcast():
     out = np.zeros((n, m), order="F", dtype=np.float64)
     sdfg(t=t, f=f, mask=mask, out=out)
     np.testing.assert_array_equal(out, np.where(mask.astype(bool), 13.5, f))
+
+
+def test_symbolic_shape_iteration_range():
+    """A symbolically-shaped operand: the expansion's iteration extent must be the canonical
+    ``int_floor`` of the subset, not a Python floor-division that leaves a ``floor()`` in the range."""
+    N = dace.symbol("N", dace.int64, nonnegative=True)
+    sdfg = dace.SDFG("merge_symbolic")
+    for name in ("t", "f", "out"):
+        sdfg.add_array(name, [N], dace.float64, transient=False)
+    sdfg.add_array("mask", [N], dace.int32, transient=False)
+    state = sdfg.add_state("merge_state")
+    node = MergeLibraryNode("merge_main")
+    state.add_node(node)
+    state.add_edge(state.add_access("t"), None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME, dace.Memlet("t[0:N]"))
+    state.add_edge(state.add_access("f"), None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME, dace.Memlet("f[0:N]"))
+    state.add_edge(state.add_access("mask"), None, node, MergeLibraryNode.MASK_CONNECTOR_NAME, dace.Memlet("mask[0:N]"))
+    state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("out"), None, dace.Memlet("out[0:N]"))
+    sdfg.validate()
+
+    node.expand(state)
+    inner = next(nd.sdfg for nd in state.nodes() if isinstance(nd, dace.nodes.NestedSDFG))
+    for conn in (MergeLibraryNode.TRUE_CONNECTOR_NAME, MergeLibraryNode.OUTPUT_CONNECTOR_NAME):
+        shape = inner.arrays[conn].shape
+        # Symbols compare by identity, not name, so match on the rendered extent.
+        assert len(shape) == 1 and str(shape[0]) == "N", f"connector '{conn}' lost the symbolic extent"
+    entry = next(nd for st in inner.states() for nd in st.nodes() if isinstance(nd, dace.nodes.MapEntry))
+    extent = entry.map.range[0][1] + 1
+    assert "floor" not in str(extent).lower(), f"map extent kept a non-canonical floor term: {extent}"
+    assert str(extent) == "N", f"map extent {extent} is not the operand extent N"
+
+    n = 6
+    rng = np.random.default_rng(11)
+    t = rng.standard_normal(n, dtype=np.float64)
+    f = rng.standard_normal(n, dtype=np.float64)
+    mask = (rng.random(n) > 0.5).astype(np.int32)
+    out = np.zeros(n, dtype=np.float64)
+    sdfg(t=t, f=f, mask=mask, out=out, N=n)
+    np.testing.assert_array_equal(out, np.where(mask.astype(bool), t, f))
