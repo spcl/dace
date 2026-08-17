@@ -2,10 +2,13 @@
 """ Tests for ``MarkSIMDMaps`` and the OpenMP ``simd`` clause it drives. """
 
 import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg import infer_types
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 
 
@@ -115,6 +118,70 @@ def test_sequential_scatter_withholds_the_clause():
     assert not any(n.map.omp_simd for _, n in entries(sdfg))
 
 
+def double_tasklet(state) -> None:
+    """``b_out[0] = a_in[0] * 2`` as plain dataflow."""
+    t = state.add_tasklet('nt', {'a': None}, {'b': None}, 'b = a * 2.0')
+    state.add_edge(state.add_read('a_in'), None, t, 'a', dace.Memlet('a_in[0]'))
+    state.add_edge(t, 'b', state.add_write('b_out'), None, dace.Memlet('b_out[0]'))
+
+
+def inner_sdfg(payload: str) -> dace.SDFG:
+    nsdfg = dace.SDFG(f'inner_{payload}')
+    nsdfg.add_array('a_in', [1], dace.float64)
+    nsdfg.add_array('b_out', [1], dace.float64)
+    if payload == 'loopregion':
+        loop = LoopRegion('nloop', 'k < 1', 'k', 'k = 0', 'k = k + 1')
+        nsdfg.add_node(loop, is_start_block=True)
+        double_tasklet(loop.add_state(is_start_block=True))
+    elif payload == 'backedge':
+        s0 = nsdfg.add_state(is_start_block=True)
+        s1 = nsdfg.add_state()
+        double_tasklet(s1)
+        # The cycle is the point; the conditions keep it from ever being taken.
+        nsdfg.add_edge(s0, s1, dace.InterstateEdge(condition='1 > 0'))
+        nsdfg.add_edge(s1, s0, dace.InterstateEdge(condition='0 > 1'))
+    elif payload == 'map':
+        nsdfg.add_state().add_mapped_tasklet('innermap',
+                                             dict(k='0:1'),
+                                             dict(a=dace.Memlet('a_in[0]')),
+                                             'b = a * 2.0',
+                                             dict(b=dace.Memlet('b_out[0]')),
+                                             external_edges=True)
+    elif payload == 'nested':
+        nstate = nsdfg.add_state()
+        deeper = nstate.add_nested_sdfg(inner_sdfg('straight'), {'a_in': None}, {'b_out': None})
+        nstate.add_edge(nstate.add_read('a_in'), None, deeper, 'a_in', dace.Memlet('a_in[0]'))
+        nstate.add_edge(deeper, 'b_out', nstate.add_write('b_out'), None, dace.Memlet('b_out[0]'))
+    else:
+        double_tasklet(nsdfg.add_state())
+    return nsdfg
+
+
+def outlined_body_sdfg(payload: str) -> dace.SDFG:
+    sdfg = dace.SDFG(f'simd_outlined_{payload}')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('outermap', dict(i='0:10'), schedule=dtypes.ScheduleType.CPU_Multicore)
+    body = state.add_nested_sdfg(inner_sdfg(payload), {'a_in': None}, {'b_out': None})
+    state.add_memlet_path(state.add_read('A'), entry, body, dst_conn='a_in', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(body, exit_node, state.add_write('B'), src_conn='b_out', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('payload,leaf', [('straight', True), ('nested', True), ('loopregion', False),
+                                          ('backedge', False), ('map', False)])
+def test_outlined_body_is_opened_not_refused(payload, leaf):
+    """An outlined body (what the Fortran frontend emits for every map) is opened rather than
+    refused on sight; a loop -- ``LoopRegion`` or back edge -- or a map inside withholds the
+    clause."""
+    sdfg = outlined_body_sdfg(payload)
+    mark(sdfg)
+    outer = next(n for _, n in entries(sdfg) if n.map.params == ['i'])
+    assert outer.map.omp_simd is leaf
+
+
 def test_config_switch_suppresses_the_clause():
     """The escape hatch keeps the pass out of code generation entirely."""
 
@@ -135,4 +202,7 @@ if __name__ == '__main__':
     test_outer_map_of_a_nest_is_not_marked()
     test_minmax_reduction_withholds_the_clause()
     test_sequential_scatter_withholds_the_clause()
+    for name, is_leaf in (('straight', True), ('nested', True), ('loopregion', False), ('backedge', False), ('map',
+                                                                                                             False)):
+        test_outlined_body_is_opened_not_refused(name, is_leaf)
     test_config_switch_suppresses_the_clause()
