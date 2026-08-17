@@ -9,7 +9,8 @@ import threading
 import pickle
 import re
 import types
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Type, Union, TYPE_CHECKING, List
+from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, Union,
+                    TYPE_CHECKING)
 import numpy
 import sympy.abc
 import sympy.printing.str
@@ -3993,6 +3994,20 @@ def equalize_symbols_across(*exprs: sympy.Expr) -> Tuple[sympy.Expr, ...]:
     if not repl:
         return equalized
     return tuple(e.xreplace(repl) for e in equalized)
+
+
+def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
+    """True iff two shape / extent sequences agree, each dimension compared by NAME.
+
+    Shapes reach a check from different sources -- a descriptor a layout pass rebuilt against a
+    bound reparsed from a string -- so one name arrives as several sympy instances that raw ``==``
+    calls different. Comparing with ``!=`` then rejects shapes that match, with a self-refuting
+    message naming the same symbol on both sides. Ranks are compared first, so this is also the
+    length check.
+    """
+    if len(shape_a) != len(shape_b):
+        return False
+    return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
 
 
 def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:

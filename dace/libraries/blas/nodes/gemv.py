@@ -437,8 +437,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         out_subset = copy.deepcopy(out_memlet.subset)
         out_subset.squeeze()
         size_y_out = out_subset.size()
-        if size_y_in is not None and (len(size_y_in) != len(size_y_out)
-                                      or any(symbolic.inequal_symbols(i, o) for i, o in zip(size_y_in, size_y_out))):
+        if size_y_in is not None and not symbolic.shapes_equal(size_y_in, size_y_out):
             raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or symbolic.inequal_symbols(size_y_out[0], a_rows)):
             raise ValueError("Vector input to GEMV must match matrix rows.")
