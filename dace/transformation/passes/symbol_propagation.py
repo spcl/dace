@@ -182,7 +182,7 @@ class SymbolPropagation(ppl.Pass):
 
     def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> Set[str]:
         """Drop interstate-edge assignments whose LHS is no longer referenced anywhere.
-        ``replace_dict`` does not reach into descriptors, so substitute there first (a no-op,
+        ``replace_dict`` reaches into descriptors as well, so substitute there first (a no-op,
         since the symbol is that expression), then sweep to a fixed point."""
         removed: Set[str] = set()
         while True:
@@ -208,8 +208,16 @@ class SymbolPropagation(ppl.Pass):
                         bindings[lhs] = rhs
                     elif bindings[lhs] is not None and bindings[lhs] != rhs:
                         bindings[lhs] = None
-            # A data read is not a legal descriptor shape, so the symbol stays live.
-            safe_subs = {sym: rhs for sym, rhs in bindings.items() if rhs is not None and not _is_array_access(rhs)}
+            # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope: a
+            # right-hand side reading data, or built from a symbol an inner block assigns (a loop
+            # iteration variable), is not legal there. ``K = i + 1`` would size a transient by the
+            # loop variable and allocate it outside the loop.
+            invariant = {str(s) for s in sd.free_symbols} | set(sd.constants_prop.keys())
+            safe_subs = {
+                sym: rhs
+                for sym, rhs in bindings.items()
+                if rhs is not None and not _is_array_access(rhs) and _free_symbols(rhs) <= invariant
+            }
 
             if safe_subs:
                 sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)

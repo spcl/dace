@@ -383,7 +383,7 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
             for jl in range(kidia, kfdia + 1):
                 ptend[jk, jl] = ptend[jk, jl] + 3.0
 
-    def _kfdia_plus1_syms(g):
+    def kfdia_plus1_syms(g):
         return {k for e in g.all_interstate_edges() for k in e.data.assignments if k.startswith('kfdia_plus_1')}
 
     nlev, nlon = 5, 8
@@ -399,12 +399,12 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
     #     ``kfdia_plus_1 -> (kfdia + 1)`` directly and drops the dead iedge
     #     assignments.
     sdfg = cloudsc_kidia_kfdia.to_sdfg(simplify=True)
-    assert _kfdia_plus1_syms(sdfg), 'simplify should promote kfdia + 1 to kfdia_plus_1 symbols'
+    assert kfdia_plus1_syms(sdfg), 'simplify should promote kfdia + 1 to kfdia_plus_1 symbols'
     assert isinstance(sdfg.arrays.get('kfdia'), dace.data.Scalar)
     propagated = SymbolPropagation().apply_pass(sdfg, {})
     assert propagated and any(s.startswith('kfdia_plus_1') for s in propagated), \
         f'symprop should fold ``kfdia_plus_1 -> (kfdia + 1)`` when kfdia is read-only Scalar; got {propagated}'
-    assert not _kfdia_plus1_syms(sdfg), 'all kfdia_plus_1 aliases should be dead-iedge-eliminated'
+    assert not kfdia_plus1_syms(sdfg), 'all kfdia_plus_1 aliases should be dead-iedge-eliminated'
     sdfg.validate()
     out1 = np.zeros((nlev, nlon))
     sdfg(pt=pt.copy(), ptend=out1, kidia=0, kfdia=nlon - 1, klev=nlev, klon=nlon)
@@ -430,14 +430,13 @@ def test_cloudsc_kidia_kfdia_promote_then_propagate():
     assert np.allclose(out2, pt * 2.0 + 3.0)
 
 
-_SP_N = dace.symbol("_SP_N")
+SP_N = dace.symbol("SP_N")
 
 
 @dace.program
-def _carried_index_kernel(a: dace.float64[_SP_N], b: dace.float64[_SP_N], c: dace.float64[_SP_N],
-                          d: dace.float64[_SP_N]):
+def carried_index_kernel(a: dace.float64[SP_N], b: dace.float64[SP_N], c: dace.float64[SP_N], d: dace.float64[SP_N]):
     j = -1
-    for i in range(_SP_N // 2):
+    for i in range(SP_N // 2):
         k = j + 1
         a[i] = b[k] - d[i]
         j = k + 1
@@ -455,15 +454,15 @@ def test_carried_index_symbol_not_propagated_stale():
     rng = np.random.default_rng(0)
     base = {name: rng.random(n) for name in "abcd"}
 
-    ref = _carried_index_kernel.to_sdfg(simplify=True)
+    ref = carried_index_kernel.to_sdfg(simplify=True)
     cand = copy.deepcopy(ref)
     SymbolPropagation().apply_pass(cand, {})
     cand.validate()
 
     ra = {name: arr.copy() for name, arr in base.items()}
-    ref(**ra, _SP_N=n)
+    ref(**ra, SP_N=n)
     ca = {name: arr.copy() for name, arr in base.items()}
-    cand(**ca, _SP_N=n)
+    cand(**ca, SP_N=n)
     for name in "abcd":
         assert np.allclose(ra[name], ca[name]), f"{name}: SymbolPropagation changed the result"
 
@@ -593,3 +592,23 @@ if __name__ == "__main__":
     test_dead_iedge_assignment_eliminated_after_substitution()
     test_dead_iedge_chain_unravels_to_fixed_point()
     test_dead_iedge_preserved_when_lhs_still_used()
+
+
+def test_a_loop_varying_binding_does_not_reach_descriptor_shapes():
+    """``replace_dict`` rewrites descriptor shapes too, and those live at SDFG scope: propagating
+    ``K = i + 1`` would size a transient by the loop variable and allocate it outside the loop."""
+    sdfg = dace.SDFG('symprop_loop_varying_shape')
+    sdfg.add_array('a', (32, ), dace.float64)
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_transient('tmp', ('K', ), dace.float64)
+
+    loop = LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('first', is_start_block=True)
+    second = loop.add_state('second')
+    loop.add_edge(first, second, dace.InterstateEdge(assignments={'K': 'i + 1'}))
+    second.add_mapped_tasklet('write', {'j': '0:K'}, {}, 'o = 1.0', {'o': dace.Memlet('tmp[j]')}, external_edges=True)
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+    assert [str(s) for s in sdfg.arrays['tmp'].shape] == ['K']
