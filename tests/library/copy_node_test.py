@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy_node import (CopyLibraryNode, _make_expansion_sdfg, cuda2d_pitch_params,
                                                      select_copy_implementation)
@@ -1852,6 +1854,39 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     memcpy_call = code.find('MemcpyAsync(_cpy_out, _cpy_in')
     assert stream_decl != -1 and memcpy_call != -1, code
     assert stream_decl < memcpy_call
+
+
+def test_in_kernel_copy_does_not_emit_a_grid_barrier():
+    """A grid barrier releases only once EVERY thread reaches it. The copy expansion runs inside a
+    single-thread component of a persistent kernel, so a barrier at its own state boundary is
+    reached by one thread of one block and hangs the grid. Ordering comes from the enclosing
+    state's barrier, which sits outside that guard."""
+    N = dace.symbol('N_gbar', dtype=dace.int64)
+
+    @dace.program(auto_optimize=False, device=dace.dtypes.DeviceType.GPU)
+    def gbar_prog(A: dace.float64[N], B: dace.float64[N]):
+        a = 10.2
+        for t in range(1, 10):
+            if t < N:
+                A[:] = (A + B + a) / 2
+                a += 1
+
+    sdfg = gbar_prog.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    transform = GPUPersistentKernel()
+    transform.setup_match(SubgraphView(sdfg, content_nodes))
+    transform.kernel_prefix = 'stuff'
+    transform.apply(sdfg)
+
+    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+    marker = 'DACE_DFI void copy_'
+    assert marker in cuda, cuda
+    start = cuda.index(marker)
+    end = cuda.index('DACE_DFI', start + len(marker))
+    assert '__gbar.Sync();' not in cuda[start:end], cuda[start:end]
+    # The kernel's own state machine still gets its barriers.
+    assert '__gbar.Sync();' in cuda[end:]
 
 
 def test_shared_to_global_uses_the_block_collective_helper():
