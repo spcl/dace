@@ -290,9 +290,11 @@ if(DACE_ENABLE_HIP)
   # On the NVIDIA platform hip::host carries the ROCm include directory and nothing else, so a host
   # translation unit that reaches hip_runtime.h lands in nvidia_detail/ and fails to find
   # cuda_runtime.h. nvcc adds the toolkit implicitly; the host compiler has to be told.
+  # nvtx3 for the same reason: this platform has no roctracer, so the TX-marker instrumentation
+  # emits NVTX here. The target is header-only, so it costs nothing when nothing is instrumented.
   if(CMAKE_HIP_PLATFORM STREQUAL "nvidia")
     find_package(CUDAToolkit REQUIRED)
-    set(DACE_LIBS ${DACE_LIBS} CUDA::cudart)
+    set(DACE_LIBS ${DACE_LIBS} CUDA::cudart CUDA::nvtx3)
   endif()
 
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
