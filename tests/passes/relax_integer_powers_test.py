@@ -284,3 +284,19 @@ def test_loop_condition_off_by_one_not_relaxed():
 
     assert 'ipow' not in build('i < R**(K - i - 1)')  # exponent uses i, negative at i = K
     assert 'ipow' in build('i < R**K')  # constant exponent -> safe to relax
+
+
+def test_int64_power_compiles_as_an_integer():
+    """``pow`` on int64 symbols must stay integral: as a double it is neither a legal OpenMP
+    controlling predicate nor a pointer offset, and the generated code fails to build."""
+    R = dace.symbol('R', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64)
+
+    @dace.program
+    def tester(A: dace.float64[R**K]):
+        for i in dace.map[0:R**K]:
+            A[i] = 1.0
+
+    a = np.zeros(8)
+    tester(a, R=2, K=3)
+    assert np.allclose(a, 1.0)
