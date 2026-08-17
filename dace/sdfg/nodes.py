@@ -1411,6 +1411,11 @@ class LibraryNode(CodeNode):
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty(allow_none=True)
+    # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
+    # node, and expansion carries this onto whatever the node expands into.
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
 
     #: Whether this node must be expanded before other library nodes in the same state.
     #: Set on nodes whose expansion *reads* neighbouring library nodes and therefore needs

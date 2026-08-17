@@ -48,10 +48,15 @@ def test_constant_specialization():
     # the test valid for both CPU generators -- only the legacy one emits ``CopyND ... Dynamic``.
     entry = re.compile(r'void __program_spectest_internal\([^)]*\)')
 
+    # Was ``'Dynamic' in code``: the implicit copy used to lower to the ``dace::CopyNDDynamic``
+    # runtime template, whose name doubled as the "shape is still symbolic" marker. Explicit copy
+    # nodes lower it to a mapped tasklet, so assert specialization itself.
     code_nonspec = spec_sdfg.generate_code()
     sig_nonspec = entry.search(code_nonspec[0].code)
     assert sig_nonspec is not None
     assert re.search(r'\bN\b', sig_nonspec.group(0)) and re.search(r'\bM\b', sig_nonspec.group(0))
+    assert 'constexpr int64_t N' not in code_nonspec[0].code
+    assert 'constexpr int64_t M' not in code_nonspec[0].code
 
     spec_sdfg.specialize(dict(N=n, M=m))
     code_spec = spec_sdfg.generate_code()

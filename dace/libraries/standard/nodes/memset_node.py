@@ -11,7 +11,8 @@ from dace.utils import prod
 from .. import environments
 
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
-                                            auto_dispatch, collapse_shape_and_strides, is_parallel_cpu_transfer_size)
+                                            auto_dispatch, collapse_shape_and_strides, is_in_parallel_scope,
+                                            is_parallel_cpu_transfer_size)
 
 
 def _make_memset_skeleton(node: "MemsetLibraryNode",
@@ -99,8 +100,11 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     # CPU main-memory contiguous zero: the element map ('pure') is the DEFAULT, taken unless the
     # count is PROVABLY below parallel_transfer_min_elements, which keeps a single memset ('CPU').
     # A symbolic count is assumed big. Register / non-main-memory storages also stay serial.
+    # Inside a parallel map the element map is sequentialized anyway, so the single call wins there
+    # at any size.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
-    if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements()):
+    if (out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements())
+            and not is_in_parallel_scope(node, parent_state)):
         return 'pure'
     return 'CPU'
 

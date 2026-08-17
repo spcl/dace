@@ -1985,6 +1985,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
+        # A pointer connector bound to a variable defined as a scalar takes its ADDRESS -- done by
+        # the Scalar-source-feeding-a-pointer-connector branch below, which also carves out opaque
+        # dtypes (MPI_Comm et al.) that must NOT be address-taken. Prefixing '&' here as well emits
+        # '&&s'.
+
         defined = None
 
         if var_type in (DefinedType.Scalar, DefinedType.Pointer):

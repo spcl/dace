@@ -16,6 +16,11 @@ from tests.corpus.polybench.datamining.covariance import covariance, init_array 
 from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d, init_array as _fdtd2d_init_array
 
 
+def _wcr_edges(sdfg):
+    """``(state, edge)`` for every edge still carrying a WCR."""
+    return [(st, e) for st in sdfg.all_states() for e in st.edges() if e.data.wcr is not None]
+
+
 def _count_copy_nodes(sdfg):
     """Count CopyLibraryNode instances across all states (recursive)."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode))
@@ -969,7 +974,9 @@ def test_iec_symbolic_reshape_targets_the_whole_destination():
     """``A[1:N-1, 0:M]`` into a transient shaped ``[N-2, M]`` moves the whole destination, so the
     derived side must be the destination's full range. The element counts are equal but come from
     two symbol instances of the same name, so a cancel-based comparison answers None; taking
-    ``src_subset`` then wrote one row past the end of the transient."""
+    ``src_subset`` then wrote one row past the end of the transient. Equalizing first keeps the
+    comparison conclusive, so this passes on the strict ``is True`` gate rather than depending on
+    a loose gate to paper over an unresolved symbol identity."""
     N = dace.symbol("N", dtype=dace.int64)
     M = dace.symbol("M", dtype=dace.int64)
     sdfg = dace.SDFG("iec_symbolic_reshape")
@@ -1035,6 +1042,146 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     # against each other, so what A ends up holding is not defined by the graph. The end-to-end
     # semantics live in tests/codegen/dependency_edge_test.py, where the two chains write
     # different arrays.
+
+
+def test_iec_skips_wcr_staging_edge():
+    """A WCR edge is a reduction, not a copy. ``CopyLibraryNode``'s expansions emit an unconditional
+    store, so lifting the tile-merge edge AccumulateTransient produces turns ``out[i] += tile[i]``
+    into ``out[i] = tile[i]`` -- silently, with a valid SDFG and a wrong answer."""
+    sdfg = dace.SDFG("iec_wcr_staging")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_transient("tile", [1], dace.float64)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:8"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("copy", {"inp"}, {"o"}, "o = inp")
+    tile = state.add_access("tile")
+    state.add_memlet_path(state.add_read("A"), me, t, dst_conn="inp", memlet=Memlet("A[i]"))
+    state.add_edge(t, "o", tile, None, Memlet("tile[0]"))
+    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
+    state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0]", wcr="lambda a, b: a + b"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a WCR edge must not be lowered to CopyLibraryNode"
+    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
+    assert wcr_edges, "the accumulate must survive the pass"
+    sdfg.validate()
+
+    A = np.arange(8, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, out=out)
+    assert out[0] == A.sum(), f"expected the accumulate {A.sum()}, got {out[0]} (an overwrite keeps only the last)"
+
+
+def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
+    """An empty memlet is a happens-before edge, and lifting a copy moves the write it constrained.
+
+    The map reads ``A[i]`` into ``tmp_A`` and writes ``A[(i+1)%2]`` from ``tmp_B``, with an ordering
+    edge saying the read happens after that write. Left on the access node, the constraint no longer
+    reaches the node that performs the read, and the copy is free to be scheduled ahead of it -- a
+    silently wrong answer, not an error.
+    """
+    sdfg = dace.SDFG("iec_ordering_edge")
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [2], dace.int32)
+    sdfg.add_transient("tmp_A", [1], dace.int32)
+    sdfg.add_transient("tmp_B", [1], dace.int32)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    for conn in ("IN_A", "IN_B"):
+        me.add_in_connector(conn)
+    for conn in ("OUT_A", "OUT_B"):
+        me.add_out_connector(conn)
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+
+    a_write, a_ordered = state.add_write("A"), state.add_write("A")
+    tmp_a, tmp_b = state.add_write("tmp_A"), state.add_write("tmp_B")
+    state.add_edge(state.add_read("A"), None, me, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(state.add_read("B"), None, me, "IN_B", Memlet("B[0:2]"))
+    state.add_edge(me, "OUT_A", tmp_a, None, Memlet("A[i]"))
+    state.add_edge(me, "OUT_B", tmp_b, None, Memlet("B[i]"))
+    state.add_edge(tmp_a, None, a_write, None, Memlet("tmp_A[0] -> [((i+1)%2)]"))
+    state.add_edge(a_write, None, mx, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(tmp_b, None, a_ordered, None, Memlet("tmp_B[0] -> [((i+1)%2)]"))
+    state.add_edge(a_ordered, None, tmp_a, None, Memlet())  # the ordering edge
+    state.add_edge(a_ordered, None, mx, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(mx, "OUT_A", state.add_write("A"), None, Memlet("A[0:2]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
+    assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
+    ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
+    assert a_ordered in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
+
+    a = np.array([7, 3], dtype=np.int32)
+    sdfg(A=a, B=np.array([11, 13], dtype=np.int32))
+    assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
+
+
+def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
+    """Nothing orders two writes to one region that reach a node on separate edges. Plain copy-edge
+    codegen emits the copy when its SOURCE access node is visited, so it lands before the tasklet
+    that supersedes it; lifting it to a node would re-sort it after and flip which write survives."""
+    sdfg = dace.SDFG("competing_writer")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    a = state.add_access("A")
+    b = state.add_access("B")
+    tasklet = state.add_tasklet("supersede", {"i"}, {"o"}, "o = i + 1.0")
+    state.add_nedge(a, b, Memlet("A[0:4] -> [0:4]"))
+    state.add_edge(a, None, tasklet, "i", Memlet("A[0]"))
+    state.add_edge(tasklet, "o", b, None, Memlet("B[0]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert not lifted, "a copy competing with another write to B was lifted"
+
+
+def test_zero_element_copy_is_not_lifted():
+    """A copy that moves nothing needs no node: plain copy-edge codegen emits nothing for it."""
+    sdfg = dace.SDFG("zero_element_copy")
+    for name in "AB":
+        sdfg.add_array(name, [20, 20], dace.float64, transient=True)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[2:17, 2:2] -> [2:18, 3:3]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert state.number_of_nodes() == 2
+    assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+
+
+def test_lifted_copy_inherits_the_state_instrumentation():
+    """Providers read a copy edge's instrumentation off the state it lives in (``on_copy_begin``);
+    as a node the copy carries its own setting, or it drops out of the report."""
+    sdfg = dace.SDFG("instrumented_copy")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.instrument = dace.InstrumentationType.GPU_TX_MARKERS
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[0:4] -> [0:4]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(lifted) == 1
+    assert lifted[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
+
+    sdfg.expand_library_nodes()
+    expanded = [n for n in state.nodes() if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG))]
+    assert len(expanded) == 1
+    assert expanded[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
 
 
 if __name__ == "__main__":
