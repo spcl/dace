@@ -29,9 +29,10 @@ def test_no_libnode_connector_literals_outside_definitions():
     for path in REPO_ROOT.glob("**/*.py"):
         if path in _ALLOWED_FILES:
             continue
-        # Skip caches and external trees.
+        # Skip caches, build artifacts (a gitignored setuptools copy of the definition files) and
+        # external trees.
         rel = path.relative_to(REPO_ROOT)
-        if any(part in {".dacecache", "external", ".git"} for part in rel.parts):
+        if any(part in {".dacecache", "build", "external", ".git"} for part in rel.parts):
             continue
         try:
             text = path.read_text(encoding="utf-8")

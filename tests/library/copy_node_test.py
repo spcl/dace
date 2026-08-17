@@ -1839,12 +1839,14 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     state = sdfg.add_state('s0')
     state.add_nedge(state.add_read('s'), state.add_write('gs'), dace.Memlet('s'))
     state.add_nedge(state.add_read('gs'), state.add_write('out'), dace.Memlet('gs'))
-    # Legacy generator: the readable one inlines tasklet connectors, so the '_cpy_in' the address
-    # binds to is spelled away. The address-taking itself is generator-independent.
+    # Legacy generator: the readable one inlines tasklet connectors, so the input connector the
+    # address binds to is spelled away. The address-taking itself is generator-independent.
     with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
         code = _generated_code(sdfg)
-    assert 'MemcpyAsync(_cpy_out, _cpy_in' in code
-    assert '_cpy_in = &s;' in code, code
+    src = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    dst = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    assert f'MemcpyAsync({dst}, {src}' in code
+    assert f'{src} = &s;' in code, code
 
 
 def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
