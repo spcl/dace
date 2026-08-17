@@ -129,6 +129,16 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
     return True
 
 
+def _hashable_bound(bound):
+    """``bound`` with every symbol reduced to a bare same-named one, so instances of a name hash alike."""
+    if not isinstance(bound, sp.Basic):
+        return bound
+    free = bound.free_symbols
+    if not free:
+        return bound
+    return bound.xreplace({s: sp.Symbol(s.name) for s in free})
+
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
 
@@ -398,7 +408,10 @@ class Range(Subset):
         return result
 
     def __hash__(self):
-        return hash(tuple(r for r in self.ranges))
+        # Symbols reduced to bare names, matching __eq__: two Ranges that compare equal must hash
+        # equal, or they miss each other in every dict and set they are keyed by. Equalizing inside
+        # one expression is not enough -- the two instances live in DIFFERENT objects here.
+        return hash(tuple(tuple(_hashable_bound(b) for b in r) for r in self.ranges))
 
     def __add__(self, other):
         return Range(
@@ -801,12 +814,23 @@ class Range(Subset):
         return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
+        # By NAME, not by sympy identity. A name denotes one value in an SDFG, but a bound rebuilt
+        # by a pass and one reparsed from a string are distinct sympy objects, so raw '==' called
+        # two spellings of `0:N` different -- while covers() and intersects() called them the same.
         if not isinstance(other, Range):
             return False
         if len(self.ranges) != len(other.ranges):
             return False
-        return all([(rb == orb and re == ore and rs == ors)
-                    for (rb, re, rs), (orb, ore, ors) in zip(self.ranges, other.ranges)])
+        for mine, theirs in zip(self.ranges, other.ranges):
+            for a, b in zip(mine, theirs):
+                # Equalize, then compare STRUCTURALLY. A simplify-based test would call
+                # structurally different bounds equal, and no structural __hash__ could agree.
+                # Bounds are not always sympy: a raw int reaches here and equalizing would raise.
+                if isinstance(a, sp.Basic) and isinstance(b, sp.Basic):
+                    a, b = symbolic.equalize_symbols_across(a, b)
+                if a != b:
+                    return False
+        return True
 
     def __ne__(self, other):
         return not self.__eq__(other)

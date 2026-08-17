@@ -3932,6 +3932,8 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     name -- a subset an assumption-setting pass rebuilt, against a bound reparsed from its
     ``CodeBlock`` string -- which sympy then treats as independent variables that never cancel.
     """
+    if not isinstance(sym, sympy.Basic):
+        return sym  # a plain int/float bound reaches here; nothing to merge, and it has no free_symbols
     free: set = sym.free_symbols
     by_name: dict[str, list] = {}
     for s in free:
@@ -3985,6 +3987,9 @@ def equalize_symbols_across(*exprs: sympy.Expr) -> Tuple[sympy.Expr, ...]:
     equalized = tuple(equalize_symbol(e) for e in exprs)
     by_name: Dict[str, List[sympy.Symbol]] = {}
     for e in equalized:
+        # plain int/float bounds pass through untouched rather than raising on free_symbols
+        if not isinstance(e, sympy.Basic):
+            continue
         for s in e.free_symbols:
             by_name.setdefault(s.name, []).append(s)
     repl = {}
@@ -3993,7 +3998,7 @@ def equalize_symbols_across(*exprs: sympy.Expr) -> Tuple[sympy.Expr, ...]:
         repl.update({s: keep for s in group if s is not keep})
     if not repl:
         return equalized
-    return tuple(e.xreplace(repl) for e in equalized)
+    return tuple(e.xreplace(repl) if isinstance(e, sympy.Basic) else e for e in equalized)
 
 
 def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
