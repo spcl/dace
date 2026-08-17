@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple, Dict, List
 
 import dace
 from dace import data as dt
@@ -19,8 +18,8 @@ except ImportError:
 
 def make_backward_function(
     model,  # ONNXModel type hint removed for optional import
-    required_grads: List[str],
-) -> Tuple[dace.SDFG, dace.SDFG, BackwardResult, Dict[str, dt.Data]]:
+    required_grads: list[str],
+) -> tuple[dace.SDFG, dace.SDFG, BackwardResult, dict[str, dt.Data]]:
     """ Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
         Instead use the ``backward=True`` parameter of :class:`dace.ml.DaceModule`.
 
@@ -56,7 +55,7 @@ def make_backward_function(
     # start/end of the backward (a source to ``add_state_before``, a sink to ``add_state_after``).
     # With a single state these coincide; with multiple states (e.g. GPU copy-in/out) they don't,
     # so pick the correct boundary. Computed lazily -- only needed when a scalar is forwarded.
-    def _boundary(sdfg: dace.SDFG, kind: str) -> dace.SDFGState:
+    def boundary(sdfg: dace.SDFG, kind: str) -> dace.SDFGState:
         states = sdfg.sink_nodes() if kind == "sink" else sdfg.source_nodes()
         if len(states) != 1:
             raise AutoDiffException(f"make_backward_function: expected a single {kind} state in SDFG '{sdfg.name}' to "
@@ -91,9 +90,9 @@ def make_backward_function(
                                                              find_new_name=True)
             backward_sdfg.arrays[name].transient = True
 
-            fwd_copy_state = forward_sdfg.add_state_after(_boundary(forward_sdfg, "sink"),
+            fwd_copy_state = forward_sdfg.add_state_after(boundary(forward_sdfg, "sink"),
                                                           label="copy_out_" + fwd_arr_name)
-            bwd_copy_state = backward_sdfg.add_state_before(_boundary(backward_sdfg, "source"),
+            bwd_copy_state = backward_sdfg.add_state_before(boundary(backward_sdfg, "source"),
                                                             label="copy_in_" + bwd_arr_name)
             fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
                                     dace.Memlet(name + "[0]"))
@@ -117,7 +116,7 @@ def make_backward_function(
                                                          storage=desc.storage,
                                                          find_new_name=True)
             desc.transient = True
-            bwd_copy_state = backward_sdfg.add_state_after(_boundary(backward_sdfg, "sink"),
+            bwd_copy_state = backward_sdfg.add_state_after(boundary(backward_sdfg, "sink"),
                                                            label="copy_out_" + bwd_name)
             bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_name), None, bwd_copy_state.add_write(arr_name), None,
                                     dace.Memlet(bwd_name + "[0]"))

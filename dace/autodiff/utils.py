@@ -5,7 +5,7 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Dict, List, Set, Tuple, Union
+from typing import Union
 
 import astunparse
 import sympy as sp
@@ -14,7 +14,7 @@ from ordered_set import OrderedSet
 # DaCe imports
 import dace
 import dace.sdfg.utils as utils
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
@@ -22,6 +22,15 @@ from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
+
+#: Global the generated ``symbolic_execution`` source reads its pre-built symbols from, so that
+#: minting happens here with a dtype instead of inside an exec'd string with a bare name.
+#:
+#: PORTING NOTE: this table is only worth having because the extended branch keeps a symbol's dtype
+#: in its identity, so a dtype-carrying symbol is not interchangeable with a bare one. Main has no
+#: such distinction; porting there can drop the table and mint in the generated source again. The
+#: dependency is confined to ``code_to_exprs`` and to the ``symbols`` argument its one caller passes.
+SYMBOL_TABLE_GLOBAL = "dace_ad_symbol_table"
 
 
 def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
@@ -87,8 +96,34 @@ def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward
     return backward_sdfg.add_datadesc(backward_name, new_desc)
 
 
-def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[str],
-                            context: BackwardContext) -> Tuple[nd.NestedSDFG, BackwardResult]:
+def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> dict[str, sp.Expr]:
+    """Symbol mapping for a backward nested SDFG, resolved against the scope it is placed in.
+
+    Backward SDFGs are assembled from descriptors deep-copied out of the parent, so identity is the
+    right mapping -- but it has to be spelled out. ``add_nested_sdfg`` installs its identity default
+    only *after* its own missing-symbol check, which therefore can never fire, and the default
+    re-mints every symbol from a bare name, dropping the dtype the parent declared for it.
+    """
+    parent_symbols = parent_state.sdfg.symbols
+    # A symbol the parent SDFG does not declare is scope-local (a map parameter, say) and has no
+    # authoritative dtype to carry over.
+    return {
+        name: connector_symbol(name, parent_symbols.get(name))
+        for name in sorted(nested_sdfg.free_symbols - {'NoneSymbol'})
+    }
+
+
+def connector_dict(names) -> dict[str, None]:
+    """Connector set for ``add_nested_sdfg`` as an ordered mapping.
+
+    A plain ``set`` makes connector order -- which reaches codegen -- depend on ``PYTHONHASHSEED``,
+    and ``add_nested_sdfg`` warns about exactly that. ``None`` keeps its type auto-detection.
+    """
+    return {name: None for name in sorted(names)}
+
+
+def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: list[str],
+                            context: BackwardContext) -> tuple[nd.NestedSDFG, BackwardResult]:
     """ Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
         ``required_descriptors`` may contain:
@@ -107,7 +142,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
 
     nsdfg = dace.SDFG(forward_node.label + "_backward_expansion")
 
-    def _get_fwd_descriptor(name):
+    def get_fwd_descriptor(name):
         """Returns the descriptor and whether it is an input"""
         if name in forward_node.out_connectors:
             return forward_out_desc_with_name(forward_node, context, name), False
@@ -119,13 +154,13 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
     outputs_to_connect_from_forward = []
 
     result = BackwardResult.empty()
-    inputs = set()
-    outputs = set()
+    inputs: OrderedSet[str] = OrderedSet()
+    outputs: OrderedSet[str] = OrderedSet()
 
     for name in required_descriptors:
         if name.endswith("_grad"):
             # hook this up as a gradient
-            desc, is_input = _get_fwd_descriptor(name[:-5])
+            desc, is_input = get_fwd_descriptor(name[:-5])
             if is_input:
                 result.required_grad_names[name[:-5]] = name
             else:
@@ -136,7 +171,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
             else:
                 inputs.add(name)
         else:
-            desc, is_input = _get_fwd_descriptor(name)
+            desc, is_input = get_fwd_descriptor(name)
             if not is_input:
                 outputs_to_connect_from_forward.append(name)
             inputs.add(name)
@@ -144,7 +179,11 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
         ndesc.transient = False
         nsdfg.add_datadesc(name, ndesc)
 
-    bwd_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+    bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                      connector_dict(inputs),
+                                                      connector_dict(outputs),
+                                                      symbol_mapping=backward_symbol_mapping(
+                                                          nsdfg, context.backward_state))
     for output in outputs_to_connect_from_forward:
         connect_output_from_forward(forward_node, bwd_node, context, output)
 
@@ -152,7 +191,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
 
 
 def backward_program_for_node(program, context: BackwardContext,
-                              forward_node: nd.Node) -> Tuple[nd.Node, BackwardResult]:
+                              forward_node: nd.Node) -> tuple[nd.Node, BackwardResult]:
     """ Expand a function to the backward function for a node.
 
         The dtypes for the arguments will be extracted by matching the parameter names to edges.
@@ -200,7 +239,11 @@ def backward_program_for_node(program, context: BackwardContext,
 
     sdfg = DaceProgram(program, (), {}, False, dace.DeviceType.CPU).to_sdfg()
 
-    result_node = context.backward_state.add_nested_sdfg(sdfg, set(inputs), set(outputs))
+    result_node = context.backward_state.add_nested_sdfg(sdfg,
+                                                         connector_dict(inputs),
+                                                         connector_dict(outputs),
+                                                         symbol_mapping=backward_symbol_mapping(
+                                                             sdfg, context.backward_state))
 
     return result_node, backward_result
 
@@ -342,7 +385,7 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
         raise AutoDiffException("Unsupported data descriptor {}".format(arr))
 
 
-def extract_indices(expression: str) -> Dict[str, List[str]]:
+def extract_indices(expression: str) -> dict[str, list[str]]:
     """Extracts indexed array names and their indices from a given string expression.
 
     This function uses regular expressions to find patterns like "array[i, j, k]"
@@ -372,25 +415,86 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
     return index_map
 
 
+def connector_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbolic.symbol:
+    """Mint the DaCe symbol standing for a tasklet connector or an SDFG symbol.
+
+    Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: a bare one carries neither the
+    dtype nor DaCe's assumptions, so it compares unequal to the same-named DaCe symbol while still
+    substituting for it -- the split that makes ``diff()`` return a silent zero.
+    """
+    return symbolic.symbol(name, dtype if isinstance(dtype, dtypes.typeclass) else None)
+
+
+def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> sp.Idx:
+    """Index label for an ``IndexedBase`` access, over a DaCe symbol.
+
+    An ``Idx`` label must be integral, so a non-integer declaration cannot supply it and the
+    default integer dtype stands in.
+    """
+    sym = connector_symbol(name, dtype)
+    return sp.Idx(sym if sym.is_integer else connector_symbol(name))
+
+
+def replace_bare_symbols(expr: sp.Expr, known: dict[str, sp.Expr]) -> sp.Expr:
+    """Replace every bare sympy Symbol in ``expr`` with the DaCe symbol of the same name.
+
+    The boundary guarantee for this module: no expression leaves it carrying a symbol that would
+    compare unequal to the SDFG's own. SymPy can still introduce one from inside the executed code.
+    """
+    replacements = {}
+    for sym in expr.free_symbols:
+        if type(sym) is not sp.Symbol:
+            continue
+        declared = known.get(sym.name)
+        replacements[sym] = declared if isinstance(declared, symbolic.symbol) else connector_symbol(sym.name)
+    return expr.xreplace(replacements) if replacements else expr
+
+
+def resolve_differentiation_target(expr: sp.Expr, name: str, indices: list[str] | None) -> sp.Expr:
+    """Find, inside ``expr``, the symbol or indexed access that stands for connector ``name``.
+
+    ``expr.diff(...)`` has to see the very instance the expression was built around; a re-minted
+    equivalent differentiates to zero (or to a KroneckerDelta). A connector absent from ``expr``
+    falls back to a fresh instance, where zero is the right derivative anyway.
+    """
+    if indices is None:
+        # sorted() only to keep the fallback deterministic; at most one symbol carries a given name.
+        candidates = sorted((s for s in expr.free_symbols if str(s) == name), key=str)
+        return candidates[0] if candidates else connector_symbol(name)
+
+    wanted = tuple(indices)
+    candidates = sorted(
+        (a for a in expr.atoms(sp.Indexed) if str(a.base) == name and tuple(str(i) for i in a.indices) == wanted),
+        key=str)
+    if candidates:
+        return candidates[0]
+    return sp.IndexedBase(name)[tuple(index_symbol(index) for index in indices)]
+
+
 def code_to_exprs(code: str, tasklet: nd.Tasklet,
-                  symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
+                  symbols: dict[str, dtypes.typeclass]) -> tuple[dict[str, sp.Expr], dict[str, list[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
         supports only code consisting of assignment statements.
 
         :param code: the code to convert
-        :param inputs: the inputs (i.e. the defined variables) for the code
-        :param outputs: the outputs to generate simplified expressions for
-        :return: map from outputs to symbolic expressions
+        :param tasklet: the tasklet the code belongs to; its connectors are the defined variables
+        :param symbols: the SDFG symbols visible to the code, mapped to their dtypes
+        :return: map from outputs to symbolic expressions, and the map of indexed objects to indices
     """
 
-    inputs: List[str] = list(tasklet.in_connectors)
-    outputs: List[str] = list(tasklet.out_connectors)
+    inputs: list[str] = list(tasklet.in_connectors)
+    outputs: list[str] = list(tasklet.out_connectors)
+
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: dict[str, sp.Expr] = {}
 
     # Add the definition of global constant symbols that are presen in the code
     # Prepare the Symbol declaration code
     symbol_code = ""
-    for symb in symbols:
-        symbol_code += f"    {symb} = sp.symbols('{symb}')\n"
+    for symb, symb_dtype in symbols.items():
+        symbol_table[symb] = connector_symbol(symb, symb_dtype)
+        symbol_code += f"    {symb} = {SYMBOL_TABLE_GLOBAL}['{symb}']\n"
 
     # We prepare a map of indexed objects and their indices
     indexed_objects_map = extract_indices(code)
@@ -409,7 +513,8 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
-                indexed_objects_code += f"    {idx} = sp.symbols('{idx}', cls=sp.Idx)\n"
+                symbol_table[idx] = index_symbol(idx, symbols.get(idx) or tasklet.in_connectors.get(idx))
+                indexed_objects_code += f"    {idx} = {SYMBOL_TABLE_GLOBAL}['{idx}']\n"
 
     code_fn = """
 def symbolic_execution({}):
@@ -445,23 +550,26 @@ def symbolic_execution({}):
 
     try:
         # need to have dace so things like `dace.float32(1)` work
-        temp_globals = {'dace': dace}
+        temp_globals = {'dace': dace, SYMBOL_TABLE_GLOBAL: symbol_table}
         exec(code_fn, temp_globals)
 
         # no idea why, but simply calling symbolic_execution doesn't work
-        results = temp_globals["symbolic_execution"](*[sp.symbols(inp) for inp in inputs])
+        results = temp_globals["symbolic_execution"](
+            *[connector_symbol(inp, tasklet.in_connectors[inp]) for inp in inputs])
 
         if len(outputs) > 1:
-            # make sure that everything is a sympy expression
-            for i, res in enumerate(results):
-                if not isinstance(res, sp.Expr):
-                    results[i] = sp.sympify(res)
-            return dict(zip(outputs, results)), indexed_objects_map
+            # make sure that everything is a sympy expression. A new list, not in place: a
+            # multi-output symbolic_execution returns a tuple.
+            normalized = [
+                replace_bare_symbols(res if isinstance(res, sp.Expr) else symbolic.pystr_to_symbolic(res), symbol_table)
+                for res in results
+            ]
+            return dict(zip(outputs, normalized)), indexed_objects_map
         else:
             # make sure that everything is a sympy expression
             if not isinstance(results, sp.Expr):
-                results = sp.sympify(results)
-            return {outputs[0]: results}, indexed_objects_map
+                results = symbolic.pystr_to_symbolic(results)
+            return {outputs[0]: replace_bare_symbols(results, symbol_table)}, indexed_objects_map
     except Exception as e:
         raise AutoDiffException(
             "Exception occurred while attempting to symbolically execute code:\n{}".format(code)) from e
@@ -499,7 +607,7 @@ def carries_gradient(edge: dgraph.MultiConnectorEdge) -> bool:
     return (not edge.data.is_empty() or isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.ExitNode))
 
 
-def reverse_bfs_gradient_nodes(state: dstate.StateSubgraphView, sources: List[nd.Node]) -> OrderedSet[nd.Node]:
+def reverse_bfs_gradient_nodes(state: dstate.StateSubgraphView, sources: list[nd.Node]) -> OrderedSet[nd.Node]:
     """Collect the endpoints of every edge a reverse BFS from ``sources`` reaches along gradients.
 
     :param state: The state (or subgraph view) to traverse.
@@ -529,7 +637,7 @@ def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.
     return path_src in subgraph.nodes()
 
 
-def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
+def get_read_only_arrays(sdfg: SDFG) -> set[str]:
     """Get the arrays that are only read in SDFG.
 
     This function identifies arrays that are never written to (only have outgoing
@@ -548,7 +656,7 @@ def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
     return read_only_arrays
 
 
-def get_state_topological_order(graph) -> List[SDFGState]:
+def get_state_topological_order(graph) -> list[SDFGState]:
     """
     Returns the SDFG states in topological order.
     """
@@ -650,7 +758,7 @@ def analyze_loop_change(code: str, loop_variable: str) -> str:
 
 
 def get_map_nest_information(
-        edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
+        edges_list: list[dstate.MultiConnectorEdge]) -> tuple[list, list[str], list, dict[str, tuple]]:
     """
         """
     # First, get the shape of the new array
@@ -683,7 +791,7 @@ def get_map_nest_information(
 
 
 def get_all_path_edges(state: SDFGState, source: nd.Node,
-                       starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
+                       starting_edge: dgraph.MultiConnectorEdge) -> list[dgraph.MultiConnectorEdge]:
     """
     We will start from the target node and go back until we reach the destination.
     Starting edge should be an in node
@@ -707,7 +815,7 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
     raise AutoDiffException("Can't easily find path. Upgrade function.")
 
 
-def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
+def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> tuple[str, str, str]:
     """
         Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
         The else statement could be None in case there is only an if statement. The current supported formats are the following:
@@ -844,7 +952,7 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
                     f" on edge {edge} has type {edge_type}")
 
 
-def state_within_loop(forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
+def state_within_loop(forward_state: SDFGState) -> tuple[bool, LoopRegion]:
     """
     Check if this state will be executed several times within a loop.
     We check if any of the parents of this state is a loop region.
@@ -865,7 +973,7 @@ class SympyCleaner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
+def extract_loop_region_info(loop: LoopRegion) -> tuple[str, str]:
     """
         Use regular expression matching to extract the start and end of the loop region.
         We only treat regular for-loops with incrementation and decrementation updates.

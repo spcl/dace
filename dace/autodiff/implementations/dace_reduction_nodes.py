@@ -27,6 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
+import dace.autodiff.utils as ad_utils
 from dace.autodiff.utils import init_grad
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
@@ -57,8 +58,8 @@ class ReverseReduce(BackwardImplementation):
         return True
 
     @staticmethod
-    def backward(forward_node: Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
-                 required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[Node, BackwardResult]:
+    def backward(forward_node: Node, context: BackwardContext, given_gradients: list[typing.Optional[str]],
+                 required_gradients: list[typing.Optional[str]]) -> tuple[Node, BackwardResult]:
         """Generate the backward pass for a reduction node.
 
         :param forward_node: The forward reduction node.
@@ -84,20 +85,19 @@ class ReverseReduce(BackwardImplementation):
         output_name = next(iter(given_gradients))
         out_desc = out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, output_name)
 
-        all_axes: typing.List[int] = list(range(len(in_desc.shape)))
-        reduce_axes: typing.List[int] = all_axes if forward_node.axes is None else forward_node.axes
-        non_reduce_axes: typing.List[int] = [i for i in all_axes if i not in reduce_axes]
+        all_axes: list[int] = list(range(len(in_desc.shape)))
+        reduce_axes: list[int] = all_axes if forward_node.axes is None else forward_node.axes
+        non_reduce_axes: list[int] = [i for i in all_axes if i not in reduce_axes]
 
         result = BackwardResult.empty()
 
-        return ReverseReduce._backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
-                                                 in_desc, out_desc, all_axes, non_reduce_axes)
+        return ReverseReduce.backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
+                                                in_desc, out_desc, all_axes, non_reduce_axes)
 
     @staticmethod
-    def _backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
-                            reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
-                            all_axes: typing.List[int],
-                            non_reduce_axes: typing.List[int]) -> typing.Tuple[Node, BackwardResult]:
+    def backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
+                           reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
+                           all_axes: list[int], non_reduce_axes: list[int]) -> tuple[Node, BackwardResult]:
         """Backward pass for Sum/Max/Min reductions.
 
         - Sum: Broadcasts gradients uniformly across reduced dimensions
@@ -134,14 +134,14 @@ class ReverseReduce(BackwardImplementation):
         sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
         sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
 
-        nsdfg_inputs = {rev_input_conn_name}
+        nsdfg_inputs = [rev_input_conn_name]
 
         if is_extremal:
             extremal_conn_name = f"input_{type_name}_val"
             extremal_idx_conn_name = f"input_{type_name}_arr"
             sdfg.add_array(extremal_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
             sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
-            nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
+            nsdfg_inputs += [extremal_conn_name, extremal_idx_conn_name]
 
             # Add transient array to count matching elements per output position
             count_arr_name = f"_{type_name}_count"
@@ -241,7 +241,11 @@ class ReverseReduce(BackwardImplementation):
                                                       tasklet_code, {"__out": reverse_reduction_memlet},
                                                       external_edges=True)
 
-        nsdfg = context.backward_state.add_nested_sdfg(sdfg, nsdfg_inputs, {rev_output_conn_name})
+        nsdfg = context.backward_state.add_nested_sdfg(sdfg,
+                                                       ad_utils.connector_dict(nsdfg_inputs),
+                                                       ad_utils.connector_dict([rev_output_conn_name]),
+                                                       symbol_mapping=ad_utils.backward_symbol_mapping(
+                                                           sdfg, context.backward_state))
 
         out_edges = state.out_edges(exit_map)
         if len(out_edges) != 1:

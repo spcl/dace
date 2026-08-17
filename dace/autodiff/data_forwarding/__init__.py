@@ -7,9 +7,9 @@ recomputing them during the backward pass. This is a fundamental memory-time
 tradeoff in automatic differentiation.
 """
 
-from .manager import DataForwardingManager
-from .store import resolve_overwrite_with_store
-from .recompute import get_recomputation_nsdfg, resolve_overwrite_with_recomputation
+from dace.autodiff.data_forwarding.manager import DataForwardingManager
+from dace.autodiff.data_forwarding.store import resolve_overwrite_with_store
+from dace.autodiff.data_forwarding.recompute import get_recomputation_nsdfg, resolve_overwrite_with_recomputation
 
 __all__ = [
     "DataForwardingManager",

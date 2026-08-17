@@ -2,7 +2,7 @@
 
 import copy
 import itertools
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import dace
 import dace.libraries.torch
@@ -30,8 +30,8 @@ class PyTorchConvBackward(BackwardImplementation):
         return len(X_desc.shape) == 4
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: list[Optional[str]],
+                 required_gradients: list[Optional[str]]) -> tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         X_desc = butils.forward_in_desc_with_name(forward_node, context, "X")
@@ -121,8 +121,12 @@ class PyTorchConvBackward(BackwardImplementation):
             arr_name = result.required_grad_names[name]
             nstate.add_edge(tasklet, f"_d{name}", nstate.add_write(arr_name), None, nsdfg.make_array_memlet(arr_name))
 
-        inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
-        outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+        inputs = [result.given_grad_names["Y"], *sorted(required_forward_inputs)]
+        outputs = [result.required_grad_names[n] for n in sorted(required_gradients)]
+        node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                      butils.connector_dict(inputs),
+                                                      butils.connector_dict(outputs),
+                                                      symbol_mapping=butils.backward_symbol_mapping(
+                                                          nsdfg, context.backward_state))
 
         return node, result
