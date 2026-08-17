@@ -66,25 +66,20 @@ def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return False
 
 
-def map_wcr_is_simd_safe(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if every WCR out-edge of this map's exit is a safe ``simd`` target: no ``min``/``max``,
-        and no scatter (a target subset indexed by this map's own parameter, as in
-        ``hist[bin(a[i])] += 1``). Sequential maps lower WCR to a plain ``wcr_fixed::reduce``, so a
-        scatter really can alias across lanes; CPU_Multicore goes through the atomic path instead.
+def map_has_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """ True if any out-edge of this map's exit carries a WCR.
+
+        A Sequential map lowers WCR to a plain ``wcr_fixed::reduce``, a read-modify-write of the
+        target in the loop body: an accumulation into a fixed location carries across iterations,
+        and a scatter (``hist[bin(a[i])] += 1``) can alias across them. ``simd`` asserts neither
+        happens, so a Sequential map that reduces gets no clause. CPU_Multicore goes through
+        ``reduce_atomic`` instead, which composes with the clause.
     """
-    if map_has_minmax_wcr(state, map_entry):
-        return False
     try:
         map_exit = state.exit_node(map_entry)
     except (KeyError, StopIteration):
-        return True
-    map_params = set(map_entry.map.params)
-    for iedge in state.in_edges(map_exit):
-        if iedge.data is None or iedge.data.wcr is None or iedge.data.subset is None:
-            continue
-        if {str(s) for s in iedge.data.subset.free_symbols} & map_params:
-            return False
-    return True
+        return False
+    return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(map_exit))
 
 
 @dataclass(unsafe_hash=True)
@@ -153,5 +148,5 @@ class MarkSIMDMaps(ppl.Pass):
             # with ``simd``, so only the min/max combine withholds the clause here.
             return map_body_is_leaf(state, map_entry) and not map_has_minmax_wcr(state, map_entry)
         if map_entry.map.schedule == dtypes.ScheduleType.Sequential:
-            return map_body_is_leaf(state, map_entry) and map_wcr_is_simd_safe(state, map_entry)
+            return map_body_is_leaf(state, map_entry) and not map_has_wcr(state, map_entry)
         return False

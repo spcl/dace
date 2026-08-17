@@ -101,21 +101,45 @@ def test_minmax_reduction_withholds_the_clause():
     assert ' simd' not in sdfg.generate_code()[0].clean_code
 
 
-def test_sequential_scatter_withholds_the_clause():
-    """A Sequential map lowers a conflicted WCR to a non-atomic reduce, so a target indexed by the
-    map's own parameter can alias across lanes."""
-    sdfg = dace.SDFG('scatter_wcr_map')
+@pytest.mark.parametrize('target', ('hist[i]', 'hist[0]'))
+def test_sequential_wcr_withholds_the_clause(target):
+    """A Sequential map lowers WCR to a non-atomic read-modify-write in the loop body: a scatter can
+    alias across lanes, and an accumulation into a fixed location carries across iterations. Neither
+    is what ``simd`` asserts."""
+    sdfg = dace.SDFG(f"seq_wcr_{target.replace('[', '_').replace(']', '')}")
     sdfg.add_array('a', (64, ), dace.float64)
     sdfg.add_array('hist', (64, ), dace.float64)
     state = sdfg.add_state('main', is_start_block=True)
-    state.add_mapped_tasklet('scatter', {'i': '0:64'}, {'inp': dace.Memlet('a[i]')},
-                             'o = inp', {'o': dace.Memlet('hist[i]', wcr='lambda x, y: x + y')},
+    state.add_mapped_tasklet('accumulate', {'i': '0:64'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp', {'o': dace.Memlet(target, wcr='lambda x, y: x + y')},
                              schedule=dtypes.ScheduleType.Sequential,
                              external_edges=True)
     sdfg.validate()
 
     mark(sdfg)
     assert not any(n.map.omp_simd for _, n in entries(sdfg))
+    assert ' simd' not in sdfg.generate_code()[0].clean_code
+
+
+def test_multicore_reduction_keeps_the_clause_and_the_value():
+    """CPU_Multicore lowers a conflicted WCR through ``reduce_atomic``, which composes with the
+    clause, so the sum still lands."""
+    sdfg = dace.SDFG('multicore_wcr_map')
+    sdfg.add_array('a', (1024, ), dace.float64)
+    sdfg.add_array('out', (1, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('reduce_sum', {'i': '0:1024'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp', {'o': dace.Memlet('out[0]', wcr='lambda x, y: x + y')},
+                             schedule=dtypes.ScheduleType.CPU_Multicore,
+                             external_edges=True)
+    sdfg.validate()
+
+    assert '#pragma omp parallel for simd' in sdfg.generate_code()[0].clean_code
+
+    a = np.random.rand(1024)
+    out = np.zeros(1)
+    sdfg(a=a, out=out)
+    assert np.allclose(out[0], a.sum())
 
 
 def double_tasklet(state) -> None:
@@ -201,7 +225,9 @@ if __name__ == '__main__':
     test_multidimensional_map_vectorizes_its_innermost_dimension()
     test_outer_map_of_a_nest_is_not_marked()
     test_minmax_reduction_withholds_the_clause()
-    test_sequential_scatter_withholds_the_clause()
+    for wcr_target in ('hist[i]', 'hist[0]'):
+        test_sequential_wcr_withholds_the_clause(wcr_target)
+    test_multicore_reduction_keeps_the_clause_and_the_value()
     for name, is_leaf in (('straight', True), ('nested', True), ('loopregion', False), ('backedge', False), ('map',
                                                                                                              False)):
         test_outlined_body_is_opened_not_refused(name, is_leaf)
