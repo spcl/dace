@@ -102,6 +102,14 @@ test_cscs_gh200_hip:
     - cd "${WORKDIR}/dace"
     - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
     - git checkout "${CI_COMMIT_SHA}"
+    # cuTENSOR-backed library nodes are reached on this platform too: HIP's NVIDIA platform builds
+    # the generated GPU file with nvcc, so the same library links. Same steps as the CUDA job.
+    - uv pip install cutensor-cu12
+    - CUTENSOR_DIR="${VIRTUAL_ENV}/lib/python${PY_VERSION}/site-packages/cutensor"
+    - ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+    - export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+    - export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+    - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
     - hipcc --version
