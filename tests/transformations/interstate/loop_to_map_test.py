@@ -457,26 +457,39 @@ def test_symbol_array_mix_2(parallel):
     # compute ``B[i]=0``. The ``parallel`` variant only adds an ``A`` write.
     assert sdfg.apply_transformations(LoopToMap) == 0
 
+    if parallel:
+        # A is read-only in this arm, so pin the exact sequential semantics too: B[i] = sym-at-entry =
+        # A[i-2] (B[1] = sym's 0.0 init). Guards against any future lift that zeroes the carry.
+        A = np.arange(1.0, 21.0)
+        B = np.full(20, -999.0)
+        sdfg(A=A.copy(), B=B)
+        expected = np.full(20, -999.0)
+        sym = 0.0
+        for i in range(1, 20):
+            expected[i] = sym
+            sym = A[i - 1]
+        assert np.allclose(B, expected)
 
-_CN = dace.symbol('_CN')
+
+CN = dace.symbol('CN')
 
 
 @dace.program
-def _carried_symbol_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
-    im = _CN - 1
-    for i in range(_CN):
+def carried_symbol_loop(a: dace.float64[CN], b: dace.float64[CN]):
+    im = CN - 1
+    for i in range(CN):
         a[i] = b[i] + b[im]
         im = i
 
 
 @dace.program
-def _peeled_affine_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
-    a[0] = b[0] + b[_CN - 1]  # wrapping first iteration, peeled off
-    for i in range(1, _CN):
+def peeled_affine_loop(a: dace.float64[CN], b: dace.float64[CN]):
+    a[0] = b[0] + b[CN - 1]  # wrapping first iteration, peeled off
+    for i in range(1, CN):
         a[i] = b[i] + b[i - 1]  # induction substituted -> affine
 
 
-def _only_loop(sdfg: dace.SDFG) -> LoopRegion:
+def only_loop(sdfg: dace.SDFG) -> LoopRegion:
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
 
 
@@ -485,15 +498,15 @@ def test_loop2map_rejects_unpeeled_carried_symbol():
     ``im`` is read (in ``b[im]``) before it is reassigned, so it is loop-carried and
     LoopToMap must refuse -- a Map would pin ``im`` to ``N-1`` and compute
     ``b[i] + b[N-1]`` everywhere."""
-    sdfg = _carried_symbol_loop.to_sdfg(simplify=True)
-    assert not LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
+    sdfg = carried_symbol_loop.to_sdfg(simplify=True)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
 
 
 def test_loop2map_accepts_peeled_affine_form():
     """Once peeled and the induction substituted, ``a[i] = b[i] + b[i-1]`` is affine
     and LoopToMap accepts it."""
-    sdfg = _peeled_affine_loop.to_sdfg(simplify=True)
-    assert LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
+    sdfg = peeled_affine_loop.to_sdfg(simplify=True)
+    assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
 
 
 @pytest.mark.parametrize('overwrite', (False, True))
