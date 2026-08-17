@@ -1713,9 +1713,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    # A DefinedType.Pointer registers the POINTER ctype, as every other allocation
+                    # site does; the element type here makes consumers that adopt the defined ctype
+                    # (``emit_memlet_reference``) declare the parameter one indirection short.
                     self._dispatcher.defined_vars.add(inner_name,
                                                       DefinedType.Pointer,
-                                                      desc.dtype.ctype,
+                                                      dtypes.pointer(desc.dtype).ctype,
                                                       allow_shadowing=True)
                     extra_call_args.append(outer_name)
                     extra_call_args_typed.append(desc.as_arg(name=inner_name))

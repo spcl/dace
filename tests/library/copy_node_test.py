@@ -1818,6 +1818,25 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     assert '_cpy_in = &s;' in code, code
 
 
+def test_opaque_handle_endpoint_is_not_addressed():
+    """The other half of the scalar-endpoint rule: an opaque handle (``MPI_Comm`` and friends) IS
+    already the pointer its connector names, so it passes through by value instead of gaining an
+    ``&`` -- ``&handle`` is one indirection too many and does not compile."""
+    handle = dace.dtypes.opaque('MPI_Comm')
+    sdfg = dace.SDFG('opaque_handle_endpoint')
+    sdfg.add_scalar('h', handle, transient=True)
+    sdfg.add_array('out', [1], dace.int32)
+    state = sdfg.add_state('s0')
+    tasklet = state.add_tasklet('use_handle', {'_h'}, {'_o'}, 'take_handle(_h);\n_o = 0;', language=dace.Language.CPP)
+    tasklet.in_connectors['_h'] = dace.dtypes.pointer(handle)
+    state.add_edge(state.add_access('h'), None, tasklet, '_h', dace.memlet.Memlet('h'))
+    state.add_edge(tasklet, '_o', state.add_write('out'), None, dace.memlet.Memlet('out[0]'))
+
+    code = _generated_code(sdfg)
+    assert 'MPI_Comm _h = h;' in code, code
+    assert '&h' not in code, code
+
+
 def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     """``__dace_current_stream`` is declared for a host tasklet that only WRITES GPU memory."""
     sdfg = dace.SDFG('h2d_stream_scope')
