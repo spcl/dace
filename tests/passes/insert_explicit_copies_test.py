@@ -1105,5 +1105,56 @@ def test_iec_skips_wcr_staging_edge():
     assert out[0] == A.sum(), f"expected the accumulate {A.sum()}, got {out[0]} (an overwrite keeps only the last)"
 
 
+def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
+    """An empty memlet is a happens-before edge, and lifting a copy moves the write it constrained.
+
+    The map reads ``A[i]`` into ``tmp_A`` and writes ``A[(i+1)%2]`` from ``tmp_B``, with an ordering
+    edge saying the read happens after that write. Left on the access node, the constraint no longer
+    reaches the node that performs the read, and the copy is free to be scheduled ahead of it -- a
+    silently wrong answer, not an error.
+    """
+    sdfg = dace.SDFG("iec_ordering_edge")
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [2], dace.int32)
+    sdfg.add_transient("tmp_A", [1], dace.int32)
+    sdfg.add_transient("tmp_B", [1], dace.int32)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    for conn in ("IN_A", "IN_B"):
+        me.add_in_connector(conn)
+    for conn in ("OUT_A", "OUT_B"):
+        me.add_out_connector(conn)
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+
+    a_write, a_ordered = state.add_write("A"), state.add_write("A")
+    tmp_a, tmp_b = state.add_write("tmp_A"), state.add_write("tmp_B")
+    state.add_edge(state.add_read("A"), None, me, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(state.add_read("B"), None, me, "IN_B", Memlet("B[0:2]"))
+    state.add_edge(me, "OUT_A", tmp_a, None, Memlet("A[i]"))
+    state.add_edge(me, "OUT_B", tmp_b, None, Memlet("B[i]"))
+    state.add_edge(tmp_a, None, a_write, None, Memlet("tmp_A[0] -> [((i+1)%2)]"))
+    state.add_edge(a_write, None, mx, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(tmp_b, None, a_ordered, None, Memlet("tmp_B[0] -> [((i+1)%2)]"))
+    state.add_edge(a_ordered, None, tmp_a, None, Memlet())  # the ordering edge
+    state.add_edge(a_ordered, None, mx, "IN_A", Memlet("A[0:2]"))
+    state.add_edge(mx, "OUT_A", state.add_write("A"), None, Memlet("A[0:2]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
+    assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
+    ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
+    assert a_ordered in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
+
+    a = np.array([7, 3], dtype=np.int32)
+    sdfg(A=a, B=np.array([11, 13], dtype=np.int32))
+    assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

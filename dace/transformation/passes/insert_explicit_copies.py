@@ -29,6 +29,25 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     return src_subset
 
 
+def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: nodes.Node) -> None:
+    """Repeat onto ``libnode`` the ordering edges that sequenced writes to ``written``.
+
+    An empty memlet is a happens-before edge, and the write it constrained is no longer the access
+    node's own -- it is the libnode's. Left behind, it orders a node that no longer writes anything,
+    and the libnode is free to be scheduled ahead of the write it was supposed to follow.
+
+    :param state: the state both nodes live in.
+    :param written: the access node the libnode now writes.
+    :param libnode: the inserted copy node.
+    """
+    for edge in state.in_edges(written):
+        if not edge.data.is_empty() or edge.src is libnode:
+            continue
+        if any(existing.src is edge.src for existing in state.in_edges(libnode)):
+            continue
+        state.add_edge(edge.src, None, libnode, None, Memlet())
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
@@ -145,6 +164,7 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_node(libnode)
             state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
+            _carry_write_ordering(state, dst_node, libnode)
             count += 1
 
         return count
@@ -229,6 +249,7 @@ class InsertExplicitCopies(ppl.Pass):
             map_node = edge.src
             state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, outer_side_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
+            _carry_write_ordering(state, inner_node, libnode)
             boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
             boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
