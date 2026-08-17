@@ -297,8 +297,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         call_suffix = ''
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
-            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+            1.0: f"__state->cublas_handle.Constants().{factort}Pone()",
+            0.0: f"__state->cublas_handle.Constants().{factort}Zero()",
         }
         if node.alpha not in constants:
             # Deal with complex input constants
@@ -320,7 +320,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             alpha = f'({cdtype} *)&alpha'
         else:
             alpha = constants[node.alpha]
-            beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
+            beta = "__state->cublas_handle.Constants().%sZero()" % factort
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)

@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
+#include <optional>
 
 namespace dace {
 namespace linalg {
@@ -19,12 +19,7 @@ static void CheckCuTensorError(cutensorStatus_t const& status) {
   }
 }
 
-static cutensorHandle_t CreateCuTensorHandle(int device) {
-  if (device >= 0) {
-    if (cudaSetDevice(device) != cudaSuccess) {
-      throw std::runtime_error("Failed to set CUDA device.");
-    }
-  }
+static cutensorHandle_t CreateCuTensorHandle() {
   cutensorHandle_t handle;
   CheckCuTensorError(cutensorCreate(&handle));
   return handle;
@@ -35,26 +30,21 @@ class CuTensorHandle {
   CuTensorHandle() = default;
   CuTensorHandle(CuTensorHandle const&) = delete;
 
-  cutensorHandle_t& Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new cuTENSOR handle if the specified key does
-      // not yet exist
-      auto handle = CreateCuTensorHandle(device);
-      f = handles_.emplace(device, handle).first;
+  cutensorHandle_t& Get() {
+    if (!handle_) {
+      auto handle = CreateCuTensorHandle();
+      handle_ = handle;
     }
-    return f->second;
+    return *handle_;
   }
 
   ~CuTensorHandle() {
-    for (auto& h : handles_) {
-      cutensorDestroy(h.second);
-    }
+    if (handle_) cutensorDestroy(*handle_);
   }
 
   CuTensorHandle& operator=(CuTensorHandle const&) = delete;
 
-  std::unordered_map<int, cutensorHandle_t> handles_;
+  std::optional<cutensorHandle_t> handle_;
 };
 
 }  // namespace linalg
