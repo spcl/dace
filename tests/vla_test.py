@@ -1,6 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tries to allocate a symbolically-sized array on a register and makes
-    sure that it is allocated on the heap instead.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+""" Allocates a symbolically-sized array on a register and makes sure that it is emitted as a
+    stack variable-length array rather than falling back to the heap.
 """
 import dace
 import numpy as np
@@ -27,10 +27,11 @@ def test():
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
+        code = sdfg.generate_code()[0].clean_code
         sdfg(A=A, B=B, N=12)
 
-        assert w
-        assert any('Variable-length' in str(warn.message) for warn in w)
+        assert 'float tmp[N];' in code, code
+        assert not any('Variable-length' in str(warn.message) for warn in w)
 
     diff = np.linalg.norm(A - B)
     print('Difference:', diff)

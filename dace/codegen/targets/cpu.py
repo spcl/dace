@@ -25,17 +25,6 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime) -> bool:
-    """ Whether a symbolically-sized register array is emitted as a stack variable-length array,
-        which GCC, Clang and NVHPC all accept. A VLA dies with its block, so only the lifetimes
-        that end there qualify; the others are declared elsewhere and keep the heap. Allocation
-        and deallocation both ask here so they cannot disagree.
-    """
-    return (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants)
-            and lifetime
-            in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
-
-
 def _use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
@@ -419,8 +408,6 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
-        variable_length_arrays = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime)
-
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
@@ -498,12 +485,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not variable_length_arrays) or
+                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not nodedesc.vla) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
-                if (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
+                if symbolic.issymbolic(arrsize, sdfg.constants):
+                    warnings.warn('Variable-length array %s with size %s '
+                                  'detected and was allocated on the heap instead of '
+                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
@@ -533,9 +524,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
             # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment.
-            is_vla = symbolic.issymbolic(arrsize, sdfg.constants)
-            alignment = '' if is_vla else '  DACE_ALIGN(64)'
-            if node.setzero and not is_vla:
+            alignment = '' if nodedesc.vla else '  DACE_ALIGN(64)'
+            if node.setzero and not nodedesc.vla:
                 declaration_stream.write(
                     "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                     cfg,
@@ -619,8 +609,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)
-                    and not stack_variable_length_array(sdfg, nodedesc, arrsize, nodedesc.lifetime)) or
+                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not nodedesc.vla) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator

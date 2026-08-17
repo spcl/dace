@@ -4,6 +4,7 @@
 import numpy as np
 
 import dace
+from dace.transformation.passes.mark_vla_arrays import MarkVLAArrays
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -93,7 +94,69 @@ def test_global_lifetime_keeps_the_heap():
     assert np.allclose(b, a + 1.0)
 
 
+def split_declaration_sdfg():
+    """An SDFG whose register transient is sized by a symbol an interstate edge assigns."""
+    K = dace.symbol('K', dtype=dace.int64)
+    sdfg = dace.SDFG('vla_split_declaration')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_array('a', (N, ), dace.float64)
+    sdfg.add_array('b', (N, ), dace.float64)
+    sdfg.add_transient('tmp', (K, ), dace.float64, storage=dace.StorageType.Register)
+    init = sdfg.add_state('init', is_start_block=True)
+    first = sdfg.add_state('first')
+    second = sdfg.add_state('second')
+    sdfg.add_edge(init, first, dace.InterstateEdge(assignments={'K': 'N'}))
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    first.add_mapped_tasklet('copy', {'i': '0:K'}, {'inp': dace.Memlet('a[i]')},
+                             'o = inp + 1.0', {'o': dace.Memlet('tmp[i]')},
+                             external_edges=True)
+    second.add_mapped_tasklet('back', {'i': '0:K'}, {'inp': dace.Memlet('tmp[i]')},
+                              'o = inp', {'o': dace.Memlet('b[i]')},
+                              external_edges=True)
+    sdfg.validate()
+    return sdfg
+
+
+def test_split_declaration_keeps_the_heap():
+    """A size that only an interstate edge defines is declared in one block and allocated in
+    another, and a VLA cannot bridge that split."""
+    sdfg = split_declaration_sdfg()
+
+    code = sdfg.generate_code()[0].clean_code
+    assert 'double tmp[K];' not in code, code
+
+    a = np.random.rand(8)
+    b = np.zeros(8)
+    sdfg(a=a, b=b, N=8)
+    assert np.allclose(b, a + 1.0)
+
+
+def test_pass_marks_the_stack_candidates_only():
+    """The decision lives in the pass, so it is readable off the descriptors before code
+    generation runs."""
+    stack = scratch_program('vla_marked')
+    assert MarkVLAArrays().apply_pass(stack, {}) == {(stack.cfg_id, 'tmp')}
+    assert stack.arrays['tmp'].vla
+    assert not stack.arrays['a'].vla
+
+    split = split_declaration_sdfg()
+    assert MarkVLAArrays().apply_pass(split, {}) is None
+    assert not split.arrays['tmp'].vla
+
+
+def test_pass_clears_a_stale_mark():
+    """A descriptor that no longer qualifies loses the mark, so a re-run cannot emit a VLA the
+    analysis just refused."""
+    sdfg = split_declaration_sdfg()
+    sdfg.arrays['tmp'].vla = True
+    assert MarkVLAArrays().apply_pass(sdfg, {}) is None
+    assert not sdfg.arrays['tmp'].vla
+
+
 if __name__ == '__main__':
     test_symbolic_register_array_stays_on_the_stack()
     test_constant_sized_register_array_is_unchanged()
     test_global_lifetime_keeps_the_heap()
+    test_split_declaration_keeps_the_heap()
+    test_pass_marks_the_stack_candidates_only()
+    test_pass_clears_a_stale_mark()

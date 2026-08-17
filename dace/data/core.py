@@ -66,6 +66,10 @@ class Data:
                             default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(key_type=str, value_type=str, desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
+    vla = Property(dtype=bool,
+                   default=False,
+                   desc='Declare this descriptor as a stack variable-length array. Set by the '
+                   '``MarkVLAArrays`` pass, which owns the analysis; code generation only renders it')
 
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
