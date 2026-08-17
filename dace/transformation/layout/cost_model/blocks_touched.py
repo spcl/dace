@@ -6,7 +6,7 @@ import dace
 import numpy
 import sympy as sp
 
-from dace.symbolic import int_floor, pystr_to_symbolic, simplify
+from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
 
 
 def average_blocks_touched(
@@ -54,8 +54,12 @@ def average_blocks_touched(
         for depth, param in enumerate(params):
             psym = pystr_to_symbolic(param)
             step = pystr_to_symbolic(ranges[param][2])
+            # A name reparsed from a string is a different instance than the one in the subset. subs
+            # matches by name but Add cancels by identity, so an unequalized delta stays as
+            # N*(i - i + 1) and the affine guard below rejects an index that is plainly affine.
+            eq_addr, psym, step = equalize_symbols_across(addr, psym, step)
             # byte-address movement per step
-            stride = sp.simplify(addr.subs(psym, psym + step) - addr)
+            stride = sp.simplify(eq_addr.subs(psym, psym + step) - eq_addr)
             # affine in psym <=> the step delta is free of psym; '//' and '%' indices are not, and would
             # leak the loop variable into the "per-iteration" cost, crashing the later float()
             if psym in stride.free_symbols:

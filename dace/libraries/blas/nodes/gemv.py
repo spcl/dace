@@ -42,7 +42,7 @@ class ExpandGemvPure(ExpandTransformation):
         else:
             trans_shape_a = shape_a
 
-        if trans_shape_a[1] != shape_x[0]:
+        if symbolic.inequal_symbols(trans_shape_a[1], shape_x[0]):
             raise SyntaxError("Matrix-vector product size mismatch: {} vs. {}".format(trans_shape_a[1], shape_x[0]))
 
         N, M = trans_shape_a[0], trans_shape_a[1]
@@ -423,7 +423,9 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         a_cols = size_a[1] if not self.transA else size_a[0]
         a_rows = size_a[0] if not self.transA else size_a[1]
 
-        if a_cols != size_x[0]:
+        # Equalized, not raw '!=': the two subsets can carry the same name as different sympy
+        # instances, which compare unequal by identity and reject matching shapes.
+        if symbolic.inequal_symbols(a_cols, size_x[0]):
             raise ValueError(f"Columns of A ({a_cols}) don't match "
                              f"size of x ({size_x[0]}).")
 
@@ -435,9 +437,10 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         out_subset = copy.deepcopy(out_memlet.subset)
         out_subset.squeeze()
         size_y_out = out_subset.size()
-        if size_y_in is not None and size_y_in != size_y_out:
+        if size_y_in is not None and (len(size_y_in) != len(size_y_out)
+                                      or any(symbolic.inequal_symbols(i, o) for i, o in zip(size_y_in, size_y_out))):
             raise ValueError("Input y-vector must match output y-vector.")
-        if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
+        if (len(size_y_out) != 1 or symbolic.inequal_symbols(size_y_out[0], a_rows)):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 
 

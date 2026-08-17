@@ -240,7 +240,10 @@ def _create_einsum_internal(sdfg: SDFG,
         if len(inp) != len(inparr.shape):
             raise ValueError('Dimensionality mismatch in input "%s"' % inpname)
         for char, shp in zip(inp, inparr.shape):
-            if char in chardict and shp != chardict[char]:
+            # Equalized, not raw '!=': one name can reach here as several sympy instances (a
+            # descriptor a layout pass rebuilt against one parsed from a string), which compare
+            # unequal by identity and would reject a shape that matches.
+            if char in chardict and symbolic.inequal_symbols(shp, chardict[char]):
                 raise ValueError('Dimension mismatch in einsum expression')
             chardict[char] = shp
 
@@ -520,7 +523,7 @@ def _create_einsum_internal(sdfg: SDFG,
             s2 = list(s2)
             for a in s1:
                 for i, b in enumerate(s2):
-                    if symbolic.equal_valued(a, b):
+                    if not symbolic.inequal_symbols(a, b):
                         del s2[i]
                         break
                 else:
@@ -531,7 +534,7 @@ def _create_einsum_internal(sdfg: SDFG,
             s1 = tuple(strides.get(str(d), d) for d in s1)
             if len(s1) != len(s2):
                 return False
-            return all(symbolic.equal_valued(a, b) for a, b in zip(s1, s2))
+            return all(not symbolic.inequal_symbols(a, b) for a, b in zip(s1, s2))
 
         if ((_is_permutation(nsdfg.arrays['X'].shape,
                              a.desc(sdfg).shape) and not _shape_equal(nsdfg.arrays['X'].shape,

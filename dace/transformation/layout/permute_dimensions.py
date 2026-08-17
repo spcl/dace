@@ -543,6 +543,7 @@ def rewrite_state_for_permute(state: dace.SDFGState,
             edge.data.subset = dace.subsets.Range(new_subset)
 
             flip_gemm_operand_if_transposed(edge, permute_indices)
+            rewrite_einsum_if_permuted(edge, permute_indices)
 
             if note_copy_side is not None:
                 note_copy_side(sides, edge, permute_indices)
@@ -567,6 +568,24 @@ def flip_gemm_operand_if_transposed(edge, permute_indices: List[int]) -> None:
             f"PermuteDimensions: operand '{edge.dst_conn}' of '{edge.dst.label}' was permuted by "
             f"{permute_indices}, but only a 2-D transpose [1, 0] can be absorbed into a BLAS flag.")
     flip_operand_transpose(edge.dst, edge.dst_conn)
+
+
+def rewrite_einsum_if_permuted(edge, permute_indices: List[int]) -> None:
+    """Special rewrite rule: an ``Einsum`` operand permuted by ``permute_indices`` needs the matching subscript group permuted the same way, since the node reads its shapes from the descriptors but its contraction from the string. Without this the expansion sees ``'ij,j->i'`` against a relaid-out ``(M, N)`` operand and rejects it as a dimension mismatch. Identity permutations are ignored; a permuted OUTPUT is refused, as the output subscripts are shared with every operand."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.layout.rewrite_libnodes import transform_einsum
+
+    if list(permute_indices) == list(range(len(permute_indices))):
+        return  # identity permutation -- subscripts unchanged
+    if isinstance(edge.src, Einsum):
+        raise NotImplementedError(
+            f"PermuteDimensions: the output of '{edge.src.label}' was permuted by {permute_indices}, but the "
+            f"output subscripts are shared with every operand, so permuting them alone would silently "
+            f"re-contract the expression.")
+    if not (isinstance(edge.dst, Einsum) and edge.dst_conn is not None and edge.dst_conn.startswith("_ein")):
+        return
+    operands = sorted(c for c in edge.dst.in_connectors if c.startswith("_ein"))
+    edge.dst.einsum_str = transform_einsum(edge.dst.einsum_str, operands.index(edge.dst_conn), tuple(permute_indices))
 
 
 def permute_args(expr, permute_map: dict[str, list[int]]):
