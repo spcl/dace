@@ -22,6 +22,8 @@ from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
+
+from ordered_set import OrderedSet
 from dace.properties import CodeBlock
 
 
@@ -811,7 +813,9 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
             e.data.dst_subset = new_subset
 
     edges_by_connector = collections.defaultdict(list)
-    connectors_to_remove = set()
+    # Ordered: the disjointness guard below keeps the first write of an overlapping pair and refuses
+    # the rest, so a plain set would let PYTHONHASHSEED decide which one survives.
+    connectors_to_remove = OrderedSet()
     for e in inner_edges(scope_node):
         if e.data.is_empty():
             continue
@@ -823,14 +827,19 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
+    # Per retained (write-side) connector, the exact subset of each write folded into it
+    # so far. ``sbs.union`` only computes a bounding box, so checking a new candidate
+    # against the already-widened outer subset would false-positive once enough merges
+    # have coarsened it -- track the precise per-write subsets instead.
+    merged_write_subsets: Dict[str, List[sbs.Subset]] = collections.defaultdict(list)
+
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
         odata = get_outer_data(e)
         offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
-        # Outer side of the scope - remove edge and union subsets
+        # Outer side of the scope - find the edges first, mutate nothing yet
         target_conn = prefix + data_to_conn[odata][offset:]
         conn_to_remove = prefix + conn[offset:]
-        remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
             out_edges = [ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn]
             edges_to_remove = [ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove]
@@ -840,6 +849,22 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
+
+        if isinstance(scope_node, nd.ExitNode):
+            # These are two write paths merging into one outer edge. Consolidation drops
+            # one of the writes' individual position in program order, so it is only safe
+            # when the subsets provably cannot overlap. ``Range.intersects`` both returns
+            # None *and* raises on a bound sympy won't decide; the module-level helper
+            # folds both into None, so anything but a hard False means "may overlap".
+            incoming = get_outer_subset(edge_to_remove)
+            history = merged_write_subsets[target_conn]
+            if not history:
+                history.append(get_outer_subset(out_edge))
+            if any(sbs.intersects(incoming, prior) is not False for prior in history):
+                continue
+            history.append(incoming)
+
+        remove_outer_connector(conn_to_remove)
         set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
 
         # Check if dangling connectors have been created and remove them,
