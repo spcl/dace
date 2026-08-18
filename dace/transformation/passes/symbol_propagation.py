@@ -28,17 +28,23 @@ def free_symbol_names(value) -> Set[str]:
         return set()
 
 
-def mutated_scalar_names(sdfg: SDFG) -> Set[str]:
-    """Names of ``Scalar`` descriptors written somewhere in ``sdfg``."""
-    mutated: Set[str] = set()
+def opaque_scalar_names(sdfg: SDFG) -> Set[str]:
+    """``Scalar`` descriptors of ``sdfg`` whose readers must not propagate. A scalar written here
+    changes under the reader. A non-transient scalar of a nested SDFG is a connector the parent
+    rewrites per invocation, and folding its value back into control flow undoes the
+    ``ScalarToSymbolPromotion`` that put the symbol there; only a never-written argument of the
+    top-level SDFG is a read-only parameter."""
+    opaque: Set[str] = set()
     for state in sdfg.all_states():
         for n in state.data_nodes():
             if state.in_degree(n) == 0:
                 continue
             desc = sdfg.arrays.get(n.data)
             if isinstance(desc, dt.Scalar):
-                mutated.add(n.data)
-    return mutated
+                opaque.add(n.data)
+    if sdfg.parent_sdfg is not None:
+        opaque |= {name for name, desc in sdfg.arrays.items() if isinstance(desc, dt.Scalar) and not desc.transient}
+    return opaque
 
 
 def meta_read_symbols(blk: ControlFlowBlock) -> Set[str]:
@@ -172,10 +178,10 @@ class SymbolPropagation(ppl.Pass):
             if isinstance(node, ControlFlowBlock):
                 all_cfg_blks[node] = parent
 
-        # An unwritten Scalar is read-only and propagates like a symbol.
-        self._mutated_scalars: Dict[SDFG, Set[str]] = {}
+        # An unwritten Scalar of the top-level SDFG is read-only and propagates like a symbol.
+        self._opaque_scalars: Dict[SDFG, Set[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
-            self._mutated_scalars[sd] = mutated_scalar_names(sd)
+            self._opaque_scalars[sd] = opaque_scalar_names(sd)
 
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
         out_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
@@ -324,9 +330,8 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-            # A mutated scalar can change across the SDFG, so its readers cannot propagate.
-            mutated = self._mutated_scalars.get(owner, set())
-            sym_table = {k: v for k, v in sym_table.items() if v is None or not (scalars(v, owner.arrays) & mutated)}
+            opaque = self._opaque_scalars.get(owner, set())
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not (scalars(v, owner.arrays) & opaque)}
 
             if i == 0:
                 new_in_syms = sym_table
