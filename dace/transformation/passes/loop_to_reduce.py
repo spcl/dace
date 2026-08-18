@@ -1142,6 +1142,21 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     parent.remove_node(loop)
 
 
+def _state_in_nested_loop(state: SDFGState, loop: LoopRegion) -> bool:
+    """True iff ``state`` is inside a ``LoopRegion`` nested within ``loop``.
+
+    The WCR accumulator of a nested reduction belongs to that nested loop, not to
+    the outer one; retargeting the outer loop would leave the accumulator result
+    unreachable for consumers in the outer loop body.
+    """
+    g = state.parent_graph
+    while g is not None and g is not loop:
+        if isinstance(g, LoopRegion):
+            return True
+        g = getattr(g, 'parent_graph', None)
+    return False
+
+
 def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     """Locate a single WCR-bearing write to a constant slot of a non-transient array.
 
@@ -1163,6 +1178,9 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
         loop_iedge_assignees.update(e.data.assignments.keys())
     candidates = []
     for state in loop.all_states():
+        # A WCR write inside a nested loop is the nested loop's reduction, not ours.
+        if _state_in_nested_loop(state, loop):
+            continue
         for e in state.edges():
             if e.data is None or e.data.wcr is None:
                 continue
@@ -1247,6 +1265,12 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     for state in loop.all_states():
+        # A reduction chain inside a nested loop belongs to that nested loop; retargeting
+        # the outer loop would wrap the init/writeback outside the inner reduction and lose
+        # the per-outer-iteration accumulator reset (TSVC s212/s319 family with a guarded
+        # recurrence surrounding an inner reduction).
+        if _state_in_nested_loop(state, loop):
+            continue
         by_data: Dict[str, List[nodes.AccessNode]] = {}
         for n in state.nodes():
             if isinstance(n, nodes.AccessNode):

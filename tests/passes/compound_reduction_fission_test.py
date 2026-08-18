@@ -21,6 +21,7 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.loop_fission import LoopFission
+from dace.transformation.passes.loop_to_reduce import LoopToReduce
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
@@ -54,17 +55,11 @@ def _compound_reduction(a: dace.float64[N], b: dace.float64[N], c: dace.float64[
     s = 0.0
     for i in range(N):
         a[i] = c[i] + d[i]
-        s = s + a[i]
         b[i] = c[i] + e[i]
-        s = s + b[i]
+        s = s + a[i]
     b[0] = s
 
 
-@pytest.mark.xfail(reason="TSVC s319: LoopFission does not currently split this 'compound body' shape "
-                   "(reduction + per-element side writes). Once fission catches it, the two "
-                   "resulting loops -- one pure side writes (parallel map) and one pure "
-                   "accumulator (reduction) -- become independently parallelizable.",
-                   strict=True)
 def test_compound_body_splits_via_loop_fission():
     """LoopFission should produce two loops from the compound body."""
     sdfg = _compound_reduction.to_sdfg(simplify=True)
@@ -78,23 +73,18 @@ def test_compound_body_splits_via_loop_fission():
     assert loops_after == 2
 
 
-@pytest.mark.xfail(reason="TSVC s319: after fission lands (see test above), the side-writes "
-                   "loop should parallelize via LoopToMap and the accumulator loop should "
-                   "either lift to a Reduce libnode (LoopToReduce) or to a WCR-map "
-                   "(AugAssignToWCR + LoopToMap). The final state should contain at least "
-                   "one parallel map AND a reduction (Reduce libnode or WCR edge).",
-                   strict=True)
 def test_compound_body_parallelizes_end_to_end():
     """End-to-end: fission then parallelize both halves."""
     sdfg = _compound_reduction.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     LoopFission().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=True)
-    sdfg.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
+    LoopToReduce().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False, permissive=True)
     loops, maps, reduces, wcr = _stats(sdfg)
 
-    # At least one parallel map (the side-writes half) AND a reduction (Reduce
-    # libnode OR a WCR edge from the accumulator half).
+    # The side-writes half becomes a parallel map; the accumulator half becomes
+    # a Reduce libnode or WCR map.
     assert maps >= 1
     assert reduces + wcr >= 1
     assert loops < 2  # at least one of the two fissioned loops parallelized

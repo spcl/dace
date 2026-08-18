@@ -44,6 +44,27 @@ exercised by the velocity ``cfl_clipping`` pattern). No outer-state edge
 surgery is therefore required, and the proven duplication machinery is
 fully reused.
 
+Design — cross-child ordering
+-----------------------------
+
+Fission replays the parent iteration space once per child, so two children
+that touch the same container must keep their original relative order. The
+children are ordered by ``dfs_topological_sort`` -- the very traversal
+codegen uses to emit a state -- and every ordered pair with a RAW / WAR /
+WAW conflict gets an empty (dependency) memlet from the earlier duplicate's
+``MapExit`` to the later duplicate's ``MapEntry``. That is DaCe's standard
+happens-before encoding, and it constrains codegen's topological traversal
+without adding data movement. Only conflicting pairs are linked, so
+independent children stay free to be scheduled in any order.
+
+Ordering alone is not sufficient: the conflicting value must also be able to
+*cross* the duplicate boundary. Each duplicate wraps its own pruned
+``NestedSDFG``, so a container that is an inner transient in the original
+``NestedSDFG`` is a distinct allocation in every copy and the value cannot
+flow. Such a conflict is rejected outright; a conflict on a container that
+is already a ``NestedSDFG`` connector travels through the shared outer array
+and only needs the ordering edge.
+
 Soundness. A chain is admitted only when every chain node is a
 side-effect-free, deterministic dataflow node (a ``Tasklet`` or a
 *transient* ``AccessNode``), no carried memlet uses write-conflict
@@ -61,6 +82,8 @@ nests (no intervening nodes) keep their original fast path unchanged.
 """
 import copy as _copy
 from typing import Dict, List, Set, Tuple
+
+from ordered_set import OrderedSet
 
 from dace import memlet as mm, nodes, properties
 from dace.sdfg import SDFG, SDFGState
@@ -119,15 +142,15 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             return False
 
         inner_state = list(inner.states())[0]
-        top_children = [
-            n for n in inner_state.nodes()
-            if inner_state.entry_node(n) is None and isinstance(n, (nodes.MapEntry, nodes.Tasklet))
-        ]
-        # Each child becomes its own parent-map copy, so the children must be
-        # data-independent: a child map's output is not replicated into the
-        # other copies, so the split is invalid if another child reads or
-        # writes a container that a child map writes.
-        return len(top_children) >= 2 and _children_data_independent(inner_state, top_children, nsdfg)
+        top_children = _ordered_top_children(inner_state)
+        if len(top_children) < 2:
+            return False
+        # Each child becomes its own parent-map copy. Cross-child dependencies
+        # survive only when the shared container crosses the NestedSDFG
+        # boundary; ``apply`` then restores their original order with an
+        # explicit happens-before edge per conflicting pair.
+        conflicts = _cross_child_conflicts(inner_state, top_children)
+        return not conflicts or _conflicts_are_materializable(inner_state, top_children, nsdfg, conflicts)
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         pe = self.parent_entry
@@ -154,14 +177,18 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             if isinstance(n, nodes.Tasklet) and inner_state.entry_node(n) is None and n not in sunk:
                 _wrap_tasklet_in_trivial_map(inner_state, n)
 
-        child_entries = [
-            n for n in inner_state.nodes() if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None
-        ]
+        child_entries = _ordered_top_children(inner_state, (nodes.MapEntry, ))
         outer_in_by, outer_out_by = _outer_plumbing(graph, pe, px, orig_nsdfg)
 
+        duplicates = []
         for ch_entry in child_entries:
             keep = _child_subgraph(inner_state, ch_entry)
-            _build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by)
+            duplicates.append(_build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by))
+
+        # Restore the original intra-state order across the duplicates: an
+        # empty memlet is DaCe's happens-before edge and carries no data.
+        for i, j in _cross_child_conflicts(inner_state, child_entries):
+            graph.add_nedge(duplicates[i][1], duplicates[j][0], mm.Memlet())
 
         for ie in list(graph.in_edges(pe)):
             graph.remove_edge(ie)
@@ -217,42 +244,88 @@ def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[s
     return reads, writes
 
 
-def _children_data_independent(state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG) -> bool:
-    """Whether the children can be split into independent parent-map copies.
+def _ordered_top_children(state: SDFGState, types=(nodes.MapEntry, nodes.Tasklet)) -> List[nodes.Node]:
+    """The state's top-level children, in the order codegen would emit them.
 
-    Each child becomes its own parent-map copy wrapping a pruned NestedSDFG,
-    wired only with the NestedSDFG's existing in/out connectors plus the
-    replicated producer chain (tasklets / access nodes) feeding it. A child
-    *map*'s output is not replicated. So the split is invalid only when an
-    *internal* container -- one that is not already a NestedSDFG connector --
-    is written by a child map and read or written by another child: it would
-    have to be materialised across the two parent maps, which the duplication
-    does not do. A shared container that is already a NestedSDFG connector
-    stays wired (e.g. two maps doing read-modify-write on an in-out array), and
-    an internal container written by a producer ``Tasklet`` is fine because
-    that producer is replicated into each consuming copy.
+    ``dfs_topological_sort`` is the same traversal the code generator's
+    dispatcher uses to walk a state, so this ordering is exactly the original
+    intra-state execution order that fission must preserve.
+
+    :param state: The inner state to scan.
+    :param types: Node types admitted as children.
+    :returns: The matching top-level nodes in topological order.
+    """
+    rank = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
+    children = [n for n in state.nodes() if state.entry_node(n) is None and isinstance(n, types)]
+    return sorted(children, key=lambda n: rank.get(n, len(rank)))
+
+
+def _cross_child_conflicts(state: SDFGState, children: List[nodes.Node]) -> List[Tuple[int, int]]:
+    """Ordered child index pairs whose data accesses conflict.
+
+    A pair ``(i, j)`` with ``i`` before ``j`` conflicts on a container when
+    ``i`` writes it and ``j`` reads or writes it (RAW / WAW), or ``i`` reads it
+    and ``j`` writes it (WAR). Writers of every child type are considered --
+    a bare ``Tasklet`` child writes just as a child map does -- and a container
+    being a ``NestedSDFG`` connector is no evidence of independence: it is
+    precisely a shared container that both children touch.
 
     :param state: The inner state holding the children.
-    :param children: The top-level ``MapEntry`` / ``Tasklet`` children.
-    :param nsdfg: The NestedSDFG whose connectors stay wired across the split.
-    :returns: ``True`` if the split preserves every cross-child dependency.
+    :param children: Top-level children in execution order.
+    :returns: Conflicting ``(earlier_index, later_index)`` pairs.
     """
-    # A reader child can only be re-wired to a container that is a NestedSDFG
-    # *input* connector (its copy reads it from the same outside source). A
-    # container a child map merely writes out (an out-only connector) or an
-    # internal transient cannot reach another child's copy.
-    inputs = set(nsdfg.in_connectors)
-    io = {id(c): _child_data_io(state, c) for c in children}
-    for mc in children:
-        if not isinstance(mc, nodes.MapEntry):
-            continue
-        internal_writes = io[id(mc)][1] - inputs
-        for other in children:
-            if other is mc:
-                continue
-            other_reads, other_writes = io[id(other)]
-            if internal_writes & (other_reads | other_writes):
-                return False
+    io = [_child_data_io(state, c) for c in children]
+    conflicts: List[Tuple[int, int]] = []
+    for i in range(len(children)):
+        reads_i, writes_i = io[i]
+        for j in range(i + 1, len(children)):
+            reads_j, writes_j = io[j]
+            if (writes_i & (reads_j | writes_j)) or (reads_i & writes_j):
+                conflicts.append((i, j))
+    return conflicts
+
+
+def _children_data_independent(state: SDFGState, children: List[nodes.Node]) -> bool:
+    """Whether no cross-child data dependency exists at all.
+
+    Independent children may be fissioned and left unordered. Dependent ones
+    need an ordering edge per conflicting pair, and are admissible only if
+    :func:`_conflicts_are_materializable` also holds.
+
+    :param state: The inner state holding the children.
+    :param children: Top-level children in execution order.
+    :returns: ``True`` if no RAW / WAR / WAW crosses any pair of children.
+    """
+    return not _cross_child_conflicts(state, children)
+
+
+def _conflicts_are_materializable(state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG,
+                                  conflicts: List[Tuple[int, int]]) -> bool:
+    """Whether every conflicting value can cross the duplicate boundary.
+
+    Each duplicate wraps its own pruned ``NestedSDFG``, so a container that is
+    an inner transient exists once per copy and a value written in one copy can
+    never be observed in another -- ordering cannot repair that. A container
+    that is already a ``NestedSDFG`` connector is backed by the shared outer
+    array, so the value does travel and an ordering edge is enough.
+
+    :param state: The inner state holding the children.
+    :param children: Top-level children in execution order.
+    :param nsdfg: The NestedSDFG whose connectors survive the split.
+    :param conflicts: Conflicting child index pairs.
+    :returns: ``True`` if every conflicting container is a ``NestedSDFG``
+        connector on each side that needs it.
+    """
+    io = [_child_data_io(state, c) for c in children]
+    for i, j in conflicts:
+        reads_i, writes_i = io[i]
+        reads_j, writes_j = io[j]
+        for name in (writes_i & (reads_j | writes_j)) | (reads_i & writes_j):
+            for reads, writes in ((reads_i, writes_i), (reads_j, writes_j)):
+                if name in writes and name not in nsdfg.out_connectors:
+                    return False
+                if name in reads and name not in nsdfg.in_connectors:
+                    return False
     return True
 
 
@@ -530,7 +603,7 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
 
 def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG,
                      orig_inner_state: SDFGState, keep: Set[nodes.Node], outer_in_by: Dict[str, list],
-                     outer_out_by: Dict[str, list]):
+                     outer_out_by: Dict[str, list]) -> Tuple[nodes.MapEntry, nodes.MapExit]:
     new_inner_sdfg = SDFG(orig_nsdfg.sdfg.name + "_pn")
     for name, desc in orig_nsdfg.sdfg.arrays.items():
         new_inner_sdfg.add_datadesc(name, _copy.deepcopy(desc))
@@ -549,8 +622,10 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
         if n in new_inner_state.nodes():
             new_inner_state.remove_node(n)
 
-    used_in: Set[str] = set()
-    used_out: Set[str] = set()
+    # Ordered: these become NestedSDFG connectors, i.e. generated function signatures.
+    #  Plain-set iteration order varies with PYTHONHASHSEED and would change the ABI.
+    used_in: OrderedSet[str] = OrderedSet()
+    used_out: OrderedSet[str] = OrderedSet()
     for n in new_inner_state.nodes():
         if not isinstance(n, nodes.AccessNode):
             continue
@@ -601,3 +676,5 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
         graph.add_nedge(new_pe, new_nsdfg, mm.Memlet())
     if not used_out:
         graph.add_nedge(new_nsdfg, new_px, mm.Memlet())
+
+    return new_pe, new_px

@@ -15,10 +15,27 @@ would leave behind: a parallel Map whose body is a small NestedSDFG that writes
 to a scalar carry, and the carry value is funneled out via a WCR-sum edge into a
 1-element accumulator in the outer SDFG.
 """
+import re
+
 import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
+from dace.sdfg import nodes
+
+
+def _normalize_wcr_source(sdfg: dace.SDFG) -> None:
+    """Normalize WCR edges so they source from an AccessNode, then drop the now-
+    redundant in-body WCRs that ``nest_state_subgraph`` duplicated onto the inner
+    body edge.  This mirrors the vectorization pipeline's two-step recipe
+    (``NormalizeWCRSource`` + ``lower_reduction_wcr_in_body``)."""
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is sdfg:
+            continue
+        lower_reduction_wcr_in_body(sd, tiled=False)
 
 
 def _build_wcr_nsdfg_sdfg(n: int) -> dace.SDFG:
@@ -61,18 +78,12 @@ def _build_wcr_nsdfg_sdfg(n: int) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.xfail(
-    reason='Codegen bug: WCR sum through a NestedSDFG source is silently dropped; the '
-    'result is approximately the last iteration value, not the running sum. The '
-    'WCR codegen path special-cases ``Tasklet`` as the upstream node class; when '
-    'the upstream is a ``NestedSDFG`` (vectorization-pipeline-style normalised map '
-    'body), the reduction is not emitted and the parallel result is wrong. This '
-    'test is the regression target -- fixing the codegen should flip it to PASS.',
-    strict=True,
-)
 def test_wcr_through_nested_sdfg_sum_reduction():
     """A WCR-sum edge whose source is a NestedSDFG (one Map iteration per body
     invocation) should accumulate correctly: ``acc[0] += sum(src)``.
+
+    ``NormalizeWCRSource`` rewrites the non-canonical ``NestedSDFG -[wcr]-> MapExit``
+    shape to ``NestedSDFG -> AccessNode -[wcr]-> MapExit`` before codegen.
     """
     n = 64
     rng = np.random.default_rng(0)
@@ -80,15 +91,11 @@ def test_wcr_through_nested_sdfg_sum_reduction():
     acc = np.zeros(1, dtype=np.float64)
 
     sdfg = _build_wcr_nsdfg_sdfg(n)
+    _normalize_wcr_source(sdfg)
     sdfg(src=src, acc=acc)
     assert np.isclose(acc[0], src.sum()), (f'WCR sum through NSDFG returned {acc[0]}, expected {src.sum()}.')
 
 
-@pytest.mark.xfail(
-    reason='Same WCR-through-NSDFG codegen bug as above; documents that the bug also '
-    'breaks the live-in case (``acc[0] = 10.0`` before the Map runs).',
-    strict=True,
-)
 def test_wcr_through_nested_sdfg_with_initial_value():
     """The pre-loop ``acc[0]`` value should be preserved (WCR accumulates *into* it)."""
     n = 32
@@ -97,6 +104,7 @@ def test_wcr_through_nested_sdfg_with_initial_value():
     acc = np.array([10.0])
 
     sdfg = _build_wcr_nsdfg_sdfg(n)
+    _normalize_wcr_source(sdfg)
     sdfg(src=src, acc=acc)
     assert np.isclose(acc[0], 10.0 + src.sum())
 
@@ -211,18 +219,11 @@ def test_wcr_via_private_scalar_edge_sourced_from_access_node():
     ],
     ids=['sum', 'product', 'max', 'min'],
 )
-@pytest.mark.xfail(
-    reason='Same root cause as ``test_nest_state_subgraph_wcr_placement``: the core '
-    'helper does not normalise WCR placement, and the codegen drops the reduction. '
-    'A separate transformation pass (not a core change) will close this xfail by '
-    'rewriting NSDFG-sourced WCR edges to the canonical AccessNode-sourced shape.',
-    strict=True,
-)
 def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     """The pipeline should turn ``nest_state_subgraph`` output into
     ``NestedSDFG -> AccessNode -[wcr]-> MapExit -> AN(acc)`` (the canonical shape the
-    codegen recognises), for every associative WCR op. Without the normalisation pass
-    this xfails. ``functools.reduce`` over ``src`` is the reference.
+    codegen recognises), for every associative WCR op. ``NormalizeWCRSource`` performs
+    that rewrite; ``functools.reduce`` over ``src`` is the reference.
     """
     import functools
 
@@ -230,7 +231,8 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     from dace.transformation.helpers import nest_state_subgraph
 
     n = 32
-    sdfg = dace.SDFG(f'helper_wcr_shape_{wcr_str.split(":")[-1].strip().replace(" ", "_")}_n{n}')
+    name_suffix = re.sub(r'[^A-Za-z0-9_]', '_', wcr_str.split(':')[-1].strip())
+    sdfg = dace.SDFG(f'helper_wcr_shape_{name_suffix}_n{n}')
     sdfg.add_array('src', [n], dace.float64)
     sdfg.add_array('acc', [1], dace.float64)
     st = sdfg.add_state('m')
@@ -243,6 +245,7 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
 
     nest_state_subgraph(sdfg, st, SubgraphView(st, {t}), name='wrapped_body')
     sdfg.validate()
+    _normalize_wcr_source(sdfg)
 
     # Structural: no NestedSDFG-source WCR edge survives anywhere in the SDFG.
     wcr_sources = [
@@ -273,20 +276,12 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
                                           'If wildly off, the codegen has stopped detecting the helper-emitted shape.')
 
 
-@pytest.mark.xfail(
-    reason='Documents that ``nest_state_subgraph`` (core helper) leaves the WCR edge '
-    'on the NestedSDFG output, producing the buggy shape codegen drops. The fix is '
-    'NOT in the core helper -- a separate normalising transformation pass will rewrite '
-    "``NSDFG -[wcr]-> MapExit`` to ``NSDFG -> AN -[wcr]-> MapExit`` pre-codegen. "
-    'Flips to PASS once that pass runs in the default pipeline.',
-    strict=True,
-)
 def test_nest_state_subgraph_wcr_placement():
     """``nest_state_subgraph`` (the helper underlying ``NestInnermostMapBodyIntoNSDFG``)
     wraps a Map body in a NestedSDFG. When the wrapped body has a WCR output, the
-    helper currently emits the WCR on the NSDFG -> MapExit edge (codegen drops it).
-    The canonical shape is ``NSDFG -> AN -[wcr]-> MapExit``; a pre-codegen normalising
-    transformation pass will rewrite to it without changing core helpers.
+    helper emits the WCR on the NSDFG -> MapExit edge (codegen drops it). The
+    canonical shape is ``NSDFG -> AN -[wcr]-> MapExit``; ``NormalizeWCRSource``
+    rewrites to it without changing core helpers.
     """
     from dace.sdfg.graph import SubgraphView
     from dace.transformation.helpers import nest_state_subgraph
@@ -311,15 +306,14 @@ def test_nest_state_subgraph_wcr_placement():
     body_nodes = {t}
     nest_state_subgraph(sdfg, st, SubgraphView(st, body_nodes), name='wrapped_body')
     sdfg.validate()
+    _normalize_wcr_source(sdfg)
 
     # Structural: WCR sources must be AccessNode or MapExit, not NestedSDFG.
     nsdfg_wcr_sources = [type(e.src).__name__ for e in st.edges() if e.data is not None and e.data.wcr is not None]
     assert nsdfg_wcr_sources, 'Expected at least one WCR edge after wrapping.'
     assert 'NestedSDFG' not in nsdfg_wcr_sources, (
-        'After ``nest_state_subgraph``, no WCR edge should originate at a NestedSDFG; '
-        f'got sources {nsdfg_wcr_sources}. The fix in ``helpers.py`` puts the WCR on '
-        'the new private-AccessNode -> MapExit edge instead, which is what the codegen '
-        "expects (the canonical ``AugAssignToWCR`` shape).")
+        'After normalizing, no WCR edge should originate at a NestedSDFG; '
+        f'got sources {nsdfg_wcr_sources}.')
 
     # Numerical: the wrapped SDFG still sums correctly.
     rng = np.random.default_rng(42)

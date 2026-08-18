@@ -1,18 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass that rewrites a masked in-nsdfg WCR into a write-only output connector.
+"""Pass that rewrites non-canonical WCR shapes inside map-body NestedSDFGs.
 
-The DaCe frontend can emit a masked/nested scalar reduction as a WCR edge that
-lands *inside* a :class:`~dace.sdfg.nodes.NestedSDFG` body, writing a
-**write-only** output connector, while the ``NestedSDFG -> MapExit`` edge for that
-connector is a *plain* copy (no WCR). Codegen lowers the in-body WCR into an
-``reduce_atomic`` through the write-only output pointer -- correct on its own, but
-downstream canonicalization passes (``WCRToAugAssign`` severs the atomic;
-``MapFusionVertical`` double-counts it) mangle this shape.
+Two shapes are handled:
 
-This pass rewrites it into the shape the DaCe frontend already emits natively for
-the equivalent polybench reduction (e.g. ``symm``): the accumulation runs on a
-seeded body-local transient, and the cross-iteration reduction is a WCR on the
-``NestedSDFG -> MapExit -> accumulator`` edge chain.
+* **Write-only scalar reduction.** The DaCe frontend emits a masked/nested scalar
+  reduction as a WCR edge that lands *inside* a :class:`~dace.sdfg.nodes.NestedSDFG`
+  body, writing a **write-only** output connector, while the
+  ``NestedSDFG -> MapExit`` edge for that connector is a *plain* copy (no WCR).
+  Codegen lowers the in-body WCR into an ``reduce_atomic`` through the write-only
+  output pointer -- correct on its own, but downstream canonicalization passes
+  (``WCRToAugAssign`` severs the atomic; ``MapFusionVertical`` double-counts it)
+  mangle this shape.
+
+* **Read-write redundant interior WCR (TSVC s212).** An in-place aug-assign such as
+  ``b[i] += data[i]`` can be encoded with ``oc`` as both an input and output
+  connector, a scalar WCR edge into ``AccessNode(oc)`` inside the body, *and* a
+  redundant WCR on the ``NestedSDFG -> MapExit`` edge. Dropping the interior WCR
+  to plain loses the incoming ``b`` value; instead the pass rewrites the body to an
+  explicit plain read-modify-write ``oc_out = oc_in OP addend`` and removes the WCR
+  from the boundary.
 
 For each map-body :class:`~dace.sdfg.nodes.NestedSDFG` with a write-only output
 connector ``oc`` whose body contains a *scalar* WCR edge into a sink
@@ -32,9 +38,10 @@ MapExit`` edge for ``oc`` is plain, the pass:
    already identity-seeded for the ``+`` kernels; for ``min`` / ``max`` a seed is
    inserted only when one is missing.
 
-The pass is idempotent: after rewriting, the body WCR writes a transient (not an
-output connector) and the ``NestedSDFG -> MapExit`` edge carries a WCR (and is
-AccessNode-sourced), so neither detection condition matches on a second run.
+The read-write rewrite creates a fresh output connector ``_nnr_rwout_<oc>``,
+re-routes the addend through a body-local scratch, and inserts a plain tasklet that
+computes ``oc_out = oc_in OP addend``. The new output is write-only and the boundary
+edge becomes a plain copy, so the pass is idempotent.
 """
 import ast
 import copy
@@ -75,6 +82,39 @@ def _op_from_wcr(wcr: str) -> Optional[str]:
     if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ('min', 'max'):
         return _WCR_OP.get(body.func.id)
     return None
+
+
+def _binop_expr_from_wcr(wcr: str) -> Optional[str]:
+    """Return the original infix operator / function name in a WCR lambda.
+
+    Unlike :func:`_op_from_wcr`, this keeps ``-`` as subtraction (it is the aug-
+    assign operator, not the accumulation view). Non-associative ops such as ``/``
+    return ``None`` so the read-write rewrite refuses them.
+    """
+    try:
+        tree = ast.parse(wcr.strip(), mode='eval').body
+    except SyntaxError:
+        return None
+    if not isinstance(tree, ast.Lambda):
+        return None
+    body = tree.body
+    if isinstance(body, ast.BinOp):
+        opmap = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}
+        return opmap.get(type(body.op))
+    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ('min', 'max'):
+        return body.func.id
+    return None
+
+
+def _rmw_tasklet_code(op: str) -> str:
+    """Return a plain tasklet expression that computes ``old OP addend``."""
+    if op in ('+', '-', '*'):
+        return f'__out = __old {op} __addend'
+    if op == 'min':
+        return '__out = min(__old, __addend)'
+    if op == 'max':
+        return '__out = max(__old, __addend)'
+    raise ValueError(f'unsupported read-modify-write op {op!r}')
 
 
 def _identity_value(op: str, dtype: dtypes.typeclass):
@@ -463,6 +503,116 @@ class NormalizeWCR(ppl.Pass):
                 outer_mx.remove_out_connector(out_conn)
         return True
 
+    def _rewrite_readwrite_output(self, state: SDFGState, nsdfg: nodes.NestedSDFG, oc: str) -> bool:
+        """Rewrite a read-write output connector whose in-body scalar WCR is redundant
+        with a WCR on the ``NestedSDFG -> MapExit`` edge.
+
+        The shape is the one the frontend emits for an in-place aug-assign such as
+        ``b[i] += data[i]`` inside a map-body NestedSDFG: ``oc`` is both an input and an
+        output connector, the body WCRs into ``AccessNode(oc)``, and the boundary edge
+        also carries the same WCR. That double accumulation is wrong, so we:
+
+        1. Re-route the addend produced by the original source tasklet into a fresh
+           body-local transient ``_nnr_addend_<oc>``.
+        2. Read the incoming ``oc`` value and the addend into a new tasklet that emits
+           ``oc_out = oc OP addend`` as a *plain* write.
+        3. Write the result into a fresh output connector ``_nnr_rwout_<oc>`` and remove
+           the WCR from the boundary edge, so each iteration writes its fully-updated
+           element back.
+
+        The rewrite is only applied when the interior WCR is scalar, sourced from a
+        Tasklet, and uses a supported associative aug-assign op (``+``, ``-``, ``*``,
+        ``min``, ``max``). It is a no-op on a second run because the new output is
+        write-only and has no interior WCR.
+        """
+        if oc not in nsdfg.in_connectors or oc not in nsdfg.out_connectors:
+            return False
+
+        inner = nsdfg.sdfg
+        oc_desc = inner.arrays.get(oc)
+        if oc_desc is None:
+            return False
+
+        # (a) Unique scalar WCR edge inside the body writing the connector array `oc`.
+        wcr_edge = None
+        wcr_state = None
+        for ist in inner.all_states():
+            for e in ist.edges():
+                if (e.data is not None and e.data.wcr is not None and e.data.data == oc
+                        and e.data.subset is not None and e.data.subset.num_elements() == 1
+                        and isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc
+                        and ist.out_degree(e.dst) == 0):
+                    if wcr_edge is not None:
+                        return False
+                    wcr_edge, wcr_state = e, ist
+        if wcr_edge is None:
+            return False
+
+        op = _binop_expr_from_wcr(wcr_edge.data.wcr)
+        if op is None:
+            return False
+
+        src = wcr_edge.src
+        src_conn = wcr_edge.src_conn
+        if src_conn is None or not isinstance(src, nodes.Tasklet):
+            return False
+
+        # (b) The boundary edge for `oc` must carry the WCR (redundant with the body WCR).
+        out_edge = next((oe for oe in state.out_edges(nsdfg) if oe.src_conn == oc), None)
+        if out_edge is None or out_edge.data.wcr is None or not isinstance(out_edge.dst, nodes.MapExit):
+            return False
+        if out_edge.data.subset is None or out_edge.data.subset.num_elements() != 1:
+            return False
+
+        # Do not leak symbols that are only defined inside the NestedSDFG.
+        if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
+            return False
+
+        # --- Rewrite the body: explicit plain read-modify-write. ---
+        # Body-local scratch for the per-iteration addend.
+        addend_desc = self._seed_desc(oc_desc)
+        addend = inner.add_datadesc(f'_nnr_addend_{oc}', addend_desc, find_new_name=True)
+
+        # Fresh output connector array (non-transient, because it is a connector).
+        out_desc = copy.deepcopy(oc_desc)
+        out_desc.transient = False
+        out_conn_name = inner.add_datadesc(f'_nnr_rwout_{oc}', out_desc, find_new_name=True)
+        nsdfg.remove_out_connector(oc)
+        nsdfg.add_out_connector(out_conn_name, out_desc.dtype)
+
+        # Access nodes for the explicit RMW.
+        old_node = wcr_state.add_read(oc)
+        addend_node = wcr_state.add_access(addend)
+        out_node = wcr_state.add_write(out_conn_name)
+
+        # Reroute the addend source onto the scratch.
+        addend_memlet = copy.deepcopy(wcr_edge.data)
+        addend_memlet.data = addend
+        addend_memlet.wcr = None
+        wcr_state.add_edge(src, src_conn, addend_node, None, addend_memlet)
+
+        # New tasklet: __out = __old OP __addend (plain).
+        dtype = oc_desc.dtype
+        rmw = wcr_state.add_tasklet('_nnr_rmw', {'__old': dtype, '__addend': dtype}, {'__out': dtype},
+                                     _rmw_tasklet_code(op))
+        wcr_state.add_edge(old_node, None, rmw, '__old', Memlet(data=oc, subset='0'))
+        wcr_state.add_edge(addend_node, None, rmw, '__addend', Memlet(data=addend, subset='0'))
+        wcr_state.add_edge(rmw, '__out', out_node, None, Memlet(data=out_conn_name, subset='0'))
+
+        # Remove the old redundant WCR edge and its sink if orphaned.
+        old_sink = wcr_edge.dst
+        wcr_state.remove_edge(wcr_edge)
+        if wcr_state.degree(old_sink) == 0:
+            wcr_state.remove_node(old_sink)
+
+        # --- Rewrite the boundary: plain copy from the new output connector. ---
+        path = list(state.memlet_path(out_edge))
+        for e in path:
+            e.data.wcr = None
+        state.remove_edge(out_edge)
+        state.add_edge(nsdfg, out_conn_name, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
+        return True
+
     def _apply(self, sdfg: SDFG) -> int:
         total = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -476,6 +626,10 @@ class NormalizeWCR(ppl.Pass):
                         if self.extract_slice_wcr and self._extract_slice_wcr(state, nsdfg, oc):
                             total += 1
                         elif self._rewrite_nsdfg_output(state, nsdfg, oc):
+                            total += 1
+                    readwrite = [oc for oc in nsdfg.out_connectors if oc in nsdfg.in_connectors]
+                    for oc in readwrite:
+                        if self._rewrite_readwrite_output(state, nsdfg, oc):
                             total += 1
         return total
 

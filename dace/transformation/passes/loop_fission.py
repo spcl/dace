@@ -73,6 +73,10 @@ def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
     touched, so the pass reporting "nothing applied" is the truth.
     """
     probe = copy.deepcopy(loop)  # detached: its states carry no .sdfg, hence the explicit one below
+    # Restore the parent reference so that grouping can see sibling loops (e.g. the
+    # accumulator loop that consumes a split-out side-writes loop). The probe is
+    # never written back, so this is safe.
+    probe.parent_graph = loop.parent_graph
     probe_compute = _single_compute_state(probe)
     if probe_compute is None:
         return False
@@ -146,7 +150,120 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str], sdfg: S
                 state.remove_edge(oe)
 
 
-def _independent_groups(state: SDFGState, loop_var: Optional[str], sdfg: SDFG) -> List[List[nodes.Node]]:
+def _has_self_path(state: SDFGState, data: str) -> bool:
+    """True if the state's dataflow graph contains a directed path from an
+    :class:`AccessNode` of ``data`` to another (or the same) :class:`AccessNode`
+    of ``data``. Such a self-path captures a live-in/live-out recurrence like a
+    scalar accumulator update.
+    """
+    starts = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data]
+    if len(starts) < 2 and not any(state.out_degree(n) > 0 and state.in_degree(n) > 0 for n in starts):
+        return False
+    for start in starts:
+        seen = set()
+        stack = [start]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if cur is not start and isinstance(cur, nodes.AccessNode) and cur.data == data:
+                return True
+            for e in state.out_edges(cur):
+                stack.append(e.dst)
+    return False
+
+
+def _is_accumulator_group(group: List[nodes.Node], state: SDFGState, sdfg: SDFG) -> bool:
+    """True if ``group`` contains a transient scalar that is both read and written
+    in the same state, indicating a loop-carried accumulator update. Per-iteration
+    transient temporaries (produced and consumed within one iteration) are excluded
+    because they have no self-path.
+    """
+    data_nodes = [n for n in group if isinstance(n, nodes.AccessNode)]
+    written_data = {n.data for n in data_nodes if state.in_degree(n) > 0}
+    for data in written_data:
+        desc = sdfg.arrays.get(data)
+        if desc is None or getattr(desc, 'transient', False) is False:
+            continue
+        if _has_self_path(state, data):
+            return True
+    return False
+
+
+def _written_data(groups: List[List[nodes.Node]], state: SDFGState) -> Set[str]:
+    """Containers written by AccessNodes in ``groups``."""
+    return {
+        n.data for g in groups for n in g
+        if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0
+    }
+
+
+def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
+    """True if a sibling :class:`LoopRegion` in the same parent CFG reads any
+    container in ``data``. Used after fission to keep per-element producer loops
+    together when a downstream consumer loop reads them, avoiding an unnecessary
+    further split.
+    """
+    loop = state.parent_graph
+    if loop is None or not hasattr(loop, 'parent_graph'):
+        return False
+    parent = loop.parent_graph
+    if parent is None:
+        return False
+    for block in parent.nodes():
+        if not isinstance(block, LoopRegion):
+            continue
+        # Skip the loop itself, and skip the original loop when this state is a
+        # deepcopy probe (the probe shares the parent's nodes, so the original loop
+        # would otherwise look like a sibling of itself).
+        if block is loop or getattr(block, 'label', None) == getattr(loop, 'label', None):
+            continue
+        reads, _ = _block_rw(block)
+        if reads & data:
+            return True
+    return False
+
+
+def _merge_side_write_groups(groups: List[List[nodes.Node]], state: SDFGState,
+                             loop_var: Optional[str], sdfg: SDFG,
+                             sibling_check: bool = True) -> List[List[nodes.Node]]:
+    """Merge side-write groups when they are part of a compound reduction body
+    (one scalar accumulator group plus multiple per-element side writes) or when
+    they feed a sibling consumer loop. Both cases are value-preserving: keeping the
+    side-write statements in a single loop preserves their original order, and any
+    consumer sees the fully-produced per-element arrays after that loop completes.
+    """
+    if loop_var is None or len(groups) < 2:
+        return groups
+    acc_idxs = {i for i, g in enumerate(groups) if _is_accumulator_group(g, state, sdfg)}
+    side_idxs = [i for i in range(len(groups)) if i not in acc_idxs]
+    if len(side_idxs) <= 1:
+        return groups
+    side_writes = _written_data([groups[i] for i in side_idxs], state)
+    # Merge side writes when an accumulator is present in the same body (the
+    # compound-reduction pattern) or when a sibling loop consumes the side writes
+    # (so the producer loop should not be split further after fission).
+    consumed = _consumed_by_sibling_loop(state, side_writes) if sibling_check else False
+    if not acc_idxs and not consumed:
+        return groups
+    order = {n: i for i, n in enumerate(state.nodes())}
+    merged: List[nodes.Node] = []
+    kept: List[List[nodes.Node]] = []
+    for i, g in enumerate(groups):
+        if i in acc_idxs:
+            kept.append(g)
+        else:
+            merged.extend(g)
+    if merged:
+        seen = set()
+        deduped = [n for n in merged if not (n in seen or seen.add(n))]
+        kept.append(sorted(deduped, key=lambda n: order[n]))
+    return sorted(kept, key=lambda g: order[g[0]])
+
+
+def _independent_groups(state: SDFGState, loop_var: Optional[str], sdfg: SDFG,
+                        sibling_check: bool = True) -> List[List[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 
     A *pure input* is an AccessNode with no in-edges whose data is never
@@ -227,7 +344,8 @@ def _independent_groups(state: SDFGState, loop_var: Optional[str], sdfg: SDFG) -
         member_set = set(members)
         feeders = [n for n in is_input if any(e.dst in member_set for e in state.out_edges(n))]
         groups.append(sorted(members + feeders, key=lambda n: order[n]))
-    return sorted(groups, key=lambda g: order[g[0]])
+    groups = sorted(groups, key=lambda g: order[g[0]])
+    return _merge_side_write_groups(groups, state, loop_var, sdfg, sibling_check=sibling_check)
 
 
 def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
@@ -478,7 +596,7 @@ class LoopFission(ppl.Pass):
         is_start = parent.start_block is loop
         cidx = list(loop.nodes()).index(compute)
         loop_var = loop.loop_variable
-        ngroups = len(_independent_groups(compute, loop_var, sdfg))
+        ngroups = len(_independent_groups(compute, loop_var, sdfg, sibling_check=False))
 
         clones: List[LoopRegion] = []
         for gi in range(ngroups):
@@ -486,7 +604,7 @@ class LoopFission(ppl.Pass):
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             cstate = list(clone.nodes())[cidx]
-            keep = set(_independent_groups(cstate, loop_var, sdfg)[gi])
+            keep = set(_independent_groups(cstate, loop_var, sdfg, sibling_check=False)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:
                 cstate.remove_node(n)
             clones.append(clone)

@@ -188,10 +188,6 @@ def hybrid_sparse(y: dace.float64[N], val: dace.float64[N], x: dace.float64[N], 
             y[i] = acc + y[i - 1]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='BUG: canonicalize raises InvalidSDFGEdgeError "Memlet subset negative '
-                   'out-of-bounds (y[-1...])" -- the y[i-1] read is hoisted without respecting the '
-                   'i >= K guard that makes it in-range')
 def test_hybrid_sparse_is_value_preserving():
     n, ksplit = 10, 4
     rng = np.random.default_rng(3)
@@ -211,8 +207,7 @@ def test_hybrid_sparse_is_value_preserving():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='blocked by the same InvalidSDFGEdgeError as above; then needs an SMT oracle '
-                   'to refute FULL sequentiality and split at K')
+                   reason='needs an SMT oracle to refute FULL sequentiality and split at K')
 def test_hybrid_sparse_partitions_at_k():
     """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop."""
     sdfg = cpu_canon(hybrid_sparse.to_sdfg(simplify=True))

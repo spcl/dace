@@ -6,6 +6,8 @@ Scope:
   - ``Memlet.subset`` and ``Memlet.other_subset`` (rewritten as a new
     ``subsets.Range`` with each ``(begin, end, step)`` simplified)
   - ``Memlet.volume``
+  - ``MapEntry.map.range`` (same per-bound simplification as memlet
+    subsets)
   - Interstate edges: each assignment's RHS and the edge's condition,
     walked via ``all_interstate_edges`` so ``LoopRegion`` bodies and
     ``ConditionalBlock`` branches are reached too.
@@ -14,11 +16,36 @@ Scope:
     each ``ConditionalBlock`` branch's guard.
   - Every nested SDFG, recursively.
 
+Range/subset bounds also get two targeted rewrites ``sympy.simplify`` does
+not perform on its own.
+
+``IfExpr(a < b, b, a) -> Max(a, b)`` (and the ``>``/``<=``/``>=`` and
+``Min`` variants). ``IfExpr`` is DaCe's own ``sympy.Function``
+(``dace.symbolic.IfExpr``), *not* a ``sympy.Piecewise``, so sympy never
+recognises the select-the-larger idiom. ICON's ``get_indices_e`` inlines as
+``IfExpr(i_startidx_in < 1, 1, i_startidx_in)``, which is exactly
+``Max(1, i_startidx_in)``; recovering the ``Max`` both shortens the range
+and feeds the offset push below.
+
+``Max(a, b) + c -> Max(a + c, b + c)`` (and ``Min``, and the value branches
+of an ``IfExpr``). Addition is order-preserving, so shifting every argument
+of a Max/Min by the same additive term shifts the result by that term --
+this holds for any term, not just constants. For ``IfExpr`` the same
+rewrite is plain distributivity of addition over a branch selection, since
+the predicate is an independent expression; the offset is therefore pushed
+into the two value arguments only and never into the predicate.
+Frontend-emitted ranges commonly look like ``Max(3, n - 2) - 1``; pushing
+the offset in gives ``Max(2, n - 3)``, which is both shorter and more
+likely to structurally match an equivalent range in a sibling map,
+unblocking fusion.
+
 A simplification is only applied if the rendered string actually changes,
 so the returned counter reflects the number of expressions rewritten,
 not merely inspected.
 """
-from typing import Any, Dict, Optional
+from typing import Any
+
+import sympy
 
 from dace import SDFG, symbolic, subsets as subs
 from dace.properties import CodeBlock
@@ -38,7 +65,7 @@ class SimplifyExpressions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Edges | ppl.Modifies.States))
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = simplify_expressions(sdfg)
         return count if count > 0 else None
 
@@ -55,6 +82,9 @@ def simplify_expressions(sdfg: SDFG) -> int:
         for state in g.all_states():
             for e in state.edges():
                 count += _simplify_memlet(e.data)
+            for n in state.nodes():
+                if isinstance(n, nodes.MapEntry):
+                    count += _simplify_map_range(n.map)
 
         for e in g.all_interstate_edges():
             for k, v in list(e.data.assignments.items()):
@@ -111,6 +141,14 @@ def _all_sdfgs(sdfg: SDFG):
             yield n.sdfg
 
 
+def _simplify_map_range(map_: nodes.Map) -> int:
+    new_range = _try_simplify_range(map_.range)
+    if new_range is not None and str(new_range) != str(map_.range):
+        map_.range = new_range
+        return 1
+    return 0
+
+
 def _simplify_memlet(m) -> int:
     if m is None:
         return 0
@@ -138,10 +176,86 @@ def _try_simplify_range(r):
     if not isinstance(r, subs.Range):
         return None
     try:
-        new_ranges = [(symbolic.simplify(b), symbolic.simplify(e), symbolic.simplify(s)) for b, e, s in r.ndrange()]
+        new_ranges = [(_push_offset_into_selection(symbolic.simplify(b)),
+                       _push_offset_into_selection(symbolic.simplify(e)),
+                       _push_offset_into_selection(symbolic.simplify(s))) for b, e, s in r.ndrange()]
     except Exception:
         return None
     return subs.Range(new_ranges)
+
+
+def _value_arg_positions(expr: sympy.Basic) -> tuple[int, ...] | None:
+    """Positions of ``expr``'s arguments that carry a selected value, or
+    ``None`` if ``expr`` does not select one. ``Max``/``Min`` select among all
+    of their arguments; DaCe's ``IfExpr(predicate, if_true, if_false)`` selects
+    among the last two only -- its first argument is a predicate, never a
+    value, so an offset must never reach it."""
+    if isinstance(expr, (sympy.Max, sympy.Min)):
+        return tuple(range(len(expr.args)))
+    if isinstance(expr, symbolic.IfExpr):
+        return (1, 2)
+    return None
+
+
+def _ifexpr_to_minmax(expr: sympy.Basic) -> sympy.Basic:
+    """``IfExpr(a < b, b, a) -> Max(a, b)``, ``IfExpr(a < b, a, b) -> Min(a, b)``,
+    and the ``>``/``<=``/``>=`` variants. Requires the two value branches to be
+    exactly the two comparison operands, so the branch that runs is determined
+    entirely by which operand is larger."""
+    if not isinstance(expr, symbolic.IfExpr):
+        return expr
+    pred, if_true, if_false = expr.args
+    if getattr(pred, 'rel_op', None) not in ('<', '<=', '>', '>='):
+        return expr
+    if if_true == if_false or {if_true, if_false} != {pred.lhs, pred.rhs}:
+        return expr
+    true_takes_rhs = if_true == pred.rhs
+    true_means_lhs_smaller = pred.rel_op in ('<', '<=')
+    picks_larger = true_takes_rhs == true_means_lhs_smaller
+    return (sympy.Max if picks_larger else sympy.Min)(pred.lhs, pred.rhs)
+
+
+def _hoist_minmax_over_ifexpr(expr: sympy.Basic) -> sympy.Basic:
+    """``IfExpr(p, k, Max(k, b)) -> Max(k, IfExpr(p, k, b))``, plus the ``Min`` and
+    swapped-branch variants. Exact: on the branch that yields ``k`` the wrapper
+    collapses (``Max(k, k) == k``), and on the other branch it is the original
+    selection. Fortran ``MERGE(1, MAX(1, i), jb /= i_startblk)`` lands in this shape;
+    lifting the ``Max`` out of the branch lets range analysis see it, which it
+    cannot do while it is buried inside an ``IfExpr`` arm."""
+    if not isinstance(expr, symbolic.IfExpr):
+        return expr
+    pred, if_true, if_false = expr.args
+    for outer, inner, swapped in ((if_true, if_false, False), (if_false, if_true, True)):
+        if not isinstance(inner, (sympy.Max, sympy.Min)) or len(inner.args) != 2:
+            continue
+        if outer not in inner.args:
+            continue
+        other = inner.args[1] if inner.args[0] == outer else inner.args[0]
+        arms = (other, outer) if swapped else (outer, other)
+        return inner.func(outer, symbolic.IfExpr(pred, *arms))
+    return expr
+
+
+def _push_offset_into_selection(expr: sympy.Basic) -> sympy.Basic:
+    """Collapse ``IfExpr`` comparisons to ``Max``/``Min`` bottom-up, then push a
+    shared additive offset into the value arguments of a selection node:
+    ``Max(a, b) + c -> Max(a + c, b + c)``, likewise ``Min``, and
+    ``IfExpr(p, a, b) + c -> IfExpr(p, a + c, b + c)``. Only triggers when
+    exactly one selection term shares an ``Add`` with everything else -- sums of
+    two or more are left untouched."""
+    if expr.args:
+        expr = expr.func(*(_push_offset_into_selection(a) for a in expr.args))
+    expr = _ifexpr_to_minmax(expr)
+    expr = _hoist_minmax_over_ifexpr(expr)
+    if isinstance(expr, sympy.Add):
+        selections = [a for a in expr.args if _value_arg_positions(a) is not None]
+        if len(selections) == 1:
+            sel = selections[0]
+            rest = sympy.Add(*(a for a in expr.args if a is not sel))
+            positions = _value_arg_positions(sel)
+            return sel.func(*(_push_offset_into_selection(a + rest) if i in positions else a
+                              for i, a in enumerate(sel.args)))
+    return expr
 
 
 def _try_simplify_str(expr: str, arrayexprs=None):
