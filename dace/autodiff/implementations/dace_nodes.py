@@ -7,10 +7,9 @@ import ast
 import collections
 import copy
 import numbers
-from typing import TYPE_CHECKING
 import astunparse
 import sympy as sp
-from typing import List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace

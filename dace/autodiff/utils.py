@@ -5,7 +5,7 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Union
+from typing import Dict, List, Tuple, Union
 
 import astunparse
 import sympy as sp
@@ -408,16 +408,6 @@ def extract_indices(expression: str) -> dict[str, list[str]]:
         index_map[name] = index_list
 
     return index_map
-
-
-def connector_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbolic.symbol:
-    """Mint the DaCe symbol standing for a tasklet connector or an SDFG symbol.
-
-    Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: a bare one carries neither the
-    dtype nor DaCe's assumptions, so it compares unequal to the same-named DaCe symbol while still
-    substituting for it -- the split that makes ``diff()`` return a silent zero.
-    """
-    return symbolic.symbol(name, dtype if isinstance(dtype, dtypes.typeclass) else None)
 
 
 def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> sp.Idx:

@@ -15,7 +15,7 @@ from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.common import codeblock_to_cpp, emits_tree_reductions, sym2cpp, update_persistent_desc
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -45,7 +45,7 @@ def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifeti
             in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
 
 
-def _use_aligned_operator_new(desc: data.Data) -> bool:
+def use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
     DaCe always builds against C++20 or newer (see ``dace.codegen.common.cpp_standard``), where
@@ -3111,12 +3111,16 @@ class CPUCodeGen(TargetCodeGenerator):
             return True
         if schedule != dtypes.ScheduleType.Sequential:
             return False
-        # ``simd_sequential_maps`` only applies to the innermost loop of a non-unrolled Sequential map.
-        if not Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
-            return False
+        # Both simd sources apply to the innermost loop of a non-unrolled Sequential map only.
         if map_entry.map.unroll:
             return False
         if loop_idx != len(map_entry.map.range) - 1:
+            return False
+        # ``MarkSIMDMaps`` already decided this map vectorizes, so the pragma is written
+        # unconditionally for it.
+        if map_entry.map.omp_simd:
+            return True
+        if not Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
             return False
         # Delegates to the same safety test used by the actual pragma emitter; a non-None return
         # means a ``#pragma omp simd`` will be written before the loop.
@@ -3252,21 +3256,23 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
-                elif (node.map.omp_simd and node.map.schedule == dtypes.ScheduleType.Sequential
-                      and i == len(node.map.range) - 1):
-                    # Innermost dimension only: the pragma must precede the ``for`` it vectorizes.
-                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 # Determine whether this loop will be immediately preceded by an OpenMP directive.
                 # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. Sequential maps
-                # may emit ``#pragma omp simd`` here for the innermost loop.
+                # may emit ``#pragma omp simd`` here for the innermost loop, from either source:
+                # ``MarkSIMDMaps`` set ``omp_simd`` on the map, or this target proves the loop safe
+                # itself. Both write through the single site below, because the pragma must sit
+                # immediately before the ``for`` -- and only once, or the second one has no loop
+                # after it ("loop nest expected").
                 will_have_openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
                                                          dtypes.ScheduleType.CPU_Persistent)
                 pragma = None
                 if (not will_have_openmp and not node.map.unroll and i == len(node.map.range) - 1
-                        and node.map.schedule == dtypes.ScheduleType.Sequential
-                        and Config.get_bool('compiler', 'cpu', 'simd_sequential_maps')):
-                    pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
+                        and node.map.schedule == dtypes.ScheduleType.Sequential):
+                    if node.map.omp_simd:
+                        pragma = "#pragma omp simd"
+                    elif Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
+                        pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
                     will_have_openmp = pragma is not None
 
                 comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)

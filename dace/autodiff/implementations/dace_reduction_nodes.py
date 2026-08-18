@@ -28,6 +28,7 @@ from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, Back
 
 # Utility imports
 import dace.autodiff.utils as ad_utils
+from dace.autodiff.utils import init_grad
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 

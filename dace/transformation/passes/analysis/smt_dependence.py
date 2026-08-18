@@ -1,0 +1,464 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""SMT-backed dependence oracle for non-affine loop-carried dependences.
+
+The oracle is a *conservative* fallback: it asks z3 to prove the absence of a
+loop-carried dependence (or the direction of the only possible dependence).
+When z3 is unavailable, every query returns ``None`` and callers fall back to
+their existing safe refusal.
+"""
+from typing import Any, Dict, List, Optional
+
+import sympy as sp
+
+from dace import symbolic
+from dace.sdfg.state import ConditionalBlock, SDFGState
+
+try:
+    import z3
+    _HAS_Z3 = True
+except Exception:
+    z3 = None  # type: ignore
+    _HAS_Z3 = False
+
+
+def has_z3() -> bool:
+    return _HAS_Z3
+
+
+# Default SMT timeout in milliseconds. Keep short: this runs inside the
+# canonicalize pipeline, not a verification bench.
+DEFAULT_TIMEOUT_MS = 5000
+
+
+def _z3_int(expr):
+    """Wrap an expression so z3 treats it as an integer."""
+    if isinstance(expr, int):
+        return z3.IntVal(expr)
+    return expr
+
+
+def _pow_to_mul(base, exp):
+    """Turn an integer power into a product so z3's integer solver can see it."""
+    if exp == 0:
+        return z3.IntVal(1)
+    if exp < 0:
+        return z3.IntVal(0)  # unsupported negative exponent; conservative
+    out = base
+    for _ in range(exp - 1):
+        out = out * base
+    return out
+
+
+def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, Any]) -> Any:
+    """Translate a sympy expression into a z3 integer term.
+
+    Symbols become integer variables; array subscripts ``A[i]`` become
+    ``Select(A, i)``; common integer operations are mapped directly.  Anything
+    that cannot be translated returns ``None``.
+    """
+    if expr is None:
+        return None
+
+    if isinstance(expr, (int, sp.Integer)):
+        return z3.IntVal(int(expr))
+
+    if isinstance(expr, sp.Symbol):
+        name = str(expr)
+        if name not in sym_cache:
+            sym_cache[name] = z3.Int(name)
+        return sym_cache[name]
+
+    if isinstance(expr, sp.Indexed):
+        base = expr.base
+        if not isinstance(base, sp.Symbol):
+            return None
+        arr_name = str(base)
+        if arr_name not in arr_cache:
+            arr_cache[arr_name] = z3.Array(arr_name, z3.IntSort(), z3.IntSort())
+        arr = arr_cache[arr_name]
+        if len(expr.indices) != 1:
+            return None
+        idx = _sympy_to_z3(expr.indices[0], sym_cache, arr_cache)
+        if idx is None:
+            return None
+        return z3.Select(arr, _z3_int(idx))
+
+    if isinstance(expr, symbolic.Subscript):
+        arr_name = str(expr.args[0])
+        rank = len(expr.args) - 1
+        if arr_name not in arr_cache:
+            # Build a nested array type of the right rank; rank 1 is the common case.
+            range_sort = z3.IntSort()
+            for _ in range(rank - 1):
+                range_sort = z3.ArraySort(z3.IntSort(), range_sort)
+            arr_cache[arr_name] = z3.Array(arr_name, z3.IntSort(), range_sort)
+        arr = arr_cache[arr_name]
+        if rank < 1:
+            return None
+        # Nested Select for multi-dimensional subscripts.
+        cur = arr
+        for idx_expr in expr.args[1:]:
+            idx = _sympy_to_z3(idx_expr, sym_cache, arr_cache)
+            if idx is None:
+                return None
+            cur = z3.Select(cur, _z3_int(idx))
+        return cur
+
+    if isinstance(expr, sp.Pow):
+        base = _sympy_to_z3(expr.base, sym_cache, arr_cache)
+        if base is None:
+            return None
+        exp = expr.exp
+        if isinstance(exp, (int, sp.Integer)):
+            return _pow_to_mul(base, int(exp))
+        return None
+
+    if isinstance(expr, sp.Add):
+        terms = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(t is None for t in terms):
+            return None
+        total = terms[0]
+        for t in terms[1:]:
+            total = total + t
+        return total
+
+    if isinstance(expr, sp.Mul):
+        factors = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(f is None for f in factors):
+            return None
+        total = factors[0]
+        for f in factors[1:]:
+            total = total * f
+        return total
+
+    if isinstance(expr, sp.Max):
+        args = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(a is None for a in args):
+            return None
+        out = args[0]
+        for a in args[1:]:
+            out = z3.If(a > out, a, out)
+        return out
+
+    if isinstance(expr, sp.Min):
+        args = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(a is None for a in args):
+            return None
+        out = args[0]
+        for a in args[1:]:
+            out = z3.If(a < out, a, out)
+        return out
+
+    if isinstance(expr, sp.floor):
+        # Rational inner expressions fail translation above, so the argument is already an
+        # integer term and floor is the identity on it.
+        return _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
+
+    if isinstance(expr, sp.Mod):
+        a = _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
+        b = _sympy_to_z3(expr.args[1], sym_cache, arr_cache)
+        if a is None or b is None:
+            return None
+        # z3's `%` is SMT-LIB `mod`, which matches sympy's Mod for positive divisors --
+        # the only divisors that appear in subscripts. SRem would diverge on negative
+        # dividends and let the solver certify a false disjointness.
+        return _z3_int(a) % _z3_int(b)
+
+    if isinstance(expr, sp.Function):
+        # Opaque functions are not modeled.
+        return None
+
+    return None
+
+
+def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, Any]) -> Any:
+    """Translate a sympy boolean into a z3 boolean."""
+    if expr is None or expr is True:
+        return True
+
+    if isinstance(expr, sp.Rel):
+        lhs = _sympy_to_z3(expr.lhs, sym_cache, arr_cache)
+        rhs = _sympy_to_z3(expr.rhs, sym_cache, arr_cache)
+        if lhs is None or rhs is None:
+            return None
+        if isinstance(expr, sp.StrictLessThan):
+            return lhs < rhs
+        if isinstance(expr, sp.LessThan):
+            return lhs <= rhs
+        if isinstance(expr, sp.StrictGreaterThan):
+            return lhs > rhs
+        if isinstance(expr, sp.GreaterThan):
+            return lhs >= rhs
+        if isinstance(expr, sp.Equality):
+            return lhs == rhs
+        if isinstance(expr, sp.Ne):
+            return lhs != rhs
+        return None
+
+    if isinstance(expr, sp.And):
+        args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(a is None for a in args):
+            return None
+        out = args[0]
+        for a in args[1:]:
+            out = z3.And(out, a)
+        return out
+
+    if isinstance(expr, sp.Or):
+        args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(a is None for a in args):
+            return None
+        out = args[0]
+        for a in args[1:]:
+            out = z3.Or(out, a)
+        return out
+
+    if isinstance(expr, sp.Not):
+        arg = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
+        if arg is None:
+            return None
+        return z3.Not(arg)
+
+    return None
+
+
+def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
+    """z3 constraints that put ``i`` inside the strided iteration domain."""
+    if isinstance(start, (int, sp.Integer)):
+        start_z = z3.IntVal(int(start))
+    else:
+        start_z = _sympy_to_z3(start, {}, {})
+    if isinstance(end, (int, sp.Integer)):
+        end_z = z3.IntVal(int(end))
+    else:
+        end_z = _sympy_to_z3(end, {}, {})
+    if start_z is None or end_z is None:
+        return []
+    # DaCe loop bounds are inclusive and the step divides (i - start).
+    cons = [i >= start_z, i <= end_z]
+    try:
+        step_v = int(symbolic.evaluate(step, {}))
+        if step_v != 1:
+            # (i - start) % step == 0
+            diff = i - start_z
+            cons.append(z3.SRem(diff, z3.IntVal(step_v)) == 0)
+    except Exception:
+        pass
+    return cons
+
+
+def _prove_unsat(antecedent: Any, consequent: Any, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+    """Return ``True`` if ``antecedent => consequent`` is valid (consequent holds
+    for every model of antecedent), ``False`` if a counter-model exists, and
+    ``None`` if the solver gives up or the encoding failed."""
+    s = z3.Solver()
+    s.set('timeout', timeout_ms)
+    s.add(antecedent)
+    s.add(z3.Not(consequent))
+    try:
+        r = s.check()
+        if r == z3.unsat:
+            return True
+        if r == z3.sat:
+            return False
+        return None
+    except Exception:
+        return None
+
+
+def _domain_assumptions(start: Any, end: Any, step: Any) -> sp.Basic:
+    """Default domain assumptions for a loop: start <= end, step > 0.
+
+    These are the invariants the canonicalization pipeline maintains after
+    ``NormalizeNegativeStride``.
+    """
+    try:
+        step_v = int(symbolic.evaluate(step, {}))
+    except Exception:
+        step_v = None
+    if step_v is not None:
+        step_expr = sp.Integer(step_v)
+    else:
+        step_expr = sp.Symbol(str(step))
+    return sp.And(sp.LessThan(start, end + 1), sp.StrictGreaterThan(step_expr, 0))
+
+
+def prove_injective_write(write_expr: sp.Basic,
+                          itervar: str,
+                          start: Any,
+                          end: Any,
+                          step: Any = 1,
+                          domain_assumptions: Optional[sp.Basic] = None,
+                          timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+    """Prove that distinct iterations write to distinct locations.
+
+    :param write_expr: The write-index expression in terms of ``itervar``.
+    :returns: ``True`` if z3 proves injectivity; ``False``/``None`` otherwise.
+    """
+    if not _HAS_Z3:
+        return None
+
+    sym_cache: Dict[str, Any] = {}
+    arr_cache: Dict[str, Any] = {}
+
+    i1 = z3.Int(f'{itervar}_1')
+    i2 = z3.Int(f'{itervar}_2')
+    sym_cache[itervar] = i1
+    w1 = _sympy_to_z3(write_expr, sym_cache, arr_cache)
+    sym_cache[itervar] = i2
+    w2 = _sympy_to_z3(write_expr, sym_cache, arr_cache)
+    if w1 is None or w2 is None:
+        return None
+
+    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    if not bounds:
+        return None
+
+    antecedent = z3.And(i1 != i2, *bounds)
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            antecedent = z3.And(antecedent, dom)
+
+    consequent = w1 != w2
+    return _prove_unsat(antecedent, consequent, timeout_ms)
+
+
+def _overlap_pair(write_expr: sp.Basic,
+                  read_expr: sp.Basic,
+                  read_guard: Optional[sp.Basic],
+                  itervar: str,
+                  start: Any,
+                  end: Any,
+                  step: Any,
+                  order: str,
+                  domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+    """Prove/disprove an overlap of the requested order.
+
+    ``order`` is ``'raw'`` (a write iteration precedes a read iteration) or
+    ``'war'`` (a write iteration follows a read iteration).  The read access is
+    optionally guarded by ``read_guard``.
+    """
+    sym_cache: Dict[str, Any] = {}
+    arr_cache: Dict[str, Any] = {}
+
+    i_w = z3.Int(f'{itervar}_w')
+    i_r = z3.Int(f'{itervar}_r')
+    sym_cache[itervar] = i_w
+    wz = _sympy_to_z3(write_expr, sym_cache, arr_cache)
+    sym_cache[itervar] = i_r
+    rz = _sympy_to_z3(read_expr, sym_cache, arr_cache)
+    gz = _bool_to_z3(read_guard, sym_cache, arr_cache) if read_guard is not None else True
+    if wz is None or rz is None or gz is None:
+        return None
+
+    bounds = _iter_bounds(i_w, start, end, step) + _iter_bounds(i_r, start, end, step)
+    if not bounds:
+        return None
+
+    order_cons = (i_w < i_r) if order == 'raw' else (i_w > i_r)
+    antecedent = z3.And(order_cons, *bounds, gz)
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            antecedent = z3.And(antecedent, dom)
+
+    consequent = wz != rz
+    return _prove_unsat(antecedent, consequent, timeout_ms=DEFAULT_TIMEOUT_MS)
+
+
+def collect_enclosing_conditions(state: SDFGState) -> sp.Basic:
+    """Return the conjunction of branch conditions that must hold when ``state`` executes.
+
+    Walks up from ``state`` through enclosing ``ConditionalBlock`` branches and
+    accumulates the guard for the branch that contains ``state``.  For the else
+    branch (the branch with ``cond is None``) the guard is the negation of all
+    preceding conditions.  Returns ``True`` when no guarding condition applies.
+    """
+    conditions: List[sp.Basic] = []
+    current: Any = state
+    while current is not None:
+        parent = current.parent_graph
+        if parent is None:
+            break
+        # ``state`` lives inside a branch region; the ConditionalBlock is the parent of that region.
+        cond_block = parent.parent_graph
+        if isinstance(cond_block, ConditionalBlock):
+            # Find which branch of ``cond_block`` equals ``parent``.
+            our_cond: Optional[str] = None
+            seen_else = False
+            for cond_codeblock, branch in cond_block.branches:
+                if branch is parent:
+                    if cond_codeblock is not None and cond_codeblock.as_string:
+                        our_cond = cond_codeblock.as_string
+                    else:
+                        seen_else = True
+                    break
+            if our_cond is not None:
+                try:
+                    conditions.append(symbolic.pystr_to_symbolic(our_cond))
+                except Exception:
+                    pass
+            elif seen_else:
+                # Negate all preceding conditions.
+                negs: List[sp.Basic] = []
+                for cond_codeblock, _branch in cond_block.branches:
+                    if cond_codeblock is None:
+                        break
+                    if cond_codeblock.as_string:
+                        try:
+                            negs.append(sp.Not(symbolic.pystr_to_symbolic(cond_codeblock.as_string)))
+                        except Exception:
+                            pass
+                if negs:
+                    conditions.append(sp.And(*negs) if len(negs) > 1 else negs[0])
+        current = parent
+    if not conditions:
+        return sp.true
+    if len(conditions) == 1:
+        return conditions[0]
+    return sp.And(*conditions)
+
+
+def classify_read_write_pair(read_expr: sp.Basic,
+                             write_expr: sp.Basic,
+                             itervar: str,
+                             start: Any,
+                             end: Any,
+                             step: Any = 1,
+                             read_guard: Optional[sp.Basic] = None,
+                             domain_assumptions: Optional[sp.Basic] = None) -> Optional[str]:
+    """Classify a single read/write pair as ``'WAR'``, ``'RAW'``, ``'none'``,
+    or ``None`` (inconclusive).
+
+    The classification is *one* of:
+
+    * ``'none'`` -- z3 proves the two accesses never alias across iterations;
+    * ``'WAR'``  -- no RAW can occur, so any alias is a write-after-read that a
+      snapshot-rename can break;
+    * ``'RAW'``  -- a true read-after-write alias exists (must stay sequential);
+    * ``None``   -- the solver gave up or the expressions could not be encoded.
+    """
+    if not _HAS_Z3:
+        return None
+
+    no_overlap_raw = _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'raw',
+                                   domain_assumptions)
+    no_overlap_war = _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'war',
+                                   domain_assumptions)
+
+    if no_overlap_raw is True and no_overlap_war is True:
+        return 'none'
+    if no_overlap_raw is False:
+        return 'RAW'
+    if no_overlap_raw is True:
+        # No RAW can occur, so any remaining alias is at worst a WAR.
+        return 'WAR'
+    return None
+
+
+__all__ = [
+    'has_z3',
+    'prove_injective_write',
+    'classify_read_write_pair',
+]

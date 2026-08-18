@@ -91,6 +91,9 @@ setup(
             'ipykernel',
             'nbconvert',
             'pytest-timeout',
+            # SMT-backed dependence oracle for non-affine parallelization proofs.
+            # Optional: absent -> oracle gracefully skips and loops stay sequential.
+            'z3-solver',
             # Plotting the corpus perf results (tests/perf/plot_corpus_perf.py); analysis only,
             # never imported by dace itself.
             'matplotlib',

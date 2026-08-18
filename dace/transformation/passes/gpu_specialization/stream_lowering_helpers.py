@@ -54,9 +54,9 @@ def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: 
     cur = child_sdfg
     while stream_name not in cur.parent_sdfg.arrays:
         _add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
-        _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+        _wire_stream_into_parent(cur, stream_name, slice_str)
         cur = cur.parent_sdfg
-    _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+    _wire_stream_into_parent(cur, stream_name, slice_str)
 
 
 def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
@@ -84,12 +84,25 @@ def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
     return requiring
 
 
-def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
+def _wire_stream_into_parent(level: SDFG, stream_name: str, slice_str: str):
     nsdfg_node = level.parent_nsdfg_node
     parent_state = level.parent
     add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
+    # A NestedSDFG inside a map scope is reachable only through its maps' pass-through connectors;
+    # an edge straight from a global AccessNode into it leaves the scope traversal with an
+    # undequeued MapExit ("Leftover nodes in queue"). One fresh Memlet per edge -- validation
+    # rejects a subset object shared by two edges.
+    scope_chain = enclosing_map_chain(parent_state, nsdfg_node)
+    if scope_chain:
+        thread_stream_through_seq_scope(parent_state,
+                                        scope_chain,
+                                        nsdfg_node,
+                                        stream_name,
+                                        get_source_access=lambda: parent_state.add_access(stream_name),
+                                        memlet_factory=lambda: dace.Memlet(slice_str))
+        return
     src = parent_state.add_access(stream_name)
-    parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
+    parent_state.add_edge(src, None, nsdfg_node, stream_name, dace.Memlet(slice_str))
 
 
 # Stream-connector wiring (per-stream chains + Sequential-scope routing).
@@ -150,7 +163,13 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
 
         entry.add_in_connector(in_conn, dtypes.gpuStream_t)
 
-        scope_chain = enclosing_map_chain(state, entry, dtypes.ScheduleType.Sequential)
+        # EVERY enclosing map, not just the Sequential ones: the stream reaches a scoped consumer
+        # only through its maps' pass-through connectors. A host-side map of any other schedule
+        # (spmv's CPU maps around the kernel call) would otherwise take the top-level branch and
+        # wire a global AccessNode straight into a scoped node, which ``scope_dict`` cannot walk
+        # ("Leftover nodes in queue"). Consumers under a GPU_Device map never get here -- they are
+        # already on the kernel's stream and are filtered out by the caller.
+        scope_chain = enclosing_map_chain(state, entry)
         if scope_chain:
             _route_through_seq_scope(state, scope_chain, entry, in_conn, accessed_slot, stream_array_name)
             continue

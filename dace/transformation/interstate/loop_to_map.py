@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -16,7 +16,7 @@ from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 
 def _align_itersym(expr, itersym):
@@ -279,6 +279,78 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     if not diff.is_Integer:
         return True
     return sp.Integer(diff) % g != 0
+
+
+def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
+    """Ask the SMT oracle whether a non-affine write touches a distinct element on
+    every iteration.
+
+    Conservative: returns ``False`` whenever z3 is unavailable, the subset is not a
+    single point, or the solver returns ``unknown``.
+    """
+    if not smt_dependence.has_z3():
+        return False
+    nd = list(dst_subset.ndrange())
+    if not nd:
+        return False
+    if any(rb != re_ for rb, re_, _ in nd):
+        return False  # only point subsets
+    if len(nd) != 1:
+        return False  # multi-dimensional non-affine writes are out of scope
+    expr = symbolic.pystr_to_symbolic(str(nd[0][0]))
+    itervar = str(itersym)
+    try:
+        r = smt_dependence.prove_injective_write(expr,
+                                                 itervar,
+                                                 symbolic.pystr_to_symbolic(str(start)),
+                                                 symbolic.pystr_to_symbolic(str(end)),
+                                                 step=symbolic.pystr_to_symbolic(str(step)))
+    except Exception:
+        return False
+    return r is True
+
+
+def _smt_classify_read_write_pair(read_subset: subsets.Subset,
+                                  write_subset: subsets.Subset,
+                                  itervar: str,
+                                  start,
+                                  end,
+                                  step,
+                                  read_state: Optional[SDFGState] = None) -> Optional[str]:
+    """SMT fallback classification for a single read/write pair.
+
+    Returns ``'none'``, ``'RAW'``, ``'WAR'``, or ``None`` (inconclusive).  Only
+    handles one-dimensional point subsets; multi-dimensional or non-point
+    subsets are left inconclusive so the existing conservative fallback applies.
+    """
+    if not smt_dependence.has_z3():
+        return None
+    read_nd = list(read_subset.ndrange())
+    write_nd = list(write_subset.ndrange())
+    if len(read_nd) != 1 or len(write_nd) != 1:
+        return None
+    if any(rb != re_ for rb, re_, _ in read_nd) or any(rb != re_ for rb, re_, _ in write_nd):
+        return None
+    try:
+        read_expr = symbolic.pystr_to_symbolic(str(read_nd[0][0]))
+        write_expr = symbolic.pystr_to_symbolic(str(write_nd[0][0]))
+    except Exception:
+        return None
+    read_guard = None
+    if read_state is not None:
+        conds = smt_dependence.collect_enclosing_conditions(read_state)
+        if conds is not sp.true:
+            read_guard = conds
+    try:
+        return smt_dependence.classify_read_write_pair(read_expr,
+                                                       write_expr,
+                                                       itervar,
+                                                       symbolic.pystr_to_symbolic(str(start)),
+                                                       symbolic.pystr_to_symbolic(str(end)),
+                                                       step=symbolic.pystr_to_symbolic(str(step)),
+                                                       read_guard=read_guard)
+    except Exception:
+        return None
 
 
 def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
@@ -805,8 +877,10 @@ class LoopToMap(xf.MultiStateTransformation):
                                 if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
                                     ok = False
                             if not ok and not permissive:
-                                return refuse(f"write to {dn.data} is not uniquely indexed by the iteration variable "
-                                              f"(needs an a*i+b subset) - dst_subset={dst_subset}")
+                                if not _smt_proves_injective_write(dst_subset, itersym, start, end, step):
+                                    return refuse(
+                                        f"write to {dn.data} is not uniquely indexed by the iteration variable "
+                                        f"(needs an a*i+b subset) - dst_subset={dst_subset}")
 
                         write_memlets[dn.data].append(e.data)
 
@@ -1010,6 +1084,17 @@ class LoopToMap(xf.MultiStateTransformation):
             # guard inside the certificate is what keeps its OUTER ``i`` loop sequential.
             if _collision_forces_same_iteration(read, write, itersym, varying):
                 continue
+            # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
+            # never alias across iterations) admits the pair. A 'WAR' verdict is NOT enough:
+            # BreakAntiDependence runs before this transformation and has no SMT path, so an
+            # anti-dependence still standing here was never snapshot-renamed and lifting it
+            # would race. 'WAR' and inconclusive both fall through to the affine checks below.
+            if smt_dependence.has_z3():
+                classification = _smt_classify_read_write_pair(read, write, itervar, start, end, step, state)
+                if classification == 'none':
+                    continue
+                if classification == 'RAW':
+                    return False
             ridx = _dependent_indices(itervar, read)
             widx = _dependent_indices(itervar, write)
             indices = set(ridx) | set(widx)

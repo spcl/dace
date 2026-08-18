@@ -17,6 +17,7 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
+from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 

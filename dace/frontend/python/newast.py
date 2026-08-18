@@ -1160,12 +1160,6 @@ class DefinedNames(collections.abc.Mapping):
             if isinstance(value, MPI.Comm):
                 return value
 
-        # Process grids are keyed by the SDFG-level name and only count when a variable points at
-        # one. Every non-MPI program has none, so the reverse lookup is built only when it can hit.
-        process_grids = sdfg.process_grids
-        if process_grids and name in process_grids and name in set(pv.variables.values()):
-            return process_grids[name]
-
         if name in arrays:
             return arrays[name]
 
@@ -1210,9 +1204,6 @@ class DefinedNames(collections.abc.Mapping):
         value = pv.globals.get(name)
         if isinstance(value, symbolic.symbol):
             return True
-        process_grids = sdfg.process_grids
-        if process_grids and name in process_grids and name in set(pv.variables.values()):
-            return True
         if value is not None and preprocessing.mpi4py_is_usable():
             from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
             return isinstance(value, MPI.Comm)
@@ -1247,12 +1238,10 @@ class DefinedNames(collections.abc.Mapping):
         # TODO: Is there a case of a variable-symbol?
         result.update({k: symbols[v] for k, v in variables.items() if v in symbols})
 
-        # Add SDFG arrays, in case a replacement added a new output
+        # Add SDFG arrays, in case a replacement added a new output. Process grids are data
+        # descriptors, so this carries them as well.
         result.update(arrays)
 
-        # MPI-related stuff
-        process_grids = sdfg.process_grids
-        result.update({v: process_grids[v] for k, v in variables.items() if v in process_grids})
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
@@ -1540,28 +1529,9 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
-        # Check parent SDFG arrays first
-        result = {}
-        result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
-        result.update({k: self.sdfg.arrays[v] for k, v in self.scope_vars.items() if v in self.sdfg.arrays})
-        result.update({k: self.scope_arrays[v] for k, v in self.scope_vars.items() if v in self.scope_arrays})
-        result.update({k: self.sdfg.arrays[v] for k, v in self.variables.items() if v in self.sdfg.arrays})
-        result.update({v: self.sdfg.arrays[v] for _, v in self.variables.items() if v in self.sdfg.arrays})
-        # TODO: Is there a case of a variable-symbol?
-        result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
-
-        # Add SDFG arrays, in case a replacement added a new output. Process grids are data
-        # descriptors, so this carries them as well.
-        result.update(self.sdfg.arrays)
-
-        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
-        # ImportError, so the availability question belongs in one place (see the helper's docstring).
-        if preprocessing.mpi4py_is_usable():
-            from mpi4py import MPI
-            result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-
-        return result
+    def defined(self) -> DefinedNames:
+        """Every name this visitor can resolve. A view -- see :class:`DefinedNames`."""
+        return DefinedNames(self)
 
     def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         """

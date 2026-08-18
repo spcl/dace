@@ -399,17 +399,13 @@ jobs:
           tests/canonicalize/wavefront_polyhedron_test.py \
           -m "not gpu and not long and not sequential"
 
-  # --- Graph Backend (rustworkx) (was graph-backend-ci.yml) ---
-  # Job id was "test" in graph-backend-ci.yml; renamed to "graph-backend" only because General Tests
-  # already owns "test". Everything else is verbatim.
-  graph-backend:
-    # Off while extended CI is repaired: duplicates every General Tests red under rustworkx.
-    if: false
+  # --- Graphlib suite under the rustworkx backend ---
+  # General Tests stays on the default networkx backend; this job runs only the graph
+  # library's own suite against rustworkx.
+  graphlib-rustworkx:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      matrix:
-        python-version: ['3.10','3.14']
+    timeout-minutes: 60
 
     steps:
     - uses: actions/checkout@v7
@@ -417,18 +413,21 @@ jobs:
         submodules: 'recursive'
     - uses: ./.github/actions/setup-dace
       with:
-        python-version: ${{ matrix.python-version }}
-        pip-packages: flake8 pytest-xdist coverage
-        extras: testing,fastgraph
+        python-version: '3.14'
+        pip-packages: pytest-xdist rustworkx
+        extras: testing
 
-    - name: Test with pytest (rustworkx backend)
+    - name: Test with pytest (tests/graphlib, rustworkx backend)
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
+        export DACE_optimizer_automatic_simplification=1
         # Config FILE, not DACE_graph_backend: an env var beats Config.set, so every
         # set_default_backend() in tests/graphlib would be a silent no-op under it.
         export DACE_CONFIG=$PWD/.ci-graph-backend.conf
         printf 'graph:\n  backend: rustworkx\n' > $DACE_CONFIG
-        pytest -n auto --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        pytest -n auto --tb=short --timeout_method thread --timeout=300 \
+          tests/graphlib \
+          -m "not gpu and not long and not sequential"

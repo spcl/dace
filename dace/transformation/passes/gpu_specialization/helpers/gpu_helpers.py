@@ -54,8 +54,14 @@ def is_stream_wiring_applied(sdfg: SDFG) -> bool:
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
-def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
-    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that enclose ``node`` (empty when none).
+def enclosing_map_chain(state: SDFGState,
+                        node: nodes.Node,
+                        schedule: Optional[dtypes.ScheduleType] = None) -> List[nodes.MapEntry]:
+    """Outermost-first chain of ``MapEntry`` nodes enclosing ``node`` (empty when none).
+
+    ``schedule`` keeps only the maps carrying it; ``None`` keeps every enclosing map, which is what
+    a caller wiring an edge INTO ``node`` needs -- an edge from a global node into a scoped one is
+    not a graph the scope traversal can walk.
 
     Invalidates the state's ``scope_dict`` cache first: earlier pipeline passes can mutate topology
     in ways that leave the cache stale.
@@ -65,7 +71,7 @@ def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.Sch
     chain: List[nodes.MapEntry] = []
     scope = sdict.get(node)
     while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == schedule:
+        if isinstance(scope, nodes.MapEntry) and (schedule is None or scope.map.schedule == schedule):
             chain.append(scope)
         scope = sdict.get(scope)
     chain.reverse()

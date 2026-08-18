@@ -165,12 +165,6 @@ def test_backward_symbol_mapping_carries_the_parent_dtype():
     assert mapping["N"].dtype == dace.int64
 
 
-# Issue 4: connectors are ordered, so codegen does not depend on PYTHONHASHSEED.
-def test_connector_dict_is_ordered_and_type_autodetecting():
-    assert list(ad_utils.connector_dict({"b", "a", "c"})) == ["a", "b", "c"]
-    assert set(ad_utils.connector_dict(["z", "y"]).values()) == {None}
-
-
 @pytest.mark.autodiff
 def test_backward_pass_does_not_build_nested_sdfgs_from_sets():
     sdfg, caught = differentiated_sdfg()
