@@ -233,8 +233,9 @@ jobs:
         pytest -n auto --tb=short --timeout_method thread --timeout=600 \
           -m "corpus and not gpu and not long and not sequential and not perf and not mpi"
 
-  # --- Loop-to-X and new library nodes (was loop2x-libnodes-ci.yml) ---
+  # --- Library nodes + loop-to-libnode lifts (was loop2x-libnodes-ci.yml) ---
   libnode-loop2x-transformations:
+    name: LibNodes + LoopToLibNodeLifts
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     timeout-minutes: 90

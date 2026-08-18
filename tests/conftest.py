@@ -186,10 +186,11 @@ _SUITE_DIRS = (
     (os.path.join('tests', 'npbench'), 'corpus'),
 )
 
-#: Library-node and loop-lifting tests introduced by this branch (absent from ``main``). They ran in
-#: general CI AND in each suite runner that happened to collect them; a dedicated runner gives them
-#: one home. Deliberately NOT the whole of ``tests/library`` -- upstream's own library tests stay
-#: where they are.
+#: Library-node and loop-to-libnode lift tests (loop2sym / loop2reduce / loop2scan / lift-einsum
+#: and the library nodes this branch adds). One home: the "LibNodes + LoopToLibNodeLifts" CI job.
+#: The file list beats the suite-directory marking below, so a lift test under a suite directory
+#: still lands here. MPI library tests are NOT here -- ``tests/library/mpi`` is directory-marked
+#: ``mpi`` and runs under the heterogeneous runner's ``mpirun``.
 _LIBNODE_FILES = (
     'allany_node_test.py',
     'arg_reduce_test.py',
@@ -207,16 +208,11 @@ _LIBNODE_FILES = (
     'gemm_runtime_coeff_test.py',
     'integer_sort_test.py',
     'lapacke_link_test.py',
-    'loop_to_map_affine_coeffs_test.py',
-    'loop_to_map_conditional_e2e_test.py',
-    'loop_to_map_disjoint_writes_test.py',
-    'loop_to_map_happens_before_war_test.py',
-    'loop_to_map_level_indexed_test.py',
-    'loop_to_map_loop_independent_test.py',
-    'loop_to_map_overlapping_writes_test.py',
-    'loop_to_map_single_iteration_test.py',
-    'loop_to_map_triangular_test.py',
+    'lift_einsum_matmul_test.py',
+    'loop_to_reduce_test.py',
     'loop_to_scan_test.py',
+    'loop_to_symm_test.py',
+    'loop_to_symmetrize_test.py',
     'matmul_batched_test.py',
     'matmul_broadcast_test.py',
     'matmul_test.py',
@@ -263,16 +259,20 @@ def pytest_collection_modifyitems(config, items):
         path = str(getattr(item, 'fspath', ''))
         if os.path.basename(path) in _IDEMPOTENCE_FILES:
             item.add_marker(pytest.mark.idempotence)
+        name = os.path.basename(path)
+        # File list beats directory: a loop-to-libnode lift test living under a suite directory
+        # (loop_to_symm* under tests/passes/canonicalize) belongs to the libnode runner, not the
+        # suite its directory would mark it into.
+        if name in _LIBNODE_FILES or os.path.join('tests', 'library', 'tileops') in path:
+            item.add_marker(pytest.mark.loop2x_libnodes)
+            continue
         for prefix, mark in _SUITE_DIRS:
             if prefix in path:
                 item.add_marker(getattr(pytest.mark, mark))
                 break
         else:
-            name = os.path.basename(path)
             if name in _CORPUS_FILES:
                 item.add_marker(pytest.mark.corpus)
-            elif name in _LIBNODE_FILES or os.path.join('tests', 'library', 'tileops') in path:
-                item.add_marker(pytest.mark.loop2x_libnodes)
 
     try:
         impl = _active_cuda_impl()
