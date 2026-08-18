@@ -8,6 +8,7 @@ import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg import infer_types
+from dace.sdfg import propagation
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 
@@ -65,6 +66,82 @@ def test_multidimensional_map_vectorizes_its_innermost_dimension():
 
     a = np.random.rand(64, 64)
     b = np.zeros((64, 64))
+    sdfg(a=a, b=b)
+    assert np.allclose(b, a * 2.0)
+
+
+@pytest.mark.parametrize('extents', [(8, 12), (4, 6, 10)])
+def test_the_marked_multidimensional_map_expands_in_order(extents):
+    """The clause needs the innermost dimension in a loop of its own, so the pass runs
+    ``MapExpansion`` on the maps it marks. What that leaves behind is asserted here: one
+    single-dimension scope per dimension, in the original order and with the original ranges,
+    nested and re-joined in mirror order, each scope handing the next its slice, and only the
+    innermost one carrying the clause."""
+    params = ['i', 'j', 'k'][:len(extents)]
+    point = ', '.join(params)
+    sdfg = dace.SDFG(f'expand_{len(extents)}d')
+    sdfg.add_array('a', extents, dace.float64)
+    sdfg.add_array('b', extents, dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    state.add_mapped_tasklet('nd', {
+        p: f'0:{ext}'
+        for p, ext in zip(params, extents)
+    }, {'inp': dace.Memlet(f'a[{point}]')},
+                             'o = inp * 2.0', {'o': dace.Memlet(f'b[{point}]')},
+                             schedule=dtypes.ScheduleType.CPU_Multicore,
+                             external_edges=True)
+    sdfg.validate()
+    original = next(n for _, n in entries(sdfg))
+    assert original.map.params == params
+    original_ranges = list(original.map.range.ranges)
+
+    assert mark(sdfg)
+    sdfg.validate()
+
+    # One scope per dimension, and they form a single nest rather than siblings.
+    scope = state.scope_dict()
+    map_entries = [n for _, n in entries(sdfg)]
+    assert len(map_entries) == len(extents)
+    chain = [next(n for n in map_entries if scope[n] is None)]
+    while True:
+        inner = [n for n in map_entries if scope[n] is chain[-1]]
+        if not inner:
+            break
+        assert len(inner) == 1
+        chain.append(inner[0])
+    assert len(chain) == len(extents)
+
+    # Outermost first, one parameter each, ranges untouched -- a permuted nest computes garbage.
+    assert [e.map.params for e in chain] == [[p] for p in params]
+    assert [e.map.range.ranges[0] for e in chain] == original_ranges
+
+    # Only the innermost loop is vectorized, and only it was made Sequential to be one.
+    assert chain[0].map.schedule == dtypes.ScheduleType.CPU_Multicore
+    assert all(e.map.schedule == dtypes.ScheduleType.Sequential for e in chain[1:])
+    assert chain[-1].map.omp_simd
+    assert not any(e.map.omp_simd for e in chain[:-1])
+
+    # The exits mirror the entries: one per entry, re-joining innermost first.
+    exits = [state.exit_node(e) for e in chain]
+    assert len(set(id(x) for x in exits)) == len(chain)
+    assert [state.entry_node(x) for x in exits] == chain
+    assert all(state.edges_between(exits[i], exits[i - 1]) for i in range(len(chain) - 1, 0, -1))
+
+    # Each entry hands the next its slice, and the tasklet still sees a single point.
+    for i in range(len(chain) - 1):
+        edge = next(e for e in state.edges_between(chain[i], chain[i + 1]) if e.data.data == 'a')
+        assert str(edge.data.subset) == ', '.join(params[:i + 1] + [f'0:{ext}' for ext in extents[i + 1:]])
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    assert str(state.in_edges(tasklet)[0].data.subset) == point
+    assert str(state.out_edges(tasklet)[0].data.subset) == point
+    written = next(e for e in state.out_edges(exits[0]) if e.data.data == 'b')
+    assert str(written.data.subset) == ', '.join(f'0:{ext}' for ext in extents)
+
+    # One vectorized loop in the nest, not one per level.
+    assert sdfg.generate_code()[0].clean_code.count('#pragma omp simd') == 1
+
+    a = np.random.rand(*extents)
+    b = np.zeros(extents)
     sdfg(a=a, b=b)
     assert np.allclose(b, a * 2.0)
 
@@ -134,6 +211,8 @@ def test_multicore_reduction_keeps_the_clause_and_the_value():
                              external_edges=True)
     sdfg.validate()
 
+    mark(sdfg)
+    assert all(n.map.omp_simd for _, n in entries(sdfg))
     assert '#pragma omp parallel for simd' in sdfg.generate_code()[0].clean_code
 
     a = np.random.rand(1024)
@@ -265,6 +344,43 @@ def test_the_mark_survives_a_round_trip():
     assert all(n.map.omp_simd for _, n in entries(restored))
 
 
+def test_expansion_does_not_trigger_whole_sdfg_propagation(monkeypatch):
+    """Performance regression guard. ``apply_to`` propagates memlets over the whole SDFG once per
+    application unless told not to, which is quadratic in the map count and hung code generation on
+    a model-sized graph for hours. MapExpansion propagates the scope it rewrote by itself, and that
+    scope is all this pass disturbs."""
+    sdfg = dace.SDFG('propagation_scope')
+    previous = None
+    for k in range(4):
+        sdfg.add_array(f'a{k}', (64, 64), dace.float64)
+        sdfg.add_array(f'b{k}', (64, 64), dace.float64)
+        state = sdfg.add_state(f's{k}', is_start_block=(k == 0))
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+        state.add_mapped_tasklet(f'm{k}', {
+            'i': '0:64',
+            'j': '0:64'
+        }, {'inp': dace.Memlet(f'a{k}[i, j]')},
+                                 'o = inp * 2.0', {'o': dace.Memlet(f'b{k}[i, j]')},
+                                 external_edges=True)
+    sdfg.validate()
+
+    whole_sdfg_calls = []
+    monkeypatch.setattr(propagation, 'propagate_memlets_sdfg', lambda *args, **kwargs: whole_sdfg_calls.append(args))
+    marked = mark(sdfg)
+
+    assert len(marked) == 4
+    assert not whole_sdfg_calls, 'expansion must not drag a whole-SDFG memlet propagation behind it'
+
+    # What the expansion did touch is still propagated: the outer map hands the inner one a row.
+    for state in sdfg.all_states():
+        outer = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.params == ['i'])
+        inner = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.params == ['j'])
+        edge = next(e for e in state.edges_between(outer, inner) if e.data.data is not None)
+        assert str(edge.data.subset) == 'i, 0:64'
+
+
 def test_config_switch_suppresses_the_clause():
     """The escape hatch keeps the pass out of code generation entirely."""
 
@@ -282,6 +398,8 @@ def test_config_switch_suppresses_the_clause():
 if __name__ == '__main__':
     test_leaf_map_is_marked_and_vectorized()
     test_multidimensional_map_vectorizes_its_innermost_dimension()
+    for map_extents in ((8, 12), (4, 6, 10)):
+        test_the_marked_multidimensional_map_expands_in_order(map_extents)
     test_outer_map_of_a_nest_is_not_marked()
     test_minmax_reduction_withholds_the_clause()
     for wcr_target in ('hist[i]', 'hist[0]'):
@@ -293,4 +411,6 @@ if __name__ == '__main__':
                                                                                                              False)):
         test_outlined_body_is_opened_not_refused(name, is_leaf)
     test_the_mark_survives_a_round_trip()
+    with pytest.MonkeyPatch.context() as mp:
+        test_expansion_does_not_trigger_whole_sdfg_propagation(mp)
     test_config_switch_suppresses_the_clause()
