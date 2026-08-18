@@ -10,7 +10,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Set, Tuple, Union, Callable, Optional
 import operator
 
 import dace
@@ -1137,12 +1137,9 @@ class DefinedNames(collections.abc.Mapping):
             if isinstance(value, MPI.Comm):
                 return value
 
-        # Process grids are keyed by the SDFG-level name and only count when a variable points at
-        # one. Every non-MPI program has none, so the reverse lookup is built only when it can hit.
-        process_grids = sdfg.process_grids
-        if process_grids and name in process_grids and name in set(pv.variables.values()):
-            return process_grids[name]
-
+        # No branch for process grids: they are data descriptors kept in ``sdfg.arrays``, so the
+        # lookup below answers them, and the ``sdfg.process_grids`` property rebuilds a dict over
+        # every array each time it is read.
         if name in arrays:
             return arrays[name]
 
@@ -1167,12 +1164,14 @@ class DefinedNames(collections.abc.Mapping):
 
         raise KeyError(name)
 
-    def __contains__(self, name: str) -> bool:
+    def __contains__(self, name: object) -> bool:
         # Spelled out rather than left to Mapping, whose default answers a miss by raising and
         # catching KeyError. A third of the uses here are membership tests and a miss is the common
         # answer, so that default would put an exception on the hot path. Every branch below mirrors
         # one in __getitem__: a name is "in" exactly when a lookup would resolve it, and a variable
         # whose target is neither an array nor a symbol resolves to nothing.
+        if not isinstance(name, str):
+            return False
         pv = self.pv
         sdfg = pv.sdfg
         arrays = sdfg.arrays
@@ -1187,15 +1186,12 @@ class DefinedNames(collections.abc.Mapping):
         value = pv.globals.get(name)
         if isinstance(value, symbolic.symbol):
             return True
-        process_grids = sdfg.process_grids
-        if process_grids and name in process_grids and name in set(pv.variables.values()):
-            return True
         if value is not None and preprocessing.mpi4py_is_usable():
             from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
             return isinstance(value, MPI.Comm)
         return False
 
-    def __iter__(self) -> Iterable[str]:
+    def __iter__(self) -> Iterator[str]:
         return iter(self.materialize())
 
     def __len__(self) -> int:
@@ -1227,9 +1223,7 @@ class DefinedNames(collections.abc.Mapping):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(arrays)
 
-        # MPI-related stuff
-        process_grids = sdfg.process_grids
-        result.update({v: process_grids[v] for k, v in variables.items() if v in process_grids})
+        # Process grids are data descriptors, so the ``arrays`` update above already carries them.
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
@@ -1502,28 +1496,9 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
-        # Check parent SDFG arrays first
-        result = {}
-        result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
-        result.update({k: self.sdfg.arrays[v] for k, v in self.scope_vars.items() if v in self.sdfg.arrays})
-        result.update({k: self.scope_arrays[v] for k, v in self.scope_vars.items() if v in self.scope_arrays})
-        result.update({k: self.sdfg.arrays[v] for k, v in self.variables.items() if v in self.sdfg.arrays})
-        result.update({v: self.sdfg.arrays[v] for _, v in self.variables.items() if v in self.sdfg.arrays})
-        # TODO: Is there a case of a variable-symbol?
-        result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
-
-        # Add SDFG arrays, in case a replacement added a new output. Process grids are data
-        # descriptors, so this carries them as well.
-        result.update(self.sdfg.arrays)
-
-        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
-        # ImportError, so the availability question belongs in one place (see the helper's docstring).
-        if preprocessing.mpi4py_is_usable():
-            from mpi4py import MPI
-            result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-
-        return result
+    def defined(self) -> DefinedNames:
+        """Every name this visitor can resolve. A view -- see :class:`DefinedNames`."""
+        return DefinedNames(self)
 
     def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         """
