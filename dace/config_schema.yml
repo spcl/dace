@@ -352,10 +352,10 @@ required:
                     parallel_transfer_min_elements:
                         type: int
                         default: 262144
-                        title: Parallel copy/memset element threshold
+                        title: Parallel copy/fill element threshold
                         description: >
                             Minimum element count (symbolic size counts as large) for a
-                            copy/memset to lower to an OpenMP element map instead of memcpy/memset.
+                            copy/fill to lower to an OpenMP element map instead of memcpy/memset.
 
                     explicit_copy:
                         type: bool

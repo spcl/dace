@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions."""
+"""Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
 from typing import Callable, List, Tuple
 
 import dace
