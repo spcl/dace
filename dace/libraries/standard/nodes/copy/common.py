@@ -281,20 +281,6 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     return f"{backend}Memcpy{src_loc}To{dst_loc}"
 
 
-def _memcpy_host_sync_suffix(inp: data.Data, out: data.Data) -> str:
-    """Statement waiting on the issuing stream after an async copy into host memory, or ``''``.
-
-    The copy tasklets here are asynchronous, and a host-located destination is read by plain host
-    code -- a kernel launch packing a by-value argument counts -- with nothing ordering the read
-    against the stream. A device-located destination is ordered by the stream itself, so it gets
-    no host wait.
-    """
-    if not _memcpy_kind(inp, out).endswith("ToHost"):
-        return ""
-    backend = get_gpu_backend()
-    return f"\nDACE_GPU_CHECK({backend}StreamSynchronize({CURRENT_STREAM_NAME}));"
-
-
 def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
     """Build a Tasklet emitting one contiguous-block copy. Raises ``ValueError`` on a
     non-contiguous subset (the single-call form would overrun the region; use ``MappedTasklet``).
@@ -327,7 +313,6 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     if cuda:
         backend = get_gpu_backend()
         code = f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
-        code += _memcpy_host_sync_suffix(inp, out)
     else:
         code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
 

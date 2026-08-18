@@ -9,8 +9,8 @@ from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (_memcpy_host_sync_suffix, _memcpy_kind, cuda2d_pitch_params,
-                                                       INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
+from dace.libraries.standard.nodes.copy.common import (_memcpy_kind, cuda2d_pitch_params, INPUT_CONNECTOR_NAME,
+                                                       OUTPUT_CONNECTOR_NAME)
 
 if TYPE_CHECKING:
     pass
@@ -67,7 +67,6 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
 
         code = (f"{backend}Memcpy2DAsync({OUTPUT_CONNECTOR_NAME}, {dpitch}, {INPUT_CONNECTOR_NAME}, {spitch}, "
                 f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});")
-        code += _memcpy_host_sync_suffix(inp, out)
 
         in_conns = {INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
         tasklet = nodes.Tasklet(node.name,
