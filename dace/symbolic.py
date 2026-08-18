@@ -1742,12 +1742,21 @@ class OR(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
-        Evaluates logical or.
+        Evaluates logical or. A LITERAL arm short-circuits even when the other arm is an
+        unresolved relational (whose ``is_Boolean`` sympy leaves False): ``OR(True, x)`` is True
+        and ``OR(False, x)`` is ``x``. Fires only on evaluating construction -- the parser builds
+        these nodes with ``evaluate=False``, so parse trees stay verbatim.
 
         :param x: First operand.
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
+        if x is sympy.true or y is sympy.true:
+            return sympy.true
+        if x is sympy.false:
+            return y
+        if y is sympy.false:
+            return x
         if x.is_Boolean and y.is_Boolean:
             return x or y
 
@@ -1760,12 +1769,21 @@ class AND(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
-        Evaluates logical and.
+        Evaluates logical and. A LITERAL arm short-circuits even when the other arm is an
+        unresolved relational (whose ``is_Boolean`` sympy leaves False): ``AND(False, x)`` is
+        False and ``AND(True, x)`` is ``x``. Fires only on evaluating construction -- the parser
+        builds these nodes with ``evaluate=False``, so parse trees stay verbatim.
 
         :param x: First operand.
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
+        if x is sympy.false or y is sympy.false:
+            return sympy.false
+        if x is sympy.true:
+            return y
+        if y is sympy.true:
+            return x
         if x.is_Boolean and y.is_Boolean:
             return x and y
 
@@ -1811,6 +1829,18 @@ class IfExpr(DaceFunction):
             return True
         if self.args[1].is_integer is False and self.args[2].is_integer is False:
             return False
+
+
+def refold_booleans(expr):
+    """``expr`` with its ``AND``/``OR`` nodes re-constructed EVALUATING, so literal arms fold
+    (``AND(False, x)`` becomes False). :func:`pystr_to_symbolic` deliberately builds these nodes
+    with ``evaluate=False`` to keep parse trees verbatim for serialization; a consumer asking
+    "is this condition constant?" calls this first. Non-boolean subtrees are left untouched."""
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    if str(expr.func) in ('AND', 'OR'):
+        return expr.func(*[refold_booleans(arg) for arg in expr.args])
+    return expr
 
 
 class ITE(DaceFunction):

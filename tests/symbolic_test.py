@@ -37,6 +37,24 @@ def test_shapes_equal_compares_by_name() -> None:
     assert not shapes_equal([wide + 1], [narrow])
 
 
+def test_refold_booleans_folds_literal_arms():
+    """The parser builds non-evaluating AND/OR nodes; refold_booleans re-constructs them so a
+    literal arm short-circuits even when the other arm is an unresolved relational (cloudsc:
+    ``AND(False, k >= m)`` guarded a dead branch that DeadStateElimination could not prune)."""
+    import sympy
+
+    from dace.symbolic import pystr_to_symbolic, refold_booleans
+
+    assert refold_booleans(pystr_to_symbolic('(k < k) and (k >= m)')) is sympy.false
+    assert refold_booleans(pystr_to_symbolic('(k <= k) or (k >= m)')) is sympy.true
+    # A nested literal folds bottom-up; an undecidable pair stays symbolic.
+    assert refold_booleans(pystr_to_symbolic('((k < k) or (k > m)) and (k < n)')) == \
+        refold_booleans(pystr_to_symbolic('(k > m) and (k < n)'))
+    folded = refold_booleans(pystr_to_symbolic('(k < m) and (k < n)'))
+    assert str(folded.func) == 'AND'
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()
+    test_refold_booleans_folds_literal_arms()
