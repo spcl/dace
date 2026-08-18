@@ -834,10 +834,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('fission', BreakAntiDependence())]
     # PerfectLoopNesting is DELIBERATELY NOT in the pipeline (user ruling 2026-08-18: it breaks
     # more than it helps). Its LoopFission grouping has no dependence distance/direction
-    # information, and the composed fixpoint (fission + MoveIfIntoLoop + TrivialLoopElimination)
-    # silently miscompiled a read-modify-write chain on CloudSC (tendency_loc_a, rel=0.13) while
-    # every phase before it stayed bit-exact. The pass and its unit tests remain for standalone
-    # use; re-adding it here requires a numerically verified grouping analysis first.
+    # information, and a SINGLE LoopFission application alone reproduces the CloudSC
+    # read-modify-write miscompile bit-for-bit (tendency_loc_a rel=0.13, measured 2026-08-18 on
+    # the phase-17 staged snapshot) -- so the fault is LoopFission's grouping itself, not the
+    # composed fixpoint. Until that grouping is dependence-verified, no fission runs here, and
+    # the mixed-parallelism collapsed-2D-map contract (canonicalize_mixed_parallelism_test)
+    # stays red rather than trading it for wrong numerics.
     s += [('fission', _uniq_fis)]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
