@@ -109,21 +109,21 @@ def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
     return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
 
-# Storages that mark a copy/memset library node as "GPU-relevant" (its expansion emits a
+# Storages that mark a copy/fill library node as "GPU-relevant" (its expansion emits a
 # cudaMemcpy / cudaMemset). Hoisted to module scope because it is consulted per node visited
 # and rebuilding the set on every call shows up in profiles.
 _GPU_COPY_STORAGES = frozenset(
     {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned})
 
 
-def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU memory."""
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
+    """``CopyLibraryNode`` / ``FillLibraryNode`` whose storage involves GPU memory."""
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
         return (node.src_storage(state) in _GPU_COPY_STORAGES or node.dst_storage(state) in _GPU_COPY_STORAGES)
-    if isinstance(node, MemsetLibraryNode):
+    if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
             if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
                 return True
@@ -136,13 +136,13 @@ def is_gpu_kernel_launcher(node) -> bool:
 
 
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes that *take* a GPU stream: kernel ``MapEntry``, GPU Copy/Memset libnode, or a
+    """True for nodes that *take* a GPU stream: kernel ``MapEntry``, GPU Copy/Fill libnode, or a
     lowered runtime-call Tasklet.
 
     AccessNodes are excluded (memory references, not stream consumers); use
     :func:`is_gpu_relevant_node` for the broader "involves GPU work" question.
     """
-    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_memset_libnode(node, sdfg, state)
+    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_fill_libnode(node, sdfg, state)
             or is_already_lowered_gpu_runtime_call(node))
 
 
@@ -150,7 +150,7 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
     """True for a Tasklet that issues a stream-bound GPU runtime call.
 
     Detected either by a ``gpuStream_t`` in-connector (cuBLAS / cuSolver expansions that wire one)
-    or by a :data:`STREAM_CONNECTOR` reference in the body (Copy/Memset libnode expansions, which
+    or by a :data:`STREAM_CONNECTOR` reference in the body (Copy/Fill libnode expansions, which
     carry no connector and rely on the scheduler binding it post-expansion). Pipeline-emitted sync
     tasklets are excluded -- they are not consumers in the WCC sense.
     """

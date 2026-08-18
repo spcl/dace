@@ -14,8 +14,8 @@ import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeT
@@ -25,7 +25,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
-    is_gpu_copy_or_memset_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
+    is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
     is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
     InsertExplicitGPUGlobalMemoryCopies)
@@ -198,8 +198,8 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             elif _is_gpu_device_exit(src) and _is_gpu_global_access(dst, parent):
                 # Kernel exit -> GPU AccessNode: sync the kernel's own stream.
                 state_end.setdefault(parent, set()).add(assignments[dst if is_sink else src])
-            elif is_gpu_copy_or_memset_libnode(src, parent.sdfg, parent) and STREAM_CONNECTOR in src.in_connectors:
-                # Stream-bound copy/memset libnode: state-end sync on its assigned stream.
+            elif is_gpu_copy_or_fill_libnode(src, parent.sdfg, parent) and STREAM_CONNECTOR in src.in_connectors:
+                # Stream-bound copy/fill libnode: state-end sync on its assigned stream.
                 state_end.setdefault(parent, set()).add(assignments[src])
             elif is_already_lowered_gpu_runtime_call(src):
                 # Already-lowered GPU runtime tasklet (cudaMemcpyAsync etc.): state-end sync on its stream.
@@ -250,7 +250,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 return None
             return "host-level Tasklet that isn't a recognized GPU runtime call"
         if isinstance(node, nodes.LibraryNode):
-            if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)):
+            if isinstance(node, (CopyLibraryNode, FillLibraryNode)):
                 return None
             if node.schedule == dtypes.ScheduleType.GPU_Device:
                 return None

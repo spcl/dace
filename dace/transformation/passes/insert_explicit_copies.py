@@ -10,7 +10,7 @@ from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:

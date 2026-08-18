@@ -497,12 +497,12 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     """
     from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
     from dace.libraries.standard.nodes.arg_reduce import ArgReduce
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
-    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode, select_memset_implementation
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+    from dace.libraries.standard.nodes.fill import FillLibraryNode, select_fill_implementation
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.libraries.standard.nodes.scan import Scan
 
-    if not isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck, CopyLibraryNode, MemsetLibraryNode)):
+    if not isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck, CopyLibraryNode, FillLibraryNode)):
         return False
     impls = type(node).implementations
     sequential = libnode_is_sequential(node, state, sdfg)
@@ -515,7 +515,7 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     elif isinstance(node, CopyLibraryNode):
         node.implementation = select_copy_implementation(node, state) if sequential else 'Auto'
     else:
-        node.implementation = select_memset_implementation(node, state) if sequential else 'Auto'
+        node.implementation = select_fill_implementation(node, state) if sequential else 'Auto'
     return True
 
 
@@ -573,7 +573,7 @@ def set_fast_implementations(sdfg: SDFG,
                     break
 
     # CPU: the nodes whose parallel lowering depends on scope. ``implementation_prio`` names only the
-    # vendor BLAS libraries, so a Reduce / ArgReduce / Scan / Copy / Memset fell through to the
+    # vendor BLAS libraries, so a Reduce / ArgReduce / Scan / Copy / Fill fell through to the
     # terminal ``pure`` fallback above and a TOP-LEVEL one silently lost its parallelism. Runs after
     # the priority loop so it has the last word on exactly those types.
     if device == dtypes.DeviceType.CPU:

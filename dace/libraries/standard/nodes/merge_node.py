@@ -1,7 +1,7 @@
 """``MergeLibraryNode`` — Fortran ``MERGE(tsource, fsource, mask)`` intrinsic.
 
 Mirrors the modularity pattern of ``CopyLibraryNode`` /
-``MemsetLibraryNode``: the bridge / frontend can drop a ``MergeLibraryNode``
+``FillLibraryNode``: the bridge / frontend can drop a ``MergeLibraryNode``
 into the SDFG instead of inlining a per-element conditional tasklet, so
 later passes (vectorisation, GPU offload, alternative backends) can pick
 their own expansion without touching the surrounding graph.
@@ -30,7 +30,7 @@ from dace.transformation.transformation import ExpandTransformation
 # Outer connector names this libnode publishes. Republished as
 # ``MergeLibraryNode.{TRUE,FALSE,MASK,OUTPUT}_CONNECTOR_NAME`` so
 # external consumers reference class constants instead of string
-# literals (mirrors ``copy_node`` / ``memset_node``).
+# literals (mirrors ``copy`` / ``fill``).
 _TRUE_CONNECTOR_NAME = "_mrg_t"
 _FALSE_CONNECTOR_NAME = "_mrg_f"
 _MASK_CONNECTOR_NAME = "_mrg_mask"
@@ -133,7 +133,7 @@ class MergeLibraryNode(nodes.LibraryNode):
     # Connector names this libnode publishes. External consumers (tests,
     # the Fortran frontend's emitter) must reference these constants
     # instead of string literals so a future rename is a single-line
-    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
+    # change (mirrors ``CopyLibraryNode`` / ``FillLibraryNode``).
     TRUE_CONNECTOR_NAME = _TRUE_CONNECTOR_NAME
     FALSE_CONNECTOR_NAME = _FALSE_CONNECTOR_NAME
     MASK_CONNECTOR_NAME = _MASK_CONNECTOR_NAME

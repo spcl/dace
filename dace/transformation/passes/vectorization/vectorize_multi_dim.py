@@ -112,7 +112,7 @@ _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileRedu
 
 #: ``canonicalize()`` knobs for the vectorizer's own entry normalization (see
 #: :meth:`VectorizeMultiDim.apply_pass`). ``semantic_lifting=False`` is the whole point: canon's
-#: map -> library-node lifts (Einsum / Copy / Memset) would hand the tiler an opaque node with no
+#: map -> library-node lifts (Einsum / Copy / Fill) would hand the tiler an opaque node with no
 #: per-lane body to widen, so the vectorizer needs the residual left as raw maps.
 #: ``unroll_limit=0``: ShortLoopUnroll would straight-line a short constant-trip loop and delete
 #: the very map the tiler was called to widen.

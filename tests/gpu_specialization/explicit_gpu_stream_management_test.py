@@ -4,8 +4,8 @@ import pytest
 
 import dace
 from dace.codegen import common
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.interstate import StateFusionExtended
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
@@ -337,15 +337,15 @@ def test_single_copy_library_node():
 
 
 def test_single_memset_library_node():
-    """Single MemsetLibraryNode over a GPU buffer in one state."""
+    """Single FillLibraryNode over a GPU buffer in one state."""
     sdfg = dace.SDFG("single_memset_node")
     sdfg.add_array("B", [128], dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
     state = sdfg.add_state("memset_state")
 
     b = state.add_access("B")
-    ms = MemsetLibraryNode(name="memset_B")
+    ms = FillLibraryNode(name="memset_B")
     state.add_node(ms)
-    state.add_edge(ms, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
+    state.add_edge(ms, FillLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
     strategy = NaiveGPUStreamScheduler()
     Pipeline([
@@ -354,7 +354,7 @@ def test_single_memset_library_node():
     ]).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
-    assert STREAM_CONNECTOR in ms.in_connectors, "MemsetLibraryNode must have its STREAM_CONNECTOR in-connector wired"
+    assert STREAM_CONNECTOR in ms.in_connectors, "FillLibraryNode must have its STREAM_CONNECTOR in-connector wired"
 
     stream_inputs = [e for e in state.in_edges(ms) if e.dst_conn == STREAM_CONNECTOR]
     assert len(stream_inputs) == 1

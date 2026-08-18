@@ -10,7 +10,7 @@ from dace.sdfg import graph, utils as sdutils
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.libraries.standard.nodes import copy_node, memset_node
+from dace.libraries.standard.nodes import copy, fill
 
 
 @properties.make_properties
@@ -561,7 +561,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return self._lift_paths(state, node, is_memset=False, verbose=verbose)
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose: bool = True) -> int:
-        """Lift every constant-zero-write path under map ``node`` to a ``MemsetLibraryNode``.
+        """Lift every constant-zero-write path under map ``node`` to a ``FillLibraryNode``.
 
         :param state: State containing the map.
         :param node: Map entry of the kernel to scan.
@@ -576,7 +576,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         Both flavours share one skeleton: detect the contiguous
         ``MapEntry -> tasklet -> MapExit -> AccessNode`` paths, validate each via
         :meth:`_lift_preconditions_ok`, and replace it with a ``CopyLibraryNode``
-        (memcpy) or ``MemsetLibraryNode`` (memset). A memcpy additionally carries
+        (memcpy) or ``FillLibraryNode`` (memset). A memcpy additionally carries
         a source AccessNode + input edge and requires matching src/dst dtype and
         storage; a memset writes a constant and has neither.
 
@@ -588,11 +588,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         """
         if is_memset:
             paths = self._detect_contiguous_memset_paths(state, node)
-            libnode_cls, kind = memset_node.MemsetLibraryNode, "memset"
+            libnode_cls, kind = fill.FillLibraryNode, "memset"
             libnode_conn_names = {libnode_cls.OUTPUT_CONNECTOR_NAME}
         else:
             paths = self._detect_contiguous_memcpy_paths(state, node)
-            libnode_cls, kind = copy_node.CopyLibraryNode, "memcpy"
+            libnode_cls, kind = copy.CopyLibraryNode, "memcpy"
             libnode_conn_names = {libnode_cls.INPUT_CONNECTOR_NAME, libnode_cls.OUTPUT_CONNECTOR_NAME}
 
         joined_edges = set()
@@ -882,7 +882,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         """Replace a detected single-statement copy / zero ``LoopRegion`` with a library node.
 
         The loop is swapped in place (its interstate in/out edges are rewired to a fresh state
-        holding the ``CopyLibraryNode`` / ``MemsetLibraryNode``), preserving control-flow ordering,
+        holding the ``CopyLibraryNode`` / ``FillLibraryNode``), preserving control-flow ordering,
         and the now-unused loop-iterator symbol is dropped.
 
         :param loop: the loop region to lift.
@@ -912,11 +912,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             return False
 
         if is_memset:
-            libnode_conn_names = {memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}
+            libnode_conn_names = {fill.FillLibraryNode.OUTPUT_CONNECTOR_NAME}
         else:
-            libnode_conn_names = {
-                copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-            }
+            libnode_conn_names = {copy.CopyLibraryNode.INPUT_CONNECTOR_NAME, copy.CopyLibraryNode.OUTPUT_CONNECTOR_NAME}
         if libnode_conn_names & set(sdfg.arrays):
             if verbose:
                 warnings.warn(
@@ -934,18 +932,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         is_start = parent.start_block is loop
         new_state = parent.add_state(f"{loop.label}_lifted", is_start_block=is_start)
         if is_memset:
-            libnode = memset_node.MemsetLibraryNode(name=f"memsetLib_{dst_access.data}_{self.rmid}")
+            libnode = fill.FillLibraryNode(name=f"memsetLib_{dst_access.data}_{self.rmid}")
             new_state.add_node(libnode)
-            new_state.add_edge(libnode, memset_node.MemsetLibraryNode.OUTPUT_CONNECTOR_NAME,
+            new_state.add_edge(libnode, fill.FillLibraryNode.OUTPUT_CONNECTOR_NAME,
                                new_state.add_access(dst_access.data), None,
                                Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access.data))
         else:
-            libnode = copy_node.CopyLibraryNode(name=f"copyLib_{src_access.data}_{dst_access.data}_{self.rmid}")
+            libnode = copy.CopyLibraryNode(name=f"copyLib_{src_access.data}_{dst_access.data}_{self.rmid}")
             new_state.add_node(libnode)
             new_state.add_edge(new_state.add_access(src_access.data), None, libnode,
-                               copy_node.CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                               copy.CopyLibraryNode.INPUT_CONNECTOR_NAME,
                                Memlet(subset=dace.subsets.Range(begin_subset), data=src_access.data))
-            new_state.add_edge(libnode, copy_node.CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+            new_state.add_edge(libnode, copy.CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
                                new_state.add_access(dst_access.data), None,
                                Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access.data))
         self.rmid += 1
@@ -1054,7 +1052,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         # Also lift single-statement contiguous copy / zero LoopRegions (the loop analog of the
         # map paths above), so a plain ``for i: dst[i] = src[i]`` / ``for i: dst[i] = 0`` becomes a
-        # Copy / Memset library node instead of surviving as a naive loop.
+        # Copy / Fill library node instead of surviving as a naive loop.
         num_lifted_loops = self._lift_loops(sdfg)
 
         return num_rmed_memcpies + num_rmed_memsets + num_lifted_loops

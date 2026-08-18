@@ -18,8 +18,8 @@ number of entries, which is exactly what separates it from the two above.
 import dace
 import pytest
 from dace import dtypes
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
@@ -222,8 +222,8 @@ def transfer_sdfg(name, loop_end, kind, subset='0:N'):
         state.add_edge(node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('dst'), None,
                        dace.Memlet(f'dst[{subset}]'))
     else:
-        node = MemsetLibraryNode(name='mset')
-        state.add_edge(node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('dst'), None,
+        node = FillLibraryNode(name='mset')
+        state.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('dst'), None,
                        dace.Memlet(f'dst[{subset}]'))
     sdfg.validate()
     return sdfg, node

@@ -79,7 +79,7 @@ def copy_is_one_memcpy(node, state) -> bool:
     """Whether a copy is expressible as a single host ``std::memcpy``.
 
     These are the shape / contiguity / layout preconditions
-    :func:`~dace.libraries.standard.nodes.copy_node.select_copy_implementation` tests before it
+    :func:`~dace.libraries.standard.nodes.copy.select_copy_implementation` tests before it
     picks ``MemcpyCPU`` for a provably sub-threshold copy; the size condition is this band's.
 
     :param node: the copy library node.
@@ -142,12 +142,12 @@ class SpecializeCpuTransfers(ppl.Pass):
         :returns: how many library nodes were changed, or ``None`` if none were.
         """
         from dace.libraries.standard.helper import is_reentered_cpu_transfer
-        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-        from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+        from dace.libraries.standard.nodes.copy import CopyLibraryNode
+        from dace.libraries.standard.nodes.fill import FillLibraryNode
         changed = 0
         for node, state in sdfg.all_nodes_recursive():
             is_copy = isinstance(node, CopyLibraryNode)
-            if not is_copy and not isinstance(node, MemsetLibraryNode):
+            if not is_copy and not isinstance(node, FillLibraryNode):
                 continue
             if not (copy_is_host(node, state) if is_copy else memset_is_host(node, state)):
                 continue

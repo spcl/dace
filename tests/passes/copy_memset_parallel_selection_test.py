@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Size-gated CPU expansion selection for ``CopyLibraryNode`` / ``MemsetLibraryNode``, plus the
+"""Size-gated CPU expansion selection for ``CopyLibraryNode`` / ``FillLibraryNode``, plus the
 fork/join cost model the CPU specialization band consumes.
 
 A contiguous CPU transfer expands to the element map (``MappedTasklet`` / ``pure``, parallel
@@ -17,8 +17,8 @@ import pytest
 import dace
 from dace.libraries.standard.helper import (cpu_transfer_parallelizes, is_parallel_cpu_transfer_size,
                                             is_reentered_cpu_transfer, is_short_loop)
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
@@ -60,9 +60,8 @@ def _memset_libnode_sdfg(n):
     sdfg = dace.SDFG(f"memset_{n}")
     sdfg.add_array("dst", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state("s")
-    ln = MemsetLibraryNode(name="ms")
-    state.add_edge(ln, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
-                   dace.Memlet(f"dst[0:{n}]"))
+    ln = FillLibraryNode(name="ms")
+    state.add_edge(ln, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{n}]"))
     sdfg.validate()
     return sdfg, ln
 

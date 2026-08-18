@@ -196,7 +196,7 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     Expansion is restricted to the nodes this created -- ``RewriteCopyForLayout`` needs the shared
     pass's other callers unexpanded.
     """
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
     from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
     InsertExplicitCopies().apply_pass(sdfg, {})

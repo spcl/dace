@@ -27,7 +27,7 @@ from .reduce import Reduce
 # Outer connector names this libnode publishes. Republished as
 # ``CountLibraryNode.INPUT_CONNECTOR_NAME`` / ``.OUTPUT_CONNECTOR_NAME``
 # so external consumers reference a class constant instead of a string
-# literal (mirrors ``copy_node`` / ``memset_node``).
+# literal (mirrors ``copy`` / ``fill``).
 _INPUT_CONNECTOR_NAME = "_cnt_in"
 _OUTPUT_CONNECTOR_NAME = "_cnt_out"
 
@@ -37,7 +37,7 @@ def _validate_count_edges(node, sdfg, state):
     ``(mask_name, mask_desc, mask_subset, out_name, out_desc, out_subset)``.
 
     Mirrors the ``_validate_*_edges`` pattern from ``copy_node`` /
-    ``memset_node`` -- one edge per connector, no surprises, dtype
+    ``fill`` -- one edge per connector, no surprises, dtype
     checked at the boundary.
     """
     in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == _INPUT_CONNECTOR_NAME]
@@ -179,7 +179,7 @@ class CountLibraryNode(nodes.LibraryNode):
     # Connector names this libnode publishes. External consumers (tests,
     # the Fortran frontend's emitter) must reference these constants
     # instead of string literals so a future rename is a single-line
-    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
+    # change (mirrors ``CopyLibraryNode`` / ``FillLibraryNode``).
     INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
 

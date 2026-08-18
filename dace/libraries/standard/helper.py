@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
-"""
+"""Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
 from typing import Callable, List, Tuple
 
 import dace
@@ -81,7 +79,7 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> b
     """Whether a CPU transfer of ``num_elements`` takes the parallel element map.
 
     Parallel is the DEFAULT, and the only carve-out an expansion may make: a count PROVABLY below
-    ``compiler.cpu.parallel_transfer_min_elements`` (default 1024) keeps the single libc call.
+    ``compiler.cpu.parallel_transfer_min_elements`` keeps the single libc call.
     Every symbol is assumed big enough and no symbol outranks another, so an undecidable
     comparison answers ``True`` -- reading "unknown" as "small" is what single-threaded every
     dynamically sized bulk copy.

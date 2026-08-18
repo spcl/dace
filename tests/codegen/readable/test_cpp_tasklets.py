@@ -28,7 +28,7 @@ import dace
 import dace.libraries.blas as blas
 from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 from dace.config import Config
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
 
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY
@@ -135,15 +135,15 @@ def _build_offset_ptr(name):
 
 
 def _build_memset(name):
-    """ A ``MemsetLibraryNode`` expanded to a CPP ``memset(...)`` tasklet. """
+    """ A ``FillLibraryNode`` expanded to a CPP ``memset(...)`` tasklet. """
     sdfg = dace.SDFG(name)
     sdfg.add_array('out', [8], dace.float64)
     st = sdfg.add_state('main')
-    node = MemsetLibraryNode('memzero')
+    node = FillLibraryNode('memzero')
     node.implementation = 'CPU'
     st.add_node(node)
     wout = st.add_access('out')
-    st.add_edge(node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, wout, None, dace.Memlet('out[0:8]'))
+    st.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, wout, None, dace.Memlet('out[0:8]'))
     sdfg.validate()
     sdfg.expand_library_nodes()
     return sdfg
@@ -320,7 +320,7 @@ def test_memset_pointer_connector():
     calls = [l.strip() for l in code.splitlines() if l.strip().startswith('memset(')]
     assert calls, 'no memset call emitted'
     call = calls[0]
-    assert MemsetLibraryNode.OUTPUT_CONNECTOR_NAME not in call, 'pointer connector not inlined: %s' % call
+    assert FillLibraryNode.OUTPUT_CONNECTOR_NAME not in call, 'pointer connector not inlined: %s' % call
     assert '_idx(' not in call, 'pointer connector wrongly turned into single-element index: %s' % call
     assert re.search(r'memset\(\s*out\b', call), call
 

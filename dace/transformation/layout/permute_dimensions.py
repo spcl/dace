@@ -432,7 +432,7 @@ def inverse_permutation(permute_indices: List[int]) -> List[int]:
 
 def note_copy_side(sides: Dict, edge, permute_indices: List[int]) -> None:
     """Marks edge (a CopyLibraryNode operand) as relaid out; may turn an elementwise copy transposing."""
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
     if isinstance(edge.dst, CopyLibraryNode):
         sides.setdefault(edge.dst, {})['in'] = list(permute_indices)
@@ -467,7 +467,7 @@ def covers_full_array(memlet, desc) -> bool:
 def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "PermuteDimensions") -> None:
     """Replaces transposing copies with TensorTranspose; must run now, the permutation isn't recoverable later (axes = P^-1 if input relaid, P if output relaid)."""
     from dace.libraries.linalg import TensorTranspose
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
     for copy_node, permuted in sides.items():
         if 'in' in permuted and 'out' in permuted:

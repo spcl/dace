@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the LoopRegion lift and the CPU expansion selection of
-``CopyLibraryNode`` / ``MemsetLibraryNode``.
+``CopyLibraryNode`` / ``FillLibraryNode``.
 
 Covers:
 * ``AssignmentAndCopyKernelToMemsetAndMemcpy`` lifting a single-statement contiguous copy /
@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy)
@@ -99,7 +99,7 @@ def test_copy_loop_lifts_to_copy_libnode():
     lifted = AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert lifted == 1
     assert _count(sdfg, CopyLibraryNode) == 1
-    assert _count(sdfg, MemsetLibraryNode) == 0
+    assert _count(sdfg, FillLibraryNode) == 0
     assert not _has_loop(sdfg)
 
     sdfg.expand_library_nodes(recursive=True)
@@ -112,12 +112,12 @@ def test_copy_loop_lifts_to_copy_libnode():
 
 @temporarily_disable_autoopt_and_serialization
 def test_zero_loop_lifts_to_memset_libnode():
-    """``for i: dst[i] = 0`` -> a single ``MemsetLibraryNode``, the loop gone, bit-exact."""
+    """``for i: dst[i] = 0`` -> a single ``FillLibraryNode``, the loop gone, bit-exact."""
     sdfg = _zero_loop.to_sdfg(simplify=True)
 
     lifted = AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert lifted == 1
-    assert _count(sdfg, MemsetLibraryNode) == 1
+    assert _count(sdfg, FillLibraryNode) == 1
     assert _count(sdfg, CopyLibraryNode) == 0
     assert not _has_loop(sdfg)
 
@@ -162,9 +162,8 @@ def _memset_libnode_sdfg(n) -> tuple:
     sdfg = dace.SDFG(f"memset_{n}")
     sdfg.add_array("dst", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state("s")
-    ln = MemsetLibraryNode(name="ms")
-    state.add_edge(ln, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
-                   dace.Memlet(f"dst[0:{n}]"))
+    ln = FillLibraryNode(name="ms")
+    state.add_edge(ln, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{n}]"))
     sdfg.validate()
     return sdfg, ln
 

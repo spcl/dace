@@ -265,7 +265,7 @@ class RewriteCopyForLayout(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
-        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+        from dace.libraries.standard.nodes.copy import CopyLibraryNode
         from dace.libraries.linalg import TensorTranspose
 
         count = 0

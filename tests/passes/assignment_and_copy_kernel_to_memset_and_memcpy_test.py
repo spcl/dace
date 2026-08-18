@@ -1,15 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`AssignmentAndCopyKernelToMemsetAndMemcpy`.
 
-Verifies the lifting of in-map memset / element-wise-copy patterns to ``MemsetLibraryNode``
+Verifies the lifting of in-map memset / element-wise-copy patterns to ``FillLibraryNode``
 and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
 """
 import functools
 import dace
 import numpy
 import pytest
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import AssignmentAndCopyKernelToMemsetAndMemcpy
@@ -192,14 +192,14 @@ def _get_num_memcpy_library_nodes(sdfg: dace.SDFG) -> int:
 
 
 def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
-    return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
+    return sum(isinstance(node, FillLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
 def _get_num_nested_sdfgs(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, dace.nodes.NestedSDFG) for node, state in sdfg.all_nodes_recursive())
 
 
-# MemsetLibraryNode and CopyLibraryNode use different impl-name vocabularies.
+# FillLibraryNode and CopyLibraryNode use different impl-name vocabularies.
 # Tests parametrize on the Memset names; map them to the Copy names here.
 _COPY_IMPL_FROM_EXPANSION_TYPE = {
     "pure": "MappedTasklet",
@@ -212,7 +212,7 @@ def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, CopyLibraryNode):
             n.implementation = _COPY_IMPL_FROM_EXPANSION_TYPE.get(expansion_type, expansion_type)
-        elif isinstance(n, MemsetLibraryNode):
+        elif isinstance(n, FillLibraryNode):
             n.implementation = expansion_type
 
 
@@ -750,7 +750,7 @@ def test_transpose_map_is_not_lifted_to_memcpy():
 
 def test_inkernel_memset_is_not_lifted():
     """A memset map nested inside a ``GPU_Device`` map is left unlifted (no
-    ``MemsetLibraryNode``) because ``cudaMemsetAsync`` cannot run from device code."""
+    ``FillLibraryNode``) because ``cudaMemsetAsync`` cannot run from device code."""
 
     @dace.program
     def kernel_with_inner_memset(A: dace.float64[128, 64] @ dace.StorageType.GPU_Global):
@@ -764,13 +764,13 @@ def test_inkernel_memset_is_not_lifted():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "An in-kernel memset (Sequential map inside GPU_Device) was lifted to a "
-        "MemsetLibraryNode -- but cudaMemsetAsync is host-only and cannot run from "
+        "FillLibraryNode -- but cudaMemsetAsync is host-only and cannot run from "
         "device code. The pass should skip maps nested in any GPU scope.")
 
 
 def test_single_element_memset_is_not_lifted():
     """A memset over a single-element array is left unlifted (no
-    ``MemsetLibraryNode``) because its pure expansion collapses to an empty map."""
+    ``FillLibraryNode``) because its pure expansion collapses to an empty map."""
 
     @dace.program
     def single_element_zero(A: dace.float64[1]):
@@ -780,7 +780,7 @@ def test_single_element_memset_is_not_lifted():
     sdfg = single_element_zero.to_sdfg(simplify=True)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
-        "A single-element memset was lifted to a MemsetLibraryNode; the pure "
+        "A single-element memset was lifted to a FillLibraryNode; the pure "
         "expansion would collapse to an empty map and crash propagation.")
 
 
@@ -802,7 +802,7 @@ def test_single_element_memcpy_is_not_lifted():
 
 def test_shared_passthrough_connector_blocks_lift():
     """A memset whose ``MapExit`` passthrough connector is shared with a compute
-    tasklet is left unlifted (no ``MemsetLibraryNode``) and the SDFG stays valid."""
+    tasklet is left unlifted (no ``FillLibraryNode``) and the SDFG stays valid."""
     sdfg = dace.SDFG("shared_passthrough_pin")
     sdfg.add_array("A", [10], dace.float64, dace.StorageType.GPU_Global)
     state = sdfg.add_state("main")
@@ -827,7 +827,7 @@ def test_shared_passthrough_connector_blocks_lift():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "Memset over a shared MapExit passthrough connector was lifted to a "
-        "MemsetLibraryNode; this severs the compute tasklet's data path.")
+        "FillLibraryNode; this severs the compute tasklet's data path.")
     # SDFG should still be valid (no orphan connectors / edges left behind).
     sdfg.validate()
 

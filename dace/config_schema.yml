@@ -427,15 +427,11 @@ required:
 
                     parallel_transfer_min_elements:
                         type: int
-                        default: 1024
-                        title: Parallel copy/memset element threshold
+                        default: 262144
+                        title: Parallel copy/fill element threshold
                         description: >
-                            A contiguous CPU copy or memset (CopyLibraryNode /
-                            MemsetLibraryNode) expands to a parallel element map by
-                            default; only an element count PROVABLY below this value
-                            expands to a single std::memcpy / std::memset. A symbolic,
-                            unknown-at-compile-time size is assumed big enough and takes
-                            the parallel map.
+                            Minimum element count (symbolic size counts as large) for a
+                            copy/fill to lower to an OpenMP element map instead of memcpy/memset.
 
                     parallel_min_work_per_region:
                         type: int

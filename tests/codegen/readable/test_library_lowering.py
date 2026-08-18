@@ -7,7 +7,7 @@ Verifies that expanded library nodes produce numerically-equivalent results unde
 * CPU: BLAS ``matmul`` / ``gemm`` / ``dot`` via the ``pure`` expansion (no external
   BLAS dependency), so the readable generator lowers the expanded tasklets/maps.
 * GPU (skip without a device): cuBLAS ``matmul``, and the ``CopyLibraryNode`` /
-  ``MemsetLibraryNode`` standard library nodes on ``GPU_Global`` data.
+  ``FillLibraryNode`` standard library nodes on ``GPU_Global`` data.
 
 For each case: build the SDFG, ``expand_library_nodes()`` under the chosen BLAS
 implementation, compile + run under both generators, and compare. Same
@@ -22,8 +22,8 @@ import pytest
 
 import dace
 import dace.libraries.blas as blas
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
                                              use_implementation)
 
@@ -137,13 +137,13 @@ def build_gpu_copy_sdfg(name):
 
 
 def build_gpu_memset_sdfg(name):
-    """One-state SDFG zeroing a slice of ``B`` on GPU via a MemsetLibraryNode."""
+    """One-state SDFG zeroing a slice of ``B`` on GPU via a FillLibraryNode."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("B", [200], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
     state = sdfg.add_state("main")
     out = state.add_access("B")
-    node = MemsetLibraryNode(name="mset")
-    state.add_edge(node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, out, None, dace.memlet.Memlet("B[50:100]"))
+    node = FillLibraryNode(name="mset")
+    state.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None, dace.memlet.Memlet("B[50:100]"))
     return sdfg
 
 
@@ -169,7 +169,7 @@ def test_copy_libnode_gpu_lowering(require_experimental, require_gpu):
 
 @pytest.mark.gpu
 def test_memset_libnode_gpu_lowering(require_experimental, require_gpu):
-    """``MemsetLibraryNode`` on GPU lowers identically under both generators."""
+    """``FillLibraryNode`` on GPU lowers identically under both generators."""
     import cupy as cp
     inputs = {"B": cp.ones(200, dtype=cp.float64)}
     legacy = expand_and_run_gpu_libnode(build_gpu_memset_sdfg, inputs, LEGACY)

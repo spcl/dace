@@ -890,7 +890,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # lift_copy_loops (BEFORE loop_to_x / LoopToReduce): a plain contiguous copy /
     # zero loop -- ``for i: dst[i] = src[i]`` / ``for i: dst[i] = 0`` -- is lifted to a
-    # Copy / Memset library node here, before the reduction/scan detection runs, so it is
+    # Copy / Fill library node here, before the reduction/scan detection runs, so it is
     # recognised as pure data movement instead of being mis-analysed as a (degenerate)
     # reduction or left as a naive loop. The earlier structural cleanup has already folded
     # the frontend ``AccessNode -> scalar-slice -> Tasklet`` bridge into the ``_out = _in``
@@ -1722,11 +1722,11 @@ class CanonicalizationPipeline(ppl.Pass):
     lift_copy = properties.Property(
         dtype=bool,
         default=True,
-        desc='Lift contiguous copy/zero-init maps to Copy/Memset library nodes (False keeps them as maps).')
+        desc='Lift contiguous copy/zero-init maps to Copy/Fill library nodes (False keeps them as maps).')
     semantic_lifting = properties.Property(
         dtype=bool,
         default=True,
-        desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Memset). '
+        desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Fill). '
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
 
     def __init__(self,
@@ -1925,7 +1925,7 @@ def canonicalize(sdfg: SDFG,
                       ``Copy`` / ``Memset`` library nodes (default ``True``). Set
                       ``False`` to keep them as plain maps.
     :param semantic_lifting: Master gate for the post-LoopToMap map->library-node
-                             lifts (Einsum + Copy/Memset). Default ``True``; the
+                             lifts (Einsum + Copy/Fill). Default ``True``; the
                              vectorizer sets ``False`` to keep the residual as raw
                              maps (a library node is not vectorizable).
     :returns: The same ``sdfg`` instance, canonicalized.

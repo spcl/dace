@@ -1,0 +1,23 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contiguous device copy through ``cudaMemcpyAsync``.
+"""
+from typing import TYPE_CHECKING
+
+from dace import library
+from dace.libraries.standard import environments
+from dace.transformation.transformation import ExpandTransformation
+from dace.libraries.standard.nodes.copy.common import (_make_memcpy_tasklet)
+
+if TYPE_CHECKING:
+    pass
+
+
+@library.expansion
+class ExpandMemcpyCUDA1D(ExpandTransformation):
+    """One ``cudaMemcpyAsync`` for a contiguous copy; direction (H2D/D2H/D2D/H2H) inferred from
+    endpoint storages."""
+    environments = [environments.CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return _make_memcpy_tasklet(node, parent_state, cuda=True)

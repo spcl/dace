@@ -129,7 +129,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
 
-        # The CPU parallel-lowering rule for Reduce / ArgReduce / Scan / Copy / Memset lives in
+        # The CPU parallel-lowering rule for Reduce / ArgReduce / Scan / Copy / Fill lives in
         # :func:`~dace.transformation.auto.auto_optimize.apply_cpu_library_parallelism`, shared with
         # ``set_fast_implementations`` so the canonicalize and auto_optimize paths cannot drift onto
         # different implementations of the same node. It has the last word on the types it governs
@@ -370,7 +370,7 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     # Infer schedules BEFORE selecting library-node implementations so the selection can adhere to
     # each node's schedule: DaCe sets a library node nested in a parallel map (or re-entered per loop
     # iteration) to ``Sequential`` and a top-level one to the device default. A ``Sequential``
-    # Reduce/Scan/Copy/Memset must lower to its efficient single-core expansion, NOT open its own
+    # Reduce/Scan/Copy/Fill must lower to its efficient single-core expansion, NOT open its own
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 

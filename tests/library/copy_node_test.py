@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
+from dace.codegen.common import get_gpu_backend
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
-from dace.libraries.standard.nodes.copy_node import (CopyLibraryNode, _make_expansion_sdfg, cuda2d_pitch_params,
-                                                     select_copy_implementation)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_memset_libnode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_fill_libnode
 
 import pytest
 import numpy as np
@@ -749,7 +752,7 @@ def test_is_gpu_copy_libnode_detects_gpu_storage():
         libnode_name="gpu_copy",
     )
     state = sdfg.start_state
-    assert is_gpu_copy_or_memset_libnode(node, state.sdfg, state) is True
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is True
 
 
 def test_is_gpu_copy_libnode_false_for_cpu_only():
@@ -762,7 +765,7 @@ def test_is_gpu_copy_libnode_false_for_cpu_only():
         libnode_name="cpu_copy",
     )
     state = sdfg.start_state
-    assert is_gpu_copy_or_memset_libnode(node, state.sdfg, state) is False
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is False
 
 
 def test_copy_cross_storage_validation_rejects_without_flag():
@@ -1640,11 +1643,13 @@ def test_register_location_detection():
     nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     assert nsdfg_count == 0, (f"Single-element in-kernel copy should expand to a direct Memcpy (cross-boundary), "
                               f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
+    # ``cuda``/``hip``: the expansion spells the backend it was configured for, so ask which.
+    memcpy_call = f'{get_gpu_backend()}Memcpy'
     assignments = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and 'cudaMemcpy' in n.code.as_string
+        if isinstance(n, dace.nodes.Tasklet) and memcpy_call in n.code.as_string
     ]
-    assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
+    assert assignments, f"Expected at least one ``{memcpy_call}`` Tasklet from the expansion."
 
 
 def test_cuda2d_pitch_params_branches():
@@ -1689,6 +1694,17 @@ def _cpu_copy_sdfg(extent, name):
 
 def _generated_code(sdfg):
     return "\n".join(obj.code for obj in sdfg.generate_code())
+
+
+def _device_code(sdfg):
+    """The GPU target's code object, whatever the backend calls its file.
+
+    The CUDA target emits ``.cu`` for CUDA and ``.cpp`` for HIP, so selecting on the language
+    would silently find nothing on a HIP-configured machine (``StopIteration``, not a failed
+    assertion). Select on the target that produced it instead.
+    """
+    from dace.codegen.targets.cuda import CUDACodeGen
+    return next(obj.clean_code for obj in sdfg.generate_code() if obj.target is CUDACodeGen)
 
 
 def test_copy_below_threshold_emits_memcpy():
@@ -1849,6 +1865,30 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     assert f'{src} = &s;' in code, code
 
 
+def test_opaque_handle_endpoint_is_not_addressed():
+    """The other half of the scalar-endpoint rule: an opaque handle (``MPI_Comm`` and friends) IS
+    already the pointer its connector names, so it passes through by value instead of gaining an
+    ``&`` -- ``&handle`` is one indirection too many and does not compile."""
+    handle = dace.dtypes.opaque('MPI_Comm')
+    sdfg = dace.SDFG('opaque_handle_endpoint')
+    sdfg.add_scalar('h', handle, transient=True)
+    sdfg.add_array('out', [1], dace.int32)
+    state = sdfg.add_state('s0')
+    tasklet = state.add_tasklet('use_handle', {'_h'}, {'_o'}, 'take_handle(_h);\n_o = 0;', language=dace.Language.CPP)
+    tasklet.in_connectors['_h'] = dace.dtypes.pointer(handle)
+    state.add_edge(state.add_access('h'), None, tasklet, '_h', dace.memlet.Memlet('h'))
+    state.add_edge(tasklet, '_o', state.add_write('out'), None, dace.memlet.Memlet('out[0]'))
+
+    # Legacy generator, as in the sibling scalar-endpoint test: the readable one inlines the
+    # connector, so there is no binding left to look at. The binding may carry ``__restrict__``
+    # (this branch de-duplicates the qualifier when registering the pointer), which is why the
+    # assertion is on the initializer rather than on an exact spelling.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = _generated_code(sdfg)
+    assert '_h = h;' in code, code
+    assert '&h' not in code, code
+
+
 def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     """``__dace_current_stream`` is declared for a host tasklet that only WRITES GPU memory."""
     sdfg = dace.SDFG('h2d_stream_scope')
@@ -1867,6 +1907,76 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     memcpy_call = code.find('MemcpyAsync(_cpy_out, _cpy_in')
     assert stream_decl != -1 and memcpy_call != -1, code
     assert stream_decl < memcpy_call
+
+
+def test_in_kernel_copy_does_not_emit_a_grid_barrier():
+    """A grid barrier releases only once EVERY thread reaches it. The copy expansion runs inside a
+    single-thread component of a persistent kernel, so a barrier at its own state boundary is
+    reached by one thread of one block and hangs the grid. Ordering comes from the enclosing
+    state's barrier, which sits outside that guard."""
+    N = dace.symbol('N_gbar', dtype=dace.int64)
+
+    @dace.program(auto_optimize=False, device=dace.dtypes.DeviceType.GPU)
+    def gbar_prog(A: dace.float64[N], B: dace.float64[N]):
+        a = 10.2
+        for t in range(1, 10):
+            if t < N:
+                A[:] = (A + B + a) / 2
+                a += 1
+
+    sdfg = gbar_prog.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    transform = GPUPersistentKernel()
+    transform.setup_match(SubgraphView(sdfg, content_nodes))
+    transform.kernel_prefix = 'stuff'
+    transform.apply(sdfg)
+
+    # Legacy CUDA target: ``GPU_Persistent`` (and with it the grid barrier this pins) is the
+    # legacy generator's scope; the experimental one registers no dispatcher for that schedule.
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        cuda = _device_code(sdfg)
+    marker = 'DACE_DFI void copy_'
+    assert marker in cuda, cuda
+    start = cuda.index(marker)
+    end = cuda.index('DACE_DFI', start + len(marker))
+    assert '__gbar.Sync();' not in cuda[start:end], cuda[start:end]
+    # The kernel's own state machine still gets its barriers.
+    assert '__gbar.Sync();' in cuda[end:]
+
+
+def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
+    """A nested SDFG with several states below the kernel map is a state machine, and its states
+    still need grid barriers between them -- the lone-state narrowing must not eat those."""
+    inner = dace.SDFG('inner_states')
+    inner.add_array('X', [32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    s1 = inner.add_state('one', is_start_block=True)
+    s2 = inner.add_state('two')
+    inner.add_edge(s1, s2, dace.InterstateEdge())
+    t1 = s1.add_tasklet('w1', {}, {'o'}, 'o = 1.0')
+    s1.add_edge(t1, 'o', s1.add_write('X'), None, dace.Memlet('X[0]'))
+    t2 = s2.add_tasklet('w2', {}, {'o'}, 'o = 2.0')
+    s2.add_edge(t2, 'o', s2.add_write('X'), None, dace.Memlet('X[1]'))
+
+    sdfg = dace.SDFG('persistent_nested_state_machine')
+    sdfg.add_array('X', [32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('launch')
+    entry, exit_ = state.add_map('kernel_launch_map',
+                                 dict(ignore='0'),
+                                 schedule=dace.dtypes.ScheduleType.GPU_Persistent)
+    nsdfg = state.add_nested_sdfg(inner, [], ['X'])
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_edge_pair(exit_,
+                        nsdfg,
+                        state.add_write('X'),
+                        internal_connector='X',
+                        internal_memlet=dace.Memlet.from_array('X', sdfg.arrays['X']))
+    sdfg.validate()
+
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        cuda = _device_code(sdfg)
+    # One barrier per inner state: the transition between them is a sync point.
+    assert cuda.count('__gbar.Sync();') >= 2, cuda
 
 
 def test_shared_to_global_uses_the_block_collective_helper():
