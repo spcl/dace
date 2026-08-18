@@ -114,15 +114,39 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                 continue
             # Distributed descriptors (process grids, subarrays) have no strides
             desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
-            symbolic_values = list(desc.shape) + list(desc_strides) + list(desc.offset)
-            given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
             given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
-            given_values += given_strides + given_offset
+
+            # On a rank mismatch (e.g. a rank-4 view with a length-1 axis passed to a rank-3 nested
+            # descriptor), first drop size-1 axes of the GIVEN argument right-to-left until the
+            # ranks agree -- the only sound way a higher-rank value can map onto the descriptor.
+            given_shape = list(arg_val.shape)
+            if len(given_shape) > len(desc.shape):
+                for i in range(len(given_shape) - 1, -1, -1):
+                    if len(given_shape) == len(desc.shape):
+                        break
+                    if given_shape[i] == 1:
+                        del given_shape[i]
+                        if given_strides:
+                            del given_strides[i]
+                        if given_offset:
+                            del given_offset[i]
+
+            # Equate shape with shape, strides with strides, offset with offset -- and only when a
+            # section's lengths match. A concatenated zip across mismatched sections shifts every
+            # later section by the rank difference, silently solving stride symbols against shape
+            # entries and producing wrong-but-plausible strides (uninitialized reads at runtime).
+            symbolic_values = []
+            given_values = []
+            for sym_part, given_part in ((desc.shape, given_shape), (desc_strides, given_strides), (desc.offset,
+                                                                                                    given_offset)):
+                if len(sym_part) == len(given_part):
+                    symbolic_values += list(sym_part)
+                    given_values += list(given_part)
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
