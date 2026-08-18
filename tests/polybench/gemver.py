@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import polybench
 
 N = dace.symbol('N')
 
@@ -73,5 +74,4 @@ def gemver(A: datatype[N, N], u1: datatype[N], v1: datatype[N], u2: datatype[N],
 
 
 if __name__ == '__main__':
-    import polybench
     polybench.main(sizes, args, outputs, init_array, gemver)

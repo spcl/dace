@@ -99,6 +99,9 @@ class CUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
+        # True while generating an SDFG nested below the one whose schedule established the current
+        # device-level scope, i.e. no longer the kernel's own state machine.
+        self._below_toplevel_sdfg = False
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
         """
         # Keep track of which kernels got a threadBlock map inserted
@@ -1634,7 +1637,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
+            # The grid barrier separates the states of the KERNEL's own state machine, where every
+            # thread arrives. A deeper nested SDFG runs inside one of the components above -- under
+            # a `blockIdx.x == 0 && threadIdx.x == 0` guard, or per-thread inside a map -- so only
+            # part of the grid would reach the barrier and it would never release. The enclosing
+            # state emits its own barrier after the component, which is what orders these writes.
+            if not self._below_toplevel_sdfg:
+                callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated
             return
@@ -1723,9 +1732,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    # A DefinedType.Pointer registers the POINTER ctype, as every other allocation
+                    # site does; the element type here makes consumers that adopt the defined ctype
+                    # (``emit_memlet_reference``) declare the parameter one indirection short.
                     self._dispatcher.defined_vars.add(inner_name,
                                                       DefinedType.Pointer,
-                                                      desc.dtype.ctype,
+                                                      dtypes.pointer(desc.dtype).ctype,
                                                       allow_shadowing=True)
                     extra_call_args.append(outer_name)
                     extra_call_args_typed.append(desc.as_arg(name=inner_name))
@@ -2937,9 +2949,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
+        old_below_toplevel = self._below_toplevel_sdfg
         nested_schedule = get_node_schedule(sdfg, dfg, node)
         if nested_schedule != dtypes.ScheduleType.Default:
             self._toplevel_schedule = nested_schedule
+        # A device-level scope is already open, so this SDFG sits inside one of its components
+        # rather than being the state machine that scope is made of.
+        self._below_toplevel_sdfg = old_schedule in dtypes.GPU_SCHEDULES
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
@@ -2947,6 +2963,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
+        self._below_toplevel_sdfg = old_below_toplevel
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

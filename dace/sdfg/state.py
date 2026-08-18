@@ -921,21 +921,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets. Every edge on the matching connector
-                #   is inspected, since the data can go to more than one destination, and each is
-                #   followed to where it lands: one hop still names the inner transient whenever the
-                #   write leaves through more than one exit, as it does in a tiled map. Prefer the
-                #   destination AccessNode's name over the Memlet's ``data``, which names the inner
-                #   transient for a source-relative Memlet -- that drops the written array, and its
-                #   shape/stride symbols, from the kernel signature.
+                # Outgoing counterpart of the above. A source-relative Memlet's .data names the
+                # inner transient, not the written array, so resolve the real destination via the
+                # memlet-tree root -- else its shape/stride symbols drop from the kernel signature.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    outermost_edge = self.graph.memlet_path(oedge)[-1]
-                    if outermost_edge.data.is_empty():
-                        continue  # ordering edge, carries no data
-                    dst_name = (outermost_edge.dst.data
-                                if isinstance(outermost_edge.dst, nd.AccessNode) else outermost_edge.data.data)
+                    if oedge.data.is_empty():
+                        continue
+                    root_dst = self.graph.memlet_tree(oedge).root().edge.dst
+                    dst_name = root_dst.data if isinstance(root_dst, nd.AccessNode) else oedge.data.data
                     if dst_name not in descs and dst_name not in additional_descs:
                         additional_descs[dst_name] = sdfg.arrays[dst_name]
 

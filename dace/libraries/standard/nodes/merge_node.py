@@ -11,7 +11,7 @@ from dace.transformation.transformation import ExpandTransformation
 # Outer connector names this libnode publishes. Republished as
 # ``MergeLibraryNode.{TRUE,FALSE,MASK,OUTPUT}_CONNECTOR_NAME`` so
 # external consumers reference class constants instead of string
-# literals (mirrors ``copy_node`` / ``memset_node``).
+# literals (mirrors ``copy`` / ``fill``).
 _TRUE_CONNECTOR_NAME = "_mrg_t"
 _FALSE_CONNECTOR_NAME = "_mrg_f"
 _MASK_CONNECTOR_NAME = "_mrg_mask"

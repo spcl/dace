@@ -1336,17 +1336,32 @@ class CPUCodeGen(TargetCodeGenerator):
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
+                              and not isinstance(desc.dtype, dtypes.opaque)):
+                            # Scalar source feeding a pointer-typed connector (e.g. CopyLibraryNode
+                            # -> cudaMemcpyAsync from a host scalar argument). The connector's
+                            # pointer type wins over the source's scalar ctypedef, and the address
+                            # of the variable is what the callee wants; `define_out_memlet` already
+                            # does this on the write side. Skip opaque dtypes (MPI_Comm /
+                            # MPI_Request / GPU handles) -- the value is already a pointer-like
+                            # handle, so address-of adds an indirection the callee rejects
+                            # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
+                            result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                         else:
                             # Pointer reference. ``ctypedef`` may already carry
-                            # ``__restrict__``; don't append a second one.
-                            _restrict = "" if "__restrict__" in ctypedef else "__restrict__ "
+                            # ``__restrict__``; don't append a second one. An opaque handle is
+                            # not a pointer type to qualify -- MPI_Comm is a struct pointer under
+                            # OpenMPI but an int under MPICH, where the qualifier does not compile.
+                            _restrict = "" if ("__restrict__" in ctypedef
+                                               or isinstance(desc.dtype, dtypes.opaque)) else "__restrict__ "
                             result += "{} {}{} = {};".format(ctypedef, _restrict, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        _restrict = "" if "__restrict__" in memlet_type else "__restrict__ "
+                        _restrict = "" if ("__restrict__" in memlet_type
+                                           or isinstance(desc.dtype, dtypes.opaque)) else "__restrict__ "
                         result += "{} {}{} = {};".format(memlet_type, _restrict, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)

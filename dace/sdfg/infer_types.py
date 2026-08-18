@@ -261,11 +261,10 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
             continue
         constraints.add(sched)
 
-    # Copy/Memset library nodes legitimately bridge storages; if any GPU
-    # storage is involved, schedule on the GPU (else fall through below).
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-    if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)) and dtypes.ScheduleType.GPU_Device in constraints:
+    # Copy/Fill library nodes legitimately bridge storages; schedule on the GPU if involved.
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+    if isinstance(node, (CopyLibraryNode, FillLibraryNode)) and dtypes.ScheduleType.GPU_Device in constraints:
         return dtypes.ScheduleType.GPU_Device
 
     if not constraints:  # No constraints found
