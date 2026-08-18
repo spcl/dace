@@ -23,7 +23,9 @@ class ExpandPure(ExpandTransformation):
         # Must not collide with the wrapper SDFG's parameter array (named after outer connector).
         inner_out = "_out"
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
-        map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
+        # Symbolic bounds, never a rendered string: the range parser splits on ':', so any extent
+        # whose spelling carries one comes back as bogus tokens.
+        map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, map_lengths)}
         outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
         schedule = (dace.dtypes.ScheduleType.GPU_Device
                     if out.storage == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default)

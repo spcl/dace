@@ -4,7 +4,7 @@
 from typing import TYPE_CHECKING
 
 import dace
-from dace import library, nodes
+from dace import library, nodes, subsets, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
@@ -66,18 +66,22 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         ctx = _make_expansion_sdfg(node, parent_state, allow_cross_storage=True)
         map_axes = [d for d in range(ndims) if d != chunk_dim]
         map_params = [f"__cpy_i{d}" for d in map_axes]
-        map_ranges = {p: f"0:{sym2cpp(ctx.in_shape_collapsed[d])}" for d, p in zip(map_axes, map_params)}
+        # Symbolic bounds, never a rendered string: ``sym2cpp`` spells a symbolic extent as C++
+        # (``dace::math::ipow(R, K)``), and the range parser splits on ':', so the qualified name
+        # comes back as four bogus tokens.
+        map_ranges = {p: (0, ctx.in_shape_collapsed[d] - 1, 1) for d, p in zip(map_axes, map_params)}
 
         def _row_subset(shape):
             parts = []
             map_pi = 0
             for d in range(ndims):
                 if d == chunk_dim:
-                    parts.append(f"0:{sym2cpp(shape[d])}")
+                    parts.append((0, shape[d] - 1, 1))
                 else:
-                    parts.append(map_params[map_pi])
+                    p = symbolic.symbol(map_params[map_pi])
+                    parts.append((p, p, 1))
                     map_pi += 1
-            return ", ".join(parts)
+            return subsets.Range(parts)
 
         in_memlet = dace.memlet.Memlet(data=ctx.inp_name, subset=_row_subset(ctx.in_shape_collapsed))
         out_memlet = dace.memlet.Memlet(data=ctx.out_name, subset=_row_subset(ctx.out_shape_collapsed))
