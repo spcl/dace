@@ -45,7 +45,6 @@ from dace.transformation.passes.canonicalize.normalize_map_body import Normalize
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
-from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
@@ -57,6 +56,7 @@ from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy)
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
@@ -832,10 +832,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the same knob as that stage.
     if break_anti_dependence:
         s += [('fission', BreakAntiDependence())]
-    # target= threads the GPU policy through: on 'gpu' the pass ALSO sinks the outer
-    # statements fission could not separate into the inner loop, so the nest is perfect
-    # enough for a grid collapse. On CPU it distributes only (see its docstring).
-    s += [('fission', PerfectLoopNesting(target=target)), ('fission', _uniq_fis)]
+    # PerfectLoopNesting is DELIBERATELY NOT in the pipeline (user ruling 2026-08-18: it breaks
+    # more than it helps). Its LoopFission grouping has no dependence distance/direction
+    # information, and the composed fixpoint (fission + MoveIfIntoLoop + TrivialLoopElimination)
+    # silently miscompiled a read-modify-write chain on CloudSC (tendency_loc_a, rel=0.13) while
+    # every phase before it stayed bit-exact. The pass and its unit tests remain for standalone
+    # use; re-adding it here requires a numerically verified grouping analysis first.
+    s += [('fission', _uniq_fis)]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
@@ -848,7 +851,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # bubble it as if it were an axis; ``AssignmentAndCopyKernelToMemsetAndMemcpy``
     # and the ``LoopTo*`` lifts refuse outright on ``not isinstance(blocks[0],
     # SDFGState)``. Leaving the scaffold in place through those stages silently
-    # disabled them. Fission runs first because ``PerfectLoopNesting`` needs the
+    # disabled them. Fission runs first because the fission stage needs the
     # uniform all-siblings-are-loops shape the scaffold provides.
     s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
 
@@ -999,6 +1002,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # GPU: perfect MAP nests for the grid collapse, via the map-side PerfLoopNesting
+    # (delegates to MapFission -- the safe, data-parallel distribution; map iterations carry no
+    # dependences, so unlike the removed loop-side PerfectLoopNesting no grouping analysis can
+    # silently split a recurrence). Runs after LoopToMap, once maps exist.
+    if target == 'gpu':
+        s += [('parallelize', PatternMatchAndApplyRepeated([PerfLoopNesting()]))]
 
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's
