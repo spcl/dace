@@ -251,12 +251,13 @@ def test_fill_register_inside_kernel_routes_to_sequential():
 
     sdfg.expand_library_nodes()
 
-    # Ensure it did not lower to a host-side or invalid device-side cudaMemset call
-    cuda_memsets = [
+    # Ensure it did not lower to a host-side or invalid device-side memset call. The expansion
+    # names the API after the configured backend, so match both spellings, not just cuda's.
+    memsets = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and 'cudaMemset' in n.code.as_string
+        if isinstance(n, dace.nodes.Tasklet) and ('cudaMemset' in n.code.as_string or 'hipMemset' in n.code.as_string)
     ]
-    assert len(cuda_memsets) == 0, "Cannot issue cudaMemset on local GPU registers."
+    assert len(memsets) == 0, "Cannot issue a device memset on local GPU registers."
 
     # It should fall back to an internal loop/unrolled tasklet chain inside the device state
     assert any(isinstance(n, dace.nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
