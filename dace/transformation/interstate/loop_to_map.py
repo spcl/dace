@@ -76,6 +76,11 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
             if dn.data != conn or state.in_degree(dn) == 0:
                 continue
             for e in state.in_edges(dn):
+                # An EMPTY memlet is a happens-before edge, not a write: it moves no data and has
+                # no subset, so reading it as a write would refuse a perfectly parallel body (the
+                # same skip the outer per-array write walk applies).
+                if e.data is not None and e.data.is_empty():
+                    continue
                 if e.data is None or e.data.wcr is not None:
                     return False
                 if isinstance(e.src, nodes.NestedSDFG):
@@ -112,7 +117,8 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
             if dn.data != conn or state.out_degree(dn) == 0:
                 continue
             for e in state.out_edges(dn):
-                if e.data is None:
+                # Empty memlets are ordering edges, not reads; see _nested_writes_iter_indexed.
+                if e.data is None or e.data.is_empty():
                     continue
                 if isinstance(e.dst, nodes.NestedSDFG):
                     # The read enters another nested SDFG; descend.

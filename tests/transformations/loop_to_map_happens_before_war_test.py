@@ -63,6 +63,42 @@ def test_still_parallelizes_after_state_fusion():
     assert applied >= 1, 'LoopToMap refused a fully parallel loop because of a happens-before edge'
 
 
+def test_parallelizes_with_the_ordering_edge_inside_a_nested_body():
+    """The happens-before edge can sit INSIDE a NestedSDFG loop body (canonicalize's map ->
+    loop round trip nests the fused body), where the outer connector write is the propagated
+    whole-array union. The nested write walk must skip the empty memlet exactly like the outer
+    walk does -- reading it as a write refused this fully parallel loop."""
+    from dace.sdfg.state import LoopRegion
+
+    inner = dace.SDFG('body')
+    inner.add_symbol('i', dace.int64)
+    inner.add_symbol('N', dace.int64)
+    inner.add_array('a', [N], dace.float64)
+    inner.add_array('d', [N], dace.float64)
+    state = inner.add_state('s', is_start_block=True)
+    read_d = state.add_read('d')
+    tasklet = state.add_tasklet('w', {'inp'}, {'out'}, 'out = inp + 1')
+    write_a = state.add_write('a')
+    state.add_edge(read_d, None, tasklet, 'inp', dace.Memlet('d[i]'))
+    state.add_edge(tasklet, 'out', write_a, None, dace.Memlet('a[i]'))
+    ordered_a = state.add_access('a')
+    state.add_edge(read_d, None, ordered_a, None, dace.Memlet())  # happens-before, not a write
+
+    outer = dace.SDFG('nested_ordering')
+    outer.add_array('a', [N], dace.float64)
+    outer.add_array('d', [N], dace.float64)
+    loop = LoopRegion('l', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    outer.add_node(loop, is_start_block=True)
+    body = loop.add_state('b', is_start_block=True)
+    nsdfg = body.add_nested_sdfg(inner, {'d'}, {'a'}, symbol_mapping={'i': 'i', 'N': 'N'})
+    body.add_edge(body.add_read('d'), None, nsdfg, 'd', dace.Memlet('d[0:N]'))
+    body.add_edge(nsdfg, 'a', body.add_write('a'), None, dace.Memlet('a[0:N]'))
+    outer.validate()
+
+    applied = outer.apply_transformations_repeated(LoopToMap, validate=False)
+    assert applied == 1, 'LoopToMap refused: the nested ordering edge was read as an unindexed write'
+
+
 def test_value_preserving():
     n = 64
     rng = np.random.default_rng(11)
