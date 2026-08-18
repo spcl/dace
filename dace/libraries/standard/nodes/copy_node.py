@@ -371,7 +371,9 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
                              f"supported -- use a Transpose libnode. Reshapes must change rank.")
         map_params = [f"__i{i}" for i in range(len(in_shape))]
-        map_rng = {i: f"0:{sym2cpp(s)}" for i, s in zip(map_params, in_shape)}
+        # Symbolic tuples, not strings: a shape term like int_pow prints as C++ (dace::math::ipow),
+        # which Range.from_string cannot read back.
+        map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, in_shape)}
         access_expr = ','.join(map_params)
         inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
         outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
@@ -408,16 +410,16 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         total = functools.reduce(operator.mul, in_shape, 1)
         b_i_name = "__b_i"
         b_i = symbolic.symbol(b_i_name)
-        map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
+        # Symbolic construction throughout -- printing these exprs and reparsing breaks on terms
+        # whose printer form is C++ (int_pow -> dace::math::ipow).
+        map_rng = {b_i_name: (0, total - 1, 1)}
 
-        def _side_access(arr_name, shape):
-            if len(shape) == 1:
-                return f"{arr_name}[{b_i_name}]"
-            idx = _delinearized_index(b_i, shape, layout)
-            return f"{arr_name}[{','.join(sym2cpp(e) for e in idx)}]"
+        def _side_memlet(arr_name, shape):
+            idx = [b_i] if len(shape) == 1 else _delinearized_index(b_i, shape, layout)
+            return dace.memlet.Memlet(data=arr_name, subset=dace.subsets.Range([(e, e, 1) for e in idx]))
 
-        inputs = {inner_in: dace.memlet.Memlet(_side_access(ctx.inp_name, in_shape))}
-        outputs = {inner_out: dace.memlet.Memlet(_side_access(ctx.out_name, out_shape))}
+        inputs = {inner_in: _side_memlet(ctx.inp_name, in_shape)}
+        outputs = {inner_out: _side_memlet(ctx.out_name, out_shape)}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
