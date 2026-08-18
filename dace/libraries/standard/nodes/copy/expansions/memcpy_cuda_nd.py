@@ -9,8 +9,8 @@ from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (_make_expansion_sdfg, _memcpy_kind, INPUT_CONNECTOR_NAME,
-                                                       OUTPUT_CONNECTOR_NAME)
+from dace.libraries.standard.nodes.copy.common import (host_visible_copy_sync, _make_expansion_sdfg, _memcpy_kind,
+                                                       INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
 
 if TYPE_CHECKING:
     pass
@@ -55,7 +55,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
 
         if ndims == 1:
             code = (f"DACE_GPU_CHECK({backend}MemcpyAsync({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, "
-                    f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
+                    f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));" + host_visible_copy_sync(out))
             in_conns = {INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
             return nodes.Tasklet(node.name,
                                  inputs=in_conns,
@@ -97,5 +97,12 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         # Force pointer connectors so codegen types them T*, matching cudaMemcpyAsync's signature.
         inner_tasklet.in_connectors[inner_in] = dace.dtypes.pointer(inp.dtype)
         inner_tasklet.out_connectors[inner_out] = dace.dtypes.pointer(out.dtype)
+
+        # One wait after the whole copy rather than one per row: the host reads the destination
+        # only once every row has landed, and a per-row wait would serialize the loop.
+        sync = host_visible_copy_sync(out)
+        if sync:
+            after = ctx.sdfg.add_state_after(ctx.state, f"{node.label}_sync")
+            after.add_tasklet(f"{node.label}_sync", {}, {}, sync.strip(), language=dace.Language.CPP)
 
         return ctx.sdfg

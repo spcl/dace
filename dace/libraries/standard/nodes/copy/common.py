@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import dace
 from dace import data, nodes, dtypes, symbolic
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace.codegen.common import sym2cpp, get_gpu_backend, emit_gpu_synchronization
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
                                             collapse_shape_and_strides)
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
@@ -281,6 +281,23 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     return f"{backend}Memcpy{src_loc}To{dst_loc}"
 
 
+def host_visible_copy_sync(out: data.Data) -> str:
+    """Stream wait to append after an async copy whose destination the host may read.
+
+    ``MemcpyAsync`` only orders the copy against other work on its own stream, so nothing stops a
+    host reader from running first -- a kernel launch taking the destination by value reads it
+    while packing its arguments. Waiting at the copy is a superset of waiting at the first host
+    consumer, and is what the code generator already does for the copies it emits itself.
+
+    :param out: the copy's destination descriptor.
+    :returns: the synchronization statement, or ``""`` when the destination is device-resident or
+        host-side synchronization is switched off.
+    """
+    if out.storage not in CPU_RESIDENT_STORAGES or not emit_gpu_synchronization():
+        return ""
+    return f"\nDACE_GPU_CHECK({get_gpu_backend()}StreamSynchronize({CURRENT_STREAM_NAME}));"
+
+
 def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
     """Build a Tasklet emitting one contiguous-block copy. Raises ``ValueError`` on a
     non-contiguous subset (the single-call form would overrun the region; use ``MappedTasklet``).
@@ -312,7 +329,8 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
     if cuda:
         backend = get_gpu_backend()
-        code = f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
+        code = (f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, "
+                f"{CURRENT_STREAM_NAME});" + host_visible_copy_sync(out))
     else:
         code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
 
