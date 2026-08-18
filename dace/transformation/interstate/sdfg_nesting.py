@@ -417,7 +417,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
                         new_name = f'{nsdfg.label}_{node.data}'
 
-                    name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                    # Connector-aware: a nested name like a copy expansion's `_cpy_in` lifted into a
+                    # graph that still holds unexpanded library nodes must dodge their connectors.
+                    new_name = sdfg.find_new_name_avoiding_connectors(new_name.replace('.', '_'))
+                    name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
         # All transients of edges between code nodes are also added to parent
@@ -430,7 +433,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{edge.data.data}'
 
-                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                        new_name = sdfg.find_new_name_avoiding_connectors(new_name.replace('.', '_'))
+                        name = sdfg.add_datadesc(new_name, datadesc)
                         transients[edge.data.data] = name
 
         # Collect nodes to add to top-level graph
@@ -482,6 +486,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 newname = f'{nsdfg.name}_ret{dname[8:]}'
             else:
                 newname = dname
+            # Connector-aware: a copy expansion's wrapper arrays are named after its connectors
+            # (`_cpy_in`), and a view lifted under that name collides with any still-unexpanded
+            # library node's connector at validation.
+            newname = sdfg.find_new_name_avoiding_connectors(newname.replace('.', '_'))
             newname, _ = sdfg.add_view(newname,
                                        desc.shape,
                                        desc.dtype,
@@ -492,8 +500,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                        allow_conflicts=desc.allow_conflicts,
                                        total_size=desc.total_size,
                                        alignment=desc.alignment,
-                                       may_alias=desc.may_alias,
-                                       find_new_name=True)
+                                       may_alias=desc.may_alias)
             repldict[dname] = newname
 
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}

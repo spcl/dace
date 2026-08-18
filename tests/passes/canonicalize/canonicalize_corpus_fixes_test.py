@@ -4,7 +4,9 @@ landed for the npbench+polybench corpus.
 
 Only the fixes confirmed value-preserving are pinned here:
 
-* ``_find_new_name`` is connector-aware (sdfg.py) -- fixed symm.
+* generic-name mints dodge tasklet connectors (fixed symm) -- pinned in
+  ``tests/sdfg/find_new_name_connectors_test.py`` since the opt-in
+  ``find_new_name_avoiding_connectors`` redesign.
 * bare-name dtype casts (``f32(0)`` where ``f32 = dace.float32``) parse
   (newast.py) -- fixed azimint_naive/resnet parsing.
 
@@ -26,21 +28,6 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 import numpy as np
 
 import dace
-
-
-def test_find_new_name_avoids_tasklet_connector():
-    """``_find_new_name`` must not return a name already used as a tasklet
-    connector (regression: ``add_scalar('tmp', find_new_name=True)`` collided with
-    a ``tmp`` connector -> 'Connector already used as a symbol' in symm)."""
-    sdfg = dace.SDFG("find_new_name_conn")
-    state = sdfg.add_state()
-    tasklet = state.add_tasklet("t", set(), {"tmp"}, "tmp = 0.0")
-    sdfg.add_scalar("out", dace.float64, transient=True)
-    state.add_edge(tasklet, "tmp", state.add_access("out"), None, dace.Memlet("out[0]"))
-
-    new_name = sdfg.add_scalar("tmp", dace.float64, transient=True, find_new_name=True)
-    assert new_name != "tmp"
-    assert "tmp" not in sdfg.arrays
 
 
 def test_bare_name_dtype_cast_parses():
