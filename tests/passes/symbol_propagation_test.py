@@ -565,11 +565,11 @@ def test_resolve_renders_operator_functions():
     print as their sympy class name under ``str`` -- ``__right_shift(__bitwise_and(
     255, b), 1)`` -- which is neither valid Python (the codeblock language) nor valid
     C++, and crashes codegen when such a value is substituted into a branch condition
-    (the crc16 canon failure). ``_resolve`` must emit the operator spelling instead.
+    (the crc16 canon failure). ``resolve_value`` must emit the operator spelling instead.
     """
-    from dace.transformation.passes.symbol_propagation import _resolve
+    from dace.transformation.passes.symbol_propagation import resolve_value
 
-    out = _resolve('y >> 1', {'y': '255 & b'})
+    out = resolve_value('y >> 1', {'y': '255 & b'})
     assert '__right_shift' not in out and '__bitwise_and' not in out, \
         f'operator functions leaked their sympy class names: {out}'
     assert '>>' in out and '&' in out, f'expected operator spelling, got {out}'
@@ -612,3 +612,52 @@ def test_a_loop_varying_binding_does_not_reach_descriptor_shapes():
 
     SymbolPropagation().apply_pass(sdfg, {})
     assert [str(s) for s in sdfg.arrays['tmp'].shape] == ['K']
+
+
+def test_loop_variable_is_never_substituted_into_its_own_meta_code():
+    """``replace_meta_accesses`` rewrites the init and update statements whole, LHS included, so a
+    value carried in for the iteration variable spells the update ``(- 1) = ((- 1) + 1)``."""
+    sdfg = dace.SDFG('symprop_loop_variable')
+    sdfg.add_array('a', (8, ), dace.float64)
+    sdfg.add_symbol('i', dace.int64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={'i': '-1'}))
+    body = loop.add_state('body', is_start_block=True)
+    body.add_mapped_tasklet('w', {'j': '0:8'}, {}, 'o = 1.0', {'o': dace.Memlet('a[j]')}, external_edges=True)
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    assert loop.loop_variable == 'i', f'the iteration variable was renamed to {loop.loop_variable}'
+    assert loop.init_statement.as_string == 'i = 0', loop.init_statement.as_string
+    assert loop.update_statement.as_string == 'i = (i + 1)', loop.update_statement.as_string
+    sdfg.validate()
+
+
+def test_propagated_value_keeps_its_python_call_spelling():
+    """A value resolved through sympy comes back with sympy's names -- ``abs(z)`` as ``Abs(z)`` --
+    which neither the codeblock language nor C++ has."""
+    sdfg = dace.SDFG('symprop_call_spelling')
+    sdfg.add_array('a', (8, ), dace.float64)
+    sdfg.add_symbol('z', dace.float64)
+    sdfg.add_symbol('mag', dace.float64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    branch = ConditionalBlock('branch', sdfg=sdfg)
+    sdfg.add_node(branch)
+    sdfg.add_edge(entry, branch, dace.InterstateEdge(assignments={'mag': 'abs(z)'}))
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    branch.add_branch(CodeBlock('mag < 1.0'), body)
+    taken = body.add_state('taken', is_start_block=True)
+    taken.add_mapped_tasklet('w', {'j': '0:8'}, {}, 'o = 1.0', {'o': dace.Memlet('a[j]')}, external_edges=True)
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    condition = branch.branches[0][0].as_string
+    assert 'Abs' not in condition, f'sympy name leaked into the branch condition: {condition}'
+    assert 'abs(z)' in condition, condition
+    sdfg.validate()
