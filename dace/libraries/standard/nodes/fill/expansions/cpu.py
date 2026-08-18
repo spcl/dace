@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Single-call host fill: ``memset`` when the value is byte-splat, else ``std::fill_n``."""
+"""Single-call host fill through ``std::fill_n``."""
 from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard import environments
-from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, byte_pattern, cpp_literal
+from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, cpp_literal
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
@@ -25,12 +25,12 @@ class ExpandCPU(ExpandTransformation):
                              f"subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
                              f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
 
+        # Both gcc and clang turn this into a memset at -O2 and above whenever the value's object
+        # representation allows it, including through the one-byte fp8 wrappers, so spelling the
+        # memset out here would only repeat what the build already does at the Release level dace
+        # always compiles with.
         count = sym2cpp(out_subset.num_elements_exact())
-        pattern = byte_pattern(node.value, out.dtype)
-        if pattern is not None:
-            code = f"memset({OUTPUT_CONNECTOR_NAME}, {pattern}, {count} * sizeof({out.dtype.ctype}));"
-        else:
-            code = f"std::fill_n({OUTPUT_CONNECTOR_NAME}, {count}, {cpp_literal(node.value, out.dtype)});"
+        code = f"std::fill_n({OUTPUT_CONNECTOR_NAME}, {count}, {cpp_literal(node.value, out.dtype)});"
 
         return nodes.Tasklet(node.name,
                              inputs={},

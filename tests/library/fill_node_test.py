@@ -4,7 +4,7 @@ import contextlib
 from typing import Optional, Sequence
 
 import dace
-from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
 
 import pytest
 import numpy as np
@@ -14,7 +14,9 @@ def make_fill_sdfg(implementation: Optional[str],
                    shape: Sequence[int],
                    subset: str,
                    gpu: bool = True,
-                   name: str = "fill_sdfg") -> dace.SDFG:
+                   name: str = "fill_sdfg",
+                   dtype: dace.dtypes.typeclass = dace.dtypes.float64,
+                   value=0) -> dace.SDFG:
     """Build an SDFG that fills a sub-region of a single array.
 
     :param implementation: ``FillLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
@@ -22,16 +24,18 @@ def make_fill_sdfg(implementation: Optional[str],
     :param subset: memlet subset string for the fill's output edge.
     :param gpu: True for ``GPU_Global`` storage, False for ``CPU_Heap``.
     :param name: SDFG name.
+    :param dtype: element type of the filled array.
+    :param value: the constant the node writes.
     :returns: the constructed SDFG.
     """
     sdfg = dace.SDFG(name)
     arr_name = "gpuB" if gpu else "B"
     storage = dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap
-    sdfg.add_array(name=arr_name, shape=list(shape), dtype=dace.dtypes.float64, storage=storage, transient=False)
+    sdfg.add_array(name=arr_name, shape=list(shape), dtype=dtype, storage=storage, transient=False)
 
     state = sdfg.add_state("main")
     out = state.add_access(arr_name)
-    libnode = FillLibraryNode(name="fill_libnode")
+    libnode = FillLibraryNode(name="fill_libnode", value=value)
     if implementation is not None:
         libnode.implementation = implementation
     state.add_edge(libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None,
@@ -173,7 +177,7 @@ def test_fill_cuda_rejects_cpu_storage():
 
 
 def test_fill_auto_routes_non_contiguous_to_pure_cpu():
-    """Auto routes a non-contiguous CPU subset to ``pure`` (a single ``memset`` would zero outside the region)."""
+    """Auto routes a non-contiguous CPU subset to ``pure`` (one call would write outside the region)."""
     sdfg = make_fill_sdfg(None, (10, 20), "2:8, 5:15", gpu=False, name="fill_noncontig_cpu_auto")
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -191,7 +195,7 @@ def test_fill_auto_routes_non_contiguous_to_pure_cpu():
 
 
 def test_fill_cpu_rejects_non_contiguous_subset():
-    """Explicit ``CPU`` expansion rejects a non-contiguous subset (one ``memset`` would overrun the region)."""
+    """Explicit ``CPU`` expansion rejects a non-contiguous subset (one call would overrun the region)."""
     sdfg = make_fill_sdfg("CPU", (10, 20), "2:8, 5:15", gpu=False, name="fill_noncontig_cpu_explicit")
     sdfg.validate()
     with pytest.raises(ValueError, match="contiguous"):
@@ -338,31 +342,33 @@ def _generated_code(sdfg):
     return "\n".join(obj.code for obj in sdfg.generate_code())
 
 
-def test_fill_below_threshold_emits_memset():
-    """A constant-size CPU fill below the threshold lowers to a single ``memset``, not an OpenMP loop."""
+def test_fill_below_threshold_emits_a_single_call():
+    """A constant-size CPU fill below the threshold lowers to one ``std::fill_n``, not an OpenMP loop.
+    gcc and clang reduce that call to a memset at the Release level dace builds with when the
+    value's object representation allows it."""
     with _pinned_transfer_threshold(1024):
         sdfg, libnode = cpu_fill_sdfg(100, "fill_below_threshold")
         sdfg.expand_library_nodes(recursive=True)
         assert libnode.implementation == 'CPU'
         code = _generated_code(sdfg)
-        assert 'memset(' in code
+        assert 'std::fill_n' in code
         assert '#pragma omp parallel for' not in code
 
 
 def test_fill_at_threshold_emits_omp_parallel_for():
-    """A constant-size CPU fill at/above the threshold lowers to an OpenMP element map, not ``memset``."""
+    """A constant-size CPU fill at/above the threshold lowers to an OpenMP element map, not one call."""
     with _pinned_transfer_threshold(1024):
         sdfg, libnode = cpu_fill_sdfg(4096, "fill_at_threshold")
         sdfg.expand_library_nodes(recursive=True)
         assert libnode.implementation == 'pure'
         code = _generated_code(sdfg)
         assert '#pragma omp parallel for' in code
-        assert 'memset(' not in code
+        assert 'std::fill_n' not in code
 
 
 def test_fill_symbolic_size_emits_omp_parallel_for():
     """A symbolic (compile-time-unknown) CPU fill size is assumed large, so it takes the same
-    OpenMP-parallel path as a large constant, never the single-call ``memset``."""
+    OpenMP-parallel path as a large constant, never the single ``std::fill_n``."""
     with _pinned_transfer_threshold(1024):
         n = dace.symbol('N_fill_symbolic')
         sdfg, libnode = cpu_fill_sdfg(n, "fill_symbolic_size")
@@ -370,8 +376,65 @@ def test_fill_symbolic_size_emits_omp_parallel_for():
         assert libnode.implementation == 'pure'
         code = _generated_code(sdfg)
         assert '#pragma omp parallel for' in code
-        assert 'memset(' not in code
+        assert 'std::fill_n' not in code
 
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+NARROW_FLOATS = [
+    pytest.param(dace.float16, 'float16'),
+    pytest.param(dace.bfloat16, 'bfloat16'),
+    pytest.param(dace.float8_e4m3fn, 'float8_e4m3fn'),
+    pytest.param(dace.float8_e5m2, 'float8_e5m2'),
+]
+
+
+@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
+@pytest.mark.parametrize('value', [0.0, 1.0, -1.0, 0.5, 2.0])
+def test_fill_narrow_float_writes_the_value(dtype, label, value):
+    """A reduced-precision fill must write the value the destination type can hold, whichever
+    lowering the object representation selects. One byte (fp8) makes every value byte-splat, so
+    those always memset; two bytes (fp16, bfloat16) only do for zero."""
+    n = 64
+    sdfg = make_fill_sdfg("CPU", (n, ),
+                          f"0:{n}",
+                          gpu=False,
+                          name=f"fill_{label}_{str(value).replace('.', '_').replace('-', 'neg')}",
+                          dtype=dtype,
+                          value=value)
+    npdt = dtype.as_numpy_dtype()
+    buf = np.full(n, 7, dtype=npdt)
+    sdfg(B=buf)
+    assert np.array_equal(buf, np.full(n, value, dtype=npdt)), f"{label} fill of {value}"
+
+
+@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
+@pytest.mark.parametrize('value', [0.0, 1.0])
+def test_fill_narrow_float_host_lowering_is_one_call(dtype, label, value):
+    """The host fill is a single ``std::fill_n`` whatever the value's object representation is:
+    gcc and clang both reduce it to a memset when the representation allows, and dace always
+    builds Release. What must hold here is that the fill stays one call and never degrades to an
+    element map."""
+    n = 64
+    tag = str(value).replace('.', '_')
+    sdfg = make_fill_sdfg("CPU", (n, ), f"0:{n}", gpu=False, dtype=dtype, value=value, name=f"lowering_{label}_{tag}")
+    code = sdfg.generate_code()[0].clean_code
+    assert 'std::fill_n' in code
+    assert '#pragma omp parallel for' not in code
+
+
+@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
+def test_fill_narrow_float_gpu_routing_follows_the_byte_pattern(dtype, label):
+    """``cudaMemsetAsync`` writes one byte, and no optimizer can widen it, so the GPU choice must
+    still be made from the object representation. A one-byte type (fp8) can memset any value; a
+    two-byte type (fp16, bfloat16) only zero, and everything else has to reach the kernel."""
+    for value in (0.0, 1.0):
+        pattern = byte_pattern(value, dtype)
+        expected_memset = (dtype.bytes == 1) or value == 0.0
+        assert (pattern is not None) == expected_memset, f"{label} {value}"
+
+    sdfg = make_fill_sdfg(None, (64, ), "0:64", gpu=True, dtype=dtype, value=1.0, name=f"gpu_route_{label}")
+    node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
+    chosen = select_fill_implementation(node, sdfg.start_state)
+    assert chosen == ('CUDA' if dtype.bytes == 1 else 'pure'), f"{label} routed to {chosen}"
