@@ -258,7 +258,11 @@ def _strides_match_packed(shape, strides, order):
         try:
             # relax_ipow so the canonicalized packed-C stride ``ipow(N, 2)`` compares equal to
             # ``N*N``; the opaque ``ipow`` never simplifies against ``expected`` (heat3d).
-            diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(sympy.sympify(strides[d] - expected)))
+            # Equalize before simplifying: a stride and a shape dim can carry two same-named symbol
+            # INSTANCES (different dtype/assumptions) whose subtraction never cancels (channel_flow).
+            diff = strides[d] - expected
+            if isinstance(diff, sympy.Basic):
+                diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(dace.symbolic.equalize_symbol(diff)))
             if diff != 0:
                 return False
         except Exception:  # noqa: BLE001 -- conservative refusal on un-comparable expressions.
