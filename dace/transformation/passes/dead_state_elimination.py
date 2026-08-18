@@ -212,6 +212,7 @@ class DeadStateElimination(ppl.Pass):
         return self._is_definitely_true(edge.condition_sympy(), sdfg)
 
     def _is_definitely_true(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        cond = symbolic.refold_booleans(cond)
         if cond == True or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanFalse(), evaluate=False):
             return True
 
@@ -232,6 +233,10 @@ class DeadStateElimination(ppl.Pass):
         return self._is_definitely_false(edge.condition_sympy(), sdfg)
 
     def _is_definitely_false(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        # The parser hands back NON-EVALUATING AND/OR nodes; fold literal arms first, else a
+        # condition such as AND(False, x) never reads as constant (cloudsc's spliced boundary
+        # segment kept a dead branch with statically out-of-bounds memlets that way).
+        cond = symbolic.refold_booleans(cond)
         if cond == False or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanTrue(), evaluate=False):
             return True
 
