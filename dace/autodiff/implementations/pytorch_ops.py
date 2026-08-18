@@ -121,11 +121,11 @@ class PyTorchConvBackward(BackwardImplementation):
             arr_name = result.required_grad_names[name]
             nstate.add_edge(tasklet, f"_d{name}", nstate.add_write(arr_name), None, nsdfg.make_array_memlet(arr_name))
 
-        inputs = [result.given_grad_names["Y"], *sorted(required_forward_inputs)]
-        outputs = [result.required_grad_names[n] for n in sorted(required_gradients)]
+        inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
+        outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
         node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                      butils.connector_dict(inputs),
-                                                      butils.connector_dict(outputs),
+                                                      sorted(inputs),
+                                                      sorted(outputs),
                                                       symbol_mapping=butils.backward_symbol_mapping(
                                                           nsdfg, context.backward_state))
 

@@ -132,8 +132,8 @@ class DefaultEinsumBackward(BackwardImplementation):
 
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
-            butils.connector_dict([*result.given_grad_names.values(), *required_forward_inputs]),
-            butils.connector_dict(result.required_grad_names.values()),
+            sorted(set(result.given_grad_names.values()).union(required_forward_inputs)),
+            sorted(result.required_grad_names.values()),
             symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
 
         return result_node, result
@@ -349,9 +349,9 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
             # Inputs to nested SDFG
-            butils.connector_dict(["output", "output_grad"]),
+            ["output", "output_grad"],
             # Outputs from nested SDFG
-            butils.connector_dict(["input_grad"]),
+            ["input_grad"],
             symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
 
         butils.connect_output_from_forward(forward_node, result_node, context, "output")
@@ -908,8 +908,8 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             inputs.append("B")
 
         bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                          butils.connector_dict(inputs),
-                                                          butils.connector_dict(result.required_grad_names.values()),
+                                                          sorted(inputs),
+                                                          sorted(result.required_grad_names.values()),
                                                           symbol_mapping=butils.backward_symbol_mapping(
                                                               nsdfg, context.backward_state))
         return bwd_node, result
@@ -1058,8 +1058,7 @@ class DefaultReduceSumBackward(BackwardImplementation):
             inputs.append("axes")
 
         result_node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                             butils.connector_dict(inputs),
-                                                             butils.connector_dict(["data_grad"]),
+                                                             sorted(inputs), ["data_grad"],
                                                              symbol_mapping=butils.backward_symbol_mapping(
                                                                  nsdfg, context.backward_state))
 

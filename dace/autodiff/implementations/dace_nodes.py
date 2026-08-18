@@ -10,6 +10,7 @@ import numbers
 from typing import TYPE_CHECKING
 import astunparse
 import sympy as sp
+from typing import List, Tuple, TYPE_CHECKING
 
 # DaCe imports
 import dace
@@ -130,8 +131,8 @@ class DaceNodeBackwardImplementations:
         # Create the sdfg and return it
         nsdfg = backward_state.add_nested_sdfg(
             reverse_nsdfg,
-            inputs=ad_utils.connector_dict(inputs),
-            outputs=ad_utils.connector_dict(outputs),
+            inputs=sorted(inputs),
+            outputs=sorted(outputs),
             # Rebound below for every connector that names a symbol; identity is right for the rest,
             # the backward SDFG being built from this SDFG's own descriptors.
             symbol_mapping=ad_utils.backward_symbol_mapping(reverse_nsdfg, backward_state),
@@ -419,10 +420,19 @@ class DaceNodeBackwardImplementations:
                 if isinstance(output_expr, numbers.Real):
                     output_expr = sp.Float(output_expr)
 
-                # Differentiate against the instance already inside the expression. A re-minted one
-                # compares unequal to it (dtype and assumptions differ) yet still substitutes, so
-                # diff() returns a silent zero for a symbol and a KroneckerDelta for an Indexed.
-                inp_expr = ad_utils.resolve_differentiation_target(output_expr, inp, indexed_objects_map.get(inp))
+                # Differentiate against the instance already inside the expression: a re-minted
+                # equivalent compares unequal to it while still substituting, so diff() returns a
+                # silent zero for a symbol and a KroneckerDelta for an Indexed. A connector absent
+                # from the expression falls back to a fresh symbol, where zero is the right answer.
+                indices = indexed_objects_map.get(inp)
+                if indices is None:
+                    occurrences = [s for s in output_expr.free_symbols if str(s) == inp]
+                else:
+                    occurrences = [
+                        a for a in output_expr.atoms(sp.Indexed)
+                        if str(a.base) == inp and tuple(str(i) for i in a.indices) == tuple(indices)
+                    ]
+                inp_expr = min(occurrences, key=str) if occurrences else ad_utils.connector_symbol(inp)
 
                 # symbolically differentiate the output w.r.t inp
                 diff_expr = output_expr.diff(inp_expr)
