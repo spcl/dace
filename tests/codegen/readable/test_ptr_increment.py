@@ -19,6 +19,7 @@ import dace
 from dace.config import set_temporary
 
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated
+from tests.helpers.isolation import call_in_child
 
 N = dace.symbol('N')
 
@@ -121,26 +122,27 @@ def test_ptr_increment_emits_walking_pointers():
     assert 'A_idx(' not in code and 'C_idx(' not in code, code
 
 
+def run_elementwise_in_child(form):
+    """Child body for :func:`test_ptr_increment_runs_bit_identical`: compile + run ``elementwise_sdfg``
+    under ``form`` and return its output. Module-level so :func:`call_in_child` can pickle it by name."""
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_access_form', value=form), \
+         set_temporary('compiler', 'cpu', 'implementation', value=EXPERIMENTAL):
+        sdfg = elementwise_sdfg(f'ew_run_{form}', dace.ScheduleType.Sequential)
+        rng = numpy.random.default_rng(0)
+        A, B = rng.random(96), rng.random(96)
+        C = numpy.zeros(96)
+        sdfg(A=A, B=B, C=C, N=96)
+        return C
+
+
 def test_ptr_increment_runs_bit_identical():
     """The walked loop must produce byte-identical results to the indexed loop (and match a reference).
-    ``ptr_increment`` is a form change only -- never a numeric one."""
-
-    def run(form):
-
-        def work():
-            with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_access_form', value=form), \
-                 set_temporary('compiler', 'cpu', 'implementation', value=EXPERIMENTAL):
-                sdfg = elementwise_sdfg(f'ew_run_{form}', dace.ScheduleType.Sequential)
-                rng = numpy.random.default_rng(0)
-                A, B = rng.random(96), rng.random(96)
-                C = numpy.zeros(96)
-                sdfg(A=A, B=B, C=C, N=96)
-                return {'C': C}
-
-        return run_isolated(work)['C']
-
-    indexed = run('indexed')
-    walked = run('ptr_increment')
+    ``ptr_increment`` is a form change only -- never a numeric one. Runs in a spawned child (repo rule)
+    via :func:`tests.helpers.isolation.call_in_child` -- not ``conftest.run_isolated`` (``os.fork``),
+    which deadlocks if an earlier test in this process already ran a compiled kernel and left an
+    OpenMP thread team live."""
+    indexed = call_in_child(run_elementwise_in_child, 'indexed')
+    walked = call_in_child(run_elementwise_in_child, 'ptr_increment')
     assert numpy.array_equal(indexed, walked)  # bit-for-bit identical between the two forms
 
 
