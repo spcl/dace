@@ -28,7 +28,6 @@ from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, Back
 
 # Utility imports
 import dace.autodiff.utils as ad_utils
-from dace.autodiff.utils import init_grad
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
@@ -154,16 +153,26 @@ class ReverseReduce(BackwardImplementation):
             # State 1: Count elements matching extremal value
             # State 2: Compute normalized gradient
 
+            zero_state = sdfg.add_state(f"zero_{type_name}_count_{id(forward_node)}", is_start_block=True)
             count_state = sdfg.add_state(f"count_{type_name}_{id(forward_node)}")
             grad_state = sdfg.add_state(f"grad_{type_name}_{id(forward_node)}")
+            sdfg.add_edge(zero_state, count_state, dace.InterstateEdge())
             sdfg.add_edge(count_state, grad_state, dace.InterstateEdge())
 
-            # The count array is transient inside this nested SDFG. When the nested
-            # SDFG is invoked repeatedly (e.g. from the reversed loop/map of a maxpool),
-            # the array may be allocated once and reused, so `setzero` on the access
-            # node is not enough: we must explicitly zero it at the start of every
-            # invocation before accumulating per-window/extremum counts.
-            init_grad(count_arr_name, sdfg, count_state)
+            # State 0: Clear the counter. It has to happen on every execution of this state, so it
+            # cannot be an AccessNode's ``setzero``: that zeroes the transient where it is ALLOCATED,
+            # i.e. once per SDFG invocation. Between calls that is enough, but under a loop the WCR
+            # below keeps accumulating across iterations, and the gradient tasklet divides by the
+            # counter -- the k-th reversed iteration then hands back grad/k instead of grad.
+            count_shape = out_desc.shape if len(out_desc.shape) > 0 else (1, )
+            zero_state.add_mapped_tasklet(
+                f"_zero_{type_name}_count_", {
+                    f"o{i}": f"0:{shape}"
+                    for i, shape in enumerate(count_shape)
+                }, {},
+                "__zero = 0",
+                {"__zero": Memlet.simple(count_arr_name, ",".join(f"o{i}" for i in range(len(count_shape))))},
+                external_edges=True)
 
             # State 1: Count matching elements
             count_memlet = Memlet.simple(count_arr_name,
@@ -173,23 +182,16 @@ class ReverseReduce(BackwardImplementation):
                 extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
             extremal_idx_memlet_count = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
 
-            _, _, count_exit = count_state.add_mapped_tasklet(
-                f"_count_{type_name}_matches_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__extremal_val": extremal_val_memlet_count,
-                    "__extremal_val_idx": extremal_idx_memlet_count
-                },
-                "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0", {"__count": count_memlet},
-                external_edges=True)
-
-            # Set count array to zero before accumulation
-            count_out_edges = count_state.out_edges(count_exit)
-            if len(count_out_edges) == 1:
-                count_out_node = count_out_edges[0].dst
-                if isinstance(count_out_node, dace.nodes.AccessNode):
-                    count_out_node.setzero = True
+            count_state.add_mapped_tasklet(f"_count_{type_name}_matches_", {
+                "i" + str(i): "0:{}".format(shape)
+                for i, shape in enumerate(in_desc.shape)
+            }, {
+                "__extremal_val": extremal_val_memlet_count,
+                "__extremal_val_idx": extremal_idx_memlet_count
+            },
+                                           "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0",
+                                           {"__count": count_memlet},
+                                           external_edges=True)
 
             # State 2: Compute normalized gradient (grad / count)
             reduction_memlet = Memlet.simple(

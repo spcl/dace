@@ -10,7 +10,6 @@ from typing import List, Tuple, Optional, Dict
 import dace.library
 import numpy as np
 import torch
-from torch.utils.cpp_extension import load as torch_load
 import dace
 from dace import config, dtypes as dt, data
 from dace.codegen import targets, compiler
@@ -672,6 +671,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
             libpath = os.path.abspath(c.filename)
             extra_ldflags.append(libpath)
             extra_ldflags.append(f"-Wl,-rpath,{os.path.dirname(libpath)}")
+
+    # Deferred: importing torch.utils.cpp_extension runs a CUDA-installation probe that blocks on
+    # torch.cuda.is_available(), so it must not happen at module import (see PyTorch environment).
+    from torch.utils.cpp_extension import load as torch_load  # noqa: PLC0415
 
     # We pass unique name + unique build directory to avoid FileBaton contention
     torch_load(
