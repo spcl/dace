@@ -1,7 +1,23 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests aliasing analysis. """
+import re
+
 import pytest
 import dace
+
+#: A generated function definition, which is where aliasing analysis decides the qualifier.
+SIGNATURE = re.compile(r'^\s*(?:DACE_EXPORTED\s+)?(?:inline\s+)?void\s+\w+\(')
+
+
+def restrict_on_parameters(code: str) -> int:
+    """``__restrict__`` occurrences on function parameters.
+
+    Counting every occurrence in the file also counts the qualifier on local pointers the code
+    generator introduces inside a body (a copy's endpoints, say). Those are a lowering detail and
+    say nothing about whether two of the program's arrays may alias, which is what these assert.
+    """
+    return sum(line.count('__restrict__') for line in code.splitlines() if SIGNATURE.match(line))
+
 
 AliasedArray = dace.data.Array(dace.float64, (20, ), may_alias=True)
 
@@ -17,9 +33,9 @@ def test_simple_program(may_alias):
     code = tester.to_sdfg().generate_code()[0]
 
     if may_alias:
-        assert code.clean_code.count('__restrict__') == 0
+        assert restrict_on_parameters(code.clean_code) == 0
     else:
-        assert code.clean_code.count('__restrict__') >= 3
+        assert restrict_on_parameters(code.clean_code) >= 3
 
 
 def test_multi_nested():
@@ -39,7 +55,7 @@ def test_multi_nested():
     code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
-    assert code.clean_code.count('__restrict__') == 4  # = [__program, tester, interim, nested]
+    assert restrict_on_parameters(code.clean_code) == 4  # = [__program, tester, interim, nested]
 
 
 def test_inference():
@@ -60,7 +76,7 @@ def test_inference():
 
     # Restrict keyword should never show up in "nested", since arrays are aliased,
     # but should show up in [__program, tester, interim]
-    assert code.clean_code.count('__restrict__') == 3
+    assert restrict_on_parameters(code.clean_code) == 3
 
 
 if __name__ == '__main__':
