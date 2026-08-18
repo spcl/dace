@@ -90,12 +90,15 @@ class BlockFusion(transformation.MultiStateTransformation):
                 ie.data.assignments.update(assignments_to_absorb)
 
         if self._is_noop(self.first_block):
-            # We remove the first block and let the second one remain.
+            # We remove the first block and let the second one remain. Resolve the pattern-node
+            # handles BEFORE remove_node: they re-resolve by node id on every access, and removing
+            # a node shifts the ids of everything after it.
+            second_block = self.second_block
             for ie in graph.in_edges(self.first_block):
-                graph.add_edge(ie.src, self.second_block, ie.data)
+                graph.add_edge(ie.src, second_block, ie.data)
             graph.remove_node(self.first_block)
             if first_is_start:
-                keep_start_block(graph, self.second_block)
+                keep_start_block(graph, second_block)
         else:
             # We remove the second block and let the first one remain.
             for oe in graph.out_edges(self.second_block):
