@@ -15,6 +15,7 @@ from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, Set, Optional
 from dace import data as dt
 from dace.frontend.python import astutils
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.symbolic import pystr_to_symbolic, scalars
 
 
@@ -186,22 +187,35 @@ class SymbolPropagation(ppl.Pass):
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
         out_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
 
-        # Perform a forward fixed-point iteration to propagate symbols
-        changed = True
-        while changed:
-            changed = False
+        # Perform a forward fixed-point iteration to propagate symbols, in execution order: a value
+        # then travels the length of a chain per sweep instead of one block per sweep, which is what
+        # made the sweep count scale with the depth of the CFG. ConstantPropagation orders its own
+        # fixed point the same way.
+        ordered_blks = self._execution_order(sdfg, all_cfg_blks)
+        readers = self._readers(ordered_blks)
 
-            for cfg_blk, parent in all_cfg_blks.items():
+        # Worklist over that order: a block is revisited only when something it reads moved, so the
+        # sweeps after the first cost the blocks that actually changed rather than all of them.
+        dirty = {id(blk) for blk, _ in ordered_blks}
+        while dirty:
+            for cfg_blk, parent in ordered_blks:
+                if id(cfg_blk) not in dirty:
+                    continue
+                dirty.discard(id(cfg_blk))
+                moved = False
+
                 new_in_syms = self._get_in_syms(sdfg, cfg_blk, parent, in_syms, out_syms)
                 if new_in_syms != in_syms[cfg_blk]:
-                    changed = True
+                    moved = True
                     in_syms[cfg_blk] = new_in_syms
 
-            for cfg_blk, parent in all_cfg_blks.items():
                 new_out_syms = self._get_out_syms(cfg_blk, parent, in_syms, out_syms)
                 if new_out_syms != out_syms[cfg_blk]:
-                    changed = True
+                    moved = True
                     out_syms[cfg_blk] = new_out_syms
+
+                if moved:
+                    dirty |= readers[id(cfg_blk)]
 
         # An honest return set is what lets a FixedPointPipeline converge.
         propagated: Set[str] = set()
@@ -288,6 +302,63 @@ class SymbolPropagation(ppl.Pass):
         return eliminated
 
     # Given a cfg_blk, builds the incoming set of symbols
+    def _execution_order(self, sdfg: SDFG, all_cfg_blks: Dict[ControlFlowBlock, ControlFlowRegion]):
+        """``(block, parent)`` pairs in execution order, one entry per block of ``all_cfg_blks``.
+
+        The sort runs per SDFG because it does not cross nested SDFGs, and it only reaches blocks
+        with a path from the start block -- an unreachable one still carries symbols, so it is
+        appended rather than dropped."""
+        ordered = []
+        seen = set()
+        for sd in sdfg.all_sdfgs_recursive():
+            try:
+                blocks = list(cfg_analysis.blockorder_topological_sort(sd, recursive=True))
+            except KeyError:
+                # The sort walks a dominator tree rooted at the start block, so a CFG with a second
+                # source -- which this pass supports -- has blocks the tree never names. Fall back
+                # to insertion order for that SDFG rather than ordering part of it.
+                continue
+            for blk in blocks:
+                if id(blk) not in seen and blk in all_cfg_blks:
+                    seen.add(id(blk))
+                    ordered.append((blk, all_cfg_blks[blk]))
+        for blk, parent in all_cfg_blks.items():
+            if id(blk) not in seen:
+                seen.add(id(blk))
+                ordered.append((blk, parent))
+        return ordered
+
+    def _readers(self, ordered_blks) -> Dict[int, Set[int]]:
+        """For each block, the blocks whose own tables read it -- who to revisit when it moves.
+
+        Deliberately a superset: missing an edge here would stop the iteration early, at a table
+        that is not yet a fixed point, so every reader named by :meth:`_get_in_syms` and
+        :meth:`_get_out_syms` is listed, and anything uncertain is listed too.
+        """
+        readers: Dict[int, Set[int]] = {id(blk): set() for blk, _ in ordered_blks}
+        present = set(readers)
+
+        def add(src: ControlFlowBlock, dst) -> None:
+            if dst is not None and id(dst) in present:
+                readers[id(src)].add(id(dst))
+
+        for blk, parent in ordered_blks:
+            # A successor's in_syms reads this block's out_syms. A ConditionalBlock holds its
+            # branches as sub-regions rather than graph nodes, so it has no edges to walk.
+            if not isinstance(parent, ConditionalBlock):
+                for edge in parent.out_edges(blk):
+                    add(blk, edge.dst)
+            # The parent's out_syms combines its sinks, or its branches when it is conditional.
+            add(blk, parent)
+            # A region hands its in_syms to whatever runs first inside it.
+            if isinstance(blk, ConditionalBlock):
+                for branch in blk.sub_regions():
+                    add(blk, branch)
+            elif isinstance(blk, AbstractControlFlowRegion):
+                add(blk, blk.start_block)
+
+        return readers
+
     def _get_in_syms(
         self,
         sdfg: SDFG,
