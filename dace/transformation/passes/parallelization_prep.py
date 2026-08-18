@@ -765,6 +765,15 @@ class BestEffortLoopPeeling(ppl.Pass):
             return False
         if start is None or end is None:
             return False
+        # An ``x`` provably outside [start, end] regroups nothing: the middle singleton would
+        # fabricate an iteration the loop never runs (the CONTRACT above; cloudsc's boundary guard
+        # at ``x == end + 1`` produced a phantom ``{klev}`` iteration reading past the array).
+        # Equalize first -- ``x`` and a bound can hold two same-named symbol instances whose
+        # difference never cancels. Undecidable stays split: the caller's relations guard covers it.
+        beyond = symbolic.simplify(symbolic.equalize_symbol(x - end))
+        below = symbolic.simplify(symbolic.equalize_symbol(start - x))
+        if (beyond > 0) == True or (below > 0) == True:
+            return False
         ivar = loop.loop_variable
         parent = loop.parent_graph
         # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a

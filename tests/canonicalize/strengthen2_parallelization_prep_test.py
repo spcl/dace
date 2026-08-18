@@ -229,3 +229,26 @@ def test_split_point_past_loop_end_does_not_run_past_the_end():
     got = a0.copy()
     sdfg.compile()(a=got, b=b.copy(), N=n, K=k)
     assert np.array_equal(got, ref)
+
+
+def test_split_point_provably_past_the_end_is_refused():
+    """``_split_loop_at``'s CONTRACT says the segments regroup the same iterations only while
+    ``start <= x <= end``; a PROVABLY out-of-range point must be refused, not emitted -- the middle
+    singleton would fabricate an iteration the loop never runs (cloudsc: a phantom ``{end + 1}``
+    segment whose body reads past the array once TrivialLoopElimination splices it)."""
+    sdfg = dace.SDFG('split_past_end')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_array('a', [dace.symbol('K')], dace.float64)
+    loop = LoopRegion('l', 'i < K', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body')
+    tasklet = body.add_tasklet('w', set(), {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    sdfg.validate()
+
+    x = symbolic.pystr_to_symbolic('K')  # end is K - 1: provably past the last iteration
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, x)
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, x, middle_singleton=False)
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, symbolic.pystr_to_symbolic('-1'))
+    sdfg.validate()
+    assert _loops(sdfg) == [loop], 'a refused split must leave the loop alone'
