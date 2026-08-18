@@ -1369,14 +1369,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: Is there a case of a variable-symbol?
         result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
 
-        # Add SDFG arrays, in case a replacement added a new output
+        # Add SDFG arrays, in case a replacement added a new output. Process grids are data
+        # descriptors, so this carries them as well.
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff. ``process_grids`` is a PROPERTY that rebuilds a dict by scanning every
-        # descriptor in the SDFG, so reading it inside the comprehension re-scanned once per variable:
-        # |variables| x |arrays| per access, and this property is read while parsing every statement.
-        process_grids = self.sdfg.process_grids
-        result.update({v: process_grids[v] for k, v in self.variables.items() if v in process_grids})
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
