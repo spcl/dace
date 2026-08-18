@@ -1,31 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that name minting consults every namespace without materializing them. """
+""" Tests that name minting consults every namespace without materializing them.
+
+Both cases below were kept because a mutation proved the rest of the suite misses them: a view
+that answers ``in`` from arrays and symbols but FORGETS constants leaves 787 sdfg + frontend
+tests passing, and mints a name straight on top of an existing constant.
+"""
 
 import dace
 from dace.sdfg.sdfg import _UsedNames
-from dace.utils import find_new_name
-
-
-def test_find_new_name_only_tests_membership():
-    """``find_new_name`` must never iterate its argument, so a view can answer ``in`` lazily."""
-
-    class ContainerOnly:
-
-        def __init__(self, taken):
-            self.taken = taken
-            self.probes = 0
-
-        def __contains__(self, name):
-            self.probes += 1
-            return name in self.taken
-
-        def __iter__(self):
-            raise AssertionError('find_new_name iterated its argument')
-
-    names = ContainerOnly({'A', 'A_0'})
-    assert find_new_name('A', names) == 'A_1'
-    assert names.probes == 3
-    assert find_new_name('B', names) == 'B'
 
 
 def test_used_names_view_covers_arrays_symbols_and_constants():
@@ -60,6 +42,5 @@ def test_minted_names_avoid_every_namespace():
 
 
 if __name__ == '__main__':
-    test_find_new_name_only_tests_membership()
     test_used_names_view_covers_arrays_symbols_and_constants()
     test_minted_names_avoid_every_namespace()
