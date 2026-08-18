@@ -12,7 +12,10 @@ from dace.transformation.passes.analysis import loop_analysis
 @transformation.explicit_cf_compatible
 class TrivialLoopElimination(transformation.MultiStateTransformation):
     """
-    Eliminates loops with a single loop iteration.
+    Eliminates loops that provably run at most once: a single-iteration loop is spliced into its
+    parent with the iterator substituted, a ZERO-trip loop is deleted outright (its body must never
+    run -- splicing it in would fabricate an iteration, polybench nussinov's ``for j = N; j < N``
+    writing ``table[N-1, N]`` one column past the end).
     """
 
     loop = transformation.PatternNode(LoopRegion)
@@ -20,6 +23,21 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
+
+    def is_zero_trip(self) -> bool:
+        """Provably zero iterations: the first condition check already fails. Undecidable is False
+        (the sound direction -- an undecidable loop is neither spliced nor deleted)."""
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
+        if start is None or end is None or stride is None:
+            return False
+        try:
+            if stride > 0:
+                return bool(start > end)
+            return bool(start < end)
+        except Exception:
+            return False
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Check if this is a for-loop with known range.
@@ -29,25 +47,22 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         if start is None or end is None or stride is None:
             return False
 
-        # Check if this is a trivial loop: it must run EXACTLY once. ``get_loop_end``
-        # returns the INCLUSIVE last iteration value, so a single-iteration loop is one
-        # whose second iteration is past the end AND whose first iteration happens at all.
+        # The loop must provably run AT MOST once. ``get_loop_end`` returns the INCLUSIVE last
+        # iteration value, so that means no second iteration; whether the single candidate
+        # iteration happens at all (splice) or not (delete) is :meth:`is_zero_trip`'s call in
+        # ``apply``. An undecidable comparison lands in the ``except`` below and refuses.
         try:
             # No second iteration: reject a loop that runs two or more times.
             if stride > 0 and start + stride < end + 1:
                 return False
             if stride < 0 and start + stride > end - 1:
                 return False
-            # A first iteration: reject a ZERO-trip loop, whose body must never run.
-            # Inlining it would fabricate an iteration the loop never executes -- polybench
-            # nussinov's ``for j in range(i+1, N)`` degenerates to ``for j = N; j < N`` at the
-            # peeled ``i = N-1``, and splicing that body in writes ``table[N-1, N]``, one column
-            # past the end of ``table[N, N]``. An undecidable comparison lands in the ``except``
-            # below and refuses, which is the sound direction.
-            if stride > 0 and start > end:
-                return False
-            if stride < 0 and start < end:
-                return False
+            # Decidability gate: whether the single candidate iteration runs at all must be
+            # provable -- True means zero-trip (``apply`` DELETES the loop), False means exactly
+            # one iteration (``apply`` splices it). Undecidable raises into the ``except`` and
+            # refuses: such a loop could be neither spliced (might be zero-trip) nor deleted
+            # (might run).
+            bool(start > end) if stride > 0 else bool(start < end)
         except:
             # if the relation can't be determined it's not a trivial loop
             return False
@@ -58,6 +73,21 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # Obtain iteration variable, range and stride
         itervar = self.loop.loop_variable
         start = loop_analysis.get_init_assignment(self.loop)
+
+        if self.is_zero_trip():
+            # The body never runs: delete the loop outright. What remains of the region is its
+            # exit binding -- a for-loop that fails its first condition check still executed the
+            # init, so downstream reads of the iterator see ``start``. Bound on its own edge so the
+            # init expression reads pre-edge values, exactly as the loop would have evaluated it.
+            head = graph.add_state(self.loop.label + '_zero_trip', is_start_block=graph.start_block is self.loop)
+            tail = graph.add_state(self.loop.label + '_zero_trip_exit')
+            for e in graph.in_edges(self.loop):
+                graph.add_edge(e.src, head, e.data)
+            graph.add_edge(head, tail, InterstateEdge(assignments={itervar: str(start)}))
+            for e in graph.out_edges(self.loop):
+                graph.add_edge(tail, e.dst, e.data)
+            graph.remove_node(self.loop)
+            return
 
         # ``replace`` (``ControlGraphView.replace``, state.py) hand-walks ``nodes()`` / ``edges()`` and
         # never routes through ``replace_dict``, so it silently misses a ``ConditionalBlock``'s branch
