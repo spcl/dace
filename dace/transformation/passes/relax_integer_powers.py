@@ -116,9 +116,9 @@ def _loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbo
 
 
 def _symbol_facts(sdfg: SDFG) -> _Facts:
-    """Sign / integrality facts per symbol name, from each SDFG's declared symbol dtypes and its
-    ``symbol_assumptions`` registry (recursively -- a fact may be recorded only on a nested
-    SDFG). Stored expressions spell their symbols BARE, so the objects carry no facts."""
+    """Sign / integrality facts per symbol name: integrality from each SDFG's declared symbol
+    dtypes, sign off the symbol objects stored in array descriptors (recursively -- a size symbol
+    may appear only in a nested SDFG's shapes)."""
     facts: Dict[str, OrderedSet] = {}
     for g in sdfg.all_sdfgs_recursive():
         for name, dtype in g.symbols.items():
@@ -127,14 +127,17 @@ def _symbol_facts(sdfg: SDFG) -> _Facts:
             # ``.type`` is an instance rather than a scalar class).
             if isinstance(dtype.type, type) and issubclass(dtype.type, numpy.integer):
                 facts.setdefault(name, OrderedSet()).add('integer')
-        for name, recorded in g.symbol_assumptions.items():
-            declared = facts.setdefault(name, OrderedSet())
-            if recorded.get('integer'):
-                declared.add('integer')
-            if recorded.get('positive'):
-                declared.add('positive')
-            elif recorded.get('nonnegative'):
-                declared.add('nonnegative')
+        for desc in g.arrays.values():
+            if not isinstance(desc, data.Array):
+                continue
+            for sym in desc.free_symbols:
+                declared = facts.setdefault(sym.name, OrderedSet())
+                if sym.is_integer:
+                    declared.add('integer')
+                if sym.is_positive:
+                    declared.add('positive')
+                elif sym.is_nonnegative:
+                    declared.add('nonnegative')
     return {name: frozenset(declared) for name, declared in facts.items()}
 
 

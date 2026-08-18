@@ -68,8 +68,6 @@ import copy
 import zlib
 from typing import Dict, List, Optional, Tuple
 
-from ordered_set import OrderedSet
-
 import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace.sdfg import nodes
@@ -135,9 +133,8 @@ def canonical_iterators(expr, iters: tuple[str, ...]):
     5-point Gauss-Seidel), and the loop variables leaked into the emitted runtime guard, where
     they became program arguments no caller can supply.
 
-    Only the ITERATORS are re-keyed. An offset symbol keeps its stored (bare) object; its
-    declared sign lives in ``SDFG.symbol_assumptions`` and is read back by
-    :func:`declared_positive`.
+    Only the ITERATORS are re-keyed. An offset symbol keeps the object carrying its declared
+    ``positive=True``, which :func:`offset_symbols` reads to decide whether a guard is needed.
     """
     e = symbolic.pystr_to_symbolic(expr)
     mp = {}
@@ -522,17 +519,6 @@ class Dependence:
         self.kind = kind
 
 
-def declared_positive(sdfg: SDFG, s) -> bool:
-    """Whether ``sdfg`` declares the offset symbol ``s`` positive.
-
-    Everything stored in a graph is spelled BARE -- ``Range`` bares every bound it parses -- so a
-    symbol taken out of a memlet answers ``is_positive`` with ``None`` no matter what the caller
-    minted it with. The declaration lives in ``SDFG.symbol_assumptions``, and
-    ``SDFG.assume_symbols`` is the seam that hands it back for one query.
-    """
-    return sdfg.assume_symbols(s).is_positive is True
-
-
 def dependence_kind(du, dv) -> str:
     """Classify a distance ``(du, dv) = writer - current`` as ``'flow'`` or
     ``'anti'`` by the lexicographic sign of its first non-zero component (a
@@ -549,11 +535,7 @@ def dependence_kind(du, dv) -> str:
     or a backward symbol (``arr[i, j - K]``) -- stays conservatively ``'flow'``:
     it is a genuine backward recurrence, or an unannotated offset the optimistic
     retry pins with a runtime positive-guard, so a flow treatment can only refuse
-    or trap, never mis-order.
-
-    The sign is read off the operands, so a caller holding stored (bare) distances has to hand in
-    the assumed spelling -- ``SDFG.assume_symbols`` -- or every symbolic distance degrades to
-    ``'flow'``."""
+    or trap, never mis-order."""
     du_s, dv_s = symbolic.simplify(du), symbolic.simplify(dv)
     if du_s.is_number and dv_s.is_number:
         if du_s > 0 or (du_s == 0 and dv_s > 0):
@@ -625,10 +607,7 @@ def collect_carrier(inner: LoopRegion,
             dv = symbolic.simplify(v_r - sym(v))
             if du == 0 and dv == 0:
                 continue  # in-place self-read, not a dependence
-            # Stored distances are bare, so the kind is decided on the ASSUMED spelling; the
-            # ``Dependence`` keeps the bare one, which is what reaches the ISL text and the guard.
-            kind = dependence_kind(sdfg.assume_symbols(du), sdfg.assume_symbols(dv))
-            deps.append(Dependence(du, dv, ctx, kind))
+            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv)))
         if deps:
             carriers.append((arr, wmap, deps))
     if len(carriers) != 1:
@@ -936,9 +915,7 @@ class WavefrontSkew(ppl.Pass):
 
         # --- Pick a legal diagonal skew, using symbol positivity if declared. ---
         off_syms = offset_symbols(deps, dims)
-        # By NAME: the registry is keyed by name, and the symbols here are the bare stored ones.
-        annotated = OrderedSet(s.name for s in off_syms if declared_positive(sdfg, s))
-        assume_annotated = [s - 1 for s in off_syms if s.name in annotated]
+        assume_annotated = [s - 1 for s in off_syms if s.is_positive]
         tau = None
         guard_syms: List[object] = []
         for cand in _SKEW_CANDIDATES:
@@ -952,7 +929,7 @@ class WavefrontSkew(ppl.Pass):
             for cand in _SKEW_CANDIDATES:
                 if schedule_legal(cand, deps, u, v, domain, assume_all):
                     tau = cand
-                    guard_syms = [s for s in off_syms if s.name not in annotated]
+                    guard_syms = [s for s in off_syms if not s.is_positive]
                     break
         if tau is None:
             return False

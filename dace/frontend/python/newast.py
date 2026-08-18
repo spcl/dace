@@ -29,7 +29,6 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.sdfg import absorb_symbol_assumptions
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
@@ -1355,7 +1354,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
                         self.sdfg.add_symbol(sym.name, sym.dtype)
-            absorb_symbol_assumptions(self.sdfg, list(self.sdfg.arrays.values()))
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state

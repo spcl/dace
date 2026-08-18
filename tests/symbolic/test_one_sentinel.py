@@ -40,16 +40,16 @@ def test_shape_with_one_preserves_symbol():
     assert ONE not in shape[2].free_symbols
 
 
-def test_one_marker_survives_storage_in_an_sdfg():
-    """Storing a ``(W, ONE)`` shape in an SDFG strips the sentinel's assumptions
-    (``absorb_symbol_assumptions`` makes stored symbols BARE), so sympy object
-    identity no longer holds -- :func:`dace.symbolic.has_one_marker` must still
-    recognise the marker, and ``collapse_one_dims`` must still drop it."""
-    sdfg = dace.SDFG("one_marker_absorbed")
+def test_one_marker_survives_a_reparse():
+    """A shape entry reparsed from its string spelling mints a bare ``ONE`` with none of the
+    sentinel's assumptions, so sympy object identity no longer holds --
+    :func:`dace.symbolic.has_one_marker` must still recognise the marker by NAME, and
+    ``collapse_one_dims`` must still drop it."""
+    sdfg = dace.SDFG("one_marker_reparsed")
     sdfg.add_array("Idx", (4, ONE), dace.int64, transient=True)
-    stored = tuple(sdfg.arrays["Idx"].shape)
+    stored = tuple(dace.symbolic.pystr_to_symbolic(str(s)) for s in sdfg.arrays["Idx"].shape)
 
-    assert ONE not in stored[1].free_symbols, "expected the stored symbol to be bare (no assumptions)"
+    assert ONE not in stored[1].free_symbols, "expected the reparsed symbol to be bare (no assumptions)"
     assert stored[1].name == "ONE"
     assert dace.symbolic.has_one_marker(stored[1])
     assert not dace.symbolic.has_one_marker(stored[0])

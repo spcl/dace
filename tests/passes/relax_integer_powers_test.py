@@ -313,24 +313,26 @@ def test_relaxes_pow_inside_a_packed_product():
 
 
 def test_nested_sdfg_inherits_outer_sign_facts():
-    """A nested SDFG an expansion mints declares symbol DTYPES only -- the sign registry stays on
-    the SDFG the frontend built. The facts have to travel the symbol mapping, else ``R**K`` inside
-    declines for want of a sign and codegen emits a ``double`` ``pow`` loop bound."""
-    shape = [pystr_to_symbolic('R**K')]  # bare symbols, exactly as a store spells them
+    """A nested SDFG an expansion mints spells its shapes bare (a reparse cannot know signs) --
+    the sign facts live on the symbol OBJECTS in the outer SDFG's descriptors. The facts have to
+    travel by name across the nesting, else ``R**K`` inside declines for want of a sign and
+    codegen emits a ``double`` ``pow`` loop bound."""
+    bare_shape = [pystr_to_symbolic('R**K')]  # bare symbols, exactly as a reparsed store spells them
 
     inner = dace.SDFG('inner')
     inner.add_symbol('R', dace.int64)
     inner.add_symbol('K', dace.int64)
-    inner.add_array('y', shape, dace.float64)
+    inner.add_array('y', bare_shape, dace.float64)
     inner.add_state().add_access('y')
-    assert not inner.symbol_assumptions  # the whole point: no signs recorded here
+    # the whole point: no signs spelled here
+    assert all(s.is_positive is None for s in inner.arrays['y'].free_symbols)
 
+    R = dace.symbol('R', dtype=dace.int64, integer=True, positive=True)
+    K = dace.symbol('K', dtype=dace.int64, integer=True, positive=True)
     outer = dace.SDFG('outer')
     outer.add_symbol('R', dace.int64)
     outer.add_symbol('K', dace.int64)
-    outer.update_symbol_assumptions('R', integer=True, positive=True)
-    outer.update_symbol_assumptions('K', integer=True, positive=True)
-    outer.add_array('y', shape, dace.float64)
+    outer.add_array('y', [R**K], dace.float64)
     state = outer.add_state()
     nsdfg = state.add_nested_sdfg(inner, {}, {'y'}, symbol_mapping={'R': 'R', 'K': 'K'})
     state.add_edge(nsdfg, 'y', state.add_write('y'), None, dace.Memlet('y[0:R**K]'))

@@ -341,11 +341,10 @@ ONE_NAME = 'ONE'
 def has_one_marker(s) -> bool:
     """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
 
-    Matches on the symbol NAME, not on sympy object identity. A symbol stored in an SDFG is
-    BARE -- ``absorb_symbol_assumptions`` moves its assumptions into the SDFG's registry and
-    rewrites the descriptor with ``symbol(name, dtype)`` -- so a descriptor's ``ONE`` is a
-    different sympy object than :data:`ONE` (which carries ``positive=True``) and compares
-    unequal. The name is what the marker contract is written on (user direction 2026-06-10).
+    Matches on the symbol NAME, not on sympy object identity. A same-named ``ONE`` reparsed from
+    a subset or shape string carries no assumptions, so it is a different sympy object than
+    :data:`ONE` (which carries ``positive=True``) and compares unequal. The name is what the
+    marker contract is written on (user direction 2026-06-10).
 
     :param s: A shape entry: Python int, sympy ``Basic``, :class:`SymExpr`, or native expression.
     :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
@@ -697,69 +696,6 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr > other.expr
         return self > pystr_to_symbolic(other)
-
-
-@lru_cache(maxsize=2048, typed=True)
-def _bare_spelling(sym: symbol) -> Optional[symbol]:
-    """The bare same-named symbol, or ``None`` when ``sym`` is already bare.
-
-    :param sym: A :class:`symbol`; :class:`UndefinedSymbol` must be filtered out by the caller,
-                its equality is symbolic and would poison the cache.
-    :return: The bare spelling, or ``None``.
-    :rtype: Optional[symbol]
-    """
-    bare = symbol(sym.name, sym.dtype)
-    return None if bare.assumptions0 == sym.assumptions0 else bare
-
-
-@lru_cache(maxsize=2048, typed=True)
-def assumed_symbol(name: str, dtype: Optional[dtypes.typeclass], facts: Tuple[Tuple[str, Any], ...]) -> symbol:
-    """The same-named symbol carrying ``facts``; the inverse of :func:`bare_symbols`.
-
-    ``symbol`` deliberately bypasses SymPy's own symbol cache, so re-minting an assumed spelling
-    per query would rebuild the assumption closure every time; that is what this cache holds.
-
-    :param name: Symbol name.
-    :param dtype: Symbol type, or ``None`` for the default.
-    :param facts: Sorted ``(fact, value)`` pairs, as :attr:`SDFG.symbol_assumptions` records them.
-    :return: The assumed symbol. It is for reasoning only and must never be stored in a graph.
-    :rtype: symbol
-    """
-    return symbol(name, dtype, **dict(facts))
-
-
-def bare_symbols(expr):
-    """``expr`` with every assumed symbol swapped for the bare same-named one.
-
-    Symbol identity is the name: assumptions belong in ``SDFG.symbol_assumptions``, never in an
-    object stored in a graph, where a second spelling of the same name stops index arithmetic from
-    cancelling. Plain SymPy symbols and :class:`UndefinedSymbol` are left alone.
-
-    ``expr`` itself is returned when it is already bare, so callers can compare by identity.
-
-    :param expr: A symbolic expression, or any value, which is returned unchanged.
-    :return: ``expr`` spelled bare.
-    :rtype: Any
-    """
-    # Numbers carry no symbol and are what most stored bounds are; that check is a bare isinstance,
-    # while `free_symbols` below builds a set.
-    if isinstance(expr, sympy.Number):
-        return expr
-    if isinstance(expr, SymExpr):
-        main, approx = bare_symbols(expr.expr), bare_symbols(expr.approx)
-        if main is expr.expr and approx is expr.approx:
-            return expr
-        return SymExpr(main, approx)
-    if not isinstance(expr, sympy.Basic):
-        return expr
-    replacements = {}
-    for sym in expr.free_symbols:
-        if type(sym) is not symbol:
-            continue
-        bare = _bare_spelling(sym)
-        if bare is not None:
-            replacements[sym] = bare
-    return expr.xreplace(replacements) if replacements else expr
 
 
 def _sympy_constant_value(value):

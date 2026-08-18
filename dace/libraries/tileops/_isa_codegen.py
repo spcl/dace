@@ -633,55 +633,6 @@ def _guarded_stride_divisors(parent_sdfg) -> dict:
     return facts
 
 
-def _chain_assumptions(parent_sdfg) -> dict:
-    """``{symbol name: ((fact, value), ...)}`` recorded anywhere up ``parent_sdfg``'s chain.
-
-    Assumptions live in :attr:`SDFG.symbol_assumptions` and stored expressions stay BARE, so a
-    bare ``N`` answers ``is_nonnegative`` with ``None`` until the recorded facts are put back on.
-    The tile ops sit in a body SDFG that ``NestInnermostMapBodyIntoNSDFG`` created after the
-    canonicalization that recorded the facts, so its own registry is empty and the fact is only on
-    an ancestor -- hence the walk, with the same rebind refusal as
-    :func:`_guarded_stride_divisors`: a name the ``symbol_mapping`` sends a different expression to
-    means something else on the two sides, and translating it would be exactly the unchecked
-    promise the proof exists to avoid.
-    """
-    from dace.sdfg.sdfg import SDFG
-
-    facts, sdfg, rebound = {}, parent_sdfg, set()
-    while isinstance(sdfg, SDFG):
-        for name, recorded in sdfg.symbol_assumptions.items():
-            if name not in rebound and recorded:
-                facts.setdefault(name, (tuple(sorted(recorded.items())), sdfg.symbols.get(name)))
-        nsdfg_node = sdfg.parent_nsdfg_node
-        if nsdfg_node is None:
-            break
-        for inner, outer in nsdfg_node.symbol_mapping.items():
-            outer_name = str(dace.symbolic.pystr_to_symbolic(outer))
-            if outer_name != str(inner):
-                rebound.add(str(inner))
-                rebound.add(outer_name)
-        sdfg = sdfg.parent_sdfg
-    return facts
-
-
-def _assume(expr, facts: dict):
-    """``expr`` with ``facts`` re-minted onto its bare symbols, for REASONING only.
-
-    The per-SDFG seam is :meth:`SDFG.assume_symbols`; this is the same operation against the facts
-    :func:`_chain_assumptions` collected across the chain. Callers pass a
-    :func:`dace.symbolic.simplify` result, so the expression is always symbolic. Its output must
-    never be stored back into the graph -- a second spelling of a name stops index arithmetic from
-    cancelling.
-    """
-    repl = {
-        sym: dace.symbolic.assumed_symbol(sym.name, facts[sym.name][1], facts[sym.name][0])
-        for sym in expr.free_symbols if sym.name in facts
-    }
-    # `xreplace` and not `subs`: the keys ARE the expression's own symbols, so nothing has to be
-    # matched and none of the rewriting on the way out is wanted.
-    return expr.xreplace(repl) if repl else expr
-
-
 def _base_offset_is_visible(sdfg, name: str) -> bool:
     """True if the memlet offset seen INSIDE ``sdfg`` is the whole offset from the allocation.
 
@@ -745,7 +696,6 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
     # False and every param stays un-substituted, which leaves the residue undecidable for reasons
     # that have nothing to do with the shape.
     by_name = {str(s): s for s in offset.free_symbols}
-    assumptions = _chain_assumptions(parent_sdfg)
     size = dace.symbolic.pystr_to_symbolic(arr.total_size)
     # Built BEFORE the coefficient test, not after: a stride of ``N - 2`` (the shape a transient
     # holding a stencil's interior gets) is not provably non-negative as written, while the very
@@ -757,7 +707,8 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
         sym = by_name.get(param)
         if sym is None:
             continue
-        if _assume(dace.symbolic.simplify(offset.diff(sym)).subs(subs), assumptions).is_nonnegative is not True:
+        coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(offset.diff(sym).subs(subs)))
+        if coeff.is_nonnegative is not True:
             return None
         k = dace.symbolic.symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))

@@ -682,16 +682,15 @@ def _hand_built_forward_symbolic_nest(fwd_col):
     (not via ``@dace.program``): the frontend lowers a two-read integer body
     through ``aa_index`` slice transients that ``simplify`` collapses into
     disconnected symbol refs, hiding the reads from ``collect_carrier`` so the pass
-    would refuse and never engage. ``S`` is declared positive in the SDFG's assumption
-    REGISTRY: everything stored in a graph is bare (``Range`` bares every bound it parses), so
-    minting the memlets from a ``positive=True`` symbol object declares nothing."""
+    would refuse and never engage. Building the memlets from the positive ``S``
+    symbol OBJECT (not a parsed string, which strips ``positive=True``) is what
+    drives the genuine forward-anti dependence into the pass."""
     from dace import subsets
     N_ = dace.symbol('N')
     i, j = dace.symbol('i'), dace.symbol('j')
     sdfg = dace.SDFG('wf_fwd_sym')
     sdfg.add_array('aa', [N_, N_], dace.int64)
     sdfg.add_symbol('S', dace.int64)
-    sdfg.update_symbol_assumptions('S', positive=True)
     outer = LoopRegion('outer', 'i < N - 1', 'i', 'i = 1', 'i = i + 1')
     sdfg.add_node(outer, is_start_block=True)
     inner = LoopRegion('inner', 'j < N - 1', 'j', 'j = 1', 'j = j + 1')
