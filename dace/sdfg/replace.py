@@ -120,7 +120,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
 
     # Replace in node properties
     for node in subgraph.nodes():
-        replace_properties_dict(node, repl, symrepl)
+        replace_properties_dict(node, repl, symrepl, sdfg)
 
     # Replace in memlets
     for edge in subgraph.edges():
@@ -149,7 +149,23 @@ def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     replace_dict(subgraph, {name: new_name})
 
 
-def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], node: Optional[Any] = None):
+def declared_ctype(name: str, sdfg: Optional['dace.SDFG']) -> Optional[str]:
+    """C type ``name`` is declared with in ``sdfg``: a symbol's type, or a scalar's. ``None`` when
+    ``name`` is neither, as a map parameter is."""
+    if sdfg is None:
+        return None
+    if name in sdfg.symbols:
+        return sdfg.symbols[name].ctype
+    desc = sdfg.arrays.get(name)
+    if isinstance(desc, data.Scalar):
+        return desc.dtype.ctype
+    return None
+
+
+def replace_in_codeblock(codeblock: properties.CodeBlock,
+                         repl: Dict[str, str],
+                         node: Optional[Any] = None,
+                         sdfg: Optional['dace.SDFG'] = None):
     code = codeblock.code
     if isinstance(code, str) and code:
         lang = codeblock.language
@@ -160,16 +176,11 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
             for name, new_name in repl.items():
                 if name not in tokenized:
                     continue
-                new_code = cppunparse.pyexpr2cpp(new_name)
-                if new_code == name:
-                    # Textual no-op: the replacement prints to the same token as the
-                    # name (e.g. rebuilding a symbol with only a different SymPy
-                    # assumption such as ``nonnegative=True``). Emitting the shadow
-                    # ``auto k = k;`` would be a self-referential declaration that
-                    # does not compile ("use of 'k' before deduction of 'auto'").
-                    continue
-                # Use local variables and shadowing to replace
-                replacement = f'auto {name} = {new_code};\n'
+                # Shadow with the declared type: ``auto`` deduces from the replacement expression,
+                # so ``i = 2`` would narrow an int64 symbol to int. A map parameter has no declared
+                # type here, and ``auto`` then copies the index variable's own.
+                ctype = declared_ctype(name, sdfg) or 'auto'
+                replacement = f'{ctype} {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
                 prefix = replacement + prefix
                 active_replacements.add(name)
 
@@ -191,7 +202,8 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
 
 def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
-                            symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+                            symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                            sdfg: Optional['dace.SDFG'] = None):
     symrepl = symrepl or {
         symbolic.pystr_to_symbolic(symname):
         symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
@@ -220,7 +232,7 @@ def replace_properties_dict(node: Any,
             if isinstance(node, nodes.Node):
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
-            replace_in_codeblock(propval, reduced_repl, node)
+            replace_in_codeblock(propval, reduced_repl, node, sdfg)
         elif (isinstance(propclass, properties.DictProperty) and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():

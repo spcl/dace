@@ -915,15 +915,21 @@ class MapEntry(EntryNode):
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
-        # Add map params
-        for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
-
-        # Handle the dynamic map ranges.
-        dyn_inputs = self.dynamic_input_connectors
+        # Dynamic map ranges first: a bound may name one, and the connector type is the declared
+        # answer for it. Inferring the parameter without them falls back to the dtype the bound's
+        # symbol instance happens to carry, and that is not a stable property -- symbol identity is
+        # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
+        # its names untyped, while deserialization rebuilds them from the declared table. The same
+        # map would then report two different parameter types across a save/load round trip.
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+
+        # Add map params
+        known = {**symbols, **result}
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], known), infer_expr_type(rng[1], known))
 
         return result
 
