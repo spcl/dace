@@ -9,8 +9,8 @@ from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (_make_expansion_sdfg, _memcpy_kind, INPUT_CONNECTOR_NAME,
-                                                       OUTPUT_CONNECTOR_NAME)
+from dace.libraries.standard.nodes.copy.common import (_make_expansion_sdfg, _memcpy_host_sync_suffix, _memcpy_kind,
+                                                       INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
 
 if TYPE_CHECKING:
     pass
@@ -56,6 +56,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         if ndims == 1:
             code = (f"DACE_GPU_CHECK({backend}MemcpyAsync({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, "
                     f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
+            code += _memcpy_host_sync_suffix(inp, out)
             in_conns = {INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
             return nodes.Tasklet(node.name,
                                  inputs=in_conns,
@@ -83,8 +84,11 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         out_memlet = dace.memlet.Memlet(data=ctx.out_name, subset=_row_subset(ctx.out_shape_collapsed))
         inner_in, inner_out = "_in", "_out"
         backend = get_gpu_backend()
+        # Per-row wait: the sync tasklet would need the stream local, which codegen only defines for
+        # nodes touching GPU memory -- and this fallback is the slow path already.
         code = (f"DACE_GPU_CHECK({backend}MemcpyAsync({inner_out}, {inner_in}, "
                 f"{chunk} * sizeof({ctype}), {kind}, {CURRENT_STREAM_NAME}));")
+        code += _memcpy_host_sync_suffix(inp, out)
 
         inner_tasklet, map_entry, _map_exit = ctx.state.add_mapped_tasklet(name=f"{node.label}_tasklet",
                                                                            map_ranges=map_ranges,
