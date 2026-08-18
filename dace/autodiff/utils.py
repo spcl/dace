@@ -13,7 +13,7 @@ import sympy as sp
 # DaCe imports
 import dace
 import dace.sdfg.utils as utils
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
@@ -21,6 +21,10 @@ from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
+
+#: Global that the generated ``symbolic_execution`` source reads its pre-built symbols from, so
+#: minting happens here -- where the dtypes are known -- instead of inside an exec'd string.
+SYMBOL_TABLE_GLOBAL = "dace_ad_symbol_table"
 
 
 def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
@@ -86,6 +90,32 @@ def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward
     return backward_sdfg.add_datadesc(backward_name, new_desc)
 
 
+def connector_symbol(name: str, dtype: Union[dtypes.typeclass, None] = None) -> symbolic.symbol:
+    """Mint the DaCe symbol standing for a tasklet connector or an SDFG symbol.
+
+    Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: the two compare unequal while
+    still substituting for one another, which is what makes ``diff()`` return a silent zero.
+    ``integer=None`` where the dtype is unknown, so that ``symbol``'s int32 default does not
+    assert an integer assumption the declaration never made.
+    """
+    if isinstance(dtype, dtypes.typeclass):
+        return symbolic.symbol(name, dtype)
+    return symbolic.symbol(name, integer=None)
+
+
+def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> Dict[str, symbolic.symbol]:
+    """Symbol mapping for a backward nested SDFG, resolved against the scope it is placed in.
+
+    Backward SDFGs are assembled from descriptors deep-copied out of the parent, so identity is the
+    right mapping -- but it has to be spelled out. ``add_nested_sdfg`` installs its identity default
+    only *after* its own missing-symbol check, which therefore can never fire, and the default maps
+    every symbol to a bare name, dropping the dtype the parent declared for it. A symbol the parent
+    does not declare is scope-local (a map parameter, say) and has no dtype to carry over.
+    """
+    parent_symbols = parent_state.sdfg.symbols
+    return {name: connector_symbol(name, parent_symbols.get(name)) for name in sorted(nested_sdfg.free_symbols)}
+
+
 def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[str],
                             context: BackwardContext) -> Tuple[nd.NestedSDFG, BackwardResult]:
     """ Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
@@ -143,7 +173,11 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
         ndesc.transient = False
         nsdfg.add_datadesc(name, ndesc)
 
-    bwd_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+    bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                      sorted(inputs),
+                                                      sorted(outputs),
+                                                      symbol_mapping=backward_symbol_mapping(
+                                                          nsdfg, context.backward_state))
     for output in outputs_to_connect_from_forward:
         connect_output_from_forward(forward_node, bwd_node, context, output)
 
@@ -199,7 +233,11 @@ def backward_program_for_node(program, context: BackwardContext,
 
     sdfg = DaceProgram(program, (), {}, False, dace.DeviceType.CPU).to_sdfg()
 
-    result_node = context.backward_state.add_nested_sdfg(sdfg, set(inputs), set(outputs))
+    result_node = context.backward_state.add_nested_sdfg(sdfg,
+                                                         sorted(inputs),
+                                                         sorted(outputs),
+                                                         symbol_mapping=backward_symbol_mapping(
+                                                             sdfg, context.backward_state))
 
     return result_node, backward_result
 
@@ -372,24 +410,29 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
 
 
 def code_to_exprs(code: str, tasklet: nd.Tasklet,
-                  symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
+                  symbols: Dict[str, dtypes.typeclass]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
         supports only code consisting of assignment statements.
 
         :param code: the code to convert
-        :param inputs: the inputs (i.e. the defined variables) for the code
-        :param outputs: the outputs to generate simplified expressions for
-        :return: map from outputs to symbolic expressions
+        :param tasklet: the tasklet the code belongs to; its connectors are the defined variables
+        :param symbols: the SDFG symbols visible to the code, mapped to their dtypes
+        :return: map from outputs to symbolic expressions, and the map of indexed objects to indices
     """
 
     inputs: List[str] = list(tasklet.in_connectors)
     outputs: List[str] = list(tasklet.out_connectors)
 
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: Dict[str, sp.Expr] = {}
+
     # Add the definition of global constant symbols that are presen in the code
     # Prepare the Symbol declaration code
     symbol_code = ""
-    for symb in symbols:
-        symbol_code += f"    {symb} = sp.symbols('{symb}')\n"
+    for symb, symb_dtype in symbols.items():
+        symbol_table[symb] = connector_symbol(symb, symb_dtype)
+        symbol_code += f"    {symb} = {SYMBOL_TABLE_GLOBAL}['{symb}']\n"
 
     # We prepare a map of indexed objects and their indices
     indexed_objects_map = extract_indices(code)
@@ -408,7 +451,10 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
-                indexed_objects_code += f"    {idx} = sp.symbols('{idx}', cls=sp.Idx)\n"
+                idx_sym = connector_symbol(idx, symbols.get(idx) or tasklet.in_connectors.get(idx))
+                # An Idx label must be integral, so a non-integer declaration cannot supply one.
+                symbol_table[idx] = sp.Idx(idx_sym if idx_sym.is_integer else symbolic.symbol(idx))
+                indexed_objects_code += f"    {idx} = {SYMBOL_TABLE_GLOBAL}['{idx}']\n"
 
     code_fn = """
 def symbolic_execution({}):
@@ -444,22 +490,23 @@ def symbolic_execution({}):
 
     try:
         # need to have dace so things like `dace.float32(1)` work
-        temp_globals = {'dace': dace}
+        temp_globals = {'dace': dace, SYMBOL_TABLE_GLOBAL: symbol_table}
         exec(code_fn, temp_globals)
 
         # no idea why, but simply calling symbolic_execution doesn't work
-        results = temp_globals["symbolic_execution"](*[sp.symbols(inp) for inp in inputs])
+        results = temp_globals["symbolic_execution"](
+            *[connector_symbol(inp, tasklet.in_connectors[inp]) for inp in inputs])
 
+        # pystr_to_symbolic rather than sympify: it keeps `//` as int_floor and mints DaCe symbols.
         if len(outputs) > 1:
-            # make sure that everything is a sympy expression
-            for i, res in enumerate(results):
-                if not isinstance(res, sp.Expr):
-                    results[i] = sp.sympify(res)
-            return dict(zip(outputs, results)), indexed_objects_map
+            # make sure that everything is a sympy expression. A new list, not in place: a
+            # multi-output symbolic_execution returns a tuple.
+            normalized = [res if isinstance(res, sp.Expr) else symbolic.pystr_to_symbolic(res) for res in results]
+            return dict(zip(outputs, normalized)), indexed_objects_map
         else:
             # make sure that everything is a sympy expression
             if not isinstance(results, sp.Expr):
-                results = sp.sympify(results)
+                results = symbolic.pystr_to_symbolic(results)
             return {outputs[0]: results}, indexed_objects_map
     except Exception as e:
         raise AutoDiffException(

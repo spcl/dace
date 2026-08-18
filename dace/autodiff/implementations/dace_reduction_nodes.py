@@ -27,6 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
+import dace.autodiff.utils as ad_utils
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
@@ -233,7 +234,10 @@ class ReverseReduce(BackwardImplementation):
                                                       tasklet_code, {"__out": reverse_reduction_memlet},
                                                       external_edges=True)
 
-        nsdfg = context.backward_state.add_nested_sdfg(sdfg, nsdfg_inputs, {rev_output_conn_name})
+        nsdfg = context.backward_state.add_nested_sdfg(sdfg,
+                                                       sorted(nsdfg_inputs), [rev_output_conn_name],
+                                                       symbol_mapping=ad_utils.backward_symbol_mapping(
+                                                           sdfg, context.backward_state))
 
         out_edges = state.out_edges(exit_map)
         if len(out_edges) != 1:
