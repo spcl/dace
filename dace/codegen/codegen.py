@@ -173,6 +173,18 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
             node.no_inline = False
 
 
+def sdfg_uses_gpu(sdfg: SDFG) -> bool:
+    """True when any descriptor lives in GPU storage or any scope/library node carries a GPU
+    schedule -- the SDFGs the experimental CUDA generator will emit device code for."""
+    from dace.sdfg import nodes
+    if any(desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+           for _, _, desc in sdfg.arrays_recursive()):
+        return True
+    return any(
+        isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive())
+
+
 def lower_implicit_copies(sdfg: SDFG) -> None:
     """Lift implicit copies to :class:`CopyLibraryNode` instances and expand them.
 
@@ -311,9 +323,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND. Runs
         # inside this branch so the readable pipeline's order is unchanged: the scalar normalization
-        # above must precede it, the readability rewrites below must follow it.
-        if config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
-            lower_implicit_copies(sdfg)
+        # above must precede it, the readability rewrites below must follow it. Unconditional here:
+        # the new generators require the lowering; the ``explicit_copy`` knob governs only the
+        # classic path.
+        lower_implicit_copies(sdfg)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
         # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization
         # pass and belongs in the caller's pipeline, before WCR memlets exist: by codegen time an
@@ -337,10 +350,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
 
-    elif config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
-        # The classic generator gets the same lowering. It emits an implicit copy edge inline, with no
-        # node to hang a happens-before edge on, so a copy that must follow another write was free to
-        # move ahead of it.
+    elif (config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on'
+          or (config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and sdfg_uses_gpu(sdfg))):
+        # The classic CPU generator gets the lowering only on opt-in ('off' by default keeps its
+        # implicit copy-edge emission). The experimental CUDA generator requires it like the
+        # readable CPU one does, whichever CPU generator it is paired with -- but only when there is
+        # GPU code for it to emit; a pure-CPU SDFG under the classic generator keeps the knob's word.
         lower_implicit_copies(sdfg)
 
     # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in

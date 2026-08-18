@@ -24,38 +24,27 @@ def generate(implementation: str, explicit_copy: str) -> str:
         return '\n'.join(obj.code for obj in sdfg.generate_code() if obj.language == 'cpp')
 
 
-def test_on_replaces_copynd_in_readable():
-    """ ``on`` (the default) removes ``dace::CopyND`` and lowers the contiguous copy to ``memcpy``. """
-    on = generate('experimental_readable', 'on')
-    assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind'
-    assert 'memcpy' in on, 'the contiguous copy should lower to memcpy'
+def test_readable_always_lowers():
+    """ The readable generator requires the lowering, so the knob has no effect on it: either value
+    removes ``dace::CopyND`` and lowers the contiguous copy to ``memcpy``. """
+    for value in ('on', 'off'):
+        code = generate('experimental_readable', value)
+        assert 'dace::CopyND' not in code, f'readable must lower copies regardless of the knob (got {value})'
+        assert 'memcpy' in code, 'the contiguous copy should lower to memcpy'
 
 
-def test_off_keeps_copynd_in_readable():
-    """ ``off`` takes the pass out: the copies stay on the implicit ``dace::CopyND`` path. """
-    off = generate('experimental_readable', 'off')
-    assert 'dace::CopyND' in off, 'explicit_copy off should keep the implicit CopyND lowering'
-
-
-def test_on_is_the_default():
-    """ The schema default is ``on``: generating without touching the key matches an explicit ``on``. """
-    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
-        sdfg = mixed_copies.to_sdfg(simplify=False)
-        default = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
-    assert default == generate('experimental_readable', 'on')
-
-
-def test_legacy_honours_the_flag():
-    """ Legacy runs the lowering too: it is a correctness step, not a readability one.
-
-    An implicit copy edge is a write no node performs, so an empty memlet ordering that write has
-    nothing to point at. Giving the copy a node is what makes the constraint reach it, which is why
-    this is not gated on the generator.
-    """
+def test_legacy_honours_the_flag_and_defaults_off():
+    """ The knob governs only the classic generator: ``on`` opts into the lowering, ``off`` -- the
+    schema default -- keeps the implicit ``dace::CopyND`` emission byte-identical to upstream. """
     on = generate('legacy', 'on')
     assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind on legacy'
     assert 'memcpy' in on, 'the contiguous copy should lower to memcpy on legacy too'
-    assert 'dace::CopyND' in generate('legacy', 'off'), 'off should keep the implicit CopyND lowering'
+    off = generate('legacy', 'off')
+    assert 'dace::CopyND' in off, 'off should keep the implicit CopyND lowering'
+    with set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        sdfg = mixed_copies.to_sdfg(simplify=False)
+        default = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
+    assert default == off, 'the schema default must be off'
 
 
 @pytest.mark.parametrize('implementation', ['experimental_readable', 'legacy'])

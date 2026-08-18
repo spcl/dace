@@ -1018,42 +1018,32 @@ required:
 
                             explicit_copy:
                                 type: str
-                                default: 'on'
+                                default: 'off'
                                 title: Lower implicit copies through explicit CopyLibraryNodes
                                 description: >
-                                    Applies to: BOTH CPU generators. Giving an implicit copy a node of
-                                    its own is what an empty memlet ordering that write can point at, so
-                                    this is a correctness lowering, not a readability choice.
+                                    Applies to: the CLASSIC CPU generator only. The experimental readable
+                                    CPU generator and the experimental CUDA generator ALWAYS run the
+                                    lowering -- they require every copy to be a node an ordering edge can
+                                    point at -- so this key has no effect on them.
 
-                                    Whether an implicit copy is lifted to an explicit
+                                    ``on`` lifts every implicit copy edge to a
                                     :class:`~dace.libraries.standard.nodes.copy_node.CopyLibraryNode`
-                                    before emission: ``on`` (the default) runs
-                                    :class:`~dace.transformation.passes.insert_explicit_copies.InsertExplicitCopies`
-                                    and then expands the nodes it inserted; ``off`` leaves every copy to the
-                                    generator's implicit path.
+                                    (:class:`~dace.transformation.passes.insert_explicit_copies.InsertExplicitCopies`)
+                                    and expands the nodes it inserted; ``off`` (the default) keeps the
+                                    classic generator's implicit copy-edge emission byte-identical to
+                                    upstream.
 
-                                    WHY IT IS ON. The implicit path emits the ``dace::CopyND`` template for
-                                    the general case. Going through the library node lets ``ExpandAuto``
-                                    pick per copy instead: a single-element copy becomes a plain ``=``
-                                    tasklet and a contiguous same-layout multi-element copy becomes
-                                    ``std::memcpy`` -- both faster than instantiating ``dace::CopyND``, and
-                                    the readable generator then inlines the ``=`` tasklet's connectors like
-                                    any other. Only a GPU_Shared copy still needs ``dace::CopyND``.
-
-                                    NOTE this default DEVIATES from the rule the rest of this group follows,
-                                    that a new key's default reproduces today's output: the pass does NOT
-                                    run in ``codegen.py`` today, so ``on`` deliberately CHANGES the readable
-                                    generator's output. That is the point of the key, and it is safe to do
-                                    here because the deviation is bounded by the ``Applies to`` line above --
-                                    the absolute invariant is that LEGACY stays byte-identical, and gating
-                                    this inside the readable-only block keeps it so for both values. Set
-                                    ``off`` to recover the readable generator's previous copy lowering.
+                                    Going through the library node lets ``ExpandAuto`` pick per copy: a
+                                    single-element copy becomes a plain ``=`` tasklet and a contiguous
+                                    same-layout multi-element copy becomes ``std::memcpy`` -- both faster
+                                    than instantiating ``dace::CopyND``. Only a GPU_Shared copy still
+                                    needs ``dace::CopyND``.
 
                                     The pass itself is shared, and its other callers
                                     (``transformation/layout/prepare.py``, the GPU-specialization pipeline)
                                     need the ``CopyLibraryNode`` LEFT UNEXPANDED -- ``RewriteCopyForLayout``
-                                    rewrites it to a ``TensorTranspose``. So the expansion belongs to this
-                                    key's block in ``codegen.py``, not to the pass.
+                                    rewrites it to a ``TensorTranspose``. So the expansion belongs to
+                                    ``codegen.py``, not to the pass.
 
                             scalar_emission_type:
                                 type: str
