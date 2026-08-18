@@ -65,8 +65,10 @@ static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) 
     static_assert(dace_minmax_same_kind<U, T...>::value, DACE_MINMAX_MIXED_MSG);
     return max(val, vals...);
 }
+// Deduced, not ``T``: ``abs`` of a complex value is real, so pinning the return to the argument
+// type turns ``Abs(z)`` back into a complex and every comparison on it loses its candidate.
 template <typename T>
-static DACE_HDFI T Abs(T val) {
+static DACE_HDFI auto Abs(T val) {
     return abs(val);
 }
 template <typename T, typename U>
