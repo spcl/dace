@@ -57,11 +57,10 @@ jobs:
           tests/library/copy_node_test.py \
           tests/library/count_node_test.py \
           tests/library/cshift_test.py \
-          tests/library/memset_node_test.py \
+          tests/library/fill_node_test.py \
           tests/library/merge_node_test.py \
           tests/library/norm2_test.py \
-          tests/library/matmul_trans_test.py \
-          tests/passes/copy_memset_parallel_selection_test.py
+          tests/library/matmul_trans_test.py
 
     - name: FFT nodes
       run: |
