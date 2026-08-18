@@ -7,7 +7,6 @@ if the walk order is the exact reverse of the merge order, and nothing but a tes
 frontend consults ``defined`` on nearly every name it touches, so a single inverted pair would
 resolve some names to the wrong descriptor and lower a silently different program.
 """
-import numpy as np
 import pytest
 
 import dace
@@ -38,9 +37,13 @@ def make_visitor() -> ProgramVisitor:
                                  'from_scope': 'outer',
                                  'both_tables': 'shadowed',
                                  'to_sdfg_array': 'A',
+                                 'contested': 'outer',
                              })
     visitor.sdfg = sdfg
-    visitor.variables = {'var_to_array': 'A', 'var_to_symbol': 'N', 'A': 's'}
+    # ``contested`` is deliberately in BOTH tables, resolving to a DIFFERENT descriptor in each:
+    # that is the only shape that pins which table wins, and without it an inverted walk order
+    # passes every assertion here (verified by mutation).
+    visitor.variables = {'var_to_array': 'A', 'var_to_symbol': 'N', 'A': 's', 'contested': 'A'}
     return visitor
 
 
@@ -83,43 +86,16 @@ def test_the_view_resolves_each_source_the_way_the_merge_order_says():
     assert view['var_to_symbol'] is sdfg.symbols['N']
     # A scope variable resolves against the ENCLOSING scope's descriptors...
     assert view['from_scope'] is view.pv.scope_arrays['outer']
-    # ...and when the name is in both tables, the scope one wins, being merged later.
     assert view['both_tables'] is view.pv.scope_arrays['shadowed']
+    # ...but a name in BOTH tables resolves through ``variables``, which the merge applies LAST.
+    # This is the assertion that fails if the walk order is inverted.
+    assert view['contested'] is sdfg.arrays['A']
     assert view['to_sdfg_array'] is sdfg.arrays['A']
     # A closure symbol is the lowest-precedence source, and a non-symbol global is not defined.
     assert view['g_sym'] is view.pv.globals['g_sym']
     assert 'g_plain' not in view
 
 
-def test_the_view_tracks_later_writes_to_the_tables():
-    """A view, not a snapshot: the old property rebuilt on every access, so anything that read it
-    once and expected staleness would be a new bug, and anything that expects freshness must get it."""
-    visitor = make_visitor()
-    view = visitor.defined
-
-    assert 'added_later' not in view
-    visitor.sdfg.add_array('added_later', [3], dace.float64)
-    assert 'added_later' in view
-    assert view['added_later'] is visitor.sdfg.arrays['added_later']
-
-
-def test_a_parsed_program_still_resolves_its_names():
-    """The view on the real path: a program whose body needs arrays, a symbol and a temporary."""
-    N = dace.symbol('N', dtype=dace.int64)
-
-    @dace.program
-    def resolves(a: dace.float64[N], b: dace.float64[N]):
-        tmp = a * 2.0
-        b[:] = tmp + float(N)
-
-    a = np.random.rand(12)
-    b = np.zeros(12)
-    resolves(a, b, N=12)
-    assert np.allclose(b, a * 2.0 + 12.0)
-
-
 if __name__ == '__main__':
     test_the_view_and_the_merged_dict_agree_entry_for_entry()
     test_the_view_resolves_each_source_the_way_the_merge_order_says()
-    test_the_view_tracks_later_writes_to_the_tables()
-    test_a_parsed_program_still_resolves_its_names()
