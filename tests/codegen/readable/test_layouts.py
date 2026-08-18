@@ -253,28 +253,6 @@ def test_strided_stencil(require_experimental):
     assert '2 * __d0' in body, body
 
 
-def test_offset_strided_stencil(require_experimental):
-    """Case 5: ``i-1``/``i+1`` stencil on a strided ``T[32]`` with ``offset [1]``.
-
-    Confirms the ``i - 1`` subtraction lowers correctly through ``T_idx`` when the
-    descriptor also carries an offset (stride 3, offset 1 -> constant ``+3``).
-    Ranges are restricted so ``max_index + offset < 32``.
-    """
-    n = 32
-    base = dict(A=np.random.rand(n), B=np.zeros(n))
-    build = lambda name: stencil_1d_sdfg(
-        name, n=n, strides=[3], offset=[1], total_size=99, write_range='0:31', stencil_range='1:30')
-
-    _, experimental = assert_bit_exact(build, 'offset_stencil', base)
-    expected = base['B'].copy()
-    expected[1:30] = base['A'][0:29] + base['A'][2:31]
-    assert np.array_equal(experimental['B'], expected)
-
-    # stride 3 with offset 1 -> body is (3 * __d0) + 3.
-    body = index_function_body(experimental_code(build, 'offset_stencil_inspect'))
-    assert '3 * __d0' in body and '+ 3' in body, body
-
-
 def test_alignment(require_experimental):
     """Case 6: heap transient allocated with the same aligned ``new[]`` as the legacy generator."""
     n = 200

@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Host-issued ``cudaMemsetAsync`` over GPU memory. Byte-splat values only."""
+"""Host-issued ``<backend>MemsetAsync`` over GPU memory. Byte-splat values only."""
 from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, byte_pattern
@@ -32,7 +32,10 @@ class ExpandCUDA(ExpandTransformation):
                              f"{out.dtype} is not one. Use the 'pure' expansion (mapped tasklet).")
 
         nbytes = f"{sym2cpp(out_subset.num_elements_exact())} * sizeof({out.dtype.ctype})"
-        code = f"cudaMemsetAsync({OUTPUT_CONNECTOR_NAME}, {pattern}, {nbytes}, {CURRENT_STREAM_NAME});"
+        # The API name follows the configured backend (cuda/hip), like every sibling copy expansion.
+        backend = get_gpu_backend()
+        code = (f"DACE_GPU_CHECK({backend}MemsetAsync({OUTPUT_CONNECTOR_NAME}, {pattern}, {nbytes}, "
+                f"{CURRENT_STREAM_NAME}));")
 
         return nodes.Tasklet(node.name,
                              inputs={},
