@@ -120,6 +120,28 @@ def test_multidim_gpu(impl, test_case):
     assert np.allclose(b, np.sum(a, axis=axes))
 
 
+def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
+    """The GPU-auto expansion may FLATTEN the planner input (``(M, N, K) -> (M*N, K)``); the
+    reassigned shape/strides must be accompanied by a matching-rank offset, or the descriptor is
+    invalid and the host-side inline at codegen dies with 'Offset must be the same size as shape'
+    (samples/optimization/matmul.py under GPUTransformSDFG). Codegen-only: no GPU needed."""
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    @dace.program
+    def flat_reduce(inp_tensor: dace.float64[16, 8, 32], out_matrix: dace.float64[16, 8]):
+        out_matrix[:] = np.sum(inp_tensor, axis=2)
+
+    sdfg = flat_reduce.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(GPUTransformSDFG) == 1
+    sdfg.expand_library_nodes()
+    for sub in sdfg.all_sdfgs_recursive():
+        for name, desc in sub.arrays.items():
+            if isinstance(desc, dace.data.Array):
+                assert len(desc.offset) == len(desc.shape), \
+                    f'{sub.name}::{name}: offset rank {len(desc.offset)} != shape rank {len(desc.shape)}'
+    sdfg.generate_code()
+
+
 if __name__ == '__main__':
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])

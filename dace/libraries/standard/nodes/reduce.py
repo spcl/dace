@@ -1357,6 +1357,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         input_data.transient = False
         input_data.shape = schedule.in_shape
         input_data.strides = schedule.in_strides
+        # The planner may flatten the rank (e.g. (M, N, K) -> (M*N, K)); the copied offset keeps the
+        # OLD rank and descriptor validation rejects the mismatch at the next add_view/deepcopy.
+        input_data.offset = [0] * len(schedule.in_shape)
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
