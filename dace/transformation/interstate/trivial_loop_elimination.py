@@ -110,7 +110,8 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # edge loop below would otherwise auto-add the non-start blocks (``OrderedDiGraph.add_edge``),
         # which bypasses the unique naming entirely. Edges are wired by object reference, so relabelling
         # is safe. ``start_block`` goes first to keep the parent's node order as it was.
-        for block in [self.loop.start_block] + [b for b in self.loop.nodes() if b is not self.loop.start_block]:
+        spliced = [self.loop.start_block] + [b for b in self.loop.nodes() if b is not self.loop.start_block]
+        for block in spliced:
             graph.add_node(block, ensure_unique_name=True)
         for e in graph.in_edges(self.loop):
             graph.add_edge(e.src, self.loop.start_block, e.data)
@@ -126,3 +127,15 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         graph.remove_node(self.loop)
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)
+
+        # The substitution above can turn a body guard CONSTANT (a boundary split's single-trip
+        # segment under ``if i < end``, spliced at ``i = end`` -- cloudsc), and the dead branch
+        # then holds memlets that read as statically out of bounds. Resolve those trivial branches
+        # now, scoped to the spliced blocks plus one level of the parent (for a conditional that
+        # was spliced in directly) -- not a whole-graph pass.
+        from dace.transformation.passes.lift_trivial_if import LiftTrivialIf  # avoid import loop
+        lift = LiftTrivialIf()
+        for block in spliced:
+            if isinstance(block, ControlFlowRegion) and block.parent_graph is graph:
+                lift.lift_in_region(block)
+        lift.lift_in_region(graph, recursive=False)
