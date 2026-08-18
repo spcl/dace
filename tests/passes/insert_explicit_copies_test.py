@@ -11,7 +11,7 @@ import pytest
 from dace import nodes
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 import tests.polybench

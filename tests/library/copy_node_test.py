@@ -8,8 +8,8 @@ import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
-from dace.libraries.standard.nodes.copy_node import (CopyLibraryNode, _make_expansion_sdfg, cuda2d_pitch_params,
-                                                     select_copy_implementation)
+from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
 
 import pytest
 import numpy as np
