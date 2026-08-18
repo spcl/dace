@@ -3179,62 +3179,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
 
-            # OpenMP reduction clauses for WCR writes to scalar accumulators outside
-            # the map. Atomic-add via wcr_fixed::reduce_atomic is correct but
-            # contended -- replacing the (implicit) per-iter atomic with the OMP
-            # runtime's per-thread privatization + final tree-reduce is what makes
-            # scalar reductions in parallel maps fast. The covered ``(var, op)``
-            # pairs are pushed onto ``_omp_reduction_scope_stack`` so the
-            # downstream ``write_and_resolve_expr`` skips the now-redundant
-            # ``reduce_atomic`` for them.
-            # OFF leaves omp_reductions empty, so no reduction(op:var) clause is emitted and the
-            # WCR write below takes the plain atomic path (correct but contended) instead of
-            # privatize-and-tree-reduce.
-            # A ``for`` pragma binds to the loop right after it, so on a multi-dimensional map the
-            # ``simd`` clause below would land on the OUTERMOST loop and ask for outer-loop
-            # vectorization of a nest, not the element-wise vectorization it is written for. Only
-            # stamp it when the pragma's associated loops reach the innermost one -- the same rule
-            # ``_map_loop_will_have_openmp_pragma`` already applies on the Sequential path.
-            simd_reaches_innermost = (len(node.map.range) == 1 or node.map.collapse >= len(node.map.range))
-
-            omp_reductions = []
-            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
-                    and emits_tree_reductions(self.experimental_codegen)):
-                omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
-                declares = []
-                for op_str, clause_target, _dname, declare in omp_reductions:
-                    map_header += f' reduction({op_str}:{clause_target})'
-                    if declare is not None and declare not in declares:
-                        declares.append(declare)
-                # ``simd`` too: the clause already sanctions reassociation inside the combining op, so
-                # vector partials are legal. No min/max, per ``dace/runtime/include/dace/reduction.h``.
-                if (omp_reductions and simd_reaches_innermost
-                        and all(op not in ('min', 'max') for op, _ct, _dn, _dec in omp_reductions)):
-                    head, sep, rest = map_header.partition(' for')
-                    map_header = f'{head}{sep} simd{rest}'
-                # ``declare reduction`` directives must be in scope before the pragma; emit
-                # each unique one on its own line ahead of the ``parallel for``.
-                for declare in declares:
-                    map_header = declare + '\n' + map_header
-
-            # Innermost CPU_Multicore map (leaf body -- see ``_map_body_is_leaf``): stamp
-            # ``simd`` onto the existing ``parallel for`` / ``for`` pragma, EXCEPT a ``min``/
-            # ``max`` WCR target -- same NaN-combine exclusion as above, computed fresh here
-            # since it must hold regardless of ``emits_tree_reductions``. A WCR edge NOT covered
-            # by ``_collect_omp_reductions`` (a scatter) is left in: CPU_Multicore always lowers
-            # an uncovered WCR through ``wcr_fixed::reduce_atomic`` (``#pragma omp atomic``
-            # under the hood -- see reduction.h), which composes with ``simd`` by design.
-            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and ' simd' not in map_header
-                    and simd_reaches_innermost and Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps')
-                    and self._map_body_is_leaf(state_dfg, node)
-                    and all(op not in ('min', 'max')
-                            for op, _ct, _dn, _dec in self._collect_omp_reductions(sdfg, state_dfg, node))):
+            # ``MarkSIMDMaps`` decided this; stamp the clause onto the existing pragma.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
                 head, sep, rest = map_header.partition(' for')
                 map_header = f'{head}{sep} simd{rest}'
-            # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
-            # target data name so the nested WCR write's covered-check (``memlet.data in
-            # frame``) skips the now-redundant atomic and accumulates into the private copy.
-            self._omp_reduction_scope_stack.append({dname: op for op, _ct, dname, _dec in omp_reductions})
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
@@ -3283,6 +3231,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+                elif (node.map.omp_simd and node.map.schedule == dtypes.ScheduleType.Sequential
+                      and i == len(node.map.range) - 1):
+                    # Innermost dimension only: the pragma must precede the ``for`` it vectorizes.
+                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 # Determine whether this loop will be immediately preceded by an OpenMP directive.
                 # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. Sequential maps

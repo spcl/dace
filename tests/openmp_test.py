@@ -56,12 +56,10 @@ def test_omp_props():
     mapnode.schedule = dtypes.ScheduleType.CPU_Multicore
 
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel for" in code)
+    assert ("#pragma omp parallel for simd" in code)
 
     mapnode.omp_num_threads = 10
     code = sdfg.generate_code()[0].clean_code
-    # ``arrayop``'s map is a leaf (no inner map/NestedSDFG, no WCR): it also qualifies for the
-    # default-on innermost-CPU_Multicore ``simd`` clause (compiler.cpu.simd_innermost_multicore_maps).
     assert ("#pragma omp parallel for simd num_threads(10)" in code)
 
     mapnode.omp_schedule = dtypes.OMPScheduleType.Guided
