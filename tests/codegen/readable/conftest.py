@@ -125,7 +125,15 @@ def waitpid_with_timeout(pid, timeout):
 
 def run_isolated(build_and_run, timeout=300):
     """Run ``build_and_run() -> Dict[str, ndarray]`` in a forked child process (CPU only -- CUDA and
-    ``os.fork`` don't mix). A crash or timeout surfaces as a ``RuntimeError`` in the parent."""
+    ``os.fork`` don't mix). A crash or timeout surfaces as a ``RuntimeError`` in the parent.
+
+    A CPU kernel that already ran in THIS process leaves a live OpenMP thread team behind, and a
+    fork from that state deadlocks the child on libgomp's team barrier (the top-level conftest
+    guards ``os.fork`` against exactly this). Pausing the pools first is semantically transparent
+    -- the next parallel region rebuilds the team -- and makes the fork safe.
+    """
+    from dace.transformation.layout.isolation import pause_openmp_pools
+    pause_openmp_pools()
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
     pid = os.fork()
