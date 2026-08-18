@@ -154,6 +154,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
                 return False
 
+        # The experimental CUDA generator cannot allocate Stream descriptors yet; refusing here
+        # keeps a stream-carrying program on the host instead of crashing at codegen.
+        from dace.config import Config  # Avoid import loop
+        if Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+            if any(isinstance(desc, data.Stream) for sub in sdfg.all_sdfgs_recursive() for desc in sub.arrays.values()):
+                return False
+
         for state in sdfg.states():
             schildren = state.scope_children()
             for node in schildren[None]:
