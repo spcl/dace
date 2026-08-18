@@ -917,7 +917,17 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
             except StopIteration:
                 return
-            synchronize_streams(sdfg, cfg, state_dfg, state_id, node, node, callsite_stream, gpu_codegen)
+            # The tasklet's own code names the stream through the local defined above, so the
+            # synchronization it may need must name the same expression.
+            synchronize_streams(sdfg,
+                                cfg,
+                                state_dfg,
+                                state_id,
+                                node,
+                                node,
+                                callsite_stream,
+                                gpu_codegen,
+                                stream_expr='__dace_current_stream')
         return
 
     body = node.code.code
@@ -1348,10 +1358,12 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
+def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen, stream_expr=None):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-    if max_streams >= 0:
+    if stream_expr is not None:
+        cudastream = stream_expr
+    elif max_streams >= 0:
         cudastream = common.gpu_stream_expr(node._cuda_stream)
     else:  # Only default stream is used
         cudastream = 'nullptr'
@@ -1395,7 +1407,29 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     if max_streams >= 0 and hasattr(node, "_cuda_stream"):
         backend = common.get_gpu_backend()
 
+        synced_host = False
         for edge in dfg.out_edges(scope_exit):
+
+            # A host-located destination is read by plain host code as soon as the asynchronous
+            # work is issued -- a kernel launch packing a by-value argument counts -- and neither
+            # events nor consumer stream stamps order the host. Wait on the issuing stream once
+            # (copy-edge analog: ``_emit_copy`` in cuda.py).
+            hostnode = edge.dst
+            while (isinstance(hostnode, nodes.AccessNode) and hostnode.data is not None
+                   and isinstance(sdfg.arrays[hostnode.data], data.View)):
+                hostnode = dfg.out_edges(hostnode)[0].dst
+            if (isinstance(hostnode, nodes.AccessNode) and hostnode.data is not None
+                    and sdfg.arrays[hostnode.data].storage
+                    not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)):
+                if not synced_host:
+                    callsite_stream.write(
+                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        cfg,
+                        state_id,
+                        [edge.src, edge.dst],
+                    )
+                    synced_host = True
+                continue
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
