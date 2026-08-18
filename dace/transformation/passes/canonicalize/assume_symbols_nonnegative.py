@@ -111,15 +111,22 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     for g in sdfg.all_sdfgs_recursive():
         repl = {}
         plain = names_still_plain(g)
-        # The argument set, not ``free_symbols`` -- see :func:`_signed_integer_free_symbols`. The
-        # latter unions every registered ``sdfg.symbols`` key, so it also names a map parameter a
-        # loop-to-map left registered; a parameter is scope-local and must not be re-stamped.
-        # Stamping exactly what :func:`insert_assumption_guards` traps keeps the two halves on
-        # one set.
-        for name in _signed_integer_free_symbols(g):
+        # ``free_symbols``, NOT the argument set: a nested SDFG's size symbol often enters only
+        # through descriptor shapes and the symbol mapping, so it is absent from
+        # ``used_symbols(all_symbols=False)`` -- and an unstamped nested spelling makes a second
+        # canonicalize produce a different graph. The runtime guard
+        # (:func:`insert_assumption_guards`) still traps only the ARGUMENT symbols
+        # (:func:`_signed_integer_free_symbols`); every other name here maps to one of those by
+        # name across the nesting, so the contract stays boundary-checked.
+        # sorted: ``free_symbols`` is a set of strings (per-process randomized hashing). The
+        # substitutions happen to commute here, but sorting makes determinism provable.
+        for name in sorted(g.free_symbols):
+            dtype = g.symbols.get(name)
+            if dtype not in _SIGNED_INTEGER_DTYPES:
+                continue
             if name not in plain:
                 continue
-            repl[name] = symbolic.symbol(name, dtype=g.symbols.get(name), nonnegative=True)
+            repl[name] = symbolic.symbol(name, dtype=dtype, nonnegative=True)
         if repl:
             g.replace_dict(repl)
             updated += len(repl)

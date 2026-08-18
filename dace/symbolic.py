@@ -905,11 +905,14 @@ def resolve_symbol(name: Union[str, sympy.Basic, None], pool: Dict[str, 'symbol'
 
 def same_value(a: Any, b: Any) -> bool:
     """
-    Compares symbolic expressions, or sequences of them, without looking at symbol dtypes.
+    Compares symbolic expressions, or sequences of them, without looking at symbol dtypes or
+    assumptions.
 
-    Symbol identity includes the dtype, but the value a symbol stands for does not change with the width of the
-    integer carrying it. Comparisons that are about values -- shapes, strides, extents -- must use this, since the
-    same name routinely carries different dtypes on the two sides of a nested SDFG boundary.
+    Symbol identity includes the dtype and the SymPy assumptions, but the value a symbol stands
+    for changes with neither: a name denotes ONE value in an SDFG. Comparisons that are about
+    values -- shapes, strides, extents -- must use this, since the same name routinely carries
+    different dtypes across a nested SDFG boundary and different assumptions between an
+    annotated descriptor and a bound reparsed from a string.
     """
     if a is b or a == b:
         return True
@@ -920,11 +923,11 @@ def same_value(a: Any, b: Any) -> bool:
         return all(same_value(x, y) for x, y in zip(a, b))
     if not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
         return False
-    # Structural comparison with every symbol stripped down to its name and assumptions: the dtype, and
-    # only the dtype, drops out.
+    # Structural comparison with every symbol stripped down to its bare name: dtype and
+    # assumptions both drop out.
     plain = [
-        expr.subs({s: sympy.Symbol(s.name, **s.assumptions0)
-                   for s in expr.free_symbols if isinstance(s, symbol)}) for expr in (a, b)
+        expr.subs({s: sympy.Symbol(s.name)
+                   for s in expr.free_symbols if isinstance(s, sympy.Symbol)}) for expr in (a, b)
     ]
     return bool(plain[0] == plain[1])
 

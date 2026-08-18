@@ -100,20 +100,22 @@ def _zero_trip_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_trivial_loop_elimination_refuses_zero_trip_loop():
-    """The unit regression: a provably empty loop is NOT a trivial loop.
+def test_trivial_loop_elimination_deletes_zero_trip_loop():
+    """The unit regression: a provably empty loop must never run its body.
 
-    Before the fix this applied once and rewrote the write memlet to the out-of-bounds
-    ``table[N - 1, N]``. The body must stay inside the loop, indexed by ``j``.
+    The original defect spliced the body out with ``j = N`` substituted, rewriting the write
+    memlet to the out-of-bounds ``table[N - 1, N]``. The contract since is that a PROVABLE
+    zero-trip loop is deleted outright (user ruling 2026-08-18): the loop disappears, its body
+    with it, and no ``table`` access -- in-bounds or not -- survives.
     """
     sdfg = _zero_trip_sdfg()
     applied = sdfg.apply_transformations_repeated([TrivialLoopElimination])
-    assert applied == 0, "TrivialLoopElimination eliminated a ZERO-trip loop (its body must never run)"
+    assert applied == 1, "TrivialLoopElimination must delete a provably zero-trip loop"
 
+    assert not [b for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)]
     memlets = [e.data for state in sdfg.all_states() for e in state.edges() if e.data.data == "table"]
-    assert memlets, "expected a write to table"
-    for memlet in memlets:
-        assert "j" in str(memlet.subset), f"zero-trip body was spliced out with j = N: table[{memlet.subset}]"
+    assert not memlets, f"zero-trip body survived: table[{memlets[0].subset if memlets else ''}]"
+    sdfg.validate()
 
 
 def test_trivial_loop_elimination_still_eliminates_single_trip_loop():
