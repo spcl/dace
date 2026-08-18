@@ -193,10 +193,7 @@ def _is_accumulator_group(group: List[nodes.Node], state: SDFGState, sdfg: SDFG)
 
 def _written_data(groups: List[List[nodes.Node]], state: SDFGState) -> Set[str]:
     """Containers written by AccessNodes in ``groups``."""
-    return {
-        n.data for g in groups for n in g
-        if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0
-    }
+    return {n.data for g in groups for n in g if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
 
 
 def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
@@ -225,8 +222,10 @@ def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
     return False
 
 
-def _merge_side_write_groups(groups: List[List[nodes.Node]], state: SDFGState,
-                             loop_var: Optional[str], sdfg: SDFG,
+def _merge_side_write_groups(groups: List[List[nodes.Node]],
+                             state: SDFGState,
+                             loop_var: Optional[str],
+                             sdfg: SDFG,
                              sibling_check: bool = True) -> List[List[nodes.Node]]:
     """Merge side-write groups when they are part of a compound reduction body
     (one scalar accumulator group plus multiple per-element side writes) or when
@@ -262,7 +261,9 @@ def _merge_side_write_groups(groups: List[List[nodes.Node]], state: SDFGState,
     return sorted(kept, key=lambda g: order[g[0]])
 
 
-def _independent_groups(state: SDFGState, loop_var: Optional[str], sdfg: SDFG,
+def _independent_groups(state: SDFGState,
+                        loop_var: Optional[str],
+                        sdfg: SDFG,
                         sibling_check: bool = True) -> List[List[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 

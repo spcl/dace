@@ -23,7 +23,6 @@ import pytest
 import dace
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
-from dace.sdfg import nodes
 
 
 def _normalize_wcr_source(sdfg: dace.SDFG) -> None:
@@ -311,9 +310,8 @@ def test_nest_state_subgraph_wcr_placement():
     # Structural: WCR sources must be AccessNode or MapExit, not NestedSDFG.
     nsdfg_wcr_sources = [type(e.src).__name__ for e in st.edges() if e.data is not None and e.data.wcr is not None]
     assert nsdfg_wcr_sources, 'Expected at least one WCR edge after wrapping.'
-    assert 'NestedSDFG' not in nsdfg_wcr_sources, (
-        'After normalizing, no WCR edge should originate at a NestedSDFG; '
-        f'got sources {nsdfg_wcr_sources}.')
+    assert 'NestedSDFG' not in nsdfg_wcr_sources, ('After normalizing, no WCR edge should originate at a NestedSDFG; '
+                                                   f'got sources {nsdfg_wcr_sources}.')
 
     # Numerical: the wrapped SDFG still sums correctly.
     rng = np.random.default_rng(42)

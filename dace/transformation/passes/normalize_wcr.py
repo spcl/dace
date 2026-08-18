@@ -538,10 +538,9 @@ class NormalizeWCR(ppl.Pass):
         wcr_state = None
         for ist in inner.all_states():
             for e in ist.edges():
-                if (e.data is not None and e.data.wcr is not None and e.data.data == oc
-                        and e.data.subset is not None and e.data.subset.num_elements() == 1
-                        and isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc
-                        and ist.out_degree(e.dst) == 0):
+                if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
+                        and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode)
+                        and e.dst.data == oc and ist.out_degree(e.dst) == 0):
                     if wcr_edge is not None:
                         return False
                     wcr_edge, wcr_state = e, ist
@@ -593,8 +592,10 @@ class NormalizeWCR(ppl.Pass):
 
         # New tasklet: __out = __old OP __addend (plain).
         dtype = oc_desc.dtype
-        rmw = wcr_state.add_tasklet('_nnr_rmw', {'__old': dtype, '__addend': dtype}, {'__out': dtype},
-                                     _rmw_tasklet_code(op))
+        rmw = wcr_state.add_tasklet('_nnr_rmw', {
+            '__old': dtype,
+            '__addend': dtype
+        }, {'__out': dtype}, _rmw_tasklet_code(op))
         wcr_state.add_edge(old_node, None, rmw, '__old', Memlet(data=oc, subset='0'))
         wcr_state.add_edge(addend_node, None, rmw, '__addend', Memlet(data=addend, subset='0'))
         wcr_state.add_edge(rmw, '__out', out_node, None, Memlet(data=out_conn_name, subset='0'))

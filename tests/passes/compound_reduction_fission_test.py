@@ -11,7 +11,6 @@ plus one reduction (the scalar accumulator). Today neither ``LoopFission``
 nor ``LoopToReduce`` catches the shape, and the loop stays sequential. The
 tests below pin the expected behavior so the fix lands with a contract.
 """
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion

@@ -15,7 +15,7 @@ from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
+from dace.codegen.common import codeblock_to_cpp, emits_tree_reductions, sym2cpp, update_persistent_desc
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -182,8 +182,8 @@ def hoist_loop_decls(node: nodes.MapEntry, will_have_openmp_pragma: bool = False
     immediately followed by a CANONICAL loop whose init clause declares the induction variable, so
     hoisting leaves the pragma facing a declaration and the compiler rejects it ("loop nest
     expected"). The knob therefore applies to sequential loops that do not get an OpenMP ``simd``
-    pragma, and to the non-innermost loops of a Sequential map even when ``simd_sequential_maps`` is
-    on.
+    pragma, and to the non-innermost loops of a Sequential map even when ``MarkSIMDMaps`` marked
+    it.
     """
     if Config.get('compiler', 'cpu', 'codegen_params', 'loop_decl_style') != 'hoisted':
         return False
@@ -3045,60 +3045,6 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((op_str, clause_target, oedge.dst.data, declare))
         return out
 
-    def _map_body_is_leaf(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-        """True if the map's body holds no inner Map and no NestedSDFG.
-
-        Deliberately NOT recursive: a NestedSDFG disqualifies on sight, whatever it holds. A
-        single state's dataflow (what ``all_nodes_between`` walks) cannot directly contain a
-        ``LoopRegion`` -- that is control flow, not a dataflow node -- so a NestedSDFG is the
-        only place a loop could be hiding in this map's body, and refusing every NestedSDFG
-        catches it without inspecting one. Errs toward NOT simd: a map this call can't clear is
-        simply left alone.
-        """
-        try:
-            map_exit = state.exit_node(map_entry)
-        except (KeyError, StopIteration):
-            return False
-        for n in state.all_nodes_between(map_entry, map_exit):
-            if isinstance(n, (nodes.MapEntry, nodes.NestedSDFG)):
-                return False
-        return True
-
-    def _sequential_simd_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> Optional[str]:
-        """``#pragma omp simd`` (+ any safe ``reduction`` clauses) for a Sequential map's
-        innermost loop, or ``None`` if this call cannot prove it safe. Gated by
-        ``compiler.cpu.simd_sequential_maps`` at the call site.
-
-        Requires the body to be a leaf (:func:`_map_body_is_leaf`) and every WCR out-edge, if
-        any, to be a fixed-target reduction :func:`_collect_omp_reductions` can form a clause
-        for (``min``/``max`` excluded -- see ``dace/runtime/include/dace/reduction.h``). A WCR
-        edge that is NOT covered is a scatter (subset depends on this map's own iteration
-        variable) or otherwise unrecognized: the write lowers to a plain, non-atomic
-        ``wcr_fixed::reduce`` (no thread contention to guard against, since the map is
-        Sequential), so a colliding target address across iterations is a genuine
-        cross-iteration hazard ``simd`` cannot see -- withhold the pragma rather than guess.
-        """
-        if not self._map_body_is_leaf(state, map_entry):
-            return None
-        try:
-            map_exit = state.exit_node(map_entry)
-            wcr_edges = sum(1 for e in state.in_edges(map_exit) if e.data is not None and e.data.wcr is not None)
-        except (KeyError, StopIteration):
-            wcr_edges = 0
-        reductions = self._collect_omp_reductions(sdfg, state, map_entry)
-        safe = [r for r in reductions if r[0] not in ('min', 'max')]
-        if wcr_edges and len(safe) != wcr_edges:
-            return None
-        pragma = "#pragma omp simd"
-        declares = []
-        for op_str, clause_target, _dname, declare in safe:
-            pragma += f' reduction({op_str}:{clause_target})'
-            if declare is not None and declare not in declares:
-                declares.append(declare)
-        for declare in declares:
-            pragma = declare + '\n' + pragma
-        return pragma
-
     def _map_loop_will_have_openmp_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
                                           loop_idx: int) -> bool:
         """Whether the ``for`` loop at dimension ``loop_idx`` of ``map_entry`` will be immediately
@@ -3111,20 +3057,13 @@ class CPUCodeGen(TargetCodeGenerator):
             return True
         if schedule != dtypes.ScheduleType.Sequential:
             return False
-        # Both simd sources apply to the innermost loop of a non-unrolled Sequential map only.
+        # ``simd`` goes on the innermost loop of a non-unrolled Sequential map, and only where
+        # ``MarkSIMDMaps`` marked the map -- the pass owns the decision, this reads its verdict.
         if map_entry.map.unroll:
             return False
         if loop_idx != len(map_entry.map.range) - 1:
             return False
-        # ``MarkSIMDMaps`` already decided this map vectorizes, so the pragma is written
-        # unconditionally for it.
-        if map_entry.map.omp_simd:
-            return True
-        if not Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
-            return False
-        # Delegates to the same safety test used by the actual pragma emitter; a non-None return
-        # means a ``#pragma omp simd`` will be written before the loop.
-        return self._sequential_simd_pragma(sdfg, state, map_entry) is not None
+        return map_entry.map.omp_simd
 
     def _generate_MapEntry(
         self,
@@ -3204,10 +3143,39 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
 
-            # ``MarkSIMDMaps`` decided this; stamp the clause onto the existing pragma.
+            # OpenMP reduction clauses for WCR writes to accumulators outside the map. Atomic-add
+            # via wcr_fixed::reduce_atomic is correct but contended -- replacing the (implicit)
+            # per-iteration atomic with the OMP runtime's per-thread privatization + final tree
+            # reduce is what makes reductions in parallel maps fast. The covered targets are pushed
+            # onto ``_omp_reduction_scope_stack`` so the downstream ``write_and_resolve_expr`` skips
+            # the now-redundant ``reduce_atomic``.
+            omp_reductions = []
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                    and emits_tree_reductions(self.experimental_codegen)):
+                omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
+                declares = []
+                for op_str, clause_target, _dname, declare in omp_reductions:
+                    map_header += f' reduction({op_str}:{clause_target})'
+                    if declare is not None and declare not in declares:
+                        declares.append(declare)
+                # ``declare reduction`` directives must be in scope before the pragma; emit
+                # each unique one on its own line ahead of the ``parallel for``.
+                for declare in declares:
+                    map_header = declare + '\n' + map_header
+
+            # ``MarkSIMDMaps`` decided this map vectorizes -- it owns the analysis (leaf body, no
+            # directive-carrying tasklet, no min/max WCR) and expands a multidimensional map so the
+            # marked one is the innermost. Stamp its verdict onto the pragma the map already has;
+            # a covered reduction composes with it, the clause already sanctions reassociation
+            # inside the combining op, so vector partials are legal.
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
                 head, sep, rest = map_header.partition(' for')
                 map_header = f'{head}{sep} simd{rest}'
+
+            # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
+            # target data name so the nested WCR write's covered-check (``memlet.data in
+            # frame``) skips the now-redundant atomic and accumulates into the private copy.
+            self._omp_reduction_scope_stack.append({dname: op for op, _ct, dname, _dec in omp_reductions})
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
@@ -3258,22 +3226,18 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 # Determine whether this loop will be immediately preceded by an OpenMP directive.
-                # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. Sequential maps
-                # may emit ``#pragma omp simd`` here for the innermost loop, from either source:
-                # ``MarkSIMDMaps`` set ``omp_simd`` on the map, or this target proves the loop safe
-                # itself. Both write through the single site below, because the pragma must sit
-                # immediately before the ``for`` -- and only once, or the second one has no loop
-                # after it ("loop nest expected").
+                # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. A Sequential
+                # map emits ``#pragma omp simd`` here, before its innermost loop, exactly when
+                # ``MarkSIMDMaps`` marked it -- the pass owns the safety analysis, this renders its
+                # verdict. One write site, because the pragma must sit immediately before the
+                # ``for``, and only once: a second one has no loop after it ("loop nest expected").
                 will_have_openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
                                                          dtypes.ScheduleType.CPU_Persistent)
                 pragma = None
                 if (not will_have_openmp and not node.map.unroll and i == len(node.map.range) - 1
-                        and node.map.schedule == dtypes.ScheduleType.Sequential):
-                    if node.map.omp_simd:
-                        pragma = "#pragma omp simd"
-                    elif Config.get_bool('compiler', 'cpu', 'simd_sequential_maps'):
-                        pragma = self._sequential_simd_pragma(sdfg, state_dfg, node)
-                    will_have_openmp = pragma is not None
+                        and node.map.schedule == dtypes.ScheduleType.Sequential and node.map.omp_simd):
+                    pragma = "#pragma omp simd"
+                    will_have_openmp = True
 
                 comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)
                 init = '%s %s = %s' % (loop_index_ctype(), var, cpp.sym2cpp(begin))
@@ -3283,9 +3247,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write('%s;\n' % init, cfg, state_id, node)
                     init = ''
                 if pragma is not None:
-                    # ``#pragma omp simd`` must immediately precede the ``for``. ``None`` means this
-                    # call could not prove the loop safe (inner map/NestedSDFG body, or an uncovered
-                    # WCR edge) -- see ``simd_sequential_maps`` in config_schema.yml.
+                    # ``#pragma omp simd`` must immediately precede the ``for``; ``None`` means
+                    # ``MarkSIMDMaps`` did not mark this map.
                     result.write(pragma, cfg, state_id, node)
                 result.write(
                     "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),

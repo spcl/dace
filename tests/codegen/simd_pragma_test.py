@@ -1,7 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Structural tests for automatic ``#pragma omp simd`` / ``#pragma omp parallel for simd``
-emission on innermost (leaf-body) maps -- ``compiler.cpu.simd_sequential_maps`` and
-``compiler.cpu.simd_innermost_multicore_maps``.
+emission on innermost (leaf-body) maps.
+
+``MarkSIMDMaps`` (run from code generation, gated by ``compiler.cpu.simd_maps``) owns the
+decision and records it in ``Map.omp_simd``; the CPU targets only render the clause. These cases
+pin what comes out the other end.
 
 Runs every case against BOTH CPU code generators (``legacy`` and ``experimental_readable``,
 via ``compiler.cpu.implementation``): the two are separate classes (``ExperimentalCPUCodeGen``
@@ -173,16 +176,18 @@ def test_multicore_multidim_leaf_gets_no_simd(impl):
 
 
 @pytest.mark.parametrize('impl', IMPLS)
-def test_multicore_collapsed_multidim_leaf_gets_simd(impl):
-    """``collapse(2)`` makes the directive's associated loops reach the innermost one, so the
-    clause is well-defined again."""
+def test_multicore_collapsed_multidim_leaf_vectorizes_its_innermost_loop(impl):
+    """A multidimensional map reaches the clause through expansion, not through ``collapse``:
+    ``MarkSIMDMaps`` splits the innermost dimension into a Sequential map of its own and marks
+    that one, so the nest comes out as an outer ``parallel for`` over a ``simd`` inner loop."""
     with temporary_config():
         Config.set('compiler', 'cpu', 'implementation', value=impl)
         sdfg = _multidim_leaf_map_sdfg('mc_2d_coll_' + impl, dtypes.ScheduleType.CPU_Multicore, collapse=2)
         pragmas = _pragmas(sdfg)
     outer = [p for p in pragmas if 'parallel' in p]
     assert len(outer) == 1, pragmas
-    assert 'simd' in outer[0] and 'collapse(2)' in outer[0], pragmas
+    assert 'simd' not in outer[0], pragmas
+    assert any(p == '#pragma omp simd' for p in pragmas), pragmas
 
 
 @pytest.mark.parametrize('impl', IMPLS)
@@ -223,14 +228,16 @@ def test_map_with_uninlinable_nested_loop_gets_no_simd(impl, schedule):
 
 
 @pytest.mark.parametrize('impl', IMPLS)
-def test_sequential_fixed_sum_wcr_gets_simd_and_reduction_clause(impl):
+def test_sequential_fixed_sum_wcr_gets_no_simd(impl):
+    """A Sequential map lowers ANY WCR write to a plain, non-atomic ``wcr_fixed::reduce`` in the
+    loop body -- an accumulation into a fixed location carries across iterations, which is exactly
+    what ``simd`` asserts does not happen. The mark is withheld for every WCR here, fixed-target
+    reduction included; the reduction-clause path belongs to the CPU_Multicore pragma."""
     with temporary_config():
         Config.set('compiler', 'cpu', 'implementation', value=impl)
         sdfg = _leaf_map_sdfg('seq_sum_' + impl, dtypes.ScheduleType.Sequential, wcr='lambda a, b: a + b')
         pragmas = _pragmas(sdfg)
-    simd = [p for p in pragmas if p.startswith('#pragma omp simd')]
-    assert len(simd) == 1, pragmas
-    assert 'reduction(+:' in simd[0], pragmas
+    assert not any('simd' in p for p in pragmas), pragmas
 
 
 @pytest.mark.parametrize('impl', IMPLS)
@@ -278,10 +285,11 @@ def test_multicore_scatter_wcr_still_gets_simd(impl):
 
 @pytest.mark.parametrize('impl', IMPLS)
 def test_config_off_switch_disables_both_rules(impl):
+    """``simd_maps`` keeps ``MarkSIMDMaps`` out of code generation, so no map is marked and
+    neither schedule renders a clause."""
     with temporary_config():
         Config.set('compiler', 'cpu', 'implementation', value=impl)
-        Config.set('compiler', 'cpu', 'simd_sequential_maps', value=False)
-        Config.set('compiler', 'cpu', 'simd_innermost_multicore_maps', value=False)
+        Config.set('compiler', 'cpu', 'simd_maps', value=False)
         seq_pragmas = _pragmas(_leaf_map_sdfg('seq_off_' + impl, dtypes.ScheduleType.Sequential))
         mc_pragmas = _pragmas(_leaf_map_sdfg('mc_off_' + impl, dtypes.ScheduleType.CPU_Multicore))
     assert not any('simd' in p for p in seq_pragmas), seq_pragmas
@@ -293,8 +301,7 @@ def test_config_off_switch_disables_both_rules(impl):
 def test_defaults_are_on(impl):
     with temporary_config():
         Config.set('compiler', 'cpu', 'implementation', value=impl)
-        assert Config.get_bool('compiler', 'cpu', 'simd_sequential_maps') is True
-        assert Config.get_bool('compiler', 'cpu', 'simd_innermost_multicore_maps') is True
+        assert Config.get_bool('compiler', 'cpu', 'simd_maps') is True
 
 
 if __name__ == '__main__':
