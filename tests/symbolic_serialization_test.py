@@ -651,5 +651,17 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
 
 
+def test_symbol_dtype_is_part_of_symbol_identity():
+    assert symbolic.symbol('i', dace.int64) != symbolic.symbol('i', dace.int32)
+
+
+def test_typed_symbol_survives_a_poisoned_sympy_cache():
+    """A same-name symbol of another dtype must not be handed back by SymPy's global ``@cacheit`` LRUs."""
+    sympy.Mod(symbolic.symbol('cached_i', dace.int64), symbolic.TypedConstant(np.int16(3)))
+    expr = sympy.Mod(symbolic.symbol('cached_i'), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+
+    assert symbolic.serialize_symbolic(expr) == 'Mod($cached_i, 3i16)'
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

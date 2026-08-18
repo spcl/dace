@@ -171,7 +171,7 @@ class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
         # Create wildcards for multiplication and addition
         a = sympy.Wild('a', exclude=params)
         b = sympy.Wild('b', exclude=params)
@@ -249,8 +249,8 @@ class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
-            if (any(s not in defined_vars for s in node_rb.free_symbols)
-                    or any(s not in defined_vars for s in node_re.free_symbols)):
+            if (any(str(s) not in defined_names for s in node_rb.free_symbols)
+                    or any(str(s) not in defined_names for s in node_re.free_symbols)):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
                 return False
@@ -1396,11 +1396,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         sdfg = dfg_state.parent
         scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-        defined_vars = {
-            symbolic.pystr_to_symbolic(s)
-            for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
-            if s not in scope_node_symbols
-        }
+        defined_vars = (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()) - scope_node_symbols
 
         # Find other adjacent edges within the connected to the scope node
         # and union their subsets
@@ -1472,7 +1468,8 @@ class UnderapproximateWrites(ppl.Pass):
         """
         if not surrounding_itvars:
             surrounding_itvars = set()
-        # Argument handling
+        # Argument handling. Defined variables are only ever membership-tested, so keep them as bare names:
+        # symbol identity includes the dtype, which a name reparsed out of its scope cannot know.
         if defined_variables is None:
             # Default defined variables is "everything but params"
             defined_variables = set()
@@ -1480,11 +1477,15 @@ class UnderapproximateWrites(ppl.Pass):
             for memlet in memlets:
                 defined_variables |= memlet.free_symbols
             defined_variables -= set(params)
-            defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+        # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
+        defined_variables = set(map(str, defined_variables)) - {symbolic.UNDEFINED_NAME}
+
+        # Iteration variables are matched against the subsets, so they must be the very instances those carry.
+        scope_symbols = symbolic.symbols_in([m.subset for m in memlets] + [m.other_subset for m in memlets] + [rng])
 
         # Propagate subset
-        variable_context = [[symbolic.pystr_to_symbolic(p) for p in surrounding_itvars], defined_variables,
-                            [symbolic.pystr_to_symbolic(p) for p in params]]
+        variable_context = [[symbolic.resolve_symbol(p, scope_symbols) for p in surrounding_itvars], defined_variables,
+                            [symbolic.resolve_symbol(p, scope_symbols) for p in params]]
 
         new_subset = None
         for memlet in memlets:

@@ -3,7 +3,6 @@
     SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
 from dace.sdfg.state import SDFGState
-from dace import symbolic
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes, SDFG, SDFGState
 import dace.sdfg
@@ -83,9 +82,7 @@ class SVEVectorization(transformation.SingleStateTransformation):
             # Check for unsupported strides
             # The only unsupported strides are the ones containing the innermost
             # loop param because they are not constant during a vector step
-            param_sym = symbolic.symbol(current_map.params[-1])
-
-            if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
+            if param_name in {str(sym) for sym in e.data.get_stride(sdfg, map_entry.map).free_symbols}:
                 return False
 
             # Check for unsupported WCR
