@@ -3,7 +3,7 @@
 Equivalence + inspection tests for native (C++ / library-node) tasklet connector
 inlining in the experimental (readable) code generator.
 
-Native tasklets (BLAS/cuBLAS gemm, memset, small ternary tasklets) are emitted
+Native tasklets (BLAS/cuBLAS gemm, fill, small ternary tasklets) are emitted
 by ``ExperimentalCPUCodeGen`` with their connectors inlined at codegen time:
 
 * scalar connectors become direct ``<array>_idx(...)`` accesses, and
@@ -134,8 +134,8 @@ def _build_offset_ptr(name):
     return sdfg
 
 
-def _build_memset(name):
-    """ A ``FillLibraryNode`` expanded to a CPP ``memset(...)`` tasklet. """
+def _build_fill(name):
+    """ A ``FillLibraryNode`` expanded to a CPP ``std::fill_n(...)`` tasklet. """
     sdfg = dace.SDFG(name)
     sdfg.add_array('out', [8], dace.float64)
     st = sdfg.add_state('main')
@@ -313,26 +313,28 @@ def test_offset_pointer_connector_is_parenthesized_before_subscript():
     assert np.array_equal(exp['dst'], np.array([0.0, 4.0, 6.0, 8.0, 10.0]))
 
 
-def test_memset_pointer_connector():
-    # The memset output pointer connector stays a base pointer.
+def test_fill_pointer_connector():
+    # The fill output pointer connector stays a base pointer. The CPU expansion spells the fill
+    # as ``std::fill_n`` (both gcc and clang lower it to a memset when the value allows it).
     _set_impl(EXPERIMENTAL)
-    code = _build_memset('memset_codegen').generate_code()[0].clean_code
-    calls = [l.strip() for l in code.splitlines() if l.strip().startswith('memset(')]
-    assert calls, 'no memset call emitted'
+    code = _build_fill('fill_codegen').generate_code()[0].clean_code
+    calls = [l.strip() for l in code.splitlines() if l.strip().startswith('std::fill_n(')]
+    assert calls, 'no fill call emitted'
     call = calls[0]
     assert FillLibraryNode.OUTPUT_CONNECTOR_NAME not in call, 'pointer connector not inlined: %s' % call
     assert '_idx(' not in call, 'pointer connector wrongly turned into single-element index: %s' % call
-    assert re.search(r'memset\(\s*out\b', call), call
+    assert re.search(r'std::fill_n\(\s*out\b', call), call
 
     # Bit-exact legacy vs experimental.
     base = dict(out=np.arange(8, dtype=np.float64) + 1.0)
     _set_impl(LEGACY)
     leg = copy.deepcopy(base)
-    _build_memset('memset_legacy').compile()(**leg)
+    _build_fill('fill_legacy').compile()(**leg)
     _set_impl(EXPERIMENTAL)
     exp = copy.deepcopy(base)
-    _build_memset('memset_experimental').compile()(**exp)
+    _build_fill('fill_experimental').compile()(**exp)
     assert np.array_equal(leg['out'], exp['out'])
+    assert np.array_equal(exp['out'], np.zeros(8))
 
 
 def _defined_index_functions(code):
@@ -451,7 +453,7 @@ if __name__ == '__main__':
     test_cpp_ternary_scalar_inline()
     test_cpp_body_declaration_blocks_inlining()
     test_cpp_pointer_and_scalar_unit()
-    test_memset_pointer_connector()
+    test_fill_pointer_connector()
     test_index_functions_defined_in_every_file()
     test_gemm_pure_naive()
     test_gemm_openblas_pointers()

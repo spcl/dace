@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
+from dace import symbolic
 from dace.codegen.common import get_gpu_backend
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_fill_libnode
 
@@ -1999,6 +2001,60 @@ def test_shared_to_global_uses_the_block_collective_helper():
     sdfg.expand_library_nodes()
     bodies = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert any('dace::SharedToGlobal1D<' in b for b in bodies), bodies
+
+
+def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
+    """A copy / fill whose extent is a symbolic POWER must expand.
+
+    ``sym2cpp(R ** K)`` is ``dace::math::ipow(R, K)``; rendering an extent through it and handing the
+    text back to the range parser splits the qualified name on ':' and raises
+    ``SyntaxError: Invalid range``. Both expansions must therefore build their map ranges and memlet
+    subsets from the symbolic expression, never from a rendered string. Reproduces the npbench
+    ``stockham_fft`` expansion failure.
+    """
+    R, K = dace.symbol('R'), dace.symbol('K')
+    extent = R**K
+
+    sdfg = dace.SDFG('symbolic_extent_copy')
+    sdfg.add_array('src', [extent], dace.float64)
+    sdfg.add_array('dst', [extent], dace.float64)
+    state = sdfg.add_state('main')
+    libnode = CopyLibraryNode('cpy')
+    libnode.implementation = 'MappedTasklet'
+    state.add_node(libnode)
+    state.add_edge(state.add_access('src'), None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.Memlet(f'src[0:{extent}]'))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('dst'), None,
+                   dace.Memlet(f'dst[0:{extent}]'))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    fill_sdfg = dace.SDFG('symbolic_extent_fill')
+    fill_sdfg.add_array('out', [extent], dace.float64)
+    fill_state = fill_sdfg.add_state('main')
+    fill = FillLibraryNode('zero')
+    fill.implementation = 'pure'
+    fill_state.add_node(fill)
+    fill_state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access('out'), None,
+                        dace.Memlet(f'out[0:{extent}]'))
+    fill_sdfg.expand_library_nodes()
+    fill_sdfg.validate()
+
+    for expanded in (sdfg, fill_sdfg):
+        entries = [n for n, _ in expanded.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+        assert entries, f'{expanded.name}: no map emitted'
+        for entry in entries:
+            for _, end, _ in entry.map.range:
+                # The extent survives as a symbolic expression over R and K (possibly wrapped in a
+                # ceiling by the element count), not as a C++ rendering of it.
+                assert '::' not in str(end), f'{expanded.name}: C++ spelling leaked into a map range: {end}'
+                assert {str(s) for s in symbolic.pystr_to_symbolic(str(end)).free_symbols} == {'R', 'K'}, \
+                    f'{expanded.name}: extent lost its symbols: {end}'
+        for st in expanded.all_states():
+            for e in st.edges():
+                if e.data is not None and not e.data.is_empty() and e.data.subset is not None:
+                    assert '::' not in str(e.data.subset), \
+                        f'{expanded.name}: C++ spelling leaked into a memlet subset: {e.data.subset}'
 
 
 if __name__ == "__main__":
