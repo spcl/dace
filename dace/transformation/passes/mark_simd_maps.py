@@ -125,29 +125,22 @@ class MarkSIMDMaps(ppl.Pass):
                 ]
                 for entry in candidates:
                     # The clause vectorizes the loop it precedes, so a multidimensional map has to
-                    # give its innermost dimension a map of its own first.
+                    # give its innermost dimension a map of its own first. MapExpansion returns the
+                    # new nest outermost-first, and propagates the scope it rewrote by itself, so
+                    # ``annotate`` stays off: a whole-SDFG propagation per map is quadratic.
                     if len(entry.map.params) > 1:
-                        MapExpansion.apply_to(nsdfg,
-                                              options={
-                                                  'expansion_limit': len(entry.map.params) - 1,
-                                                  'inner_schedule': dtypes.ScheduleType.Sequential
-                                              },
-                                              map_entry=entry,
-                                              verify=False,
-                                              save=False)
-                        entry = self.innermost_entry(state, entry)
+                        entry = MapExpansion.apply_to(nsdfg,
+                                                      options={
+                                                          'expansion_limit': len(entry.map.params) - 1,
+                                                          'inner_schedule': dtypes.ScheduleType.Sequential
+                                                      },
+                                                      map_entry=entry,
+                                                      verify=False,
+                                                      annotate=False,
+                                                      save=False)[-1]
                     entry.map.omp_simd = True
                     marked.add((nsdfg.cfg_id, entry.map.label))
         return marked or None
-
-    def innermost_entry(self, state: SDFGState, entry: nodes.MapEntry) -> nodes.MapEntry:
-        """ The innermost MapEntry of the nest ``entry`` now heads, after expansion. """
-        scope = state.scope_children()
-        while True:
-            inner = [n for n in scope[entry] if isinstance(n, nodes.MapEntry)]
-            if not inner:
-                return entry
-            entry = inner[0]
 
     def map_takes_simd(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         """ Whether this map's innermost loop can carry the clause. """

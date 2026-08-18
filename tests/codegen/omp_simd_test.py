@@ -8,6 +8,7 @@ import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg import infer_types
+from dace.sdfg import propagation
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 
@@ -265,6 +266,46 @@ def test_the_mark_survives_a_round_trip():
     assert all(n.map.omp_simd for _, n in entries(restored))
 
 
+def test_the_pass_propagates_only_the_scopes_it_rewrote():
+    """``apply_to`` propagates memlets over the whole SDFG once per application unless told not to,
+    which is quadratic in the map count and never finished on a model-sized graph. MapExpansion
+    propagates the scope it rewrote by itself, and that scope is all this pass disturbs."""
+    sdfg = dace.SDFG('propagation_scope')
+    previous = None
+    for k in range(4):
+        sdfg.add_array(f'a{k}', (64, 64), dace.float64)
+        sdfg.add_array(f'b{k}', (64, 64), dace.float64)
+        state = sdfg.add_state(f's{k}', is_start_block=(k == 0))
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+        state.add_mapped_tasklet(f'm{k}', {
+            'i': '0:64',
+            'j': '0:64'
+        }, {'inp': dace.Memlet(f'a{k}[i, j]')},
+                                 'o = inp * 2.0', {'o': dace.Memlet(f'b{k}[i, j]')},
+                                 external_edges=True)
+    sdfg.validate()
+
+    whole_sdfg_calls = []
+    original = propagation.propagate_memlets_sdfg
+    propagation.propagate_memlets_sdfg = lambda *args, **kwargs: whole_sdfg_calls.append(args)
+    try:
+        marked = mark(sdfg)
+    finally:
+        propagation.propagate_memlets_sdfg = original
+
+    assert len(marked) == 4
+    assert not whole_sdfg_calls, 'expansion must not drag a whole-SDFG memlet propagation behind it'
+
+    # What the expansion did touch is still propagated: the outer map hands the inner one a row.
+    for state in sdfg.all_states():
+        outer = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.params == ['i'])
+        inner = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.params == ['j'])
+        edge = next(e for e in state.edges_between(outer, inner) if e.data.data is not None)
+        assert str(edge.data.subset) == 'i, 0:64'
+
+
 def test_config_switch_suppresses_the_clause():
     """The escape hatch keeps the pass out of code generation entirely."""
 
@@ -293,4 +334,5 @@ if __name__ == '__main__':
                                                                                                              False)):
         test_outlined_body_is_opened_not_refused(name, is_leaf)
     test_the_mark_survives_a_round_trip()
+    test_the_pass_propagates_only_the_scopes_it_rewrote()
     test_config_switch_suppresses_the_clause()
