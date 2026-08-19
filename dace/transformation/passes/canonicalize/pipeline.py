@@ -754,8 +754,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # / ParallelizeUnderConstraint all decline a loop that is plainly parallel. Recover the direct
     # arithmetic here, before the lifting stages; genuine data-dependent gathers (``a[idx[i]]``)
     # are left alone. ``RemoveUnusedSymbols`` then sweeps the now-dead promotion symbols.
-    s += [('index_subsets', PropagateIndexSubsets()), ('index_subsets', RemoveUnusedSymbols()),
-          ('index_subsets', SimplifyPass())]
+    s += [('index_subsets', PropagateIndexSubsets()), ('index_subsets', RemoveUnusedSymbols())]
 
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
