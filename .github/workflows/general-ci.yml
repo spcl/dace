@@ -74,8 +74,16 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        ulimit -s 65536 || true && pytest -n 2 --max-worker-restart=0 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -o faulthandler_timeout=420 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        ulimit -s 65536 || true && pytest -n 2 --max-worker-restart=0 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -o faulthandler_timeout=420 --durations=40 --junitxml=pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
+
+    - name: Upload general test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: general-results-py${{ matrix.python-version }}-${{ matrix.simplify }}-${{ github.run_id }}
+        path: pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml
+        if-no-files-found: ignore
 
     - name: Test OpenBLAS LAPACK
       run: |
