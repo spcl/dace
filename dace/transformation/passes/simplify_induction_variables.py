@@ -100,8 +100,7 @@ def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
 
 
 def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, list],
-                                    nested_carries: Dict[str, Tuple[LoopRegion,
-                                                                   symbolic.SymbolicType]]) -> int:
+                                     nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
     """Fold iedge counters of the form ``sym := sym + const`` inside ``loop``.
 
     Returns the number of symbols folded. For each folded symbol the per-iteration
@@ -140,10 +139,9 @@ def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, 
             start_block = loop.start_block
         except ValueError:
             continue
-        norm_iter = symbolic.simplify(symbolic.int_floor(symbolic.pystr_to_symbolic(loop.loop_variable) - start,
-                                                           stride))
-        src_is_empty_start = (edge.src is start_block and isinstance(edge.src, SDFGState)
-                              and not edge.src.nodes())
+        norm_iter = symbolic.simplify(symbolic.int_floor(
+            symbolic.pystr_to_symbolic(loop.loop_variable) - start, stride))
+        src_is_empty_start = (edge.src is start_block and isinstance(edge.src, SDFGState) and not edge.src.nodes())
         sinks = [b for b in loop.nodes() if loop.out_degree(b) == 0]
         dst_is_unique_empty_sink = (isinstance(edge.dst, SDFGState) and not edge.dst.nodes() and len(sinks) == 1
                                     and sinks[0] is edge.dst and loop.in_degree(edge.dst) == 1)
@@ -169,9 +167,8 @@ def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, 
     return applied
 
 
-def _fold_nested_carried_symbols(loop: LoopRegion,
-                                 nested_carries: Dict[str, Tuple[LoopRegion,
-                                                                  symbolic.SymbolicType]]) -> int:
+def _fold_nested_carried_symbols(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion,
+                                                                                   symbolic.SymbolicType]]) -> int:
     """Close the outer carry for symbols incremented by an immediately nested loop.
 
     After a nested inner loop folded a self-referential counter, this loop's

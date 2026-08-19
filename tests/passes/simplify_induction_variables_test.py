@@ -430,11 +430,7 @@ def test_nested_self_referential_counter_iv_closes_to_closed_form():
     sdfg.add_node(outer)
     sdfg.add_edge(init, outer, dace.InterstateEdge(assignments={'k': '-1'}))
 
-    inner = LoopRegion('inner',
-                       condition_expr='j < N',
-                       loop_var='j',
-                       initialize_expr='j = 0',
-                       update_expr='j = j + 1')
+    inner = LoopRegion('inner', condition_expr='j < N', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
     outer.add_node(inner, is_start_block=True)
     ibody = inner.add_state('ibody', is_start_block=True)
     iuse = inner.add_state('iuse')
