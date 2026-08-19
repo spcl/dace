@@ -127,6 +127,12 @@ def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, 
         step = _is_self_referential_incr(name, rhs)
         if step is None:
             continue
+        # The closed form assumes the increment is loop-invariant. A step that
+        # depends on the loop variable (e.g. TSVC s141 ``k = k + j + 1``) is
+        # not a constant per-iteration increment and must not be folded here.
+        loop_var_name = loop.loop_variable
+        if loop_var_name is not None and loop_var_name in {str(s) for s in step.free_symbols}:
+            continue
         # Only fold when the counter is dead after the loop. If its post-loop
         # value is consumed, InductionVariableSubstitution owns the rewrite (it
         # materialises the exit value); folding here would drop the update.
