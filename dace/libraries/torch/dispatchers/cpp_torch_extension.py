@@ -640,7 +640,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
         name=unique_name,
         sources=sources,
         build_directory=unique_build_dir,
-        extra_cflags=["-g"],
+        # torch's cpp_extension defaults to -std=c++17, while the DaCe runtime headers this
+        # translation unit includes are C++20 (``std::bit_cast`` in ``dace/types.h``, among
+        # others). Read the same config entry the DaCe build reads so the two never drift.
+        extra_cflags=["-g", f"-std=c++{config.Config.get('compiler', 'cpp_standard')}"],
         extra_include_paths=[
             p for p in {
                 include_path,
