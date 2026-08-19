@@ -16,7 +16,7 @@ from typing import Any, Dict, Set, Optional
 from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.symbolic import equalize_symbols_across, pystr_to_symbolic, scalars
+from dace.symbolic import SymbolicType, equalize_symbols_across, pystr_to_symbolic, scalars
 
 
 def free_symbol_names(value) -> Set[str]:
@@ -174,7 +174,7 @@ def consistent_bindings(sd: SDFG) -> Dict[str, Optional[str]]:
     return bindings
 
 
-def resolve_bindings(expr, sd: SDFG, rounds: int = 8):
+def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8) -> SymbolicType:
     """``expr`` with every consistently-bound interstate symbol expanded into its RHS, to a fixed
     point (bounded by ``rounds``).
 
