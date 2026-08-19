@@ -359,6 +359,17 @@ static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) ==
               std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+
+#if defined(_OPENMP) && !defined(__NVCOMPILER_MAJOR__) && !defined(__PGIC__)
+// OpenMP has no built-in reduction over std::complex; declare the arithmetic
+// operators so reduction clauses emitted on dace::complex64/128 resolve.
+DACE_PRAGMA(omp declare reduction(+ : std::complex<float> : omp_out += omp_in) initializer(omp_priv = std::complex<float>(0)))
+DACE_PRAGMA(omp declare reduction(- : std::complex<float> : omp_out -= omp_in) initializer(omp_priv = std::complex<float>(0)))
+DACE_PRAGMA(omp declare reduction(* : std::complex<float> : omp_out *= omp_in) initializer(omp_priv = std::complex<float>(1)))
+DACE_PRAGMA(omp declare reduction(+ : std::complex<double> : omp_out += omp_in) initializer(omp_priv = std::complex<double>(0)))
+DACE_PRAGMA(omp declare reduction(- : std::complex<double> : omp_out -= omp_in) initializer(omp_priv = std::complex<double>(0)))
+DACE_PRAGMA(omp declare reduction(* : std::complex<double> : omp_out *= omp_in) initializer(omp_priv = std::complex<double>(1)))
+#endif
 #endif
 
 #endif  // __DACE_TYPES_H
