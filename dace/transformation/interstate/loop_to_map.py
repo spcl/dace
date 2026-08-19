@@ -404,6 +404,24 @@ class LoopToMap(xf.MultiStateTransformation):
         for state in loop_states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
 
+        # Symbols assigned inside the loop (other than the iterator) must not shape any data
+        # descriptor that survives outside the loop body; otherwise the assignment moves into
+        # a map and leaves the descriptor's dimensions undefined.
+        body_assigned_noiter = {s for s in body_assigned_syms if s != itervar}
+        if body_assigned_noiter:
+            desc_syms_outside: OrderedSet[str] = OrderedSet()
+            for desc in sdfg.arrays.values():
+                desc_syms_outside |= OrderedSet(str(s) for s in desc.free_symbols)
+            seen = {id(sdfg)}
+            parent = sdfg.parent_nsdfg_node
+            while parent is not None and id(parent.sdfg) not in seen:
+                seen.add(id(parent.sdfg))
+                for desc in parent.sdfg.arrays.values():
+                    desc_syms_outside |= OrderedSet(str(s) for s in desc.free_symbols)
+                parent = parent.sdfg.parent_nsdfg_node
+            if desc_syms_outside & body_assigned_noiter:
+                return False
+
         # Lazy: it walks every state and edge, and the cheap refusals above take 41k of 44k.
         _, write_set = self.loop.read_and_write_sets()
 
