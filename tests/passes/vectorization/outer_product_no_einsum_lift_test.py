@@ -16,6 +16,7 @@ from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+import tests.corpus.measure_parallelization as mp
 
 N = 16
 
@@ -31,10 +32,6 @@ def _gemm_libnodes(sdfg):
 def test_default_mode_lifts_outer_products_contraction_only_does_not():
     """On gemver's rank-2 update, the default lift produces GEMM/Einsum nodes
     from the outer products; the contraction-only mode produces none."""
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.parallelize import parallelize
 
     base, _ = mp.CORPORA['poly'][1]('gemver')
@@ -56,10 +53,6 @@ def test_default_mode_lifts_outer_products_contraction_only_does_not():
 def test_existing_matmul_contractions_are_untouched():
     """The two GEMV MatMuls gemver already carries survive either mode -- the
     guard only affects the map-level outer-product lift, not real contractions."""
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.parallelize import parallelize
 
     base, _ = mp.CORPORA['poly'][1]('gemver')
@@ -80,10 +73,6 @@ def test_gemver_vectorizes_correctly_both_pipelines():
     Skipped if the corpus harness is unavailable.
     """
     import copy
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA['poly'][1]('gemver')

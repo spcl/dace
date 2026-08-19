@@ -59,8 +59,8 @@ def openmp_reduce_available():
 
 
 def _require_omp_reduce():
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
+    # Only the Reduce expansion is build-dependent; the generator itself is required.
+    assert experimental_available(), "the readable CPU generator is not wired up"
     if not openmp_reduce_available():
         pytest.skip("OpenMP reduce expansion not available in this build")
 

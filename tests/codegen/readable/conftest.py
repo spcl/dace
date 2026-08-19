@@ -58,21 +58,19 @@ def generated_code(sdfg):
 
 @functools.lru_cache(maxsize=1)
 def experimental_available():
-    """True iff the experimental readable CPU generator is wired up and its output differs from legacy."""
-    try:
-        Config.get(*IMPLEMENTATION_KEY)
-    except Exception:  # noqa: BLE001 - key absent -> feature not present
-        return False
-    try:
-        # Same SDFG object under both configs -- avoids spurious divergence from DaCe deduplicating
-        # two separately-built SDFGs' names.
-        sdfg = trivial_elementwise_sdfg("readable_probe")
-        with use_implementation(LEGACY):
-            legacy_code = generated_code(sdfg)
-        with use_implementation(EXPERIMENTAL):
-            experimental_code = generated_code(sdfg)
-    except Exception:  # noqa: BLE001 - generator under development raised -> not ready
-        return False
+    """True iff the readable CPU generator is wired up and its output differs from legacy.
+
+    Nothing is swallowed here: a raising probe means the generator regressed, and that must surface
+    as an error rather than as silent skips.
+    """
+    Config.get(*IMPLEMENTATION_KEY)
+    # Same SDFG object under both configs -- avoids spurious divergence from DaCe deduplicating
+    # two separately-built SDFGs' names.
+    sdfg = trivial_elementwise_sdfg("readable_probe")
+    with use_implementation(LEGACY):
+        legacy_code = generated_code(sdfg)
+    with use_implementation(EXPERIMENTAL):
+        experimental_code = generated_code(sdfg)
     return experimental_code != legacy_code
 
 
@@ -192,9 +190,9 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def require_experimental():
-    """Skip the test unless the readable generator is wired up (see the gate)."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
+    """Assert the readable generator is wired up; it is required, not optional."""
+    assert experimental_available(), (
+        "the readable CPU generator produced byte-identical output to legacy -- it is not wired up")
 
 
 @pytest.fixture

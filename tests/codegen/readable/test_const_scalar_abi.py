@@ -18,7 +18,7 @@ import pytest
 import dace
 from dace.config import set_temporary
 
-from tests.codegen.readable.conftest import LEGACY, EXPERIMENTAL, use_implementation, generated_code, run_isolated, experimental_available
+from tests.codegen.readable.conftest import LEGACY, EXPERIMENTAL, use_implementation, generated_code, run_isolated
 
 N = dace.symbol("N")
 #: The scalar's declaration in the generated nested-SDFG signature.
@@ -72,8 +72,6 @@ def _generate(impl, abi, sdfg=None):
 
 def test_readable_default_is_by_ref():
     """The readable generator's DEFAULT binds by const reference -- the legacy ABI."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
     assert dace.Config.get("compiler", "cpu", "codegen_params",
                            "const_scalar_abi") == "by_ref", "default must be by_ref"
     decl = _scalar_arg_decl(_generate(EXPERIMENTAL, "by_ref"))
@@ -82,16 +80,12 @@ def test_readable_default_is_by_ref():
 
 def test_readable_by_value():
     """``by_value`` binds by const value (a copy) -- no reference."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
     decl = _scalar_arg_decl(_generate(EXPERIMENTAL, "by_value"))
     assert BY_VALUE in decl and BY_REF not in decl, decl
 
 
 def test_legacy_ignores_the_flag():
     """Legacy always binds by const reference; the flag must not change its output at all."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
     sdfg = _nsdfg_scalar_arg_sdfg("abi_legacy_noop")  # ONE object -> the two outputs are comparable
     by_ref = _generate(LEGACY, "by_ref", sdfg)
     by_value = _generate(LEGACY, "by_value", sdfg)
@@ -101,8 +95,6 @@ def test_legacy_ignores_the_flag():
 
 def test_readable_matches_legacy_abi_by_default():
     """The readable default reproduces legacy's scalar binding exactly."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
     assert _scalar_arg_decl(_generate(EXPERIMENTAL, "by_ref")).count(BY_REF) == \
         _scalar_arg_decl(_generate(LEGACY, "by_ref")).count(BY_REF)
 
@@ -110,8 +102,6 @@ def test_readable_matches_legacy_abi_by_default():
 @pytest.mark.parametrize("abi", ["by_ref", "by_value"])
 def test_both_abis_are_bit_exact(abi):
     """Both bindings are semantically identical -> bit-identical results vs legacy."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
 
     def run(impl, abi_value):
 

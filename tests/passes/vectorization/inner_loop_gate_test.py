@@ -21,6 +21,7 @@ import pytest
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_has_inner_loop,
                                                                            map_body_has_tiled_param_dependent_branch)
+import tests.corpus.measure_parallelization as mp
 
 N = 16
 
@@ -146,10 +147,6 @@ def test_real_kernels_are_refused_and_correct(name):
 
     Skipped if the corpus harness is unavailable in this environment.
     """
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA['poly'][1](name)

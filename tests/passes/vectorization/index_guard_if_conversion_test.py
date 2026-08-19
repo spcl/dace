@@ -18,6 +18,7 @@ import pytest
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol, provably_nonnegative)
+import tests.corpus.measure_parallelization as mp
 
 N = dace.symbol('N')
 
@@ -78,10 +79,6 @@ def test_s276_lowers_to_a_per_lane_blend():
 
     Skipped if the corpus harness is unavailable in this environment.
     """
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.libraries.tileops.nodes import TileITE
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 

@@ -17,6 +17,7 @@ import copy
 import dace
 import pytest
 from dace.transformation.passes.vectorization.lift_map_reduction import _trip_depends_on_enclosing_map
+import tests.corpus.measure_parallelization as mp
 
 M = 32
 
@@ -67,10 +68,6 @@ def test_trmm_has_no_map_param_in_its_signature():
 
     Skipped if the corpus harness is unavailable in this environment.
     """
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     for config in ('canon+vec', 'parallelize+vec'):

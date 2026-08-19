@@ -15,6 +15,7 @@ import dace
 import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.vectorize_multi_dim import restore_sdfg_in_place
+import tests.corpus.measure_parallelization as mp
 
 N = 8
 
@@ -63,10 +64,6 @@ def test_refused_kernels_finalize(name):
 
     Skipped if the corpus harness is unavailable in this environment.
     """
-    try:
-        import tests.corpus.measure_parallelization as mp
-    except Exception:
-        pytest.skip('corpus harness unavailable')
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA['poly'][1](name)
