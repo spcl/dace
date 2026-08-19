@@ -59,6 +59,9 @@ jobs:
     - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
@@ -69,6 +72,9 @@ jobs:
     - name: Test MPI with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
@@ -78,6 +84,9 @@ jobs:
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique

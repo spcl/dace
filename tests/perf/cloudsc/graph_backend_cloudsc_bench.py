@@ -21,7 +21,7 @@ simplify -> config-prop+loopunroll pipeline. A benchmark whose backends disagree
 is not reporting a real speedup, so this script refuses to print a timing table if that
 check fails.
 
-Usage: python3 tests/perf/graph_backend_cloudsc_bench.py [--reps 10] [--output out.json]
+Usage: python3 tests/perf/cloudsc/graph_backend_cloudsc_bench.py [--reps 10] [--output out.json]
                                                           [--table-output table.md]
 """
 import argparse

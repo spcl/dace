@@ -57,6 +57,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
@@ -76,6 +79,9 @@ jobs:
     - name: Run sequential tests
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
@@ -92,6 +98,9 @@ jobs:
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
@@ -128,6 +137,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.
         export DACE_compiler_cpu_implementation=experimental_readable
@@ -189,6 +201,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.
         export DACE_compiler_cpu_implementation=experimental_readable
@@ -225,6 +240,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # Pinned, not left to the defaults: nearly every case compiles, so build caching is most of
         # the wall time here.
@@ -293,6 +311,9 @@ jobs:
         # libgomp keeps one runtime.
         export MKL_THREADING_LAYER=GNU
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # Pinned, not left to the defaults: every case here compiles, so build caching is most of
         # the wall time.
@@ -312,6 +333,9 @@ jobs:
         export MKL_THREADING_LAYER=GNU
         export TBLIS_ROOT=/usr/local
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -346,6 +370,9 @@ jobs:
     - name: Codegen knob suite + CPU external TU
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # Deterministic reduction order for the bit-exact legacy-vs-experimental corpus compare.
         export OMP_NUM_THREADS=1
@@ -387,6 +414,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         export DACE_optimizer_automatic_simplification=1
         export DACE_compiler_cpu_implementation=experimental_readable
@@ -420,6 +450,9 @@ jobs:
     - name: Test with pytest (tests/graphlib, rustworkx backend)
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique

@@ -37,6 +37,9 @@ jobs:
     - name: CloudSC corpus tests
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # The tests build with ``simplify=False`` and apply simplification as an explicit step,
         # so the automatic heuristic must not have run first.

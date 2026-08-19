@@ -39,6 +39,9 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique

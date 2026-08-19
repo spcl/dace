@@ -71,6 +71,9 @@ jobs:
     - name: Run pytest GPU with distributed compilation
       run: |
         source ~/.venv/bin/activate # activate venv
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export PATH=$PATH:/usr/local/cuda/bin
         pip install pytest-mpi
         mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
@@ -84,6 +87,9 @@ jobs:
         export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
         export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/cuda_test.sh
