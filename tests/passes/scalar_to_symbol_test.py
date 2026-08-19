@@ -1,5 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
+import re
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import scalar_to_symbol
@@ -973,11 +975,17 @@ def test_abs_complex_guard_compiles_and_runs():
 
     sdfg = absguard.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    # The complex-magnitude guard must survive as an ``Abs(...) < ...`` comparison
-    # in generated code -- this is exactly the shape that regresses if ``Abs``
-    # returns complex instead of the real magnitude.
-    assert any('Abs(' in line and '<' in line for c in codegen.generate_code(sdfg)
-               for line in c.clean_code.splitlines()), "expected an ``Abs(...) < ...`` guard in codegen"
+    # The magnitude must reach the comparison as a REAL -- that is the contract ``Abs`` breaks
+    # when it returns complex. Two lowerings say it: the guard folded into an interstate
+    # condition (``Abs(<complex>) < 2.0`` inline), or the magnitude bound to a real local first
+    # (``double m; m = abs(z); if (m < 2.0)``). Assert the property, not one of the two shapes.
+    lines = [line.strip() for c in codegen.generate_code(sdfg) for line in c.clean_code.splitlines()]
+    inline = any('Abs(' in line and '<' in line for line in lines)
+    bound = next((m.group(1) for m in (re.match(r'(\w+)\s*=\s*[aA]bs\(', line) for line in lines) if m), None)
+    real_typed = bound is not None and any(re.match(rf'(double|float)\s+{bound}\s*;', line) for line in lines)
+    compared = bound is not None and any(f'{bound} <' in line for line in lines)
+    assert inline or (real_typed and compared), \
+        f"the complex magnitude must be compared as a real; got bound={bound!r} in:\n" + "\n".join(lines)
     csdfg = sdfg.compile()  # fails to compile if Abs(complex) returns complex
 
     n = 16

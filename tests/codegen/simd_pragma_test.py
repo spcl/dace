@@ -283,6 +283,74 @@ def test_multicore_scatter_wcr_still_gets_simd(impl):
     assert any(p.startswith('#pragma omp parallel for') and 'simd' in p for p in pragmas), pragmas
 
 
+def _map_with_nested_wcr_sdfg(name: str, schedule, wcr: str):
+    """A map whose body is a NestedSDFG holding the WCR write -- the frontend-outlined scatter
+    shape ``hist[bin[i]] (op)= w[i]``. The nested-SDFG-to-MapExit edge is a PLAIN write, so the
+    only WCR is one level down; the scatter index is a symbol the body binds from its own read.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('idx', [10], dace.int64)
+    sdfg.add_array('w', [10], dace.float64)
+    sdfg.add_array('hist', [10], dace.float64)
+    state = sdfg.add_state()
+
+    body = dace.SDFG('body_' + name)
+    body.add_scalar('b_in', dace.int64)
+    body.add_scalar('w_in', dace.float64)
+    body.add_array('oc', [10], dace.float64)
+    body.add_symbol('bsym', dace.int64)
+    body.add_scalar('b_scal', dace.int64, transient=True)
+    read = body.add_state('read', is_start_block=True)
+    rd = read.add_tasklet('rd', {'__b'}, {'__o'}, '__o = __b')
+    read.add_edge(read.add_read('b_in'), None, rd, '__b', dace.Memlet('b_in[0]'))
+    read.add_edge(rd, '__o', read.add_access('b_scal'), None, dace.Memlet('b_scal[0]'))
+    accum = body.add_state('accum')
+    body.add_edge(read, accum, dace.InterstateEdge(assignments={'bsym': 'b_scal'}))
+    ac = accum.add_tasklet('acc', {'__w'}, {'__o'}, '__o = __w')
+    accum.add_edge(accum.add_read('w_in'), None, ac, '__w', dace.Memlet('w_in[0]'))
+    accum.add_edge(ac, '__o', accum.add_write('oc'), None, dace.Memlet(data='oc', subset='bsym', wcr=wcr))
+
+    me, mx = state.add_map('m', dict(i='0:10'), schedule=schedule)
+    nsdfg = state.add_nested_sdfg(body, {'b_in', 'w_in'}, {'oc'})
+    state.add_memlet_path(state.add_read('idx'), me, nsdfg, dst_conn='b_in', memlet=dace.Memlet('idx[i]'))
+    state.add_memlet_path(state.add_read('w'), me, nsdfg, dst_conn='w_in', memlet=dace.Memlet('w[i]'))
+    mx.add_in_connector('IN_hist')
+    mx.add_out_connector('OUT_hist')
+    state.add_edge(nsdfg, 'oc', mx, 'IN_hist', dace.Memlet('hist[0:10]'))
+    state.add_edge(mx, 'OUT_hist', state.add_write('hist'), None, dace.Memlet('hist[0:10]'))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('impl', IMPLS)
+def test_sequential_wcr_inside_nested_body_gets_no_simd(impl):
+    """The WCR hazard does not have to sit on the map exit. An outlined body carries the
+    accumulate INSIDE its NestedSDFG, and a Sequential map still lowers it to a plain non-atomic
+    ``wcr_fixed::reduce``; vectorizing colliding scatter addresses across lanes DROPS updates
+    (measured: ~20% of a 4000-element histogram). The scan must look through the body."""
+    with temporary_config():
+        Config.set('compiler', 'cpu', 'implementation', value=impl)
+        sdfg = _map_with_nested_wcr_sdfg('seq_nested_wcr_' + impl,
+                                         dtypes.ScheduleType.Sequential,
+                                         wcr='lambda a, b: a + b')
+        pragmas = _pragmas(sdfg)
+    assert not any('simd' in p for p in pragmas), pragmas
+
+
+@pytest.mark.parametrize('impl', IMPLS)
+def test_multicore_minmax_wcr_inside_nested_body_gets_no_simd(impl):
+    """Same blind spot on the CPU_Multicore side: ``min``/``max`` withholds the clause there, and
+    a nested-body WCR must trigger that refusal exactly as an exit-edge one does."""
+    with temporary_config():
+        Config.set('compiler', 'cpu', 'implementation', value=impl)
+        sdfg = _map_with_nested_wcr_sdfg('mc_nested_minmax_' + impl,
+                                         dtypes.ScheduleType.CPU_Multicore,
+                                         wcr='lambda a, b: max(a, b)')
+        pragmas = _pragmas(sdfg)
+    assert not any('simd' in p for p in pragmas), pragmas
+    assert any(p == '#pragma omp parallel for' for p in pragmas), pragmas
+
+
 @pytest.mark.parametrize('impl', IMPLS)
 def test_config_off_switch_disables_both_rules(impl):
     """``simd_maps`` keeps ``MarkSIMDMaps`` out of code generation, so no map is marked and

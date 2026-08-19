@@ -41,6 +41,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+from dace.transformation.passes.symbol_propagation import resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -161,7 +162,11 @@ class ParallelizeUnderConstraint(ppl.Pass):
         reads_by_arr: dict = {}
         for rarr, rkey in reads:
             reads_by_arr.setdefault(rarr, set()).add(rkey)
-        coeffs: Set = set()
+        # Symbols bound outside the loop -- a subset built only from these is genuinely
+        # loop-invariant, and anything else is a relation the matcher failed to resolve.
+        # Names, not symbol objects: ``SDFG.free_symbols`` is a set of strings.
+        invariant = set(sdfg.free_symbols) | set(sdfg.constants_prop)
+        coeffs: Set[str] = set()
         for (arr, key), subset in writes.items():
             # Admit an injective write: either a same-subset read-modify-write
             # (``key`` is among the array's read subsets) or a plain store (the
@@ -174,17 +179,37 @@ class ParallelizeUnderConstraint(ppl.Pass):
             for rb, re_, _ in subset.ndrange():
                 if rb != re_:
                     continue
-                expr = symbolic.pystr_to_symbolic(rb)
-                if loop_var not in expr.free_symbols:
+                # ``in free_symbols`` and ``coeff`` go through symbol IDENTITY, and the subset's
+                # instances come from a different source than the reparsed loop variable -- one
+                # name, several instances, and both operations then quietly answer "not there".
+                expr, lvar = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(rb), loop_var)
+                if lvar not in expr.free_symbols:
+                    # The loop variable may be hidden behind a promoted index symbol
+                    # (``a[__sym_i_times_inc]``), which SymbolPropagation binds but deliberately
+                    # does not substitute into the graph. Resolve the binding for the QUERY --
+                    # but only for a subset that actually carries an unexplained symbol, since
+                    # collecting the bindings walks every interstate edge.
+                    if not {str(sym) for sym in expr.free_symbols} - invariant:
+                        continue
+                    expr, lvar = symbolic.equalize_symbols_across(resolve_bindings(expr, sdfg), loop_var)
+                if lvar not in expr.free_symbols:
+                    # Fail closed. A write whose index still carries a symbol this pass cannot
+                    # relate to the loop variable is NOT known to be loop-invariant -- it may well
+                    # be a data-dependent scatter -- and ``coeff() == 0`` must not be read as one.
+                    if {str(sym) for sym in expr.free_symbols} - invariant:
+                        return None
                     continue
-                coeff = expr.coeff(loop_var)
+                coeff = expr.coeff(lvar)
                 # Symbolic (not provably numeric) nonzero coefficient only.
                 if coeff == 0 or not coeff.free_symbols:
                     continue
-                coeffs.add(coeff)
+                # Keyed by SPELLING: two writes can carry the same coefficient as two symbol
+                # instances (one stamped with assumptions, one not), and a set of objects would
+                # then hold "two" coefficients and refuse a loop that has exactly one.
+                coeffs.add(symbolic.symstr(coeff))
         if len(coeffs) != 1:
             return None
-        return f"({symbolic.symstr(next(iter(coeffs)))}) != 0"
+        return f"({next(iter(coeffs))}) != 0"
 
 
 __all__ = ['ParallelizeUnderConstraint']

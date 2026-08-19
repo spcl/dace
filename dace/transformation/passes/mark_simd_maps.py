@@ -60,24 +60,41 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return all(node_is_loop_free(n, set()) for n in state.all_nodes_between(map_entry, map_exit))
 
 
-def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if a WCR out-edge of this map's exit reduces with ``min``/``max``, whose
-        NaN-preserving compare/branch combine vectorizers do not reliably fold.
+def body_wcr(state: SDFGState, map_entry: nodes.MapEntry):
+    """ Every WCR the map body executes: the map exit's own in-edges, plus each edge inside a
+        NestedSDFG the body holds, at any depth.
+
+        The exit edges alone are not the whole story. A frontend-outlined body carries its
+        accumulate INSIDE the nested SDFG (``oc[bsym] += w`` with the nested-SDFG-to-exit edge
+        plain), and that write is a read-modify-write the clause would still let lanes
+        interleave. Undecidable reads as "there is a WCR": the callers use this to WITHHOLD the
+        clause, so missing one is a miscompile while an extra one only costs vectorization.
     """
     try:
         map_exit = state.exit_node(map_entry)
     except (KeyError, StopIteration):
-        return False
-    for iedge in state.in_edges(map_exit):
-        if iedge.data is None or iedge.data.wcr is None:
+        return []
+    wcrs = [e.data.wcr for e in state.in_edges(map_exit) if e.data is not None and e.data.wcr is not None]
+    for n in state.all_nodes_between(map_entry, map_exit):
+        if not isinstance(n, nodes.NestedSDFG) or n.sdfg is None:
             continue
-        if operations.detect_reduction_type(iedge.data.wcr) in (dtypes.ReductionType.Min, dtypes.ReductionType.Max):
-            return True
-    return False
+        for inner in n.sdfg.all_sdfgs_recursive():
+            for ist in inner.all_states():
+                wcrs += [e.data.wcr for e in ist.edges() if e.data is not None and e.data.wcr is not None]
+    return wcrs
+
+
+def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """ True if a WCR the map body executes reduces with ``min``/``max``, whose NaN-preserving
+        compare/branch combine vectorizers do not reliably fold.
+    """
+    return any(
+        operations.detect_reduction_type(wcr) in (dtypes.ReductionType.Min, dtypes.ReductionType.Max)
+        for wcr in body_wcr(state, map_entry))
 
 
 def map_has_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if any out-edge of this map's exit carries a WCR.
+    """ True if the map body executes any WCR.
 
         A Sequential map lowers WCR to a plain ``wcr_fixed::reduce``, a read-modify-write of the
         target in the loop body: an accumulation into a fixed location carries across iterations,
@@ -85,11 +102,7 @@ def map_has_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         happens, so a Sequential map that reduces gets no clause. CPU_Multicore goes through
         ``reduce_atomic`` instead, which composes with the clause.
     """
-    try:
-        map_exit = state.exit_node(map_entry)
-    except (KeyError, StopIteration):
-        return False
-    return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(map_exit))
+    return bool(body_wcr(state, map_entry))
 
 
 @dataclass(unsafe_hash=True)

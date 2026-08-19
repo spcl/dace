@@ -176,11 +176,18 @@ def replace_in_codeblock(codeblock: properties.CodeBlock,
             for name, new_name in repl.items():
                 if name not in tokenized:
                     continue
+                new_text = cppunparse.pyexpr2cpp(new_name)
+                if new_text == name:
+                    # A same-name rebind -- a symbol re-minted to carry new sympy assumptions
+                    # (``AssumeSymbolConstraints``) keeps its spelling. The C++ already names the
+                    # right thing, and shadowing it would emit ``int inc = inc;``: a local
+                    # initialized from ITSELF, i.e. an uninitialized read.
+                    continue
                 # Shadow with the declared type: ``auto`` deduces from the replacement expression,
                 # so ``i = 2`` would narrow an int64 symbol to int. A map parameter has no declared
                 # type here, and ``auto`` then copies the index variable's own.
                 ctype = declared_ctype(name, sdfg) or 'auto'
-                replacement = f'{ctype} {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
+                replacement = f'{ctype} {name} = {new_text};\n'
                 prefix = replacement + prefix
                 active_replacements.add(name)
 
