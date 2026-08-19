@@ -23,6 +23,7 @@ jobs:
     env:
       OMP_STACKSIZE: 64M
       DACE_compiler_max_stack_array_size: 65536
+      DACE_compiler_build_type: Release
 
     steps:
     - uses: actions/checkout@v7
