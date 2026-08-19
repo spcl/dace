@@ -21,7 +21,7 @@ def test_include():
     assert_not_exists("FooLib")
     assert_not_exists("BarLib")
 
-    import foolib  # foolib depends on barlib
+    import foolib  # noqa: F401 (FooLib depends on BarLib)
 
     assert_exists("FooLib")
     assert_exists("BarLib")

@@ -4,7 +4,7 @@ from dace import properties, symbolic
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState
-from dace import memlet as mm, data as dt
+from dace import memlet as mm
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
@@ -168,8 +168,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
-            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+            1.0: f"__state->cublas_handle.Constants().{runtimetype}Pone()",
+            0.0: f"__state->cublas_handle.Constants().{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -183,12 +183,13 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            call_prefix += f'''dace::blas::CheckCublasError(
+            cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
             call_suffix += '''
-cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
             '''
             alpha = f'({ctype} *)&alpha'
             beta = f'({ctype} *)&beta'
@@ -197,8 +198,8 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             beta = constants[node.beta]
 
         code = (call_prefix + f"""
-cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
-             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});
+dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
+             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]}));
                 """ + call_suffix)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 from dace import transformation as dace_transformation, properties as dace_properties
 from dace.sdfg import nodes as dace_nodes
 from typing import Any, Union

@@ -1,12 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the symbol write scopes analysis pass. """
 
-import pytest
-
 import dace
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
-from dace.transformation.passes.analysis import SymbolScopeDict
 
 
 def test_loop_iter_symbol_reused_split():

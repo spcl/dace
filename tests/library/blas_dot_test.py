@@ -3,11 +3,8 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import numpy as np
-import sys
-import warnings
 
 ###############################################################################
 

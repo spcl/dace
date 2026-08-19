@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.sdfg import nodes
 from dace.transformation.dataflow import TrivialMapElimination
 import unittest
 

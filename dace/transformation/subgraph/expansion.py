@@ -5,7 +5,6 @@
 from dace import dtypes, symbolic, subsets
 from dace.sdfg import nodes
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
-from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties, Property

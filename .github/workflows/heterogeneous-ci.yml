@@ -23,7 +23,7 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, linux]
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
     - name: Install dependencies
@@ -35,6 +35,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
         pip install mpi4py pytest-mpi
+        # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
+        MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
         pip uninstall -y dace
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
@@ -67,7 +69,7 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         source ~/.venv/bin/activate # activate venv
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi"
+        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
 
     - name: Test ScaLAPACK PBLAS with pytest
       run: |

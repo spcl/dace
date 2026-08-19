@@ -37,7 +37,7 @@ def find_outgoing_edges(node, dfg):
         return list(dfg.out_edges(node))
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def _sym2cpp(s, arrayexprs):
     return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
@@ -98,6 +98,18 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     strio = StringIO()
     InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
     return strio.getvalue().strip()
+
+
+def gpu_stream_expr(stream: Union[int, str]) -> str:
+    """Renders a ``_cuda_stream`` annotation as the C expression naming that stream.
+
+    The annotation indexes the context's stream array, except for ``'nullptr'``: the legacy default
+    stream lives outside it. Going through here keeps that stream an ordinary one, passed to work
+    and synchronized like any other.
+    """
+    if stream == 'nullptr':
+        return 'nullptr'
+    return f'__state->gpu_context->streams[{stream}]'
 
 
 @lru_cache()

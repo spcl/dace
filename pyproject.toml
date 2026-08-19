@@ -24,13 +24,16 @@ dependencies = [
     "sympy>=1.9",
     "pyyaml",
     "ply",
-    "fparser>=0.1.3",
+    "fparser>=0.1.3,!=0.2.3",
     "dill",
     "pyreadline; platform_system == 'Windows'",
     "packaging",
     "typing-extensions",
+    "ml_dtypes",
+    "ordered-set>=4.0.0",
     "scikit-build",
     "cmake",
+    "ninja",
 ]
 
 [project.optional-dependencies]

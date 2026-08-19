@@ -9,7 +9,6 @@ from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
 from dace import Memlet, SDFG, SDFGState
-from dace.transformation import helpers
 from dace.sdfg.propagation import propagate_memlets_state
 
 

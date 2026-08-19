@@ -3,7 +3,7 @@ import dace
 import pytest
 import numpy as np
 
-from dace.dtypes import StorageType, DeviceType, ScheduleType
+from dace.dtypes import StorageType, ScheduleType
 from dace import dtypes
 
 try:

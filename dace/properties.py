@@ -12,15 +12,49 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
+from packaging.version import parse as parse_version
+from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Integral, Number
+from numbers import Number
 from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
 
 T = TypeVar('T')
+
+
+def _is_symbolic_converter(converter) -> bool:
+    """Return True for symbolic converter functions or for the SymExpr class."""
+    return converter in (pystr_to_symbolic, symbolic.deserialize_symbolic, symbolic.SymExpr)
+
+
+def _is_symbolic_type(tp) -> bool:
+    if tp is symbolic.SymExpr:
+        return True
+    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+
+
+def _coerce_symbolic_property_value(value):
+    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+        return value
+    return pystr_to_symbolic(value, simplify=False)
+
+
+def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
+    """
+    A backwards compatibility deserializer for symbolic properties. If the version of the
+    context is less than ``2.0.0a4``, it will use the old ``pystr_to_symbolic`` deserializer.
+    Otherwise, it will use the new ``symbolic.deserialize_symbolic`` function.
+    """
+    version = (context or {}).get("version", None)
+    if version is None:
+        raise TypeError("Context must contain version information for symbolic deserialization")
+    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+        return pystr_to_symbolic(value, simplify=False)
+    return symbolic.deserialize_symbolic(value)
+
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -455,7 +489,14 @@ class ListProperty(Property[List[T]]):
         self.element_type = element_type
 
     def __set__(self, obj, val):
-        if isinstance(val, str):
+        if _is_symbolic_type(self.element_type):
+            if isinstance(val, str):
+                val = self.from_string(val)
+            elif isinstance(val, tuple):
+                val = [_coerce_symbolic_property_value(v) for v in val]
+            elif isinstance(val, list):
+                val = [_coerce_symbolic_property_value(v) for v in val]
+        elif isinstance(val, str):
             val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
             val = list(map(self.element_type, val))
@@ -468,6 +509,10 @@ class ListProperty(Property[List[T]]):
     def to_json(self, l):
         if l is None:
             return None
+        if _is_symbolic_type(self.element_type):
+            return [symbolic.serialize_symbolic(_coerce_symbolic_property_value(elem)) for elem in l]
+        if _is_symbolic_converter(self.element_type):
+            return [symbolic.serialize_symbolic(elem) for elem in l]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "to_json"):
             return [elem.to_json() for elem in l]
@@ -479,18 +524,24 @@ class ListProperty(Property[List[T]]):
 
     def from_string(self, s):
         if s.startswith('[') and s.endswith(']'):
+            if _is_symbolic_type(self.element_type):
+                return [_coerce_symbolic_property_value(d.strip()) for d in s[1:-1].split(',')]
             return [self.element_type(d.strip()) for d in s[1:-1].split(',')]
         else:
             return list(s)
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, list):
             raise TypeError('ListProperty expects a list input, got %s' % data)
+        if _is_symbolic_type(self.element_type):
+            return [_symbolic_deserializer(elem, context=context) for elem in data]
+        if _is_symbolic_converter(self.element_type):
+            return [_symbolic_deserializer(elem, context=context) for elem in data]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "from_json"):
-            return [self.element_type.from_json(elem) for elem in data]
+            return [self.element_type.from_json(elem, context) for elem in data]
         # Type-checks (casts) to the element type
         return list(map(self.element_type, data))
 
@@ -518,12 +569,12 @@ class TransformationHistProperty(Property):
             return None
         return [elem.to_json() if elem is not None else None for elem in hist]
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, list):
             raise TypeError('TransformationHistProperty expects a list input, got %s' % data)
-        return [dace.serialize.from_json(elem) for elem in data]
+        return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
 class DictProperty(Property):
@@ -569,7 +620,9 @@ class DictProperty(Property):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
             val = {
-                (k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
+                (k if self.is_key(k) else (_coerce_symbolic_property_value(k) if _is_symbolic_type(self.key_type) else self.key_type(k))):
+                (v if self.is_value(v) else
+                 (_coerce_symbolic_property_value(v) if _is_symbolic_type(self.value_type) else self.value_type(v)))
                 for k, v in val.items()
             }
         super(DictProperty, self).__set__(obj, val)
@@ -584,14 +637,28 @@ class DictProperty(Property):
         saved_dictionary = d
 
         # If key knows how to convert itself, let it
-        if hasattr(self.key_type, "to_json"):
+        if _is_symbolic_type(self.key_type):
+            saved_dictionary = {
+                symbolic.serialize_symbolic(_coerce_symbolic_property_value(k)): v
+                for k, v in saved_dictionary.items()
+            }
+        elif _is_symbolic_converter(self.key_type):
+            saved_dictionary = {symbolic.serialize_symbolic(k): v for k, v in saved_dictionary.items()}
+        elif hasattr(self.key_type, "to_json"):
             saved_dictionary = {k.to_json(): v for k, v in saved_dictionary.items()}
         # Otherwise, if the keys are not a native JSON type, convert to strings
         elif self.key_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
 
         # Same as above, but for values
-        if hasattr(self.value_type, "to_json"):
+        if _is_symbolic_type(self.value_type):
+            saved_dictionary = {
+                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v))
+                for k, v in saved_dictionary.items()
+            }
+        elif _is_symbolic_converter(self.value_type):
+            saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
+        elif hasattr(self.value_type, "to_json"):
             saved_dictionary = {k: v.to_json() for k, v in saved_dictionary.items()}
         elif self.value_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {k: str(v) for k, v in saved_dictionary.items()}
@@ -605,7 +672,7 @@ class DictProperty(Property):
     def from_string(s):
         return dict(s)
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, dict):
@@ -615,11 +682,21 @@ class DictProperty(Property):
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
 
-        return {
-            self.key_type.from_json(k, sdfg) if key_json else self.key_type(k):
-            self.value_type.from_json(v, sdfg) if value_json else self.value_type(v)
-            for k, v in data.items()
-        }
+        def _convert_key(key):
+            if _is_symbolic_type(self.key_type):
+                return _symbolic_deserializer(key, context)
+            if _is_symbolic_converter(self.key_type):
+                return _symbolic_deserializer(key, context)
+            return self.key_type.from_json(key, context) if key_json else self.key_type(key)
+
+        def _convert_value(value):
+            if _is_symbolic_type(self.value_type):
+                return _symbolic_deserializer(value, context)
+            if _is_symbolic_converter(self.value_type):
+                return _symbolic_deserializer(value, context)
+            return self.value_type.from_json(value, context) if value_json else self.value_type(value)
+
+        return {_convert_key(k): _convert_value(v) for k, v in data.items()}
 
 
 ###############################################################################
@@ -991,7 +1068,7 @@ class CodeBlock(object):
         return ret
 
     @staticmethod
-    def from_json(tmp, sdfg=None):
+    def from_json(tmp, context=None):
         if tmp is None:
             return None
         if isinstance(tmp, CodeBlock):
@@ -1142,8 +1219,8 @@ class SubsetProperty(Property):
         except AttributeError:
             return SubsetProperty.to_string(val)
 
-    def from_json(self, val, sdfg=None):
-        return dace.serialize.from_json(val)
+    def from_json(self, val, context=None):
+        return dace.serialize.from_json(val, context)
 
 
 class SymbolicProperty(Property):
@@ -1170,6 +1247,16 @@ class SymbolicProperty(Property):
     def to_string(obj):
         # Go through sympy once to reorder factors
         return str(pystr_to_symbolic(str(obj), simplify=False))
+
+    def to_json(self, val):
+        if val is None:
+            return None
+        return symbolic.serialize_symbolic(val)
+
+    def from_json(self, val, context=None):
+        if val is None:
+            return None
+        return _symbolic_deserializer(val, context=context)
 
 
 class DataProperty(Property):
@@ -1268,12 +1355,12 @@ class ShapeProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return None
-        return list(map(str, obj))
+        return [symbolic.serialize_symbolic(o) for o in obj]
 
-    def from_json(self, d, sdfg=None):
+    def from_json(self, d, context=None):
         if d is None:
             return None
-        return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
+        return tuple([_symbolic_deserializer(m, context=context) for m in d])
 
     def __set__(self, obj, val):
         if isinstance(val, list):
@@ -1347,7 +1434,7 @@ class TypeClassProperty(Property):
             return TypeClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
-            return dace.serialize.from_json(obj)
+            return dace.serialize.from_json(obj, context=context)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
 
@@ -1388,7 +1475,7 @@ class NestedDataClassProperty(Property):
             return NestedDataClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
-            return dace.serialize.from_json(obj)
+            return dace.serialize.from_json(obj, context=context)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
 
@@ -1421,7 +1508,7 @@ class DataclassProperty(Property):
             return None
         return obj.dict()
 
-    def from_json(self, d, sdfg=None):
+    def from_json(self, d, context=None):
         if d is None:
             return None
         return self.dtype.parse_obj(d)

@@ -23,7 +23,7 @@ class ScalarFission(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.ScalarWriteShadowScopes}
+        return [ap.ScalarWriteShadowScopes]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """

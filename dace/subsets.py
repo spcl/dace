@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import symbolic
 import sympy as sp
@@ -17,21 +17,21 @@ def nng(expr):
 
 
 def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
-    """Test if `subset_a` covers `subset_b`.
+    """Test if ``subset_a`` covers ``subset_b``.
 
-    The function uses a bounding box to test if `subset_a` covers `subset_b`,
-    i.e. that `subset_a` is at least as big as `subset_b`. By default the
-    box is constructed using `{min, max}_element()` or if `approximation` is
-    `True` `{min, max}_element_approx()`. The most important difference compared
-    to `bounding_box_cover_exact()` is that this function does not assume
+    The function uses a bounding box to test if ``subset_a`` covers ``subset_b``,
+    i.e. that ``subset_a`` is at least as big as ``subset_b``. By default the
+    box is constructed using ``{min, max}_element()`` or if ``approximation`` is
+    ``True`` ``{min, max}_element_approx()``. The most important difference compared
+    to ``bounding_box_cover_exact()`` is that this function does not assume
     that the symbols are positive.
 
-    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
-    and `False` otherwise.
+    The function returns ``True`` if it can be shown that ``subset_a`` covers ``subset_b``
+    and ``False`` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
     :param subset_b: The second subset, the one that should be covered.
-    :param approximation: If `True` then use the approximated bounds.
+    :param approximation: If ``True`` then use the approximated bounds.
     """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
@@ -43,7 +43,7 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # NOTE: The original implementation always called `nng()`. However, it was decided that
+    # NOTE: The original implementation always called ``nng()``. However, it was decided that
     #   this is an error and the call was removed in PR#2093.
     simplify = lambda expr: symbolic.simplify_ext(expr)
     no_simplify = lambda expr: expr
@@ -58,25 +58,25 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
 
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
-    """Checks if `subset_a` covers `subset_b` using positivity assumption.
+    """Checks if ``subset_a`` covers ``subset_b`` using positivity assumption.
 
-    The function uses a bounding box to test if `subset_a` covers `subset_b`,
-    i.e. that `subset_a` is at least as big as `subset_b`. By default the
-    box is constructed using `{min, max}_element()` or if `approximation` is
-    `True` `{min, max}_element_approx()`. The function will perform the
+    The function uses a bounding box to test if ``subset_a`` covers ``subset_b``,
+    i.e. that ``subset_a`` is at least as big as ``subset_b``. By default the
+    box is constructed using ``{min, max}_element()`` or if ``approximation`` is
+    ``True`` ``{min, max}_element_approx()``. The function will perform the
     covering check under the assumption that all symbols are positive,
-    which is the main difference to `bounding_box_cover_exact()`.
+    which is the main difference to ``bounding_box_cover_exact()``.
 
-    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
-    and `False` otherwise.
+    The function returns ``True`` if it can be shown that ``subset_a`` covers ``subset_b``
+    and ``False`` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
     :param subset_b: The second subset, the one that should be covered.
-    :param approximation: If `True` then use the approximated bounds.
+    :param approximation: If ``True`` then use the approximated bounds.
 
-    :note: In previous versions this function raised `TypeError` in some cases
+    :note: In previous versions this function raised ``TypeError`` in some cases
         when a truth value could not be determined. This behaviour was removed,
-        since the `bounding_box_cover_exact()` does not show this behaviour.
+        since the ``bounding_box_cover_exact()`` does not show this behaviour.
     """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
@@ -88,17 +88,17 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # NOTE: `nng()` is applied inside the loop.
+    # NOTE: ``nng()`` is applied inside the loop.
     simplify = lambda expr: symbolic.simplify_ext(expr)
     no_simplify = lambda expr: expr
 
     for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
         # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
         #   first with the symbols we get and if we are unable to figuring out something, we run
-        #   simplify. Furthermore, we also try to postpone `nng()` as long as we can.
-        # NOTE: We use first `==` in the hope that it is much faster than `<=`.
-        # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
-        #   get an expression resulting in a `TypeError`.
+        #   simplify. Furthermore, we also try to postpone ``nng()`` as long as we can.
+        # NOTE: We use first ``==`` in the hope that it is much faster than ``<=``.
+        # NOTE: We have to use the ``== True`` test because of SymPy's behaviour. Otherwise we would
+        #   get an expression resulting in a ``TypeError``.
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
@@ -135,7 +135,7 @@ class Subset(object):
     def ndrange(self) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
         """
         Implements an iterator over strided N-dimensional rectangular regions of the subset.
-        Note that this may be an overapproximation of the actual subset, based on the subclass.
+        Note that this may be an over-approximation of the actual subset, based on the subclass.
 
         :return: An iterator over N-dimensional ranges.
         """
@@ -153,8 +153,7 @@ class Subset(object):
 
         if Config.get('optimizer', 'symbolic_positive'):
             return bounding_box_symbolic_positive(self, other, approximation=True)
-        else:
-            return bounding_box_cover_exact(self, other, approximation=True)
+        return bounding_box_cover_exact(self, other, approximation=True)
 
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
@@ -169,11 +168,11 @@ class Subset(object):
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         if symbolic_positive and (not bounding_box_cover_exact(self, other)):
             return False
-        elif not bounding_box_symbolic_positive(self, other):
+        if not bounding_box_symbolic_positive(self, other):
             return False
 
-        # NOTE: The original implementation always called `nng()`. However, it was decided that
-        #   and the application was made conditional on `symbolic_positive`, in PR#2093.
+        # NOTE: The original implementation always called ``nng()``. However, it was decided that
+        #   and the application was made conditional on ``symbolic_positive``, in PR#2093.
         simplify = (lambda expr: symbolic.simplify_ext(nng(expr))) if symbolic_positive else (
             lambda expr: symbolic.simplify_ext(expr))
         no_simplify = lambda expr: expr
@@ -219,10 +218,10 @@ class Subset(object):
                                          (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True)):
                                     return False
                         except TypeError:
-                            # If a `TypeError happens during the "no simplify" phase, we immediately
+                            # If a ``TypeError`` happens during the "no simplify" phase, we immediately
                             #   go to the simplify phase, in the hope that it might be possible to
                             #   simplify the expression more. If we are already using simplify, then
-                            #   we return `False`.
+                            #   we return ``False``.
                             if i == 0:
                                 continue
                             return False
@@ -265,7 +264,7 @@ class Subset(object):
             :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
             :return: Absolute coordinates for index i (length equal to
-                     `data_dims()`, may be larger than `dims()`).
+                     ``data_dims()``, may be larger than ``dims()``).
         """
         raise NotImplementedError
 
@@ -297,8 +296,28 @@ def _approx(val):
     return symbolic.pystr_to_symbolic(val)
 
 
-def _tuple_to_symexpr(val):
+def tuple_to_symexpr(val):
+    """Coerce one range bound to a symbolic expression.
+
+    A ``(main, approx)`` tuple becomes a ``SymExpr``; anything else -- a Python ``int``, a
+    string, an already-symbolic value -- goes through ``pystr_to_symbolic``.
+    """
     return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
+
+
+def symbolic_range_tuple(value):
+    """Coerce a whole ``(start, end, step[, tile])`` range tuple to symbolic bounds.
+
+    ``Range`` promises symbolic bounds -- ``ndrange()`` is annotated ``SymbolicType`` and callers
+    act on it, calling ``.match()``, ``.subs()`` or ``.free_symbols`` without checking. A raw
+    Python ``int`` reaching a bound therefore does not fail where it was stored but much later,
+    in an unrelated pass, as ``'int' object has no attribute 'match'``.
+    """
+    if not isinstance(value, (tuple, list)):
+        raise TypeError(f'Expected a 3- or 4-tuple range, got {type(value).__name__}')
+    if len(value) not in (3, 4):
+        raise ValueError('Expected 3-tuple or 4-tuple')
+    return tuple(tuple_to_symexpr(v) for v in value)
 
 
 @dace.serialize.serializable
@@ -311,7 +330,7 @@ class Range(Subset):
         for r in ranges:
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
-            parsed_ranges.append((_tuple_to_symexpr(r[0]), _tuple_to_symexpr(r[1]), _tuple_to_symexpr(r[2])))
+            parsed_ranges.append((tuple_to_symexpr(r[0]), tuple_to_symexpr(r[1]), tuple_to_symexpr(r[2])))
             if len(r) == 3:
                 parsed_tiles.append(symbolic.pystr_to_symbolic(1))
             else:
@@ -331,10 +350,7 @@ class Range(Subset):
         ret = []
 
         def a2s(obj):
-            if isinstance(obj, symbolic.SymExpr):
-                return {'main': str(obj.expr), 'approx': str(obj.approx)}
-            else:
-                return _simplified_str(obj)
+            return symbolic.serialize_symbolic(obj)
 
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
@@ -343,6 +359,7 @@ class Range(Subset):
 
     @staticmethod
     def from_json(obj, context=None):
+        from dace.properties import _symbolic_deserializer  # Avoid circular import
         if not isinstance(obj, dict):
             raise TypeError("Expected dict, got {}".format(type(obj)))
         if obj['type'] != 'Range':
@@ -352,15 +369,9 @@ class Range(Subset):
         ranges = obj['ranges']
         tuples = []
 
-        def p2s(x):
-            pts = symbolic.pystr_to_symbolic
-            if isinstance(x, str):
-                return pts(x)
-            else:
-                return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
-
         for r in ranges:
-            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']), p2s(r['tile'])))
+            tuples.append((_symbolic_deserializer(r['start'], context), _symbolic_deserializer(r['end'], context),
+                           _symbolic_deserializer(r['step'], context), _symbolic_deserializer(r['tile'], context)))
 
         return Range(tuples)
 
@@ -368,7 +379,7 @@ class Range(Subset):
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
         result = Range([(0, s - 1, 1) for s in array.shape])
-        if any(o != 0 for o in array.offset):
+        if hasattr(array, 'offset') and any(o != 0 for o in array.offset):
             result.offset(array.offset, True)
         return result
 
@@ -380,7 +391,7 @@ class Range(Subset):
             ((*ranges, tile) for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)))
 
     def __deepcopy__(self, memo) -> 'Range':
-        """Performs a deepcopy of `self`.
+        """Performs a deepcopy of ``self``.
 
         For performance reasons only the mutable parts are copied.
         """
@@ -457,7 +468,7 @@ class Range(Subset):
             :param i: A tuple of the same dimensionality as subset.dims() or
                       subset.data_dims().
             :return: Absolute coordinates for index i (length equal to
-                     `data_dims()`, may be larger than `dims()`).
+                     ``data_dims()``, may be larger than ``dims()``).
         """
         tiles = sum(1 if ts != 1 else 0 for ts in self.tile_sizes)
         if len(i) != len(self.ranges) and len(i) != len(self.ranges) + tiles:
@@ -486,10 +497,10 @@ class Range(Subset):
         coord = self.coord_at(i)
 
         # Return i0 + i1*size0 + i2*size1*size0 + ....
-        # Cancel out stride since we determine the initial offset only here
-        return sum(
-            _expr(s) * _expr(astr) / _expr(rs)
-            for s, (_, _, rs), astr in zip(coord, self.ranges, self.absolute_strides(strides)))
+        # The array stride directly, rather than `absolute_strides` divided back down by the range
+        # step: those are `rs * strides[i]` and `rs`, so the division only undoes the multiplication,
+        # and it cancels only because `/` is modeled over the rationals.
+        return sum(_expr(s) * _expr(stride) for s, _, stride in zip(coord, self.ranges, strides))
 
     def data_dims(self):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
@@ -533,8 +544,8 @@ class Range(Subset):
 
     def absolute_strides(self, global_shape):
         """ Returns a list of strides for advancing one element in each
-            dimension. Size of the list is equal to `data_dims()`, which may
-            be larger than `dims()` depending on tile sizes. """
+            dimension. Size of the list is equal to ``data_dims()``, which may
+            be larger than ``dims()`` depending on tile sizes. """
         # ..., stride2*size1*size0, stride1*size0, stride0, ..., tile strides
         return [rs * global_shape[i] for i, (_, _, rs) in enumerate(self.ranges)
                 ] + [global_shape[i] for i, ts in enumerate(self.tile_sizes) if ts != 1]
@@ -573,14 +584,16 @@ class Range(Subset):
                     result |= symbolic.symlist(d).keys()
         return result
 
-    def reorder(self, order):
+    def reorder(self, order: Sequence[int]) -> None:
         """ Re-orders the dimensions in-place according to a permutation list.
 
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_ranges = [self.ranges[o] for o in order]
+        new_tile_sizes = [self.tile_sizes[o] for o in order]
         self.ranges = new_ranges
+        self.tile_sizes = new_tile_sizes
 
     @staticmethod
     def dim_to_string(d, t=1):
@@ -753,7 +766,22 @@ class Range(Subset):
         return self.ranges.__getitem__(key)
 
     def __setitem__(self, key, value):
-        return self.ranges.__setitem__(key, value)
+        # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
+        # quietly put Python ints into a container whose contract says symbolic.
+        def coerce(idx, v):
+            if isinstance(v, (tuple, list)):
+                v = symbolic_range_tuple(v)
+                if len(v) == 4:
+                    self.tile_sizes[idx] = v[3]
+                return v[:3]
+            # Single-index write (e.g. the frontend replacing one dimension by an
+            # expression): still coerce so no raw Python number slips in.
+            return symbolic.pystr_to_symbolic(v)
+
+        if isinstance(key, slice):
+            indices = range(*key.indices(len(self.ranges)))
+            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+        return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
         if not isinstance(other, Range):
@@ -953,6 +981,29 @@ class Range(Subset):
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):
             return False
+
+        # Special case for 1D subsets.
+        if self.dims() == 1:
+            return (array.strides[0] == 1) == True
+
+        # Special case for 1D slicing, e.g. `a[idx0, b:e, idx2]`, i.e. there is only one dimensions
+        #  in which the size of the subset is larger than 1 and in all others it is 1. The subset
+        #  is continuous if that dimension has stride 1.
+        is_1d_slice = False
+        for copy_elem, stride in zip(self.size(), array.strides):
+            if (copy_elem == 1) == True:
+                continue
+            if (copy_elem == 0) == True:
+                return False  # Strange case, does it happen?
+            if is_1d_slice:
+                is_1d_slice = False  # There are multiple >1 size dimensions.
+                break
+            if (stride == 1) == False:
+                break  # The >1 size dimension is not associated to stride 1.
+            is_1d_slice = True
+        else:
+            if is_1d_slice:
+                return True
 
         # Determine array layout and calculate expression lengths accordingly
         if array.is_packed_fortran_strides():

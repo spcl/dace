@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.config import Config, set_temporary, temporary_config
 import threading
-import time
 
 
 def test_set_temporary():

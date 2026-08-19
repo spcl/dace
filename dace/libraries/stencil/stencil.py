@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import dace
 import dace.library

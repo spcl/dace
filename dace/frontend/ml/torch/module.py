@@ -1,12 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
-from dataclasses import dataclass
 import collections
 import itertools
 import tempfile
 import copy
 import os
-from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Tuple, Union
 
 # Try importing ML dependencies
 try:
@@ -29,7 +28,6 @@ except ImportError:
     onnx = None
     ONNX_AVAILABLE = False
 
-import dace
 from dace import config, data
 from dace.codegen import compiled_sdfg
 from dace.sdfg import SDFG, nodes
@@ -135,6 +133,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.inputs_to_skip = inputs_to_skip or []
 
             self.function = None
+            self._gradient_buffers: Optional[List[str]] = None
 
             #: hooks that are executed after onnx graph is imported to an SDFG
             self.post_onnx_hooks: OrderedDict[str, Callable[[DaceModule], None]] = collections.OrderedDict()
@@ -464,7 +463,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             """
 
             assert self.sdfg is not None
-            if hasattr(self, '_gradient_buffers'):
+            if self._gradient_buffers is not None:
                 return self._gradient_buffers
 
             buffers = []

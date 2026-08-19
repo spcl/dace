@@ -115,6 +115,16 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            build_folder_mode:
+                type: str
+                default: development
+                title: Save mode for the build folder
+                description: >
+                  Selects which content should be saved in the build folder.
+                  Two modes are currently supported: `development`, that includes
+                  everything; and `production`, that saves only the compiled library
+                  and the folder mode file.
+
             library_prefix:
                 type: str
                 default: ""
@@ -139,13 +149,48 @@ required:
                 description: >
                     Number of spaces used when indenting generated code.
 
+            precompiled_header:
+                type: bool
+                default: true
+                title: Precompile the DaCe runtime header
+                description: >
+                    Precompile ``<dace/dace.h>`` once per compiler and flag set and force-include it
+                    into generated host sources. An optimization: a header that does not match the
+                    translation unit is ignored, producing the same object.
+
+            configure_cache:
+                type: bool
+                default: true
+                title: Reuse CMake configure results across builds
+                description: >
+                    Seed each build folder with the compiler and ``find_package`` results of an
+                    earlier build of the same shape. An optimization: without a usable entry CMake
+                    configures from scratch.
+
+            command_cache:
+                type: bool
+                default: true
+                title: Replay a recorded build instead of running CMake
+                description: >
+                    Record the first build of a shape (``ninja -t compdb``) and replay its commands
+                    for later SDFGs, skipping CMake. An optimization: a missing or mismatched entry
+                    falls back to a full build.
+
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs
+                description: >
+                    Translation units compiled concurrently. Small by default: builds share
+                    machines, and each generated-source compile can use a lot of memory.
+
             build_type:
                 type: str
-                default: RelWithDebInfo
+                default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for CMake build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel).
+                    CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
+                    the optimization level; ``args`` add to it.
 
             allow_shadowing:
                 type: bool
@@ -201,7 +246,7 @@ required:
                 description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
-                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
+                    are represented using 64 bits). If the property is set to "C", C's semantics will be
                     used (`float` and `int` are represented using 32bits).
 
             unique_functions:
@@ -251,6 +296,18 @@ required:
                     If set, specifies additional arguments to the initial invocation
                     of ``cmake``.
 
+            lineinfo:
+                type: str
+                default: "inspect"
+                title: Add line info
+                description: >
+                    Wether or not to add line info from the parsed code in the
+                    generated SDFG. Valid options are `inspect` and `none`.
+                    "inspect": During parsing, inspect the python call stack and
+                    automatically add line info from the parsed source code in the
+                    resulting SDFG.
+                    "none": Do not save any line info in the resulting SDFG.
+
             #############################################
             # CPU compiler
             cpu:
@@ -267,9 +324,15 @@ required:
                     args:
                         type: str
                         title: Arguments
-                        description: Compiler argument flags
-                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
-                        default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+                        description: >
+                            Flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it for every
+                            language, from ``CMAKE_POSITION_INDEPENDENT_CODE``).
+                            ``default_<family>`` applies for that host compiler, since nvc++
+                            rejects several switches below.
+                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_nvhpc: '-Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                        default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
                         type: str
@@ -309,33 +372,37 @@ required:
                     args:
                         type: str
                         title: nvcc Arguments
-                        description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-O3 --use_fast_math'
+                        description: >
+                            nvcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``). Host flags are not listed here: DaCe forwards
+                            ``compiler.cpu.args`` through ``-Xcompiler`` so both halves of a ``.cu``
+                            are built the same way.
+                        default: '-lineinfo'
+                        default_Windows: ''
 
                     hip_args:
                         type: str
                         title: hipcc Arguments
-                        description: Compiler argument flags for HIP
-                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        description: >
+                            hipcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it, from
+                            ``CMAKE_POSITION_INDEPENDENT_CODE``). Host flags are not listed here:
+                            DaCe forwards ``compiler.cpu.args``, which hipcc takes directly.
+                        default: ''
 
                     cuda_arch:
                         type: str
-                        title: Additional CUDA architectures
+                        title: CUDA architectures to compile for
                         description: >
-                            Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: '60'
+                            If empty, the SDFG is compiled for the 'native' CUDA architecture.
+                        default: ''
 
                     hip_arch:
                         type: str
-                        title: Additional HIP architectures
+                        title: HIP architectures to compile for
                         description: >
-                            Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: 'gfx906'
+                            If empty, the SDFG build will detect the local HIP architecture.
+                        default: ''
 
                     default_block_size:
                         type: str
@@ -536,7 +603,8 @@ required:
                         title: Enable vectorization check
                         default: false
                         description: >
-                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
+                            Report which loops the compiler vectorized. Flag chosen per compiler in
+                            CMake; only GCC writes ``perf/vecreport.txt``, others use stderr.
 
     #############################################
     # Python frontend settings
@@ -669,6 +737,16 @@ required:
             * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
+
+    cache_distaware:
+        type: bool
+        default: true
+        title: Distribution-aware build cache
+        description: >
+            Give every rank of a job its own build folder, named after the rank its launcher
+            (MPI, Flux, Slurm) advertises. Without it, ranks that each compile share one folder
+            and can load a library another rank is still writing. Leave it off when only one
+            rank compiles, as ``dace.sdfg.utils.distributed_compile`` does.
 
     store_history:
         type: bool
