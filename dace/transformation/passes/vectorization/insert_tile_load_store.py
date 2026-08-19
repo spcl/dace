@@ -31,6 +31,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch,
                                                                             no_transient_scalar_stores)
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
                                                                         build_symbol_definition_map)
@@ -172,6 +173,27 @@ def _safe_bridge_hint(name_hint: str) -> str:
     if name_hint.startswith("__return"):
         return "tile_" + name_hint.lstrip("_")
     return name_hint
+
+
+def refuse_linearized_multi_var_dim(record, array_name: str, subset, iter_vars: Tuple[str, ...]) -> None:
+    """Refuse an access whose single array dim is indexed JOINTLY by several tile iter-vars.
+
+    ``flat[N*i + j]`` under a ``(i, j)`` tile is a 2-D access flattened onto a 1-D array. The
+    classifier reports that dim as AFFINE with NO stride (no single iter-var owns it), so
+    ``_pad_to_tile_dims`` finds nothing for the second iter-var and pads it to a BROADCAST stride
+    of 0 -- a read would then splat one cell across its lanes, and a write would have every lane
+    of that dim race for the same cell. The cell set is a ``W_0 x W_1`` box at strides
+    ``(N, 1)`` over ONE array dim, which a per-array-dim tile window cannot spell, so refuse and
+    leave the kernel un-tiled rather than emit a broadcast in place of a stride.
+    """
+    for d, kind in enumerate(record.per_dim_kind):
+        # Stop 4 of ``classify_tile_access`` is the only site pairing AFFINE with a ``None``
+        # stride: jointly affine in more than one tile iter-var.
+        if kind == PerDimKind.AFFINE and record.dim_strides[d] is None:
+            raise VectorizeUnsupported(
+                f"{array_name}{subset} dim {d} is indexed jointly by several of the tile iter-vars "
+                f"{iter_vars} (a linearized multi-dimensional access); the lane set is a strided box "
+                f"over ONE array dim, which a per-dim tile window cannot express")
 
 
 def stage_tile_load(state: SDFGState,
@@ -468,6 +490,7 @@ class InsertTileLoadStore(ppl.Pass):
             record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
             if not record.per_dim_kind:
                 continue
+            refuse_linearized_multi_var_dim(record, an.data, subset, iter_vars)
             kinds = set(record.per_dim_kind)
             if PerDimKind.GATHER in kinds:
                 # GATHER read: build per-lane idx tile(s) as TILE LIB NODES + TileLoad. One AN
@@ -674,6 +697,7 @@ class InsertTileLoadStore(ppl.Pass):
             wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
             if not wrecord.per_dim_kind:
                 continue
+            refuse_linearized_multi_var_dim(wrecord, an.data, wsubset, iter_vars)
             wkinds = set(wrecord.per_dim_kind)
             if wkinds == {PerDimKind.CONSTANT}:
                 continue  # Loop-invariant write stays as direct producer -> AN copy (design 3.6).

@@ -290,10 +290,40 @@ class WidenAccesses(ppl.Pass):
             if per_dim_kinds is not None and d < len(per_dim_kinds) and per_dim_kinds[d] == PerDimKind.GATHER:
                 continue
             w = widths[dominating_k]
-            new_end = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1")
-            ranges[d] = (beg, new_end, step)
+            lane_stride = self._lane_stride(beg, iter_vars[dominating_k])
+            if lane_stride is None:
+                new_end, new_step = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1"), step
+            else:
+                new_end = dace.symbolic.simplify(beg + lane_stride * w - 1)
+                new_step = lane_stride
+            ranges[d] = (beg, new_end, new_step)
             modified = True
         return subsets.Range(ranges) if modified else None
+
+    @staticmethod
+    def _lane_stride(beg, iter_var: str):
+        """Per-lane element step of index expression ``beg`` along ``iter_var``.
+
+        Lane ``l`` of a tile evaluates ``beg`` at ``iter_var + l``, so the widened window must be
+        ``beg : beg + c*W : c`` (exclusive end) where ``c`` is that step -- ``a[i * inc]`` walks ``inc`` cells
+        per lane, not one, and the contiguous ``beg : beg + W`` window names the wrong cells for
+        every ``inc != 1``. Returns ``None`` when ``beg`` is not affine in ``iter_var``
+        (``a[i % 4]``), or when the step is a negative constant: the tile-op base pointer is lane
+        0's address, which a descending window would no longer be.
+        """
+        if not dace.symbolic.issymbolic(beg):
+            return None
+        # Resolve the iter-var INSTANCE out of ``beg`` instead of minting one from its name: a
+        # fresh ``symbol(name)`` carries different sympy assumptions / dtype, so ``subs`` and
+        # ``in free_symbols`` answer against the wrong object and the stride silently reads as
+        # "not affine" (see the symbol-identity rule in dace/symbolic.py).
+        iv = next((sym for sym in beg.free_symbols if str(sym) == iter_var), None)
+        if iv is None:
+            return None
+        step = dace.symbolic.simplify(beg.subs(iv, iv + 1) - beg)
+        if any(str(sym) == iter_var for sym in step.free_symbols) or step.is_negative:
+            return None
+        return step
 
     def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str, iter_vars: Tuple[str, ...]) -> bool:
         """Widen single-element memlets on edges incident to a non-transient AN.

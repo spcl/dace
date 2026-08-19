@@ -81,7 +81,9 @@ from dace.transformation.passes.dead_state_elimination import DeadStateEliminati
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution,
                                                                                      LoopCarriedRotationSubstitution)
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
@@ -403,6 +405,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   reconstruct_wavefront_nest: bool = False,
                   normalize_loop_and_map_origin: bool = False,
                   assume_parallel_guards: bool = False,
+                  perfect_loop_nesting: bool = False,
                   target: str = 'cpu',
                   lift: bool = True,
                   lift_copy: bool = True,
@@ -743,6 +746,17 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
     # upward, see ``CASCADE_UP_DESIGN.md``) so the later body-assigns-range-symbol
     # refuse-check sees the cleaned-up shape.
+    # The frontend promotes a computed index (``i * inc``, ``i + M``) to a scalar and then to an
+    # interstate symbol used in the subset (``a[__sym_i_times_inc]``). ``SymbolPropagation``
+    # deliberately does NOT substitute a loop-variable RHS back into the graph (``replace_dict``
+    # sizes descriptors), so the opaque symbol reaches every structural matcher below --
+    # ``expr.coeff(loop_var)`` reads 0, the loop variable is "absent", and LoopToMap / LoopToScan
+    # / ParallelizeUnderConstraint all decline a loop that is plainly parallel. Recover the direct
+    # arithmetic here, before the lifting stages; genuine data-dependent gathers (``a[idx[i]]``)
+    # are left alone. ``RemoveUnusedSymbols`` then sweeps the now-dead promotion symbols.
+    s += [('index_subsets', PropagateIndexSubsets()), ('index_subsets', RemoveUnusedSymbols()),
+          ('index_subsets', SimplifyPass())]
+
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
     # distribute (BEFORE loop_to_symmetrize / loop_to_x): split a linear-chain loop
@@ -837,9 +851,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # information, and a SINGLE LoopFission application alone reproduces the CloudSC
     # read-modify-write miscompile bit-for-bit (tendency_loc_a rel=0.13, measured 2026-08-18 on
     # the phase-17 staged snapshot) -- so the fault is LoopFission's grouping itself, not the
-    # composed fixpoint. Until that grouping is dependence-verified, no fission runs here, and
-    # the mixed-parallelism collapsed-2D-map contract (canonicalize_mixed_parallelism_test)
-    # stays red rather than trading it for wrong numerics.
+    # composed fixpoint. Until that grouping is dependence-verified, no fission runs here BY
+    # DEFAULT: rather than trade the CloudSC numbers for it, the distribution sits behind the
+    # opt-in ``perfect_loop_nesting`` knob, which is how the collapsed-2D-map contract
+    # (canonicalize_mixed_parallelism_test) is exercised. Make it the default again once
+    # LoopFission's grouping consults a dependence distance/direction oracle
+    # (``passes.analysis.smt_dependence.classify_read_write_pair``).
+    if perfect_loop_nesting:
+        s += [('fission', PerfectLoopNesting(target=target))]
     s += [('fission', _uniq_fis)]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
@@ -1628,6 +1647,8 @@ class CanonicalizationPipeline(ppl.Pass):
                        off by default -- the per-loop search is expensive).
     :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
                                   loops before parallelize (off by default).
+    :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the fission stage. Off by
+                                 default -- see the ruling at the fission stage below.
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
                    preset (see ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``). Any
                    explicit knob argument (e.g. ``interchange_carry_with_map=...``)
@@ -1709,6 +1730,14 @@ class CanonicalizationPipeline(ppl.Pass):
         desc='Run NormalizeLoopAndMapOrigin right before the loop_to_x stage, rebasing every Map range / '
         'LoopRegion counter to a 0-based begin while keeping the stride. Off by default on both targets '
         '(see _CPU_DEFAULTS).')
+    perfect_loop_nesting = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Distribute a loop over its data-independent statement groups (PerfectLoopNesting) so '
+        'each statement parallelizes on its own axes. Off by default: LoopFission\'s grouping carries '
+        'no dependence distance/direction and one application reproduces the CloudSC read-modify-write '
+        'miscompile (measured 2026-08-18). Opt in where the statements are known independent.')
+
     assume_parallel_guards = properties.Property(
         dtype=bool,
         default=False,
@@ -1742,6 +1771,7 @@ class CanonicalizationPipeline(ppl.Pass):
                  reconstruct_wavefront_nest: Optional[bool] = None,
                  normalize_loop_and_map_origin: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
+                 perfect_loop_nesting: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
@@ -1781,6 +1811,7 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                      normalize_loop_and_map_origin,
                                                                      fallback=False)
         self.assume_parallel_guards = assume_parallel_guards
+        self.perfect_loop_nesting = perfect_loop_nesting
         self.lift = lift
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
@@ -1820,6 +1851,7 @@ class CanonicalizationPipeline(ppl.Pass):
                                reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
                                normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
                                assume_parallel_guards=self.assume_parallel_guards,
+                               perfect_loop_nesting=self.perfect_loop_nesting,
                                target=self.target,
                                lift=self.lift,
                                lift_copy=self.lift_copy,
@@ -1862,6 +1894,7 @@ def canonicalize(sdfg: SDFG,
                  reconstruct_wavefront_nest: Optional[bool] = None,
                  normalize_loop_and_map_origin: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
+                 perfect_loop_nesting: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
@@ -1912,6 +1945,14 @@ def canonicalize(sdfg: SDFG,
                                    scatter sort/trap). Unsound if a condition is
                                    violated at runtime; ``False`` (default) keeps
                                    the sound guards.
+    :param perfect_loop_nesting: Distribute a loop over its data-independent statement groups
+                                 (``PerfectLoopNesting``) so each statement gets its own complete
+                                 nest and parallelizes on its own axes. ``False`` (default) --
+                                 ``LoopFission``'s grouping carries no dependence distance or
+                                 direction, and one application reproduces the CloudSC
+                                 read-modify-write miscompile bit-for-bit (measured 2026-08-18),
+                                 so the default pipeline does not fission. Opt in only where the
+                                 statements are known independent.
     :param specialize_constants: Optional ``{symbol: value}`` baked in via
                              ``specialize_symbols`` (cloudsc-style, recursive into nested
                              SDFGs) before canonicalization, so symbolic trip counts
@@ -1942,6 +1983,7 @@ def canonicalize(sdfg: SDFG,
                              reconstruct_wavefront_nest=reconstruct_wavefront_nest,
                              normalize_loop_and_map_origin=normalize_loop_and_map_origin,
                              assume_parallel_guards=assume_parallel_guards,
+                             perfect_loop_nesting=perfect_loop_nesting,
                              specialize_constants=specialize_constants,
                              lift=lift,
                              lift_copy=lift_copy,
