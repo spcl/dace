@@ -19,10 +19,12 @@ Scope is limited to:
   * The defining assignment must be loop-invariant in its scale and offset;
     guaranteed by the detection pass.
 """
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
+
+import sympy
 
 from dace import SDFG, properties, symbolic
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -45,8 +47,12 @@ class SimplifyInductionVariables(ppl.Pass):
         loops = [n for n, _p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
         loops.sort(key=_loop_nesting_depth, reverse=True)
         total = 0
+        # Carried symbols that nested loops increment. Maps symbol name -> per-enclosing-loop
+        # increment expression. Populated when a self-referential iedge IV is folded in an inner
+        # loop; consumed by the enclosing loop so the outer carry can close too.
+        nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]] = {}
         for loop in loops:
-            total += _simplify_loop(loop)
+            total += _simplify_loop(loop, nested_carries)
         return total or None
 
 
@@ -60,15 +66,164 @@ def _loop_nesting_depth(loop: LoopRegion) -> int:
     return depth
 
 
-def _simplify_loop(loop: LoopRegion) -> int:
-    ivs = loop_analysis.detect_induction_variables(loop)
-    if not ivs:
+def _loop_trip_count(loop: LoopRegion) -> Optional[sympy.Expr]:
+    """Return the number of iterations of ``loop`` if its bounds are simple enough.
+
+    Mirrors the trip-count computation used by ``InductionVariableSubstitution``.
+    """
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None:
+        return None
+    try:
+        if int(str(symbolic.simplify(stride))) == 0:
+            return None
+    except Exception:
+        pass
+    return symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
+
+
+def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
+    """If ``rhs`` equals ``name + step`` (or ``name - step``), return the signed
+    loop-invariant step. Otherwise return ``None``.
+    """
+    try:
+        lhs_sym = symbolic.pystr_to_symbolic(name)
+        rhs_sym = symbolic.pystr_to_symbolic(rhs)
+        diff = symbolic.simplify(rhs_sym - lhs_sym)
+    except Exception:
+        return None
+    if name in {str(s) for s in diff.free_symbols}:
+        return None
+    return diff
+
+
+def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, list],
+                                    nested_carries: Dict[str, Tuple[LoopRegion,
+                                                                   symbolic.SymbolicType]]) -> int:
+    """Fold iedge counters of the form ``sym := sym + const`` inside ``loop``.
+
+    Returns the number of symbols folded. For each folded symbol the per-iteration
+    net increment is recorded in ``nested_carries`` so any immediately enclosing
+    loop can close the outer carry.
+    """
+    applied = 0
+    start = loop_analysis.get_init_assignment(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or stride is None:
         return 0
+
+    for name, edges in list(iv_edge_sites.items()):
+        if len(edges) != 1:
+            continue
+        edge = edges[0]
+        if edge.data.condition.as_string not in ('1', 'True', '(1)'):
+            continue
+        if not edge.data.assignments or len(edge.data.assignments) != 1:
+            continue
+        (lhs, rhs) = next(iter(edge.data.assignments.items()))
+        if lhs != name:
+            continue
+        step = _is_self_referential_incr(name, rhs)
+        if step is None:
+            continue
+        # Only fold when the counter is dead after the loop. If its post-loop
+        # value is consumed, InductionVariableSubstitution owns the rewrite (it
+        # materialises the exit value); folding here would drop the update.
+        if not _symbol_is_dead_outside_loop(loop, name):
+            continue
+        # Determine whether the increment is before or after the body reads.
+        # Post-increment (edge from empty start block): body sees ``sym + (t+1)*step``.
+        # Pre-increment (edge to unique empty sink): body sees ``sym + t*step``.
+        try:
+            start_block = loop.start_block
+        except ValueError:
+            continue
+        norm_iter = symbolic.simplify(symbolic.int_floor(symbolic.pystr_to_symbolic(loop.loop_variable) - start,
+                                                           stride))
+        src_is_empty_start = (edge.src is start_block and isinstance(edge.src, SDFGState)
+                              and not edge.src.nodes())
+        sinks = [b for b in loop.nodes() if loop.out_degree(b) == 0]
+        dst_is_unique_empty_sink = (isinstance(edge.dst, SDFGState) and not edge.dst.nodes() and len(sinks) == 1
+                                    and sinks[0] is edge.dst and loop.in_degree(edge.dst) == 1)
+        if src_is_empty_start:
+            body_offset = norm_iter + 1
+        elif dst_is_unique_empty_sink:
+            body_offset = norm_iter
+        else:
+            # Mid-body increment: conservatively refuse until a use-side analysis lands.
+            continue
+
+        # The symbol inside the loop now represents the value on entry, so the
+        # closed form is ``entry_sym + body_offset * step``.
+        closed = symbolic.symstr(symbolic.simplify(symbolic.pystr_to_symbolic(name) + body_offset * step))
+        edge.data.assignments.pop(name, None)
+        loop.replace_dict({name: closed}, replace_keys=False)
+
+        trip = _loop_trip_count(loop)
+        if trip is not None:
+            nested_carries[name] = (loop, symbolic.simplify(trip * step))
+        applied += 1
+
+    return applied
+
+
+def _fold_nested_carried_symbols(loop: LoopRegion,
+                                 nested_carries: Dict[str, Tuple[LoopRegion,
+                                                                  symbolic.SymbolicType]]) -> int:
+    """Close the outer carry for symbols incremented by an immediately nested loop.
+
+    After a nested inner loop folded a self-referential counter, this loop's
+    iteration variable can be used to express the counter's value as a derived IV.
+    """
+    applied = 0
+    start = loop_analysis.get_init_assignment(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or stride is None:
+        return 0
+    loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
+    norm_iter = symbolic.simplify(symbolic.int_floor(loop_var - start, stride))
+
+    # Only consume carries that belong to loops immediately nested inside this one.
+    immediate_nested = {n for n in loop.nodes() if isinstance(n, LoopRegion)}
+    for name, (src_loop, per_iter) in list(nested_carries.items()):
+        if src_loop not in immediate_nested:
+            continue
+        # Refuse if the symbol is still assigned on an interstate edge of this loop;
+        # that would be a direct outer-loop increment (s126) and double-counting.
+        if any(name in e.data.assignments for e in loop.all_interstate_edges()):
+            continue
+        # The symbol's value at the start of this loop is a derived IV: substitute
+        # its closed form inside the loop body. The symbol still names the pre-loop
+        # value; constant propagation downstream folds the initializer (e.g. ``k = -1``).
+        closed = symbolic.symstr(symbolic.simplify(symbolic.pystr_to_symbolic(name) + norm_iter * per_iter))
+        loop.replace_dict({name: closed}, replace_keys=False)
+        nested_carries.pop(name, None)
+        applied += 1
+
+    return applied
+
+
+def _simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
+    ivs = loop_analysis.detect_induction_variables(loop)
 
     # Only fold derived IVs that came from interstate-edge assignments; skip
     # tasklet-derived entries (they refer to data descriptors, not symbols,
     # and folding them requires dataflow rewrites out of scope for v1).
     iv_edge_sites = _collect_interstate_iv_sites(loop)
+
+    applied = 0
+
+    # Fold self-referential iedge IVs (``k := k + step``) that the basic detector
+    # rejects because the RHS mentions the LHS. These are common in TSVC kernels
+    # (s125/s126) where a scalar counter is incremented each inner iteration and
+    # also carried by the outer loop. We must fold them before normal derived-IV
+    # folding so the per-iteration increment is visible to the outer-loop pass.
+    applied += _fold_self_referential_iedge_ivs(loop, iv_edge_sites, nested_carries)
+
+    if not ivs:
+        return applied
 
     # Order derived IVs so that deeper basis chains are substituted first.
     # That way, when we later substitute a shallower IV, the expression we
@@ -100,7 +255,6 @@ def _simplify_loop(loop: LoopRegion) -> int:
     ]
     derived.sort(key=_depth, reverse=True)
 
-    applied = 0
     for iv in derived:
         name = iv.name
         basis = iv.basis
@@ -126,6 +280,10 @@ def _simplify_loop(loop: LoopRegion) -> int:
             _remove_dead_scalar(loop, name)
 
         applied += 1
+
+    # A symbol carried by an immediately-nested inner loop can become a derived
+    # IV of this loop once the inner loop's net per-iteration increment is known.
+    applied += _fold_nested_carried_symbols(loop, nested_carries)
 
     return applied
 
@@ -253,15 +411,15 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
     for edge in sdfg.all_interstate_edges():
         if id(edge) in loop_edges:
             continue
-        # Assignments that reference ``name`` in their RHS.
+        # Assignments that reference ``name`` in their RHS are reads of the value.
         for rhs in edge.data.assignments.values():
             if _name_in_expr_string(name, rhs):
                 return False
         if _name_in_expr_string(name, edge.data.condition.as_string):
             return False
-        # LHS assignments: writing to ``name`` elsewhere means it's live outside.
-        if name in edge.data.assignments:
-            return False
+        # Note: an LHS assignment to ``name`` outside the loop is a write, not a
+        # read of the loop-carried value (e.g. the pre-loop initializer), so it
+        # does not make the symbol live here.
 
     # Check memlets / tasklets in every state outside the loop.
     for state in sdfg.all_states():

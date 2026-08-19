@@ -58,6 +58,15 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
+# Kernels whose canonical 2-D map contains a 1-D array indexed by a linearized
+# combination of the two map params (e.g. TSVC s125 ``flat[i*LEN_2D + j]``).
+# A K=2 tile would see the single array dim as jointly-affine in both iter-vars
+# and would be refused; vectorizing the inner (unit-stride) dim alone is both
+# correct and contiguous. Force K=1 for these kernels.
+_FORCE_K1_KERNELS = {
+    's125_d_single',
+}
+
 
 def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     """Assert every float output matches the reference, ``nan``/``inf`` equal.
@@ -121,7 +130,14 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # any 1-D map (an init / reduction / boundary beside a 2-D body) cannot be
     # tiled with a uniform K=2 -- mixed-K within one SDFG is unsupported by the
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
-    if map_param_counts and min(map_param_counts) >= 2:
+    # A 2-D map whose single 1-D output is indexed linearly across both params
+    # (s125) is also forced to K=1: vectorizing only the inner (unit-stride)
+    # dim yields a plain contiguous TileStore; a K=2 tile cannot express the
+    # strided box over one array dim.
+    if name in _FORCE_K1_KERNELS:
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+    elif map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
         vec = VectorizeCPUMultiDim(
             VectorizeConfig(widths=(8, 8),

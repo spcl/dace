@@ -410,6 +410,49 @@ def test_llvm_negative_scale_derived_iv():
     assert 'j' not in {str(s) for s in read_edge.data.subset.free_symbols}
 
 
+def test_nested_self_referential_counter_iv_closes_to_closed_form():
+    """TSVC s125 shape: scalar counter ``k := k + 1`` on an inner-loop
+    interstate edge, with the same ``k`` carried by the outer loop. Both
+    loops' contributions must fold into the inner body's read of ``k`` so the
+    flat index becomes ``i*N + j`` and no loop-carried scalar remains."""
+    sdfg = dace.SDFG('s125')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('flat', [2000], dace.float64)
+    sdfg.add_array('a', [50, 50], dace.float64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    outer = LoopRegion('outer',
+                       condition_expr='i < N',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       sdfg=sdfg)
+    sdfg.add_node(outer)
+    sdfg.add_edge(init, outer, dace.InterstateEdge(assignments={'k': '-1'}))
+
+    inner = LoopRegion('inner',
+                       condition_expr='j < N',
+                       loop_var='j',
+                       initialize_expr='j = 0',
+                       update_expr='j = j + 1')
+    outer.add_node(inner, is_start_block=True)
+    ibody = inner.add_state('ibody', is_start_block=True)
+    iuse = inner.add_state('iuse')
+    inner.add_edge(ibody, iuse, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+
+    an = iuse.add_access('flat')
+    t = iuse.add_tasklet('t', {'r'}, {}, 'pass')
+    iuse.add_edge(an, None, t, 'r', dace.Memlet('flat[k]'))
+
+    SimplifyInductionVariables().apply_pass(sdfg, {})
+    read_edge = next(e for e in iuse.edges() if e.data.data == 'flat')
+    syms = {str(s) for s in read_edge.data.subset.free_symbols}
+    # Outer carry folded: flat index now reads i*N + j + k + 1, where k is the
+    # initial value (-1). The remaining k is folded away by constant propagation.
+    assert 'i' in syms and 'j' in syms and 'N' in syms
+    assert str(read_edge.data.subset) == 'N*i + j + k + 1'
+
+
 def test_llvm_nested_loop_outer_iv_as_invariant_inside_inner():
     """LLVM different-loops-recs.ll analog: outer IV appears in inner loop's
     derived-IV expression as a loop-invariant symbol. Folding happens inside
