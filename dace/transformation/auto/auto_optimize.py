@@ -333,7 +333,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
 
 
 def find_fast_library(device: dtypes.DeviceType) -> List[str]:
-    from dace.codegen.common import get_gpu_backend
+    from dace.codegen.common import get_gpu_backend, get_hip_platform
 
     # Returns the optimized library node implementations for the given target
     # device
@@ -346,6 +346,14 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         if backend == 'cuda':
             return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'pure']
         elif backend == 'hip':
+            # HIP's NVIDIA platform is a header layer over the CUDA toolkit: rocBLAS is not there to
+            # link against, cuBLAS is. Keying on the backend alone asks for a library the platform
+            # does not have.
+            if get_hip_platform() == 'nvidia':
+                # The NVIDIA platform IS the CUDA toolkit, so its libraries are the ones present:
+                # cuBLAS, cuSolverDn and CUB all ship with it. cuTENSOR does not -- it is a separate
+                # package -- so it stays out of the list here even though the CUDA path lists it.
+                return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:
             return ['GPUAuto', 'pure']

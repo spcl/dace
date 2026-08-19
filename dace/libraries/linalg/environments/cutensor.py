@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the NVIDIA cuTENSOR backend."""
 import dace.library
+from dace.codegen import common
 
 
 @dace.library.environment
@@ -36,6 +37,16 @@ class cuTensor:
         dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
         dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
     }
+
+    @staticmethod
+    def is_available() -> bool:
+        """Whether a build on this machine can reach cuTENSOR at all.
+
+        It is NVIDIA's library, but the question is the platform rather than the backend: HIP's
+        NVIDIA platform is the CUDA toolkit underneath and links it like any CUDA build. An AMD
+        build has hipTensor instead, which DaCe does not wrap.
+        """
+        return common.get_gpu_backend() != 'hip' or common.get_hip_platform() == 'nvidia'
 
     @staticmethod
     def handle_setup_code(node):

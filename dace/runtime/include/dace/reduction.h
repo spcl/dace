@@ -25,7 +25,8 @@
 #endif
 #endif
 
-#ifdef __HIPCC__
+// Not __HIPCC__: hip_common.h defines it in the host pass too on the NVIDIA platform.
+#ifdef __HIP_DEVICE_COMPILE__
     // HIP supports the same set of atomic ops as CUDA SM 6.0+
     #define DACE_USE_GPU_ATOMICS
     #define DACE_USE_GPU_DOUBLE_ATOMICS
@@ -626,7 +627,9 @@ namespace dace {
     struct warpReduce {
         static DACE_DFI T reduce(T v)
         {
-            for (int i = 1; i < 32; i = i * 2)
+            // ``warpSize``, not 32: it is a built-in on both platforms and states the width the
+            // hardware actually has, instead of restating an assumption this header cannot check.
+            for (int i = 1; i < warpSize; i = i * 2)
                 v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
             return v;
         }

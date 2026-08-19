@@ -273,6 +273,10 @@ class ExpandCuTensor(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
+        if not environments.cuTensor.is_available():
+            raise NotImplementedError("cuTENSOR is not available on HIP's AMD platform (hipTensor is the equivalent "
+                                      "there, and DaCe does not wrap it); use the 'pure' or 'TTGT' expansion")
+
         dtype = out_tensor.dtype.base_type
         if dtype not in environments.cuTensor.TYPE_MAP:
             raise NotImplementedError(f"cuTENSOR TensorDot does not support dtype {dtype}; supported: "

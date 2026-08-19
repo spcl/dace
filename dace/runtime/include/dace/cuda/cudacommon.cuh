@@ -3,6 +3,8 @@
 #define __DACE_CUDACOMMON_CUH
 
 #if defined(__HIPCC__) || defined(WITH_HIP)
+// The precompiled runtime header is force-included ahead of the generated file's own includes.
+#include <hip/hip_runtime.h>
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
@@ -21,6 +23,28 @@ typedef cudaError_t gpuError_t;
 #define gpuDeviceSynchronize cudaDeviceSynchronize
 #define gpuEventSynchronize cudaEventSynchronize
 #endif
+
+// CUB and the CUDA runtime return cudaError_t even when DaCe's error type is HIP's. On the NVIDIA
+// platform hipError_t is a distinct enum reached through this conversion, so a CUDA-API result has
+// to pass through it before DACE_GPU_CHECK can take it. Everywhere else the two already agree.
+#if defined(__HIP_PLATFORM_NVIDIA__)
+#define DACE_GPU_ERROR(err) hipCUDAErrorTohipError(err)
+#else
+#define DACE_GPU_ERROR(err) (err)
+#endif
+
+// For the runtime calls DaCe's own headers make outside any generated function, where there is no
+// __state to record into. The result is still reported: these calls return an error type declared
+// nodiscard, and dropping it hides a failed allocation until whatever reads the memory produces
+// wrong numbers.
+#define DACE_GPU_CHECK_NO_STATE(err)                                      \
+  do {                                                                    \
+    gpuError_t errr = (err);                                              \
+    if (errr != (gpuError_t)0) {                                          \
+      printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
+             gpuGetErrorString(errr), errr);                              \
+    }                                                                     \
+  } while (0)
 
 // The context guard covers the calls checked during __dace_init_cuda before the context has been
 // constructed (the runtime warm-up allocation). The message is printed either way; only the

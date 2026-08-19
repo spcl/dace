@@ -113,6 +113,12 @@ class ExpandCuTensor(ExpandTransformation):
 
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
+        # Not a fallback to ExpandPure: the environment is attached from this class either way, so a
+        # silent fallback would still emit the cuTENSOR header and fail to build.
+        if not environments.cuTensor.is_available():
+            raise NotImplementedError("cuTENSOR is not available on HIP's AMD platform (hipTensor is the equivalent "
+                                      "there, and DaCe does not wrap it); use the 'pure' or 'HPTT' expansion")
+
         if node.beta != 0:
             raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
                                       "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")

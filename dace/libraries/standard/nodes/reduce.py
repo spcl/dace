@@ -549,10 +549,10 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # silent no-op that leaves the output untouched.
         cuda_initcode.write(
             """
-            DACE_GPU_CHECK(cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop}));
-            DACE_GPU_CHECK(cudaMalloc(&__cub_storage_{sdfg}_{state}_{node},
-                                      __cub_ssize_{sdfg}_{state}_{node} ? __cub_ssize_{sdfg}_{state}_{node} : 1));
+            DACE_GPU_CHECK(DACE_GPU_ERROR(cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
+                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop})));
+            DACE_GPU_CHECK(DACE_GPU_ERROR(cudaMalloc(&__cub_storage_{sdfg}_{state}_{node},
+                                      __cub_ssize_{sdfg}_{state}_{node} ? __cub_ssize_{sdfg}_{state}_{node} : 1)));
 """.format(sdfg=sdfg.name,
            state=state_id,
            node=node_id,
@@ -564,10 +564,10 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
            kname=kname), state.parent_graph, state_id, node)
 
         cuda_exitcode.write(
-            'DACE_GPU_CHECK(cudaFree(__cub_storage_{sdfg}_{state}_{node}));'.format(sdfg=sdfg.name,
-                                                                                    state=state_id,
-                                                                                    node=node_id), state.parent_graph,
-            state_id, node)
+            'DACE_GPU_CHECK(DACE_GPU_ERROR(cudaFree(__cub_storage_{sdfg}_{state}_{node})));'.format(sdfg=sdfg.name,
+                                                                                                    state=state_id,
+                                                                                                    node=node_id),
+            state.parent_graph, state_id, node)
 
         # Returns CUB's status rather than checking it: the check macro needs ``__state``, which this
         # function has no reason to take.
@@ -598,8 +598,8 @@ DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output,
 
         # Call reduction function where necessary
         host_localcode.write(
-            'DACE_GPU_CHECK(__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream));'.format(
-                id=idstr, reduce_range_call=reduce_range_call))
+            'DACE_GPU_CHECK(DACE_GPU_ERROR(__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream)));'
+            .format(id=idstr, reduce_range_call=reduce_range_call))
 
         # Make tasklet
         tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
@@ -908,7 +908,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         isqdim = insubset.squeeze()
         raw_input_data = sdfg.arrays[inedge.data.data]
         raw_output_data = sdfg.arrays[outedge.data.data]
-        warp_size = 64 if common.get_gpu_backend() == 'hip' else 32
+        warp_size = common.get_gpu_warp_size()
 
         in_type = raw_input_data.dtype
 
