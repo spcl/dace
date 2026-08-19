@@ -37,6 +37,22 @@ def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifeti
             in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
 
 
+def restrict_qualifier(desc: data.Data, ctype: str) -> str:
+    """ ``__restrict__ `` for a pointer no other name in the same scope reaches, otherwise ``''``.
+
+        ``may_alias`` marks a descriptor deliberately reachable through a second pointer -- the
+        persistent-BFS frontiers are swapped between iterations -- so qualifying it promises the
+        compiler something the SDFG denies. An opaque handle is not a pointer type to qualify:
+        ``MPI_Comm`` is a struct pointer under OpenMPI but an int under MPICH, where the qualifier
+        does not compile. A ctype that already carries the qualifier must not get a second one.
+    """
+    if '__restrict__' in ctype or isinstance(desc.dtype, dtypes.opaque):
+        return ''
+    if isinstance(desc, data.Array) and desc.may_alias:
+        return ''
+    return '__restrict__ '
+
+
 def _use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
@@ -1348,21 +1364,16 @@ class CPUCodeGen(TargetCodeGenerator):
                             # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
                             result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                         else:
-                            # Pointer reference. ``ctypedef`` may already carry
-                            # ``__restrict__``; don't append a second one. An opaque handle is
-                            # not a pointer type to qualify -- MPI_Comm is a struct pointer under
-                            # OpenMPI but an int under MPICH, where the qualifier does not compile.
-                            _restrict = "" if ("__restrict__" in ctypedef
-                                               or isinstance(desc.dtype, dtypes.opaque)) else "__restrict__ "
-                            result += "{} {}{} = {};".format(ctypedef, _restrict, local_name, expr)
+                            # Pointer reference.
+                            result += "{} {}{} = {};".format(ctypedef, restrict_qualifier(desc, ctypedef), local_name,
+                                                             expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        _restrict = "" if ("__restrict__" in memlet_type
-                                           or isinstance(desc.dtype, dtypes.opaque)) else "__restrict__ "
-                        result += "{} {}{} = {};".format(memlet_type, _restrict, local_name, expr)
+                        result += "{} {}{} = {};".format(memlet_type, restrict_qualifier(desc, memlet_type), local_name,
+                                                         expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
@@ -1633,9 +1644,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 except KeyError:
                     defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
-                # ``may_alias`` marks a descriptor deliberately reachable through another
-                # pointer; promising no-alias on this out-connector would be a miscompile.
-                restrict = '' if (isinstance(desc, data.Array) and desc.may_alias) else '__restrict__ '
+                restrict = restrict_qualifier(desc, cdtype.ctype)
                 callsite_stream.write(f'{cdtype.ctype} {restrict}{edge.src_conn} = {base_ptr};', cfg, state_id,
                                       src_node)
             else:

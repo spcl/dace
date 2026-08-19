@@ -38,6 +38,30 @@ def test_simple_program(may_alias):
         assert restrict_on_parameters(code.clean_code) >= 3
 
 
+@pytest.mark.parametrize('may_alias', (False, True))
+def test_local_pointer_into_a_tasklet(may_alias):
+    """The local pointer a tasklet reads an array through is qualified only when the descriptor
+    allows it. ``may_alias`` is a promise the SDFG makes -- the persistent BFS frontiers are two
+    names for memory that gets swapped between iterations -- so qualifying that local hands the
+    compiler a licence the program denies, and the reordering it then does is a miscompile.
+    """
+    sdfg = dace.SDFG(f'alias_local_pointer_{may_alias}')
+    sdfg.add_array('A', [20], dace.float64, may_alias=may_alias)
+    sdfg.add_array('B', [20], dace.float64)
+    state = sdfg.add_state('s0')
+    tasklet = state.add_tasklet('copy20', {'_a'}, {'_b'},
+                                'for (int i = 0; i < 20; ++i) _b[i] = _a[i];',
+                                language=dace.Language.CPP)
+    tasklet.in_connectors['_a'] = dace.dtypes.pointer(dace.float64)
+    tasklet.out_connectors['_b'] = dace.dtypes.pointer(dace.float64)
+    state.add_edge(state.add_read('A'), None, tasklet, '_a', dace.Memlet('A[0:20]'))
+    state.add_edge(tasklet, '_b', state.add_write('B'), None, dace.Memlet('B[0:20]'))
+
+    code = sdfg.generate_code()[0].clean_code
+    declaration = next(line for line in code.splitlines() if '_a = ' in line)
+    assert ('__restrict__' in declaration) is (not may_alias), declaration
+
+
 def test_multi_nested():
 
     @dace.program
@@ -82,5 +106,7 @@ def test_inference():
 if __name__ == '__main__':
     test_simple_program(False)
     test_simple_program(True)
+    test_local_pointer_into_a_tasklet(False)
+    test_local_pointer_into_a_tasklet(True)
     test_multi_nested()
     test_inference()
