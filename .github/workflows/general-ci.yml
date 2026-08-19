@@ -20,6 +20,8 @@ jobs:
       matrix:
         python-version: ['3.10','3.14']
         simplify: [0,1,autoopt]
+    env:
+      OMP_STACKSIZE: 256M
 
     steps:
     - uses: actions/checkout@v7
@@ -71,7 +73,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        ulimit -s unlimited && pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
@@ -87,7 +89,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ulimit -s unlimited && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
         ./codecov
 
     - name: Test cBLAS / MKL BLAS extension nodes
@@ -113,7 +115,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
+        ulimit -s unlimited && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
         ./codecov
 
     - name: Test FFTW3 FFT lowering
@@ -132,7 +134,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
+        ulimit -s unlimited && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
         ./codecov
 
     - name: Run sequential tests
@@ -148,7 +150,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        ulimit -s unlimited && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -159,8 +161,8 @@ jobs:
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        ./tests/polybench_test.sh
-        ./tests/xform_test.sh
+        ulimit -s unlimited; ./tests/polybench_test.sh
+        ulimit -s unlimited; ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
 
     - uses: codecov/codecov-action@v6
