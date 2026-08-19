@@ -2148,6 +2148,10 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
+    def __init__(self, use_authority=True, settings=None):
+        super().__init__(settings)
+        self.use_authority = use_authority
+
     def _print_Symbol(self, expr):
         if expr.name == '?':
             return '$?'
@@ -2157,7 +2161,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             # Prefer the dtype the enclosing scope declares for this name over the
             # instance's own (possibly cache-stale) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
+            if self.use_authority:
+                dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
+            else:
+                dtype = expr.dtype
             kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f'${expr.name}'
@@ -2256,9 +2263,11 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return '*'.join(parts) if parts else '1'
 
 
-def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number],
+                                 use_authority: bool = True) -> str:
     if isinstance(expr, SymExpr):
-        return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
+        return (f'SymExpr({serialize_symbolic(expr.expr, use_authority=use_authority)}, '
+                f'{serialize_symbolic(expr.approx, use_authority=use_authority)})')
     if isinstance(expr, TypedConstant):
         return _typed_constant_to_string(expr)
     if isinstance(expr, numpy.generic):
@@ -2268,12 +2277,12 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
     if isinstance(expr, float):
         return sympy.printing.str.sstr(expr)
     if isinstance(expr, sympy.Basic):
-        return DaceSympySerializer().doprint(expr)
+        return DaceSympySerializer(use_authority=use_authority).doprint(expr)
     return str(expr)
 
 
-def serialize_symbolic(expr):
-    return _serialize_symbolic_uncached(expr)
+def serialize_symbolic(expr, use_authority: bool = True):
+    return _serialize_symbolic_uncached(expr, use_authority=use_authority)
 
 
 @lru_cache(maxsize=16384, typed=True)

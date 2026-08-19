@@ -651,13 +651,22 @@ class DictProperty(Property):
             saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
 
         # Same as above, but for values
+        # NestedSDFG.symbol_mapping values are expressions in the parent scope and
+        # their dtype is part of the value itself; the enclosing scope's declared
+        # dtype for a name must not override it, or a round-trip can change the
+        # stored expression.
+        _symbol_mapping_values = getattr(self, 'attr_name', None) == 'symbol_mapping'
         if _is_symbolic_type(self.value_type):
             saved_dictionary = {
-                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v))
+                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v),
+                                               use_authority=not _symbol_mapping_values)
                 for k, v in saved_dictionary.items()
             }
         elif _is_symbolic_converter(self.value_type):
-            saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
+            saved_dictionary = {
+                k: symbolic.serialize_symbolic(v, use_authority=not _symbol_mapping_values)
+                for k, v in saved_dictionary.items()
+            }
         elif hasattr(self.value_type, "to_json"):
             saved_dictionary = {k: v.to_json() for k, v in saved_dictionary.items()}
         elif self.value_type not in (int, float, list, tuple, dict, str):

@@ -904,15 +904,19 @@ class MapEntry(EntryNode):
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
-        # Add map params
-        for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
-
         # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        range_symbols = dict(symbols)
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                conn_type = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                result[e.dst_conn] = conn_type
+                range_symbols[e.dst_conn] = conn_type
+
+        # Add map params
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], range_symbols),
+                                              infer_expr_type(rng[1], range_symbols))
 
         return result
 
