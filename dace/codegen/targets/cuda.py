@@ -1650,12 +1650,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            # The grid barrier separates the states of the KERNEL's own state machine, where every
-            # thread arrives. A deeper nested SDFG runs inside one of the components above -- under
-            # a `blockIdx.x == 0 && threadIdx.x == 0` guard, or per-thread inside a map -- so only
-            # part of the grid would reach the barrier and it would never release. The enclosing
-            # state emits its own barrier after the component, which is what orders these writes.
-            if not self._below_toplevel_sdfg:
+            # A state machine needs a barrier between its states wherever it runs: a nested SDFG
+            # with several states (or control flow) below the kernel still synchronizes between
+            # them. An SDFG that is one lone state has no state transition to order, so below the
+            # kernel's own SDFG it emits no barrier -- it may run inside a single-thread-guarded
+            # component, where a barrier is reached by one thread and never releases. Its writes
+            # are ordered by the enclosing state's own barrier instead.
+            lone_state = sdfg.number_of_nodes() == 1 and isinstance(sdfg.nodes()[0], SDFGState)
+            if not (self._below_toplevel_sdfg and lone_state):
                 callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated

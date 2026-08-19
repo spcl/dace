@@ -1872,6 +1872,39 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     assert '__gbar.Sync();' in cuda[end:]
 
 
+def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
+    """A nested SDFG with several states below the kernel map is a state machine, and its states
+    still need grid barriers between them -- the lone-state narrowing must not eat those."""
+    inner = dace.SDFG('inner_states')
+    inner.add_array('X', [32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    s1 = inner.add_state('one', is_start_block=True)
+    s2 = inner.add_state('two')
+    inner.add_edge(s1, s2, dace.InterstateEdge())
+    t1 = s1.add_tasklet('w1', {}, {'o'}, 'o = 1.0')
+    s1.add_edge(t1, 'o', s1.add_write('X'), None, dace.Memlet('X[0]'))
+    t2 = s2.add_tasklet('w2', {}, {'o'}, 'o = 2.0')
+    s2.add_edge(t2, 'o', s2.add_write('X'), None, dace.Memlet('X[1]'))
+
+    sdfg = dace.SDFG('persistent_nested_state_machine')
+    sdfg.add_array('X', [32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('launch')
+    entry, exit_ = state.add_map('kernel_launch_map',
+                                 dict(ignore='0'),
+                                 schedule=dace.dtypes.ScheduleType.GPU_Persistent)
+    nsdfg = state.add_nested_sdfg(inner, [], ['X'])
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_edge_pair(exit_,
+                        nsdfg,
+                        state.add_write('X'),
+                        internal_connector='X',
+                        internal_memlet=dace.Memlet.from_array('X', sdfg.arrays['X']))
+    sdfg.validate()
+
+    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+    # One barrier per inner state: the transition between them is a sync point.
+    assert cuda.count('__gbar.Sync();') >= 2, cuda
+
+
 def test_shared_to_global_uses_the_block_collective_helper():
     """Inside a kernel, a 1-D Shared -> Global copy splits across the thread block instead of
     every thread copying the whole region (which races on shared memory written by other threads)."""
