@@ -36,7 +36,7 @@ jobs:
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache* tests/.dacecache*
-        uv venv ~/.venv      # create venv so we can use uv
+        uv venv --clear ~/.venv      # create venv so we can use uv
         source ~/.venv/bin/activate # activate venv
         uv pip install flake8 pytest-xdist coverage
         uv pip install mpi4py pytest-mpi
