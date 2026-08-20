@@ -26,19 +26,24 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
     - name: Install dependencies
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
-        python -m venv ~/.venv      # create venv so we can use pip
+        uv venv ~/.venv      # create venv so we can use uv
         source ~/.venv/bin/activate # activate venv
-        python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage
-        pip install mpi4py pytest-mpi
+        uv pip install flake8 pytest-xdist coverage
+        uv pip install mpi4py pytest-mpi
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        pip uninstall -y dace
-        pip install -e ".[testing]"
+        uv pip uninstall -y dace
+        uv pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
