@@ -1,5 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 from typing import Tuple
 
 import numpy as np
@@ -414,34 +418,40 @@ def test_horizontal_fusion_drops_an_equal_dynamic_map_range(binding: str):
 def test_horizontal_fusion_keeps_the_dynamic_map_range_bound():
     """Dropping the redundant binding must not change the iteration space of the fused Map.
 
-    Run in a forked child so a miscompiled kernel segfaulting cannot take the session down.
+    The fused kernel is run in a subprocess: a miscompiled kernel may segfault, and an
+    ``os.fork()`` after the test worker has initialized OpenMP can deadlock inside the
+    child's first parallel region because the inherited runtime locks were held by worker
+    threads that no longer exist.
     """
     sdfg = _make_shared_dynamic_map_range_sdfg("same_data")
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 1
-    csdfg = sdfg.compile()
 
     bound = np.full((1, ), 4, dtype=np.int64)
     args = {name: np.full((10, ), -1.0, dtype=np.float64) for name in ("A", "B")}
     expected = {name: np.where(np.arange(10) < 4, value, -1.0) for name, value in (("A", 1.0), ("B", 2.0))}
 
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:  # child: never return into pytest, and never raise past os._exit
-        code = 1
-        try:
-            csdfg(bound=bound, other_bound=bound.copy(), **args)
-            code = 0 if all(np.array_equal(args[n], expected[n]) for n in args) else 2
-        except BaseException:  # noqa: BLE001 -- report as an exit code, never as an exception
-            code = 3
-        finally:
-            os.write(write_fd, bytes([code]))
-            os._exit(code)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sdfg_path = os.path.join(tmpdir, "shared_dmr_same_data.sdfg")
+        sdfg.save(sdfg_path)
+        child = os.path.join(tmpdir, "run_fused_kernel.py")
+        with open(child, "w") as f:
+            f.write(
+                textwrap.dedent("""
+                import dace
+                import numpy as np
+                import sys
 
-    os.close(write_fd)
-    _, status = os.waitpid(pid, 0)
-    os.close(read_fd)
-    assert not os.WIFSIGNALED(status), f"fused kernel killed by signal {os.WTERMSIG(status)}"
-    assert os.WEXITSTATUS(status) == 0, f"fused Map did not honor the dynamic bound (code {os.WEXITSTATUS(status)})"
+                sdfg = dace.SDFG.from_file(%r)
+                csdfg = sdfg.compile()
+                bound = np.full((1, ), 4, dtype=np.int64)
+                args = {name: np.full((10, ), -1.0, dtype=np.float64) for name in ("A", "B")}
+                expected = {name: np.where(np.arange(10) < 4, value, -1.0)
+                            for name, value in (("A", 1.0), ("B", 2.0))}
+                csdfg(bound=bound, other_bound=bound.copy(), **args)
+                sys.exit(0 if all(np.array_equal(args[n], expected[n]) for n in args) else 2)
+            """) % sdfg_path)
+        result = subprocess.run([sys.executable, child], capture_output=True, text=True, timeout=60)
+        assert not result.returncode, f"fused Map did not honor the dynamic bound: {result.stderr}"
 
 
 @pytest.mark.parametrize("binding", ["other_data", "written_data"])
