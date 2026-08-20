@@ -1716,7 +1716,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if any(len(x) > 1 and isinstance(x, set) for x in [inputs, outputs]):
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
             warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
@@ -1796,7 +1796,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if any((len(x) > 1 and isinstance(x, set)) for x in [inputs, outputs]):
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
             warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
