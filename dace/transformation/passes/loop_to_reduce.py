@@ -246,6 +246,17 @@ class RetargetWCRAccumulator(ppl.Pass):
         return count or None
 
 
+def _loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
+    """True iff a ``LoopToMap.can_be_applied`` refusal was caused by a loop-carried dependence."""
+    if reason is None:
+        return False
+    lo = reason.lower()
+    # Covers "self-recurrent carried symbol", "carried symbol dependency",
+    # "loop-carried forward/backward dependency", "writes ... may overlap across
+    # iterations", and "read-after-write conflict ...".
+    return any(k in lo for k in ('carried', 'may overlap', 'read-after-write conflict'))
+
+
 @xf.explicit_cf_compatible
 class PinNestedSequentialLoops(ppl.Pass):
     """Mark every loop nested inside another loop ``pinned_sequential``.
@@ -276,6 +287,47 @@ class PinNestedSequentialLoops(ppl.Pass):
                 if not node.pinned_sequential:
                     node.pinned_sequential = True
                     pinned += 1
+        return pinned or None
+
+
+@xf.explicit_cf_compatible
+class PinCarriedTopLevelLoops(ppl.Pass):
+    """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
+    loop-carried dependence.
+
+    ``PinNestedSequentialLoops`` only reaches lexically nested loops. A doubly-carried nest
+    such as nussinov's ``(i, j)`` outer loops has the inner axes pinned by nesting, but the
+    outermost carrier stays top-level and is otherwise left un-pinned. This pass re-uses
+    ``LoopToMap.can_be_applied`` as the dependence oracle: a top-level loop that is applicable
+    is left alone, while one refused because of a carried dependency is pinned so that the
+    downstream ``LoopToMap`` stage and the WCR-scalar reduction path keep it sequential.
+    """
+
+    CATEGORY: str = 'Optimization Preparation'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG
+
+    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        """:returns: The number of loops newly pinned, or ``None`` if none was."""
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+
+        pinned = 0
+        for node, parent in list(sdfg.all_nodes_recursive()):
+            if not isinstance(node, LoopRegion) or not node.loop_variable:
+                continue
+            if node.pinned_sequential or _nested_in_sequential_loop(node):
+                continue
+            owner = _owner_sdfg(node)
+            probe = LoopToMap()
+            probe.loop = node
+            applicable = probe.can_be_applied(node.parent_graph, 0, owner, permissive=False)
+            if not applicable and _loop_to_map_refusal_is_carried(probe.last_refusal_reason):
+                node.pinned_sequential = True
+                pinned += 1
         return pinned or None
 
 

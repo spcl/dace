@@ -32,7 +32,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
-from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce,
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, PinCarriedTopLevelLoops,
                                                        PinNestedSequentialLoops, RetargetWCRAccumulator)
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
@@ -1082,6 +1082,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # them and ``LoopToReduce`` must not run again after it.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
     s += [('reduction_to_wcr_map', PinNestedSequentialLoops())]
+    # The nesting-only pin above misses the *outermost* carrier of a doubly-carried nest.
+    # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
+    # a carried dependency; leave DOALL-eligible top-level loops untouched.
+    s += [('reduction_to_wcr_map', PinCarriedTopLevelLoops())]
     s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]

@@ -658,8 +658,14 @@ class LoopToMap(xf.MultiStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
 
+        # Exposed so companion passes can distinguish a genuine loop-carried
+        # dependence from structural/typing inapplicability without re-running
+        # the dependence analysis.
+        self.last_refusal_reason = None
+
         def refuse(reason: str) -> bool:
-            """Refuse the match. Reason dropped; diagnostics live in the pipeline driver."""
+            """Refuse the match and record why."""
+            self.last_refusal_reason = reason
             return False
 
         # A loop pinned sequential is a deliberate fallback (the else branch of an
