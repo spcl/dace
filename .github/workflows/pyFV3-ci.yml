@@ -61,6 +61,13 @@ jobs:
         path: 'dace'
         submodules: 'recursive'
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        pyproject-file: dace/pyproject.toml
+        cache-dependency-glob: dace/pyproject.toml
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
       with:
