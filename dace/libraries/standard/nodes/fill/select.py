@@ -15,15 +15,18 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
     """Resolve an ``'Auto'`` ``FillLibraryNode`` implementation to a concrete one.
 
     ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, a GPU
-    destination whose value is not byte-splat, or a contiguous CPU fill that is not provably
-    sub-threshold. ``'CUDA'``: host-issued byte-splat fill of GPU memory. ``'CPU'``: a single
-    ``memset``/``std::fill_n``. ``'tasklet'``: a single element.
+    destination whose constant value is not byte-splat, a dynamic value wider than 32 bits, or a
+    contiguous CPU fill that is not provably sub-threshold. ``'CUDA'``: host-issued byte-splat fill
+    of GPU memory, or a dynamic value of at most 32 bits. ``'CPU'``: a single ``memset``/
+    ``std::fill_n``. ``'tasklet'``: a single element.
 
     :param node: The fill library node being expanded.
-    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
+    :param parent_state: The state containing ``node``.
     :returns: One of ``'pure'``, ``'CUDA'``, ``'CPU'``, or ``'tasklet'``.
     """
     _out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
+    value_info = node.value_descriptor(parent_state)
+    is_dynamic = value_info is not None
 
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         if out_subset.num_elements_exact() == 1:
@@ -35,6 +38,20 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
         return 'tasklet'
 
     if not out_subset.is_contiguous_subset(out):
+        return 'pure'
+
+    if is_dynamic:
+        # A dynamic value wider than 32 bits has no single-call runtime-API memset on either host or
+        # GPU; route it to the parallel map-based fill.
+        if out.dtype.bytes > 4:
+            return 'pure'
+        if out.storage == dace.dtypes.StorageType.GPU_Global:
+            return 'CUDA'
+        # Contiguous CPU/Default/Register destination with a dynamic <=32-bit value.
+        allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
+        if out.storage in allowed and not (is_parallel_cpu_transfer_size(out_subset.num_elements())
+                                           and not is_in_parallel_scope(node, parent_state)):
+            return 'CPU'
         return 'pure'
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:

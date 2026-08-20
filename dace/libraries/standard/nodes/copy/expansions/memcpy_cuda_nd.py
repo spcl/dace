@@ -8,6 +8,7 @@ from dace import library, nodes, subsets, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_make_expansion_sdfg, _memcpy_kind, INPUT_CONNECTOR_NAME,
                                                        OUTPUT_CONNECTOR_NAME)
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'MemcpyCUDANDStrided')
 class ExpandMemcpyCUDANDStrided(ExpandTransformation):
     """Fallback for >=3D-strided cross-boundary copies that can't collapse to one
     ``cudaMemcpyAsync`` / ``cudaMemcpy2DAsync``: a Sequential map issuing one ``cudaMemcpyAsync``

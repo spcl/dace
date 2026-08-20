@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from dace import library
 from dace.libraries.standard import environments
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_make_memcpy_tasklet)
 
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'MemcpyCPU')
 class ExpandMemcpyCPU(ExpandTransformation):
     """One ``std::memcpy`` for a contiguous CPU<->CPU copy."""
     environments = [environments.CPU]

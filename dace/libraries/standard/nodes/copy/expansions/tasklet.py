@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_is_cross_cpu_gpu, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'Tasklet')
 class ExpandTasklet(ExpandTransformation):
     """Single-element same-side scalar copy: ``_cpy_out = _cpy_in`` as a Python tasklet"""
     environments = []

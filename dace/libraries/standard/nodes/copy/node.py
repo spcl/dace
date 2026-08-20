@@ -3,16 +3,12 @@
 """
 from typing import TYPE_CHECKING
 
-from dace import library, nodes, dtypes
+from dace import library, nodes, dtypes, properties
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES)
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
-from dace.libraries.standard.nodes.copy.expansions import (ExpandAuto, ExpandMappedTasklet, ExpandMemcpyCPU,
-                                                           ExpandMemcpyCUDA1D, ExpandMemcpyCUDA2D,
-                                                           ExpandMemcpyCUDANDStrided, ExpandSharedMemoryCollective,
-                                                           ExpandTasklet)
 
 if TYPE_CHECKING:
-    from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+    pass
 
 
 @library.node
@@ -21,31 +17,29 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``MappedTasklet`` (element-wise tasklet, also the rank-mismatch/reshape and large-CPU-copy
     path), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy``),
     ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
-    (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
-    ``__syncthreads()``).
+    (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
+    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
+    optional ``__syncthreads()`` barriers controlled by ``sync``).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
     memlet subsets.
     """
 
-    implementations = {
-        "Auto": ExpandAuto,
-        "MappedTasklet": ExpandMappedTasklet,
-        "Tasklet": ExpandTasklet,
-        "MemcpyCPU": ExpandMemcpyCPU,
-        "MemcpyCUDA1D": ExpandMemcpyCUDA1D,
-        "MemcpyCUDA2D": ExpandMemcpyCUDA2D,
-        "MemcpyCUDANDStrided": ExpandMemcpyCUDANDStrided,
-        "SharedMemoryCollective": ExpandSharedMemoryCollective,
-    }
+    implementations = {}
     default_implementation = 'Auto'
 
     INPUT_CONNECTOR_NAME = "_cpy_in"
     OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
-    def __init__(self, name, *args, **kwargs):
+    sync = properties.Property(dtype=bool,
+                               default=True,
+                               desc='Emit __syncthreads() barriers around the SharedMemoryCollective '
+                                    'copy (default True).')
+
+    def __init__(self, name, *args, sync=True, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
+        self.sync = sync
 
     def src_storage(self, state) -> dtypes.StorageType:
         """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
