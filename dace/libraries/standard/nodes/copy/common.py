@@ -394,6 +394,6 @@ def _build_shmem_collective_copy_code(node: "CopyLibraryNode", parent_state: dac
 
     all_args = [in_conn, out_conn] + stride_args
     # Synchronize if moving to/from shared memory collectively, and the sync flag is set (default on)
-    sync_barrier = "__syncthreads();\n" if node.sync and (
-        inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared) else ""
+    sync_barrier = "__syncthreads();\n" if node.sync and (inp.storage == dtypes.StorageType.GPU_Shared
+                                                          or out.storage == dtypes.StorageType.GPU_Shared) else ""
     return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"

@@ -35,7 +35,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     sync = properties.Property(dtype=bool,
                                default=True,
                                desc='Emit __syncthreads() barriers around the SharedMemoryCollective '
-                                    'copy (default True).')
+                               'copy (default True).')
 
     def __init__(self, name, *args, sync=True, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)

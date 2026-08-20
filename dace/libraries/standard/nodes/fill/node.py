@@ -29,20 +29,21 @@ class FillLibraryNode(nodes.LibraryNode):
     def __init__(self, name: str, *args, value=0, **kwargs):
         # Dotted structure-member data names reach here through the callers that build the label;
         # the label names the wrapper SDFG, i.e. a C++ function. See CopyLibraryNode.__init__.
-        super().__init__(name.replace('.', '_'), *args,
-                         inputs={self.VALUE_CONNECTOR_NAME}, outputs={self.OUTPUT_CONNECTOR_NAME}, **kwargs)
+        super().__init__(name.replace('.', '_'),
+                         *args,
+                         inputs={self.VALUE_CONNECTOR_NAME},
+                         outputs={self.OUTPUT_CONNECTOR_NAME},
+                         **kwargs)
         self.value = value
 
     def value_edge(self, state: dace.SDFGState) -> Optional[Any]:
         """Return the edge carrying the dynamic fill value, or ``None`` if unwired."""
         in_edges = [
-            e for e in state.in_edges(self)
-            if e.dst_conn == self.VALUE_CONNECTOR_NAME and not e.data.is_empty()
+            e for e in state.in_edges(self) if e.dst_conn == self.VALUE_CONNECTOR_NAME and not e.data.is_empty()
         ]
         return in_edges[0] if len(in_edges) == 1 else None
 
-    def value_descriptor(
-            self, state: dace.SDFGState) -> Optional[Tuple[str, dace.data.Data, dace.subsets.Range]]:
+    def value_descriptor(self, state: dace.SDFGState) -> Optional[Tuple[str, dace.data.Data, dace.subsets.Range]]:
         """Return ``(data_name, data, subset)`` for the dynamic fill value, or ``None``.
 
         :raises ValueError: If the value edge is not a single-element access-node subset, or if
