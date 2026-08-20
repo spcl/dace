@@ -58,6 +58,10 @@ jobs:
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
+    - name: Enforce Release build type
+      run: |
+        python -c "import dace; bt = dace.Config.get('compiler', 'build_type'); assert bt == 'Release', bt"
+
     - name: Test dependencies
       run: |
         papi_avail
