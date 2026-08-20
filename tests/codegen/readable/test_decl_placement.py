@@ -87,15 +87,18 @@ def readable_code(sdfg, placement):
 
 def body_lines(code):
     """The stripped, non-empty source lines of the ``*_internal`` function body."""
-    out, inside = [], False
+    out, inside, depth = [], False, 0
     for raw in code.splitlines():
         line = raw.split('////')[0].rstrip()
-        if 'internal(' in line:
+        if not inside and 'internal(' in line:
             inside = True
-        if inside and line.strip():
+        if not inside:
+            continue
+        if line.strip():
             out.append(line.strip())
-        if inside and line.strip() == '}' and len(out) > 3:
-            break
+            depth += line.count('{') - line.count('}')
+            if depth == 0 and len(out) > 1:
+                break
     return out
 
 

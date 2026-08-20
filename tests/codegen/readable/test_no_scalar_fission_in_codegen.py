@@ -73,7 +73,7 @@ def test_reassigned_scalar_stays_one_variable(require_experimental):
     targets = assignment_targets(code)
     assert targets == ['s', 's', 's'], targets  # one mutable variable, three writes -- no s_0 / s_1
     assert 'const double s' not in code  # not const: it is reassigned
-    assert code.count('double s') == 1, code  # exactly one declaration, not three shadowing ones
+    assert code.count('double s;') == 1, code  # exactly one declaration, not three shadowing ones
 
 
 def test_readable_matches_legacy_bit_for_bit(require_experimental):
