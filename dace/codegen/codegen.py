@@ -310,19 +310,22 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         inline_host_nested_sdfgs(sdfg, validate=validate)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # Normalize single-value transients to Scalar/len1-array (default is transient-only, so the
-        # signature is untouched); must run before explicit_copy so copy lowering sees the final form.
+        # Normalize single-value transients to Scalar (default: the signature is untouched). This runs
+        # unconditionally for the readable generator: map-fusion scratch buffers are rank-0 single-element
+        # arrays and must become plain scalars to avoid heap-allocating them inside inner loops.
+        # GPU map outputs are left as arrays so scalarization does not force a host ABI round-trip.
+        # Must run before explicit_copy so copy lowering sees the final form.
+        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+        from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
+                                                                              PromoteGPUScalarsToArrays)
+        ConvertLengthOneArraysToScalars(single_element=True, preserve_abi=True,
+                                        skip_gpu_outputs=True).apply_pass(sdfg, {})
+        # Widen GPU-storage scalars back: a by-value Scalar cannot live in device memory.
+        Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
         scalar_emission = config.Config.get('compiler', 'cpu', 'codegen_params', 'scalar_emission_type')
-        if scalar_emission == 'scalar':
-            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-            from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
-                                                                                  PromoteGPUScalarsToArrays)
-            ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
-            # Widen GPU-storage scalars back: a by-value Scalar cannot live in device memory.
-            Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        elif scalar_emission == 'len1_array':
+        if scalar_emission == 'len1_array':
             from dace.transformation.passes.length_one_array_scalar_conversion import ConvertScalarsToLengthOneArrays
             ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)

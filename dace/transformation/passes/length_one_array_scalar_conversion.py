@@ -225,6 +225,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         nested-SDFG transient recursion.
     :param single_element: Also rewrite a higher-rank single-element array (every dim == 1, e.g. a
         ``(1, 1)`` map-fusion scratch buffer), not just a rank-1 length-1 array.
+    :param skip_gpu_outputs: If ``True``, length-1 arrays that are outputs of a GPU-scheduled map are
+        left as arrays. This is useful right before CPU codegen, where scalarizing a GPU kernel output
+        would force an expensive round-trip through the host scalar ABI.
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
@@ -246,17 +249,21 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         default=False,
         desc="Also rewrite a higher-rank single-element array (every dim == 1, e.g. a (1, 1) map-fusion "
         "scratch buffer), not just a rank-1 length-1 array.")
+    skip_gpu_outputs = properties.Property(
+        dtype=bool, default=False, desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.")
 
     def __init__(self,
                  recursive: bool = True,
                  preserve_abi: bool = False,
                  filter: 'Optional[Set[str]]' = None,
-                 single_element: bool = False):
+                 single_element: bool = False,
+                 skip_gpu_outputs: bool = False):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi
         self.filter = None if filter is None else frozenset(filter)
         self.single_element = single_element
+        self.skip_gpu_outputs = skip_gpu_outputs
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols | ppl.Modifies.States
@@ -311,8 +318,16 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapExit) and nb.map.schedule in dtypes.GPU_SCHEDULES:
-                        # Block only partials that feed the map exit from inside the body (node -> MapExit).
-                        # A MapExit -> outside edge is a normal output and may be scalarized.
+                        # Partial WCR outputs from inside the map body (node -> MapExit) are always
+                        # blocked because the code generator cannot emit them as a scalar collective.
+                        if edge.src is node:
+                            blocked.add(node.data)
+                            break
+                        # Normal MapExit -> outside outputs are allowed by default, but the caller may
+                        # opt out: scalarizing a GPU kernel output forces a host scalar ABI round-trip.
+                        if self.skip_gpu_outputs and edge.dst is node:
+                            blocked.add(node.data)
+                            break
                         if edge.src is node:
                             blocked.add(node.data)
                             break
