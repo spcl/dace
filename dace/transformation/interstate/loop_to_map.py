@@ -1311,6 +1311,8 @@ class LoopToMap(xf.MultiStateTransformation):
                 sym_name = str(sym)
                 if sym_name in internally_defined:
                     continue
+                if sym_name in nsdfg.constants_prop:
+                    continue
                 if sym_name in sdfg.symbols:
                     if sym_name not in nsdfg.symbols:
                         nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
