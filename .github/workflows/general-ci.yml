@@ -22,6 +22,11 @@ jobs:
         simplify: [0,1,autoopt]
     env:
       OMP_STACKSIZE: 64M
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      VECLIB_MAXIMUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
       DACE_compiler_max_stack_array_size: 65536
       DACE_compiler_build_type: Release
 
