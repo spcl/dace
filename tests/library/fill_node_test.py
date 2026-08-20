@@ -461,13 +461,17 @@ def make_dynamic_fill_sdfg(shape: Sequence[int],
     libnode = FillLibraryNode(name="fill_libnode", value=0)
     state.add_edge(val, None, libnode, FillLibraryNode.VALUE_CONNECTOR_NAME, dace.memlet.Memlet("V[0]"))
     state.add_edge(libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None,
-                  dace.memlet.Memlet(f"{arr_name}[{subset}]"))
+                   dace.memlet.Memlet(f"{arr_name}[{subset}]"))
     return sdfg
 
 
 def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     """A dynamic <=32-bit value on a contiguous CPU subset lowers to ``std::fill_n``."""
-    sdfg = make_dynamic_fill_sdfg((100, ), "0:100", gpu=False, dtype=dace.float32, value_dtype=dace.float32,
+    sdfg = make_dynamic_fill_sdfg((100, ),
+                                  "0:100",
+                                  gpu=False,
+                                  dtype=dace.float32,
+                                  value_dtype=dace.float32,
                                   name="fill_dyn_cpu_f32")
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
@@ -480,7 +484,11 @@ def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
 
 def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
     """A dynamic 64-bit value has no single-call runtime memset, so it routes to ``pure``."""
-    sdfg = make_dynamic_fill_sdfg((100, ), "0:100", gpu=False, dtype=dace.float64, value_dtype=dace.float64,
+    sdfg = make_dynamic_fill_sdfg((100, ),
+                                  "0:100",
+                                  gpu=False,
+                                  dtype=dace.float64,
+                                  value_dtype=dace.float64,
                                   name="fill_dyn_cpu_f64")
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
@@ -489,7 +497,11 @@ def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
 
 def test_fill_dynamic_value_cpu_runs_and_writes_value():
     """A dynamic CPU fill actually writes the supplied value into the destination array."""
-    sdfg = make_dynamic_fill_sdfg((64, ), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float64,
+    sdfg = make_dynamic_fill_sdfg((64, ),
+                                  "0:64",
+                                  gpu=False,
+                                  dtype=dace.float64,
+                                  value_dtype=dace.float64,
                                   name="fill_dyn_cpu_run")
     sdfg.validate()
     sdfg.expand_library_nodes()
@@ -504,7 +516,11 @@ def test_fill_dynamic_value_cpu_runs_and_writes_value():
 
 def test_fill_dynamic_value_rejects_multi_element_subset():
     """The value connector must address exactly one element."""
-    sdfg = make_dynamic_fill_sdfg((64, ), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float64,
+    sdfg = make_dynamic_fill_sdfg((64, ),
+                                  "0:64",
+                                  gpu=False,
+                                  dtype=dace.float64,
+                                  value_dtype=dace.float64,
                                   name="fill_dyn_multi")
     state = sdfg.start_state
     fill = next(n for n in state.nodes() if isinstance(n, FillLibraryNode))
@@ -521,7 +537,11 @@ def test_fill_dynamic_value_rejects_multi_element_subset():
 
 def test_fill_dynamic_value_rejects_dtype_mismatch():
     """The value descriptor dtype must match the output array dtype."""
-    sdfg = make_dynamic_fill_sdfg((64, ), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float32,
+    sdfg = make_dynamic_fill_sdfg((64, ),
+                                  "0:64",
+                                  gpu=False,
+                                  dtype=dace.float64,
+                                  value_dtype=dace.float32,
                                   name="fill_dyn_mismatch")
     with pytest.raises(dace.sdfg.validation.InvalidSDFGError, match="dtype"):
         sdfg.validate()
@@ -530,7 +550,11 @@ def test_fill_dynamic_value_rejects_dtype_mismatch():
 @pytest.mark.gpu
 def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     """A dynamic <=32-bit value on a contiguous GPU subset lowers to ``<backend>MemsetAsync``."""
-    sdfg = make_dynamic_fill_sdfg((100, ), "0:100", gpu=True, dtype=dace.float32, value_dtype=dace.float32,
+    sdfg = make_dynamic_fill_sdfg((100, ),
+                                  "0:100",
+                                  gpu=True,
+                                  dtype=dace.float32,
+                                  value_dtype=dace.float32,
                                   name="fill_dyn_gpu_f32")
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
