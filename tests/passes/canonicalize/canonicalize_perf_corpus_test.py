@@ -355,6 +355,7 @@ def serialize(sdfg: dace.SDFG) -> dace.SDFG:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
             node.map.schedule = dace.ScheduleType.Sequential
+            node.map.omp_simd = False
         elif isinstance(node, nodes.LibraryNode):
             node.schedule = dace.ScheduleType.Sequential
     SpecializeCpuTransfers().apply_pass(sdfg, {})
