@@ -263,8 +263,9 @@ def test_opaque_scalar_is_not_arrayized():
 
 
 def test_passes_expose_property_options():
-    assert set(
-        ConvertLengthOneArraysToScalars.__properties__) == {"recursive", "preserve_abi", "filter", "single_element"}
+    assert set(ConvertLengthOneArraysToScalars.__properties__) == {
+        "recursive", "preserve_abi", "filter", "single_element", "skip_gpu_outputs"
+    }
     assert set(ConvertScalarsToLengthOneArrays.__properties__) == {"recursive", "preserve_abi", "filter"}
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
         inst = cls(recursive=False, preserve_abi=True)

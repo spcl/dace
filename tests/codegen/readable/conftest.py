@@ -17,7 +17,9 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 # Pin 1 OpenMP thread: reduction order must be deterministic for the bit-exact legacy-vs-experimental compare.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+# Forced, not setdefault: CI runners export OMP_NUM_THREADS=8, and a live libgomp team breaks the
+# fork-based isolation this directory uses. A single thread means no worker team exists to strand.
+os.environ["OMP_NUM_THREADS"] = "1"
 
 import numpy as np
 import pytest
