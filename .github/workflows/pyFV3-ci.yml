@@ -29,7 +29,7 @@ jobs:
      - name: Checkout to repository
        uses: actions/checkout@v7
      - name: Install uv
-       uses: astral-sh/setup-uv@v4
+       uses: astral-sh/setup-uv@v7
        with:
          enable-cache: true
          pyproject-file: pyproject.toml
@@ -45,6 +45,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
     name: "${{ matrix.module }} regression test"
+    env:
+      UV_SYSTEM_PYTHON: '1'
 
     steps:
     - name: Checkout pyFV3
@@ -65,6 +67,9 @@ jobs:
         python-version: 3.12
 
     - name: Install OpenMPI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopenmpi-dev openmpi-bin
 
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
