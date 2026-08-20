@@ -1,6 +1,8 @@
 #!/bin/sh
-
 set -e
+
+# Install dependencies
+uv pip install --upgrade twine build
 
 # Synchronize submodules
 git submodule update --init --recursive
@@ -9,7 +11,7 @@ git submodule update --init --recursive
 rm -rf dist dace.egg-info
 
 # Make tarball
-uv build --sdist --no-sources
+python -m build --sdist
 
 # Upload to PyPI
-uv publish dist/*
+twine upload dist/*
