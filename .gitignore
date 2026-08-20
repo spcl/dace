@@ -220,6 +220,10 @@ report-*.json
 # canonicalize perf harness per-kernel result files
 perf_results/
 
+# Local corpus perf sweep outputs
+canon_corpus_perf_job/corpus_perf_results*/
+canon_corpus_perf_job/flow_results/
+
 # Never commit key / secret material anywhere in this repo.
 *.pem
 *.key

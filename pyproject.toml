@@ -49,7 +49,15 @@ testing = [
     "ipykernel",
     "nbconvert",
     "pytest-timeout",
+    # SMT-backed dependence oracle for non-affine parallelization proofs.
+    "z3-solver",
+    # Plotting the corpus perf results; analysis only, never imported by dace itself.
+    "matplotlib",
 ]
+# Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
+fastgraph = ["rustworkx"]
+# Optional: exact-integer polyhedral engine for WavefrontSkew canonicalization.
+polyhedral = ["islpy"]
 ml-testing = [
     "coverage",
     "pytest-cov",
