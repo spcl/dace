@@ -755,6 +755,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # arithmetic here, before the lifting stages; genuine data-dependent gathers (``a[idx[i]]``)
     # are left alone. ``RemoveUnusedSymbols`` then sweeps the now-dead promotion symbols.
     s += [('index_subsets', PropagateIndexSubsets()), ('index_subsets', RemoveUnusedSymbols())]
+    # ``PropagateIndexSubsets`` exposes fresh loop-invariant arithmetic on
+    # interstate edges; without a following propagation/cleanup the
+    # ``reduction_to_wcr_map`` stage can build WCR memlet subsets that reference
+    # nested connector arrays as if they were symbols and then inline the
+    # nested SDFG, leaving free ``__tmp_*`` symbols behind
+    # (``split_tasklets_test::test_add_missing_symbols_honors_integer_cast``).
+    # This narrow cleanup (not a full ``SimplifyPass``) folds those expressions
+    # and removes the now-dead dataflow.
+    s += [('index_subsets',
+           ppl.FixedPointPipeline([SymbolPropagation(),
+                                   ConstantPropagation(),
+                                   DeadDataflowElimination()]))]
 
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
