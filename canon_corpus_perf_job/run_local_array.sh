@@ -24,7 +24,7 @@ PRESET="${PRESET:-S}"
 # Only the two DaCe CPU pipelines by default; set CANON_PERF_ARMS=1 for the full baseline table.
 export CANON_PERF_ARMS="${CANON_PERF_ARMS:-0}"
 
-OUT="$HERE/corpus_perf_results_array_${PRESET}"
+OUT="${OUT_DIR:-$HERE/corpus_perf_results_array_${PRESET}}"
 
 echo "=== array sweep: OMP=$OMP_NUM_THREADS preset=$PRESET -> $OUT"
 python3 - "$HERE" "$OUT" "$PRESET" <<'PY'
