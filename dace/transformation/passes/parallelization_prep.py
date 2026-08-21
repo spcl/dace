@@ -20,7 +20,7 @@ imports pull in).
 """
 import ast
 import copy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 import sympy
 
@@ -726,7 +726,12 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
-    def _split_loop_at(self, sdfg: SDFG, loop: LoopRegion, x, middle_singleton: bool = True) -> bool:
+    def _split_loop_at(self,
+                       sdfg: SDFG,
+                       loop: LoopRegion,
+                       x,
+                       middle_singleton: bool = True,
+                       clamp: FrozenSet[str] = frozenset()) -> bool:
         """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
         clone of the body wired in sequence in place of the loop. Unit stride only;
         returns whether it split.
@@ -749,8 +754,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         CONTRACT: the segments regroup the SAME iterations only while ``start <= x <= end``. An
         ``x`` outside the range would invent iterations the loop never ran (the middle at ``i = x``)
         or run past its end (``before``'s ``i < x`` REPLACES the original bound), so a caller that
-        cannot prove the range membership must guard the split with it -- see
-        :meth:`_split_range_relations` and :meth:`_specialize_index_set_split`."""
+        cannot prove the range membership must discharge it one of two ways -- see
+        :meth:`_split_sides_needing_clamp`, which names the sides that need it:
+
+        - ``clamp`` the named side's own bound, the way the middle singleton is already clamped
+          (``before`` becomes ``i < min(x, end + 1)``, ``after`` starts at ``max(x, start)``). The
+          split is then TOTAL for any ``x`` and needs no branch at all. Costs a ``min`` / ``max``
+          in the segment's bound, which ``LoopToMap`` maps as readily as a bare one.
+        - guard the whole split with the membership relation and keep the original loop as the
+          fallback -- :meth:`_split_range_relations` plus :meth:`_specialize_index_set_split`.
+          Keeps the bounds bare, at the price of a second copy of the nest that never parallelizes."""
         import copy
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
@@ -800,7 +813,10 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         if want_before:
             before = clone_segment()
-            before.loop_condition = CodeBlock(f'{ivar} < ({x})')  # [start, x-1]
+            # [start, x-1]; clamped to ``end + 1`` where ``x <= end`` is not provable, so an ``x``
+            # past the end makes this segment exactly the original loop instead of overrunning it.
+            hi = f'min(({x}), ({end}) + 1)' if 'before' in clamp else f'({x})'
+            before.loop_condition = CodeBlock(f'{ivar} < {hi}')
             chain.append(before)
         if middle_singleton:
             at = clone_segment()  # {x} intersected with [start, end]: at most a single iteration
@@ -812,12 +828,14 @@ class BestEffortLoopPeeling(ppl.Pass):
             at.loop_condition = CodeBlock(f'{ivar} < min(({x}), ({end})) + 1')
             chain.append(at)
             if want_after:
-                after = clone_segment()
-                after.init_statement = CodeBlock(f'{ivar} = ({x}) + 1')  # [x+1, end], original condition
+                after = clone_segment()  # [x+1, end], original condition
+                lo = f'max(({x}) + 1, ({start}))' if 'after' in clamp else f'({x}) + 1'
+                after.init_statement = CodeBlock(f'{ivar} = {lo}')
                 chain.append(after)
         else:
             after = clone_segment()  # [x, end]: x joins the second half, original condition
-            after.init_statement = CodeBlock(f'{ivar} = ({x})')
+            lo = f'max(({x}), ({start}))' if 'after' in clamp else f'({x})'
+            after.init_statement = CodeBlock(f'{ivar} = {lo}')
             chain.append(after)
 
         in_edges = list(parent.in_edges(loop))
@@ -858,16 +876,36 @@ class BestEffortLoopPeeling(ppl.Pass):
         to prove). ``None`` means the bounds are unreadable and the caller must not split."""
         import sympy
         from dace.transformation.passes.analysis import loop_analysis
+        sides = self._split_sides_needing_clamp(loop, x)
+        if sides is None:
+            return None  # bounds unreadable -> membership cannot even be stated
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        relations = set()
+        if 'before' in sides:
+            relations.add(sympy.LessThan(x, end))  # a `before` segment exists -> it must not overrun
+        if 'after' in sides:
+            relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
+        return frozenset(relations)
+
+    def _split_sides_needing_clamp(self, loop: LoopRegion, x) -> Optional[FrozenSet[str]]:
+        """Which range segments of a split at ``x`` are not PROVABLY inside ``loop``'s bounds.
+
+        The one predicate behind both ways of discharging the contract of :meth:`_split_loop_at`:
+        clamping the segment's own bound (:meth:`_split_loop_at`'s ``clamp``), or -- for a caller
+        that wants the bound left bare -- guarding the whole split with the membership relation
+        (:meth:`_split_range_relations`). ``None`` when the bounds are unreadable."""
+        from dace.transformation.passes.analysis import loop_analysis
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         if start is None or end is None:
-            return None  # bounds unreadable -> membership cannot even be stated
-        relations = set()
+            return None
+        sides = set()
         if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
-            relations.add(sympy.LessThan(x, end))  # a `before` segment exists -> it must not overrun
+            sides.add('before')
         if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
-            relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
-        return frozenset(relations)
+            sides.add('after')
+        return frozenset(sides)
 
     def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
         """Whether ``expr >= 0`` holds -- either unconditionally
@@ -906,28 +944,26 @@ class BestEffortLoopPeeling(ppl.Pass):
                                     x,
                                     relations,
                                     middle_singleton: bool = True) -> None:
-        """Replace ``loop`` with ``if (start <= x <= end) { index-set split } else { original loop }``.
+        """Replace ``loop`` with the index-set split at ``x``, in place.
 
-        The split form regroups the same iterations only inside the range (see
-        :meth:`_split_loop_at`), so it is emitted as the true branch guarded by ``relations`` and
-        the untouched loop -- correct wherever ``x`` lands -- is the sequential fallback. With no
-        relation (a provably in-range ``x``) the split is applied in place, no branch. Mirrors
-        :meth:`_specialize_modulo_split`, whose far-half fold is likewise conditional."""
-        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
-        if not relations:
-            if self._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton):
-                self._clean_peeled_remainder(sdfg)
+        The split regroups the same iterations only inside the range (see :meth:`_split_loop_at`),
+        and a loop-invariant ``x`` need not land there. Each side that cannot be proven in range is
+        CLAMPED to the loop's own bound, which makes the split total for any ``x`` -- an ``x`` past
+        the end leaves the whole loop in the ``before`` segment, an ``x`` below the start leaves it
+        in the ``after`` one, and neither invents an iteration.
+
+        The alternative -- emitting ``if in-range { split } else { original loop }`` -- keeps the
+        segment bounds bare but leaves a second, never-parallelized copy of the nest standing in the
+        else branch. That copy is the whole cost: on the hybrid sparse kernel it doubled the
+        residual sequential loops, and the fallback runs exactly when the split would have been
+        legal anyway once clamped. ``relations`` is kept in the signature because it is what the
+        caller already computed to decide the split is worth trying; the sides it names are the
+        sides that get clamped."""
+        sides = self._split_sides_needing_clamp(loop, x)
+        if sides is None:
             return
-        # A ``CodeBlock`` condition is PYTHON (``and``, not ``&&``), and the relation is rendered by
-        # sympy's own printer -- not ``sym2cpp``, whose C ``/`` would turn the ``N // 2`` split point
-        # into a true division. ``int_floor`` and friends round-trip through ``pystr_to_symbolic``.
-        condition = ' and '.join(f'({r})' for r in sorted(relations, key=str))
-
-        def _parallelize(par_loop, par_region, _owner):
-            if self._split_loop_at(sdfg, par_loop, x, middle_singleton=middle_singleton):
-                self._clean_peeled_remainder(par_region)
-
-        specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
+        if self._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton, clamp=sides):
+            self._clean_peeled_remainder(sdfg)
 
     def _inner_loop_variables(self, loop: LoopRegion) -> set:
         """Iterator names bound by a ``LoopRegion`` nested strictly inside ``loop``.
@@ -993,7 +1029,10 @@ class BestEffortLoopPeeling(ppl.Pass):
             singleton = x not in two_way
             cand = copy.deepcopy(mini)
             cloops = _loops(cand)
-            if not cloops or not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton):
+            if not cloops:
+                continue
+            clamp = self._split_sides_needing_clamp(cloops[0], x) or frozenset()
+            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=clamp):
                 continue
             self._clean_peeled_remainder(cand)
             try:

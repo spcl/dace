@@ -257,6 +257,7 @@ def _loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
     return any(k in lo for k in ('carried', 'may overlap', 'read-after-write conflict'))
 
 
+@properties.make_properties
 @xf.explicit_cf_compatible
 class PinNestedSequentialLoops(ppl.Pass):
     """Mark every loop nested inside another loop ``pinned_sequential``.
@@ -272,6 +273,18 @@ class PinNestedSequentialLoops(ppl.Pass):
 
     CATEGORY: str = 'Optimization Preparation'
 
+    exempt_scalar_reductions = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Leave a nested loop that only accumulates into one body-local scalar UNPINNED, so the '
+        'WCR-map path may lift it. Off by default and deliberately so: the fork-per-outer-iteration '
+        'cost is what this pass exists to avoid, and it is not small -- nussinov measured ~340x '
+        'slower lifted. Turn it on only where the inner trip count is known to be large.')
+
+    def __init__(self, exempt_scalar_reductions: bool = False) -> None:
+        super().__init__()
+        self.exempt_scalar_reductions = exempt_scalar_reductions
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
@@ -283,11 +296,47 @@ class PinNestedSequentialLoops(ppl.Pass):
         pinned = 0
         for node, _p in list(sdfg.all_nodes_recursive()):
             if isinstance(node, LoopRegion) and node.loop_variable and _nested_in_sequential_loop(node):
+                if self.exempt_scalar_reductions and accumulates_only_a_local_scalar(node, sdfg):
+                    continue
                 # Only a flag that is not already set is a modification.
                 if not node.pinned_sequential:
                     node.pinned_sequential = True
                     pinned += 1
         return pinned or None
+
+
+def accumulates_only_a_local_scalar(loop: LoopRegion, sdfg: SDFG) -> bool:
+    """``loop``'s only effect an outer iteration can observe is ONE fixed slot -- a reduction.
+
+    Every live (non-transient) write must land on a single element that does NOT move with the
+    loop variable, and there must be at most one such slot. Body-local transients are unconstrained:
+    they are scratch, gone at the end of the iteration. nussinov's ``table[i, j] = max(table[i, j],
+    ...)`` is the live-accumulator form of this; ``acc += val[k] * x[col[k]]`` the transient one.
+
+    Profitability only. Whether lifting it is SOUND stays with the passes that do the lifting
+    (``AccumulatorCopyChainToWCR`` checks the combine is WCR-safe, ``LoopToMap`` checks the
+    dependences); this decides nothing but whether they are allowed to look.
+    """
+    loop_var_sym = symbolic.symbol(loop.loop_variable, sdfg.symbols.get(loop.loop_variable))
+    live_slots = set()
+    for state in loop.all_states():
+        # A nested SDFG owns its own descriptors; asking the outer one returns ``None`` for every
+        # name inside it, which silently made this refuse every nested reduction.
+        owner = state.sdfg if state.sdfg is not None else sdfg
+        for node in state.data_nodes():
+            if state.in_degree(node) == 0:
+                continue
+            desc = owner.arrays.get(node.data)
+            if desc is None:
+                return False
+            if desc.transient:
+                continue
+            for edge in state.in_edges(node):
+                subset = edge.data.subset if edge.data is not None else None
+                if subset is None or _one_elem(subset) != 1 or _uses(subset, loop_var_sym):
+                    return False  # a live per-iteration store -- the loop emits a sequence, not a fold
+                live_slots.add((node.data, str(subset)))
+    return len(live_slots) <= 1
 
 
 @xf.explicit_cf_compatible

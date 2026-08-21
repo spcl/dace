@@ -409,7 +409,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   target: str = 'cpu',
                   lift: bool = True,
                   lift_copy: bool = True,
-                  semantic_lifting: bool = True) -> List[Tuple[str, ppl.Pass]]:
+                  semantic_lifting: bool = True,
+                  parallelize_nested_reductions: bool = False) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
@@ -1081,7 +1082,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
     # them and ``LoopToReduce`` must not run again after it.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
-    s += [('reduction_to_wcr_map', PinNestedSequentialLoops())]
+    s += [('reduction_to_wcr_map', PinNestedSequentialLoops(exempt_scalar_reductions=parallelize_nested_reductions))]
     # The nesting-only pin above misses the *outermost* carrier of a doubly-carried nest.
     # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
     # a carried dependency; leave DOALL-eligible top-level loops untouched.
@@ -1774,6 +1775,13 @@ class CanonicalizationPipeline(ppl.Pass):
         desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Fill). '
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
 
+    parallelize_nested_reductions = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Let a reduction nested inside a SEQUENTIAL loop become a parallel WCR-map instead of '
+        'staying pinned sequential. Off by default: the pin exists because the OpenMP region is '
+        're-entered once per outer iteration, which measured ~340x slower on polybench nussinov.')
+
     def __init__(self,
                  validate: bool = True,
                  validate_all: bool = True,
@@ -1792,6 +1800,7 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
+                 parallelize_nested_reductions: bool = False,
                  dump_dir: Optional[str] = None):
         if target not in _TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
@@ -1831,6 +1840,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.lift = lift
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
+        self.parallelize_nested_reductions = parallelize_nested_reductions
         self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -1871,7 +1881,8 @@ class CanonicalizationPipeline(ppl.Pass):
                                target=self.target,
                                lift=self.lift,
                                lift_copy=self.lift_copy,
-                               semantic_lifting=self.semantic_lifting)
+                               semantic_lifting=self.semantic_lifting,
+                               parallelize_nested_reductions=self.parallelize_nested_reductions)
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
             sdfg.save(os.path.join(self.dump_dir, '000_input.sdfgz'), compress=True)
@@ -1915,6 +1926,7 @@ def canonicalize(sdfg: SDFG,
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
+                 parallelize_nested_reductions: bool = False,
                  dump_dir: Optional[str] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -2004,6 +2016,7 @@ def canonicalize(sdfg: SDFG,
                              lift=lift,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting,
+                             parallelize_nested_reductions=parallelize_nested_reductions,
                              dump_dir=dump_dir).apply_pass(sdfg, {})
     # The guard stage runs last, so nothing cleans up after it: on kernels whose old entry was
     # empty it leaves a redundant empty state between guard and body, which a second canonicalize
