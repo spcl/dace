@@ -268,6 +268,38 @@ def _ndarray_transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
     return _transpose(pv, sdfg, state, arr, axes)
 
 
+@oprepo.replaces('numpy.broadcast_to')
+def broadcast_to(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str,
+                 shape: Union[str, symbolic.SymbolicType, Sequence[Union[str, symbolic.SymbolicType]]]) -> str:
+    """Replicate ``arr`` across ``shape`` by the NumPy broadcasting rule.
+
+    NumPy returns a zero-stride VIEW; DaCe materializes a transient instead, because a
+    stride of 0 makes every write to the result alias and there is no way to tell here
+    whether the caller only reads it.
+    """
+    from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
+
+    if isinstance(arr, (list, tuple)) and len(arr) == 1:
+        arr = arr[0]
+    desc = sdfg.arrays[arr]
+    if isinstance(shape, (str, symbolic.symbol)) or isinstance(shape, Integral):
+        shape = [shape]
+    newshape = [symbolic.pystr_to_symbolic(s) for s in shape]
+    if len(newshape) < len(desc.shape):
+        raise ValueError(f'Cannot broadcast a rank-{len(desc.shape)} array to the '
+                         f'rank-{len(newshape)} shape {tuple(newshape)}')
+
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), newshape, desc.dtype, desc.storage, find_new_name=True)
+    node = Broadcast('broadcast_to', dim=None)
+    state.add_node(node)
+    state.add_edge(state.add_read(arr), None, node, '_src', Memlet.from_array(arr, desc))
+    state.add_edge(node, '_dst', state.add_write(out), None, Memlet.from_array(out, out_desc))
+    # The node's own validate() is what rejects a shape that does not broadcast; run it here
+    # so the error names the numpy call instead of surfacing at expansion time.
+    node.validate(sdfg, state)
+    return out
+
+
 @oprepo.replaces('numpy.reshape')
 def reshape(pv: ProgramVisitor,
             sdfg: SDFG,
