@@ -355,7 +355,8 @@ def serialize(sdfg: dace.SDFG) -> dace.SDFG:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
             node.map.schedule = dace.ScheduleType.Sequential
-            node.map.omp_simd = False
+            # Leave ``omp_simd`` as-is: ``#pragma omp simd`` is valid on a sequential loop and the
+            # baseline should measure the same vectorized body the canonicalizer targets.
         elif isinstance(node, nodes.LibraryNode):
             node.schedule = dace.ScheduleType.Sequential
     SpecializeCpuTransfers().apply_pass(sdfg, {})

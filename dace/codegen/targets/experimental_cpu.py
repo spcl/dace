@@ -26,13 +26,15 @@ from dace.codegen.common import emits_tree_reductions, sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import (CPUCodeGen, aligned_new_value, decl_placement, hoist_loop_decls,
-                                      map_schedule_is_sequential, scalar_init_style, use_aligned_operator_new)
+from dace.codegen.targets.cpu import (CPUCodeGen, aligned_new_value, counter_init_assigns_only,
+                                      counter_used_outside_loop, decl_placement, hoist_loop_decls,
+                                      loop_region_index_ctype, map_schedule_is_sequential, scalar_init_style,
+                                      use_aligned_operator_new)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
@@ -60,6 +62,27 @@ DECLARATOR_TOKENS = frozenset({'*', '&', '>'})
 INCLUDE_LINE = re.compile(r'^\s*#\s*include\s')
 PREPROCESSOR_IF = re.compile(r'^\s*#\s*if')
 PREPROCESSOR_ENDIF = re.compile(r'^\s*#\s*endif')
+
+
+def _experimental_loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> Optional[str]:
+    """C++ type to declare a LoopRegion counter INSIDE its ``for``-init clause in the readable
+    generator, ignoring the ``decl_placement`` knob (which otherwise leaves it hoisted by default).
+
+    The eligibility gates match :func:`dace.codegen.targets.cpu.loop_local_counter_ctype`: the
+    counter must be owned by exactly one non-inverted LoopRegion whose init is a plain assignment,
+    and it must not be read outside that loop. ``loop_index_type``/``loop_region_index_ctype`` still
+    apply.
+    """
+    owners = [
+        cfr for cfr in sdfg.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable == name and cfr.init_statement is not None
+    ]
+    if len(owners) != 1:
+        return None
+    loop = owners[0]
+    if loop.inverted or not counter_init_assigns_only(loop) or counter_used_outside_loop(name, loop, sdfg):
+        return None
+    return loop_region_index_ctype() or dtype.ctype
 
 
 def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
@@ -253,6 +276,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # emit_tasklet_body_block, which is the first point that knows whether that tasklet is emitted
         # brace-free (fuse the binding) or in its own `{ }` block (declare ahead of the block instead).
         self.const_pending: List[dict] = []
+
+    def emit_interstate_variable_declaration(self, name, dtype, callsite_stream, sdfg):
+        """LoopRegion counters are declared inside their own ``for``-init clause in the readable
+        generator (``for (T i = ...)``); only non-loop interstate symbols keep the hoisted declaration.
+        """
+        local_ctype = _experimental_loop_local_counter_ctype(name, dtype, sdfg)
+        if local_ctype is not None:
+            self._frame.loop_local_counters[(sdfg.cfg_id, name)] = local_ctype
+            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, local_ctype)
+            return
+        super().emit_interstate_variable_declaration(name, dtype, callsite_stream, sdfg)
 
     def get_generated_codeobjects(self):
         # A split-nest / external translation unit assembles its global code the way the frame does --

@@ -139,6 +139,7 @@ jobs:
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.
@@ -203,6 +204,7 @@ jobs:
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.

@@ -324,8 +324,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                             blocked.add(node.data)
                             break
                         # Normal MapExit -> outside outputs are allowed by default, but the caller may
-                        # opt out: scalarizing a GPU kernel output forces a host scalar ABI round-trip.
-                        if self.skip_gpu_outputs and edge.dst is node:
+                        # opt out: scalarizing a non-transient GPU kernel output forces a host scalar ABI
+                        # round-trip. Transient outputs are scalarized and widened back by the GPU-scalar
+                        # promotion pass when they live in device memory.
+                        if self.skip_gpu_outputs and edge.dst is node and not arr.transient:
                             blocked.add(node.data)
                             break
                         if edge.src is node:
