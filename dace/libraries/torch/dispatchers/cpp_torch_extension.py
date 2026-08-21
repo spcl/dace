@@ -615,22 +615,30 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
                          f"Torch{module.sdfg_name}",
                          environments=environments)
 
-    # Ask each SDFG where it was built. build_folder honours default_build_folder, cache and
-    # cache_distaware; a literal '.dacecache' misses the folder whenever any of them is not default.
-    fwd_build_path = compiled.sdfg.build_folder
-    bwd_build_path = bwd_sdfg.build_folder if bwd_sdfg is not None else None
-    torch_module_build_path = os.path.join(dace.sdfg.sdfg.build_folder_root(), base_libname)
+    # Derive the build root from the library that was actually produced, rather than assuming the
+    # default folder name: ``compiler.default_build_folder`` is configurable, and a multi-rank run
+    # is expected to set it per rank. ``compiled.filename`` is
+    # ``<build root>/<sdfg folder>/build/lib<name>.so``.
+    sdfg_build_folder = os.path.dirname(os.path.dirname(os.path.abspath(compiled.filename)))
+    dace_build_root = os.path.dirname(sdfg_build_folder)
+    sdfg_folder_name = os.path.basename(sdfg_build_folder)
+
+    torch_module_build_path = os.path.join(dace_build_root, base_libname)
+
+    # Treat the case where a hash is added to the SDFG folder dir
+    backward_sdfg_folder_name = f"{compiled.sdfg.name}_backward_{sdfg_folder_name.removeprefix(compiled.sdfg.name + '_')}" if sdfg_folder_name != compiled.sdfg.name else f"{compiled.sdfg.name}_backward"
     compiler.generate_program_folder(None, [program], torch_module_build_path)
 
-    include_path = os.path.abspath(os.path.join(fwd_build_path, "include"))
-    include_path_bwd = os.path.abspath(os.path.join(bwd_build_path, "include")) if bwd_build_path else None
+    include_path = os.path.abspath(os.path.join(dace_build_root, sdfg_folder_name, "include"))
+    include_path_bwd = os.path.abspath(os.path.join(dace_build_root, backward_sdfg_folder_name, "include"))
     dace_include_path = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
     dace_include_onnx = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
     dace_include_blas = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
 
-    code_path = os.path.join(fwd_build_path, "src", "cpu", f"{compiled.sdfg.name}.cpp")
-    code_path_bwd = os.path.join(bwd_build_path, "src", "cpu", f"{bwd_sdfg.name}.cpp") if bwd_build_path else None
-    torch_code_path = os.path.join(torch_module_build_path, "src", "cpu", f"{base_libname}.cpp")
+    code_path = os.path.join(dace_build_root, sdfg_folder_name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
+    code_path_bwd = os.path.join(dace_build_root, backward_sdfg_folder_name, "src", "cpu",
+                                 f"{compiled.sdfg.name}_backward.cpp")
+    torch_code_path = os.path.join(dace_build_root, base_libname, "src", "cpu", f"{base_libname}.cpp")
 
     sources = [p for p in [code_path, torch_code_path, code_path_bwd] if p and os.path.exists(p)]
 
@@ -643,35 +651,6 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     unique_build_dir = os.path.join(build_root, unique_name)
     os.makedirs(unique_build_dir, exist_ok=True)
 
-    # GPU SDFGs: the DaCe-generated CPU sources reference CUDA declarations
-    # (gpuStream_t, dace::cuda::Context, kernel-launch wrappers) that the DaCe runtime
-    # headers gate behind WITH_CUDA, and the kernel definitions live in the
-    # separately-built SDFG libraries. Mirror the generated CMake (-DWITH_CUDA, CUDA
-    # include dirs via with_cuda=True) and link the SDFG libraries so those symbols
-    # resolve in the extension.
-    # The DaCe runtime headers this extension includes are C++20 (``std::bit_cast`` in types.h).
-    # torch's extension builder injects its own ``-std=`` default, which is C++17 on current
-    # releases; ours comes after it on the command line and wins.
-    extra_cflags = ["-g", "-std=c++20"]
-    extra_ldflags = []
-
-    # ``has_gpu_code`` keys off dtypes.GPU_STORAGES (only GPU_Shared) + GPU schedules, so an SDFG
-    # that is GPU-resident but only moves data (GPU_Global arrays + stream copies, no kernels --
-    # e.g. a pure Reshape) reports False. The generated CPU source still references gpuStream_t /
-    # dace::cuda::Context, so detect GPU residency broadly.
-    def _is_gpu_sdfg(c):
-        if c.has_gpu_code:
-            return True
-        return any(desc.storage in GPU_RESIDENT_STORAGES for _, _, desc in c.sdfg.arrays_recursive())
-
-    with_cuda = any(_is_gpu_sdfg(c) for c in compiled_sdfgs)
-    if with_cuda:
-        extra_cflags.append("-DWITH_CUDA")
-        for c in compiled_sdfgs:
-            libpath = os.path.abspath(c.filename)
-            extra_ldflags.append(libpath)
-            extra_ldflags.append(f"-Wl,-rpath,{os.path.dirname(libpath)}")
-
     # Deferred: importing torch.utils.cpp_extension runs a CUDA-installation probe that blocks on
     # torch.cuda.is_available(), so it must not happen at module import (see PyTorch environment).
     from torch.utils.cpp_extension import load as torch_load  # noqa: PLC0415
@@ -681,9 +660,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
         name=unique_name,
         sources=sources,
         build_directory=unique_build_dir,
-        extra_cflags=extra_cflags,
-        extra_ldflags=extra_ldflags,
-        with_cuda=with_cuda,
+        # torch's cpp_extension defaults to -std=c++17, while the DaCe runtime headers this
+        # translation unit includes are C++20 (``std::bit_cast`` in ``dace/types.h``, among
+        # others). Read the same config entry the DaCe build reads so the two never drift.
+        extra_cflags=["-g", f"-std=c++{config.Config.get('compiler', 'cpp_standard')}"],
         extra_include_paths=[
             p for p in {
                 include_path,
