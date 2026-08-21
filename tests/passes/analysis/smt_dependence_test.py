@@ -60,6 +60,39 @@ def test_an_untranslatable_expression_is_inconclusive():
     assert smt_dependence.prove_injective_write(opaque, 'i', 0, N, 1) is not True
 
 
+def test_read_ahead_excludes_the_readers_own_iteration():
+    """``prove_read_ahead`` is what a snapshot rewrite needs, and no verdict from
+    :func:`classify_read_write_pair` implies it -- not even the strongest one.
+
+    ``A[i]`` read against ``A[i]`` written classifies ``'none'``: two DIFFERENT iterations never
+    touch a common element. The read still aliases the write of its OWN iteration, so redirecting
+    it to a pre-loop snapshot would hand it the stale original instead of the value that iteration
+    just produced. Only the read-ahead question excludes that, and it does."""
+    assert smt_dependence.classify_read_write_pair(I, I, 'i', 0, N) == 'none'
+    assert smt_dependence.prove_read_ahead(I, I, 'i', 0, N) is not True
+    assert smt_dependence.prove_read_ahead(I + 1, I, 'i', 0, N) is True
+
+
+def test_read_ahead_reads_the_guard():
+    """A non-affine subscript with no guard could land anywhere, including on an element an
+    earlier iteration wrote; the same subscript under ``P > i`` cannot. The guard, not the
+    subscript, is what makes the second one provable -- the ``A[IDX[i]*IDX[i-1]]`` shape."""
+    p = symbolic.pystr_to_symbolic('P')
+    assert smt_dependence.prove_read_ahead(p, I, 'i', 0, N) is not True
+    assert smt_dependence.prove_read_ahead(p, I, 'i', 0, N, read_guard=sp.StrictGreaterThan(p, I)) is True
+
+
+def test_dace_connectives_reach_the_solver():
+    """``pystr_to_symbolic`` keeps ``and`` / ``or`` / ``not`` as DaCe function nodes rather than
+    folding them to sympy's, so a guard collected off a ``ConditionalBlock`` arrives in that form.
+    It used to fall through the translator to ``None``, which silently disarmed every
+    guard-dependent proof -- the failure mode is a REFUSAL, so nothing ever flagged it."""
+    guard = symbolic.pystr_to_symbolic('(P > i) and (P < N)')
+    assert str(guard.func) == 'AND', guard
+    p = symbolic.pystr_to_symbolic('P')
+    assert smt_dependence.prove_read_ahead(p, I, 'i', 0, N, read_guard=guard) is True
+
+
 if __name__ == '__main__':
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()

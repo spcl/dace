@@ -101,8 +101,13 @@ def test_guarded_poly_indirection_is_value_preserving():
     assert np.allclose(got, expected), 'canonicalize must preserve the guarded indirection'
 
 
-@pytest.mark.xfail(strict=True, reason='needs an SMT oracle: guard makes the RAW chain UNSAT')
 def test_guarded_poly_indirection_parallelizes():
+    """The oracle closes this one in ``BreakAntiDependence``, not in ``LoopToMap``: the guard
+    ``P > i`` refutes a read-BEHIND, which leaves a pure anti-dependence (iteration ``i`` reads
+    ``A[P]`` with ``P > i``, written later), and a pre-loop snapshot of ``A`` breaks it. The
+    affine matcher cannot even phrase the question -- the frontend hands the branch condition
+    and the subscript two DIFFERENT copies of ``IDX[i]``, so the guard has to be resolved back
+    through its interstate bindings before it says anything about the read."""
     sdfg = cpu_canon(guarded_poly_indirection.to_sdfg(simplify=True))
     assert residual_loops(sdfg) == 0
 

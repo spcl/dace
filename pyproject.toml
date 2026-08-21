@@ -31,6 +31,10 @@ dependencies = [
     "typing-extensions",
     "ml_dtypes",
     "ordered-set>=4.0.0",
+    # SMT-backed dependence oracle. Not optional: LoopToMap and the canonicalize
+    # parallelization band query it, so an install without it silently refuses
+    # loops the shipped analysis can otherwise prove parallel.
+    "z3-solver",
     "scikit-build",
     "cmake",
     "ninja",
@@ -49,8 +53,6 @@ testing = [
     "ipykernel",
     "nbconvert",
     "pytest-timeout",
-    # SMT-backed dependence oracle for non-affine parallelization proofs.
-    "z3-solver",
     # Plotting the corpus perf results; analysis only, never imported by dace itself.
     "matplotlib",
 ]
