@@ -520,6 +520,24 @@ class InterstateEdge(object):
         return ret
 
 
+class _UsedNames:
+    """Membership view over the names an SDFG already uses.
+
+    :func:`dace.utils.find_new_name` only ever asks whether a candidate is taken, so this
+    answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
+    arrays, constants and symbols on every mint. Not a container in any other sense --
+    it is deliberately not iterable, because there is no cheap order to iterate in.
+    """
+
+    __slots__ = ('sdfg', )
+
+    def __init__(self, sdfg: 'SDFG') -> None:
+        self.sdfg = sdfg
+
+    def __contains__(self, name: str) -> bool:
+        return self.sdfg.is_name_used(name)
+
+
 @make_properties
 class SDFG(ControlFlowRegion):
     """ The main intermediate representation of code in DaCe.
@@ -1888,8 +1906,10 @@ class SDFG(ControlFlowRegion):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
-        return dt.find_new_name(name, names)
+        # ``find_new_name`` only ever tests membership, so the union set never has to be built:
+        # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
+        # instead of one set the size of every name in the SDFG per call.
+        return dt.find_new_name(name, _UsedNames(self))
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""
