@@ -6,7 +6,10 @@ into the SDFG instead of inlining a per-element conditional tasklet, so
 later passes (vectorisation, GPU offload, alternative backends) can pick
 their own expansion without touching the surrounding graph.
 
-Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]``.
+Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]`` -- the
+same operation as a per-element if-then-else (ITE) and as NumPy's
+``np.where(mask, t, f)``, only with the operands named after the Fortran
+intrinsic.  A frontend that has one of those spellings wants this node.
 
 Supported variants (Fortran standard):
 
@@ -118,8 +121,9 @@ class ExpandPure(ExpandTransformation):
 
 @library.node
 class MergeLibraryNode(nodes.LibraryNode):
-    """Library node for the Fortran ``MERGE(tsource, fsource, mask)``
-    intrinsic.
+    """Library node for the per-element select: Fortran
+    ``MERGE(tsource, fsource, mask)``, NumPy ``where(mask, t, f)``, and the
+    element-wise if-then-else generally.
 
     Inputs ``_t``, ``_f``, ``_mask``; output ``_out``.  Each input may
     cover the result shape (per-element) or a single element (broadcast
