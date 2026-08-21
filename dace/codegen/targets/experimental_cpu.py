@@ -82,7 +82,40 @@ def _experimental_loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, s
     loop = owners[0]
     if loop.inverted or not counter_init_assigns_only(loop) or counter_used_outside_loop(name, loop, sdfg):
         return None
+    # Instrumentation conditions (e.g. data-instrument ``i == 0``) are emitted around access-node
+    # uses that may be outside the loop body, so the counter must stay in function scope.
+    if _loop_variable_in_instrument_conditions(loop, name):
+        return None
     return loop_region_index_ctype() or dtype.ctype
+
+
+def _loop_variable_in_instrument_conditions(loop: LoopRegion, name: str) -> bool:
+    """Return True if ``name`` may be referenced by instrumentation code emitted outside ``loop``.
+
+    Data-instrumentation conditions and state-level symbol dumps are emitted around state
+    boundaries; the loop variable is not in scope before the ``for``-init clause, so any such
+    reference forces a hoisted declaration.
+    """
+    sdfg = loop.sdfg
+    name_re = re.compile(r'\b' + re.escape(name) + r'\b')
+
+    # Access-node instrumentation conditions anywhere in the SDFG may reference the loop variable.
+    for node, _state in sdfg.all_nodes_recursive():
+        cond = getattr(node, 'instrument_condition', None)
+        if isinstance(cond, CodeBlock) and cond.as_string and name_re.search(cond.as_string):
+            return True
+
+    # State-level symbol instrumentation dumps every symbol in state.defined_symbols(); if the loop
+    # variable is among them the dump is emitted at the top of the state, which can be before the
+    # ``for``-init clause that declares it.
+    for state in sdfg.states():
+        sym_instr = state.symbol_instrument
+        if sym_instr != dtypes.DataInstrumentationType.No_Instrumentation and name in state.defined_symbols():
+            return True
+        sym_cond = state.symbol_instrument_condition
+        if isinstance(sym_cond, CodeBlock) and sym_cond.as_string and name_re.search(sym_cond.as_string):
+            return True
+    return False
 
 
 def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
