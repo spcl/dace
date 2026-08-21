@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple, TYPE_CHECKING
+from typing import List, TYPE_CHECKING
 import sympy as sp
 
 # DaCe imports
@@ -599,8 +599,8 @@ def find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) ->
     return src_candidates[0]
 
 
-def _get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s: sp.Symbol,
-                                      loops: List[LoopRegion]) -> int:
+def get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s: sp.Symbol,
+                                     loops: List[LoopRegion]) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
     Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.

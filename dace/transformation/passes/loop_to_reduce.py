@@ -15,7 +15,7 @@ Accumulator: ``Scalar``, length-1 ``Array``, or one loop-invariant slice of an `
 """
 import ast
 import copy
-from typing import Dict, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 import sympy
 
