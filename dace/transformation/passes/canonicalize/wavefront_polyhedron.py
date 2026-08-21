@@ -32,11 +32,56 @@ guarantee).
 """
 from typing import List, Optional, Sequence, Tuple
 
+import sympy as sp
+
 from dace import symbolic
 # noqa: F401 -- re-exports reached as poly.<name> from wavefront_skew; ruff cannot see that use.
 from dace.sdfg.analysis.polyhedral_isl import HAVE_ISL, is_domain_empty  # noqa: F401
 from dace.sdfg.analysis.polyhedral_isl import (isl, classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
                                                make_set, pwaff_bound, subs_by_name)
+
+
+def constraints_from_condition(cond) -> Optional[List]:
+    """``cond`` rendered as a list of expressions each meant ``>= 0``, or ``None``.
+
+    A read that only executes under a branch guard carries a dependence only where that guard
+    holds, so the guard belongs in the dependence's polyhedron exactly like the loop bounds do.
+    Adding it can only SHRINK the region a schedule must order, so a caller that drops a guard
+    this refuses stays conservative.
+
+    Strict relations are tightened by one (``a < b`` becomes ``b - a - 1 >= 0``), which is exact
+    on the integer index space and would be wrong on a rational one. ``Or`` has no conjunctive
+    form and ``Ne`` no convex one, so both are refused rather than approximated.
+    """
+    if cond is None or cond is sp.true or cond is True:
+        return []
+    if cond is sp.false or cond is False:
+        return None  # an unsatisfiable guard is a caller bug, not a constraint to render
+    # ``AND``/``OR`` also arrive as DaCe's own function nodes: ``pystr_to_symbolic`` builds a
+    # parsed condition with ``evaluate=False`` and keeps them verbatim rather than folding to
+    # sympy's connectives, so matching only ``sp.And`` would miss every parsed guard.
+    func = str(cond.func) if isinstance(cond, sp.Basic) else ''
+    if isinstance(cond, sp.And) or func == 'AND':
+        out: List = []
+        for arg in cond.args:
+            part = constraints_from_condition(arg)
+            if part is None:
+                return None
+            out += part
+        return out
+    if func == 'NOT':
+        return constraints_from_condition(symbolic.refold_booleans(sp.Not(cond.args[0])))
+    if isinstance(cond, sp.StrictLessThan):  # a < b
+        return [symbolic.simplify(cond.rhs - cond.lhs - 1)]
+    if isinstance(cond, sp.LessThan):  # a <= b
+        return [symbolic.simplify(cond.rhs - cond.lhs)]
+    if isinstance(cond, sp.StrictGreaterThan):  # a > b
+        return [symbolic.simplify(cond.lhs - cond.rhs - 1)]
+    if isinstance(cond, sp.GreaterThan):  # a >= b
+        return [symbolic.simplify(cond.lhs - cond.rhs)]
+    if isinstance(cond, sp.Equality):  # a == b, as the two inequalities
+        return [symbolic.simplify(cond.lhs - cond.rhs), symbolic.simplify(cond.rhs - cond.lhs)]
+    return None
 
 
 class SkewBounds:

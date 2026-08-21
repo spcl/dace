@@ -71,11 +71,13 @@ from typing import Dict, List, Optional, Tuple
 import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.analysis import cfg
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
 
 #: Prefix for the synthesised skewed iterators.
 _SKEW_T_PREFIX = '_skew_t_'
@@ -399,7 +401,11 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: Tuple[str, 'Writ
     reflected / negative-stride write map is classified in iteration space, not by
     a raw array-index offset. Refuses if any snapshot read is a backward (flow)
     dependence, sits on a non-carrier array, or has an undecidable distance."""
+    if not snap_reads:
+        return True
     arr, wmap, _deps = carrier
+    if wmap is None:
+        return False  # a reduced (one-axis) carrier does not name the writing iteration
     for (_st, _node, _e, ridx, src_name, _win) in snap_reads:
         if src_name != arr or len(ridx) != 2:
             return False  # snapshot not on the 2-D carrier -> cannot reason
@@ -468,6 +474,144 @@ def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     return idx
 
 
+def access_extent(subset, iters: tuple[str, ...]) -> Optional[List[Tuple[object, object]]]:
+    """The per-dimension ``(start, end)`` of a subset, keyed on the nest's iterators.
+
+    The range-tolerant form of :func:`point_index`: a whole-row update ``A[i, 1:N-1]`` is a point
+    on the axis that carries the dependence and a fixed span on the one that does not, and only
+    :func:`uniform_axes` can tell which is which -- that needs every access of the array at once,
+    so the decision cannot be made here. ``None`` for a strided axis, whose two endpoints do not
+    describe the elements it touches."""
+    idx = []
+    for (start, end, step) in subset.ndrange():
+        if step != 1:
+            return None
+        idx.append((canonical_iterators(start, iters), canonical_iterators(end, iters)))
+    return idx
+
+
+def uniform_axes(extents: List[List[Tuple[object, object]]], iters: tuple[str, ...]) -> List[int]:
+    """Axes that every access of one array spans identically and independently of the nest.
+
+    Such an axis carries no dependence: any two iterations that touch a common cell agree on it
+    by construction, so it can be dropped and the distance read off what is left. A row sweep
+    ``A[i, 1:N-1] = f(A[i-1, 1:N-1], A[i, 1:N-1], A[i+1, 1:N-1])`` is the shape this exists for --
+    every access spans the same columns, and the wavefront lives entirely in the row index.
+
+    An axis is kept whenever that does not hold, including when the accesses disagree on it: a
+    range there is a real span of distances, and :func:`reduced_points` is what decides whether it
+    can be enumerated or the nest must be refused.
+    """
+    if not extents:
+        return []
+    width = len(extents[0])
+    if any(len(e) != width for e in extents):
+        return []
+    nest = set(iters)
+    drop: List[int] = []
+    for axis in range(width):
+        spans = [e[axis] for e in extents]
+        first = spans[0]
+        if first[0] == first[1]:
+            continue  # a point on the first access -> not a span every access shares
+        if any(lo != first[0] or hi != first[1] for lo, hi in spans):
+            continue  # the accesses disagree -> a distance can live here
+        if any(nest & {str(x) for x in bound.free_symbols} for bound in first):
+            continue  # a range that moves with the nest carries its own dependence
+        drop.append(axis)
+    return drop
+
+
+#: Widest constant-width range read expanded into its individual points. A stencil reads a
+#: handful of neighbours; anything wider is a sweep whose distances are not a small fixed set.
+MAX_RANGE_READ_WIDTH = 8
+
+
+def reduced_points(extent: List[Tuple[object, object]], drop: List[int]) -> Optional[List[List[object]]]:
+    """``extent`` with the wildcard axes removed, as the list of point indices it covers.
+
+    A kept axis that is a range of CONSTANT width is the union of that many point accesses --
+    memlet consolidation turns the three neighbour reads of a row sweep into the single
+    ``A[i-1 : i+2, ...]``, and expanding it back is what recovers the three distances. A
+    symbolic or over-wide range has no such finite reading and refuses (``None``).
+    """
+    axes: List[List[object]] = []
+    for axis, (lo, hi) in enumerate(extent):
+        if axis in drop:
+            continue
+        if lo == hi:
+            axes.append([lo])
+            continue
+        width = symbolic.simplify(hi - lo)
+        if not width.is_number or width < 0 or width > MAX_RANGE_READ_WIDTH:
+            return None
+        axes.append([symbolic.simplify(lo + k) for k in range(int(width) + 1)])
+    if not axes:
+        return None
+    points = [[]]
+    for values in axes:
+        points = [pt + [val] for pt in points for val in values]
+    return points
+
+
+def axis_write_map(write_idxs: List[List[object]], u: str, v: str) -> Optional[Tuple[object, object]]:
+    """``(coeff, const)`` for a carrier reduced to ONE axis and written at ``coeff * v + const``,
+    with ``coeff`` in ``{1, -1}`` and ``const`` free of both iterators; ``None`` otherwise.
+
+    Only a write independent of the OUTER iterator is admitted. It is the shape that makes a
+    reduced carrier interesting -- the row sweep writes row ``i`` on every time step -- and it is
+    the one whose reader can still be named: the location does not say which ``u`` wrote it, but
+    within one ``u`` the rows are written in increasing ``v``, so the last write before a read is
+    a lexicographic predecessor (:func:`axis_distance`). A write independent of the INNER
+    iterator instead has its last write at the inner loop's final iteration, a bound rather than
+    a distance, so it gets no uniform delta and is refused here."""
+    found = None
+    for idx in write_idxs:
+        if len(idx) != 1:
+            return None
+        cu, rest = split_var(idx[0], u)
+        if cu != 0:
+            return None
+        cv, const = split_var(rest, v)
+        if cv not in (1, -1):
+            return None
+        if found is None:
+            found = (cv, const)
+        elif found != (cv, const):
+            return None
+    return found
+
+
+def axis_distance(idx: object, coeff, const, u: str, v: str) -> Optional[Tuple[object, object]]:
+    """``(du, dv) = writer - current`` for a read of the reduced carrier at ``idx``.
+
+    ``coeff`` is its own inverse, so the writing ``v`` is ``coeff * (idx - const)``. Which ``u``
+    wrote it is not in the location, so it is decided by order: a row BELOW the current one was
+    written earlier in this same sweep (``du = 0``), while the current row and any row above it
+    are written at or after this iteration, so the value being read is the previous sweep's
+    (``du = -1``). ``None`` when the offset's sign is not decidable -- an undecided sign would
+    have to pick one of the two answers, and picking wrong mis-orders the schedule."""
+    v_w = symbolic.simplify(coeff * (idx - const))
+    d = symbolic.simplify(v_w - sym(v))
+    if not d.is_number:
+        return None
+    zero, back = symbolic.pystr_to_symbolic('0'), symbolic.pystr_to_symbolic('-1')
+    return (zero, d) if d < 0 else (back, d)
+
+
+def read_guard(state: SDFGState, inner: LoopRegion, iters: tuple[str, ...]) -> List[object]:
+    """The branch conditions ``state`` executes under, as constraints ``>= 0`` keyed on the
+    nest's iterator symbols; empty when nothing guards it or the guard has no convex form.
+
+    The walk stops at ``inner`` so only conditions written inside the nest are collected -- one
+    further out can be phrased in symbols an interstate edge reassigns on the way in, and would
+    then constrain the wrong values."""
+    cons = poly.constraints_from_condition(cfg.collect_enclosing_conditions(state, stop=inner))
+    if not cons:
+        return []
+    return [canonical_iterators(c, iters) for c in cons]
+
+
 def loop_bounds(loop: LoopRegion) -> Optional[Tuple[object, object]]:
     lo = loop_analysis.get_init_assignment(loop)
     hi = loop_analysis.get_loop_end(loop)
@@ -510,13 +654,25 @@ class Dependence:
     (producer before consumer), anti needs ``tau . delta > 0`` (read before the
     overwrite). Treating an anti dependence as flow -- the pre-fix behaviour --
     makes both the backward and forward reads demand contradictory signs, so no
-    skew is ever found for a symmetric stencil."""
+    skew is ever found for a symmetric stencil.
 
-    def __init__(self, du, dv, nested: List[Tuple[str, object, object]], kind: str = 'flow'):
+    ``guard`` holds the branch conditions the READ executes under, as expressions meant
+    ``>= 0`` in the current iteration's coordinates. A guarded read carries a dependence only
+    where its guard holds, so the constraints join the iteration domain in
+    :func:`dep_dims_and_cons`. Only the read's guard is collected, never the write's: assuming
+    the write always happens can add dependences that do not exist but can never drop one."""
+
+    def __init__(self,
+                 du,
+                 dv,
+                 nested: List[Tuple[str, object, object]],
+                 kind: str = 'flow',
+                 guard: Optional[List[object]] = None):
         self.du = symbolic.simplify(du)
         self.dv = symbolic.simplify(dv)
         self.nested = nested
         self.kind = kind
+        self.guard = guard or []
 
 
 def dependence_kind(du, dv) -> str:
@@ -547,14 +703,68 @@ def dependence_kind(du, dv) -> str:
     return 'flow'
 
 
-def collect_carrier(inner: LoopRegion,
+def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str, v: str, v_local: str,
+                        snap_src: Dict[str, str], sibling_cons: List[object], writes: Dict[str, List[List[object]]],
+                        reads: Dict[str, List[Tuple]]) -> bool:
+    """Record ``state``'s point accesses to 2-D arrays into ``writes`` / ``reads``.
+
+    ``False`` means refuse: a non-point subset, or an enclosing loop whose range is not a clean
+    interval. Each read is stored with the constraints it executes under -- its sibling's slice
+    of the iteration space plus its own branch guards.
+
+    ``v_local`` is the iterator THIS body is written in. Sibling loops are normalized apart, so
+    each carries a private ``_loop_it_N``; every index and guard taken from this body is renamed
+    onto the shared ``v`` here, where the subsets enter, rather than by mutating the graph before
+    the skew is known to be legal."""
+    ctx = None
+    rename = {sym(v_local): sym(v)} if v_local != v else {}
+    guard = sibling_cons + [g.xreplace(rename) for g in read_guard(state, inner, (u, v_local))]
+    iters: tuple[str, ...] = (u, v_local)
+    for node in state.data_nodes():
+        data_name = snap_src.get(node.data, node.data)
+        desc = sdfg.arrays.get(data_name)
+        if desc is None or len(desc.shape) != 2:
+            continue
+        if ctx is None:
+            ctx = nested_loop_context(state, inner)
+            if ctx is None:
+                return False
+            # An enclosing reduction loop's iterator reaches the distances too, so it needs
+            # the same single spelling as ``u`` / ``v``.
+            iters = (u, v, *(nm for (nm, _, _) in ctx))
+        for e in state.in_edges(node):
+            if e.data is None or e.data.subset is None:
+                continue
+            idx = access_extent(e.data.subset, iters)
+            if idx is None:
+                return False  # strided write -> refuse
+            writes.setdefault(data_name, []).append([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx])
+        for e in state.out_edges(node):
+            if e.data is None or e.data.subset is None:
+                continue
+            idx = access_extent(e.data.subset, iters)
+            if idx is None:
+                return False  # strided read of a 2-D carrier -> refuse
+            reads.setdefault(data_name, []).append(
+                ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], ctx, guard))
+    return True
+
+
+def collect_carrier(inners: List[Tuple[LoopRegion, str, List[object]]],
                     sdfg: SDFG,
                     u: str,
                     v: str,
                     snap_src: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, WriteMap, List[Dependence]]]:
     """Find the unique carrier array (written *and* self-read with a non-zero
-    distance) in ``inner``'s body, its write map, and its dependences. ``None``
+    distance) across ``inners``' bodies, its write map, and its dependences. ``None``
     if there is no clean single carrier (refuse).
+
+    ``inners`` is normally the one inner loop, paired with an empty guard. A chain of
+    adjacent-range SIBLING loops is passed as several entries, each paired with the constraints
+    that hold inside it (``plan_guarded_fusion``'s ``guards``): the siblings partition one
+    iteration space, and a read in one of them carries a dependence only over that sibling's
+    slice of it. Analysing them together is what lets a nest whose two halves are written as
+    separate loops -- polybench ``lu`` and ``ludcmp`` -- be seen as the single 2-D space it is.
 
     ``snap_src`` maps each not-yet-committed ``arr_split_snap`` snapshot array to
     its live source; a read of a snapshot array is attributed to the live array so
@@ -563,56 +773,89 @@ def collect_carrier(inner: LoopRegion,
     the snapshotted read would be invisible and the skew decided on a partial
     dependence set."""
     snap_src = snap_src or {}
-    writes: Dict[str, List[List[object]]] = {}
-    reads: Dict[str, List[Tuple[List[object], List[Tuple[str, object, object]]]]] = {}
-    for state in inner.all_states():
-        ctx = None
-        iters: tuple[str, ...] = (u, v)
-        for node in state.data_nodes():
-            data_name = snap_src.get(node.data, node.data)
-            desc = sdfg.arrays.get(data_name)
-            if desc is None or len(desc.shape) != 2:
-                continue
-            if ctx is None:
-                ctx = nested_loop_context(state, inner)
-                if ctx is None:
-                    return None
-                # An enclosing reduction loop's iterator reaches the distances too, so it needs
-                # the same single spelling as ``u`` / ``v``.
-                iters = (u, v, *(nm for (nm, _, _) in ctx))
-            for e in state.in_edges(node):
-                if e.data is None or e.data.subset is None:
-                    continue
-                idx = point_index(e.data.subset, iters)
-                if idx is None:
-                    return None  # non-point write -> refuse
-                writes.setdefault(data_name, []).append(idx)
-            for e in state.out_edges(node):
-                if e.data is None or e.data.subset is None:
-                    continue
-                idx = point_index(e.data.subset, iters)
-                if idx is None:
-                    return None  # non-point read of a 2-D carrier -> refuse
-                reads.setdefault(data_name, []).append((idx, ctx))
+    writes: Dict[str, List[List[Tuple[object, object]]]] = {}
+    reads: Dict[str, List[Tuple[List[Tuple[object, object]], List[Tuple[str, object, object]], List[object]]]] = {}
+    for inner, v_local, sibling_guard in inners:
+        sibling_cons = [canonical_iterators(g, (u, v)) for g in sibling_guard]
+        for state in inner.all_states():
+            if not scan_state_accesses(state, inner, sdfg, u, v, v_local, snap_src, sibling_cons, writes, reads):
+                return None
 
-    carriers: List[Tuple[str, WriteMap, List[Dependence]]] = []
-    for arr, wsubs in writes.items():
+    carriers: List[Tuple[str, Optional[WriteMap], List[Dependence]]] = []
+    for arr, wextents in writes.items():
+        rextents = reads.get(arr, [])
+        drop = uniform_axes(wextents + [r[0] for r in rextents], (u, v))
+        wsubs: List[List[object]] = []
+        rsubs: List[Tuple[List[object], object, List[object]]] = []
+        for extent in wextents:
+            points = reduced_points(extent, drop)
+            if points is None:
+                return None  # a kept axis is a range with no finite reading -> refuse
+            wsubs.extend(points)
+        for (extent, ctx, guard) in rextents:
+            points = reduced_points(extent, drop)
+            if points is None:
+                return None
+            rsubs.extend((pt, ctx, guard) for pt in points)
+        deps = carrier_dependences(wsubs, rsubs, u, v)
+        if deps is None:
+            return None
+        wmap, dep_list = deps
+        if dep_list:
+            carriers.append((arr, wmap, dep_list))
+    if len(carriers) != 1:
+        return None  # zero or several carriers -> refuse
+    return carriers[0]
+
+
+def carrier_dependences(wsubs: List[List[object]], rsubs: List[Tuple[List[object], object, List[object]]], u: str,
+                        v: str) -> Optional[Tuple[Optional[WriteMap], List[Dependence]]]:
+    """``(write map, dependences)`` for one array, or ``None`` to refuse the whole nest.
+
+    Two carrier shapes, by how many axes survived :func:`uniform_axes`:
+
+    * TWO -- the write is a unimodular 2-D map, so a location names the single iteration that
+      wrote it and every distance is exact.
+    * ONE -- the write is independent of the outer iterator, so a location is written once per
+      outer iteration and names no single writer. The distances come from program order instead
+      (:func:`axis_distance`), and the repeated writes are themselves an output dependence: the
+      previous sweep's write to the same location must stay ordered before this one, which is
+      what stops the outer axis from being handed out in parallel.
+    """
+    if all(len(idx) == 2 for idx in wsubs):
         wmap = consistent_write_map(wsubs, u, v)
         if wmap is None:
             return None  # written by a non-affine or non-unimodular map -> refuse
         deps: List[Dependence] = []
-        for (idx, ctx) in reads.get(arr, []):
+        for (idx, ctx, guard) in rsubs:
+            if len(idx) != 2:
+                return None
             u_r, v_r = wmap.invert(idx[0], idx[1])
             du = symbolic.simplify(u_r - sym(u))
             dv = symbolic.simplify(v_r - sym(v))
             if du == 0 and dv == 0:
                 continue  # in-place self-read, not a dependence
-            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv)))
-        if deps:
-            carriers.append((arr, wmap, deps))
-    if len(carriers) != 1:
-        return None  # zero or several carriers -> refuse
-    return carriers[0]
+            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv), guard))
+        return wmap, deps
+
+    amap = axis_write_map(wsubs, u, v)
+    if amap is None:
+        return None
+    coeff, const = amap
+    deps = []
+    for (idx, ctx, guard) in rsubs:
+        if len(idx) != 1:
+            return None
+        d = axis_distance(idx[0], coeff, const, u, v)
+        if d is None:
+            return None  # undecidable offset sign -> refuse
+        deps.append(Dependence(d[0], d[1], ctx, dependence_kind(d[0], d[1]), guard))
+    if deps:
+        # Output dependence: the same location is rewritten every outer iteration, so consecutive
+        # sweeps must not land on one diagonal. Unguarded on purpose -- assuming a write always
+        # happens can only add order, never drop it.
+        deps.append(Dependence(symbolic.pystr_to_symbolic('-1'), symbolic.pystr_to_symbolic('0'), [], 'flow'))
+    return None, deps
 
 
 def consistent_write_map(write_subs: List[List[object]], u: str, v: str) -> Optional[WriteMap]:
@@ -648,6 +891,7 @@ def dep_dims_and_cons(dep: Dependence, u: str, v: str, domain: List[object],
     for (nm, lo, hi) in dep.nested:
         S = sym(nm)
         cons += [S - lo, hi - S]
+    cons += list(dep.guard)
     cons += list(assume)
     return dims, cons
 
@@ -857,14 +1101,31 @@ class WavefrontSkew(ppl.Pass):
     def _try_skew(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         if not unit_positive_stride(outer):
             return False
-        inner = extract_two_level_nest(outer)
-        if inner is None or not unit_positive_stride(inner):
-            return False
         ub = loop_bounds(outer)
-        vb = loop_bounds(inner)
-        if ub is None or vb is None:
+        if ub is None:
             return False
-        u, v = outer.loop_variable, inner.loop_variable
+        # One inner loop is the common shape. A chain of adjacent-range SIBLING loops -- lu's
+        # ``j < i`` column update followed by its ``j >= i`` row update -- is the SAME 2-D space
+        # spelled as two loops, so it is analysed jointly (each sibling's range becomes a guard on
+        # its own reads) and fused into one guarded loop only once a legal skew is confirmed.
+        inner = extract_two_level_nest(outer)
+        fusion = None
+        if inner is None:
+            fusion = plan_guarded_fusion(outer)
+            if fusion is None:
+                return False
+            inners = list(zip(fusion.loops, fusion.loop_vars, fusion.guards))
+            v, vb = fusion.var, (fusion.lo, fusion.hi)
+            snap_src, snap_reads, copy_states = {}, [], []
+        else:
+            if not unit_positive_stride(inner):
+                return False
+            vb = loop_bounds(inner)
+            if vb is None:
+                return False
+            inners = [(inner, inner.loop_variable, [])]
+            v = inner.loop_variable
+        u = outer.loop_variable
         # The inner bound must not leak the inner var (malformed); the outer var
         # in the inner bound is fine -- that is the triangular case ISL handles.
         vsym = sym(v)
@@ -876,14 +1137,15 @@ class WavefrontSkew(ppl.Pass):
         # cause. Refuse now if a snapshot is used outside the nest; the reads are
         # only redirected onto the live array once a legal skew is confirmed, so a
         # refusal below leaves the snapshot (and the parallelism it enables) intact.
-        plan = plan_split_snapshots(outer, inner, sdfg)
-        if plan is None:
-            return False
-        snap_src, snap_reads, copy_states = plan
+        if fusion is None:
+            plan = plan_split_snapshots(outer, inner, sdfg)
+            if plan is None:
+                return False
+            snap_src, snap_reads, copy_states = plan
 
         # Analyse against the live array (snapshot reads attributed virtually), so
         # the dependence set is complete without mutating.
-        carrier = collect_carrier(inner, sdfg, u, v, snap_src=snap_src)
+        carrier = collect_carrier(inners, sdfg, u, v, snap_src=snap_src)
         if carrier is None:
             return False
         _arr, _wmap, deps = carrier
@@ -948,6 +1210,9 @@ class WavefrontSkew(ppl.Pass):
         # so every earlier refusal left the snapshot intact. Reads are redirected
         # onto the live array before the rewrite skews the inner body over them.
         commit_split_snapshots(snap_reads, copy_states)
+
+        if fusion is not None:
+            inner = commit_guarded_fusion(fusion, outer)
 
         if guard_syms:
             self._emit_positive_guard(outer, deps, guard_syms)

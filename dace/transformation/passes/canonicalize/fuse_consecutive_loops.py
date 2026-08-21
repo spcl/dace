@@ -29,14 +29,14 @@ variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
 never on unrelated adjacent loops.
 """
 import re
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import sympy
 
 import dace
 from dace import symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
@@ -279,4 +279,155 @@ class FuseConsecutiveLoops(ppl.Pass):
             cfg.add_edge(first, e.dst, e.data)
 
 
-__all__ = ['FuseConsecutiveLoops']
+__all__ = ['FuseConsecutiveLoops', 'GuardedFusionPlan', 'plan_guarded_fusion', 'commit_guarded_fusion']
+
+# --------------------------------------------------------------------------- #
+# Guarded fusion: the same adjacent-range rewrite for loops whose bodies DIFFER.
+# --------------------------------------------------------------------------- #
+#
+# ``FuseConsecutiveLoops`` above fuses a chain only when the bodies are identical, because then
+# the merge is free -- widen one bound, drop the twin. When the bodies differ the index sequence
+# argument is unchanged (concatenating ``[A, B)`` and ``[B, C)`` under the same stride visits the
+# same indices in the same order), but the merged loop has to pick a body per iteration, so the
+# bodies move into a ``ConditionalBlock`` keyed on the iterator.
+#
+# That rewrite is NOT unconditionally desirable, which is why it is a plan/commit pair rather
+# than part of the pass above: if one sibling is a recurrence and the other is DOALL, fusing them
+# makes the whole range a recurrence and LOSES the parallel half (the shape
+# ``ConditionalRecurrenceSplit`` exists to undo). Only a caller that has already proved it wins
+# something -- ``WavefrontSkew``, which needs the merged 2-D space to find a diagonal -- may
+# commit it.
+
+
+class GuardedFusionPlan:
+    """Sibling loops that fuse into one guarded loop over the union of their ranges.
+
+    ``guards[k]`` are the constraints (each meant ``>= 0``) that hold inside sibling ``k`` --
+    exactly the branch conditions :func:`commit_guarded_fusion` will emit, so an analysis run
+    against the plan sees the same iteration space as the committed graph.
+
+    ``var`` is the iterator the fused loop uses -- the first sibling's. Siblings normalized
+    apart (``normalize_loops_and_maps`` gives every loop a PRIVATE ``_loop_it_N``) keep their own
+    names in ``loop_vars`` and are renamed onto ``var`` at commit.
+    """
+
+    __slots__ = ('loops', 'loop_vars', 'var', 'lo', 'hi', 'bounds', 'guards')
+
+    def __init__(self, loops: List[LoopRegion], loop_vars: List[str], var: str, lo, hi, bounds: List[Tuple],
+                 guards: List[List]):
+        self.loops = loops
+        self.loop_vars = loop_vars
+        self.var = var
+        self.lo = lo
+        self.hi = hi
+        self.bounds = bounds
+        self.guards = guards
+
+
+def plan_guarded_fusion(region: ControlFlowRegion) -> Optional[GuardedFusionPlan]:
+    """The maximal chain of adjacent-range sibling loops in ``region``, or ``None``.
+
+    Refuses unless the chain is everything ``region`` holds (bar empty states): the callers
+    reason about a two-level nest, and a stray computation beside the chain would be swept into
+    a branch it does not belong to. Does not mutate.
+    """
+    loops = [b for b in region.nodes() if isinstance(b, LoopRegion)]
+    if len(loops) < 2:
+        return None
+    for b in region.nodes():
+        if b not in loops and isinstance(b, SDFGState) and len(list(b.nodes())) > 0:
+            return None
+
+    # Order the chain by its sequencing edges, starting from the loop nothing else points at.
+    heads = [l for l in loops if not any(isinstance(e.src, LoopRegion) for e in region.in_edges(l))]
+    if len(heads) != 1:
+        return None
+    chain: List[LoopRegion] = [heads[0]]
+    while True:
+        out = region.out_edges(chain[-1])
+        if len(out) != 1:
+            break
+        link, nxt = out[0], out[0].dst
+        if not isinstance(nxt, LoopRegion) or nxt in chain:
+            break
+        if len(region.in_edges(nxt)) != 1:
+            break
+        # Pure sequencing only: nothing may run, or be decided, between two fused siblings.
+        if link.data.assignments:
+            return None
+        if link.data.condition is not None and link.data.condition.as_string not in ('1', 'True'):
+            return None
+        chain.append(nxt)
+    if len(chain) != len(loops):
+        return None
+
+    var = chain[0].loop_variable
+    loop_vars = [l.loop_variable for l in chain]
+    # Renaming a later sibling onto ``var`` must not capture: refuse if ``var`` already means
+    # something inside that sibling.
+    if any(var in l.free_symbols for l in chain[1:]):
+        return None
+    bounds: List[Tuple] = []
+    for loop in chain:
+        stride = loop_analysis.get_loop_stride(loop)
+        if stride is None or symbolic.simplify(stride) != 1:
+            return None
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        if start is None or end is None:
+            return None
+        bounds.append((symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end)))
+    for (_, prev_end), (nxt_start, _) in zip(bounds, bounds[1:]):
+        if not _symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
+            return None
+
+    v = symbolic.pystr_to_symbolic(var)
+    guards = [[symbolic.simplify(v - lo), symbolic.simplify(hi - v)] for (lo, hi) in bounds]
+    return GuardedFusionPlan(chain, loop_vars, var, bounds[0][0], bounds[-1][1], bounds, guards)
+
+
+def commit_guarded_fusion(plan: GuardedFusionPlan, region: ControlFlowRegion) -> LoopRegion:
+    """Replace ``plan``'s chain in ``region`` with one loop over the union range whose body is a
+    ``ConditionalBlock`` selecting the original body per iteration. Returns the new loop.
+
+    The branch conditions are the chain's own sub-ranges, tested in order, with the last sibling
+    as the ``else`` -- so the partition is total by construction and no iteration falls through.
+    """
+    var = plan.var
+    sdfg = region.sdfg
+    # Read before any mutation: if the chain led the region, the fused loop has to inherit that,
+    # and ``add_node`` is the only sanctioned way to say so.
+    was_start = region.start_block is plan.loops[0]
+    merged = LoopRegion(f'{plan.loops[0].label}_fused',
+                        condition_expr=f'{var} < ({symbolic.symstr(plan.hi + 1)})',
+                        loop_var=var,
+                        initialize_expr=f'{var} = {symbolic.symstr(plan.lo)}',
+                        update_expr=f'{var} = {var} + 1',
+                        sdfg=sdfg)
+    selector = ConditionalBlock(f'{var}_range_select', sdfg=sdfg)
+    for k, loop in enumerate(plan.loops):
+        if plan.loop_vars[k] != var:
+            loop.replace_dict({plan.loop_vars[k]: var})
+        branch = ControlFlowRegion(f'{loop.label}_range', sdfg=sdfg)
+        # Snapshot before moving: ``add_node`` re-homes each block's ``parent_graph``, so the
+        # edge list has to be read off the loop while it still owns them.
+        start, blocks, edges = loop.start_block, list(loop.nodes()), list(loop.edges())
+        for blk in blocks:
+            branch.add_node(blk, is_start_block=blk is start)
+        for e in edges:
+            branch.add_edge(e.src, e.dst, e.data)
+        last = k == len(plan.loops) - 1
+        selector.add_branch(None if last else f'{var} < ({symbolic.symstr(plan.bounds[k][1] + 1)})', branch)
+    merged.add_node(selector, is_start_block=True)
+
+    in_edges = list(region.in_edges(plan.loops[0]))
+    out_edges = list(region.out_edges(plan.loops[-1]))
+    region.add_node(merged, is_start_block=was_start, ensure_unique_name=True)
+    for e in in_edges:
+        region.add_edge(e.src, merged, e.data)
+    for e in out_edges:
+        region.add_edge(merged, e.dst, e.data)
+    for loop in plan.loops:
+        region.remove_node(loop)
+    region.reset_cfg_list()
+    return merged

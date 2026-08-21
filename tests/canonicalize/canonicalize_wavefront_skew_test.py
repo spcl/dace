@@ -1240,16 +1240,19 @@ def test_row_sweep_ti_is_a_genuine_wavefront():
     assert got == reference, 'shuffling the rows within a 2t + i diagonal must not change the answer'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: collect_carrier (wavefront_skew.py:529) refuses a non-point read of a 2-D '
-                   'carrier, so the row body\'s slice read A[i-1 : i+2, 1:N-1] stops the (t, i) wavefront from '
-                   'ever being analysed. tau=(2, 1) is legal and proved parallel by '
-                   'test_row_sweep_ti_is_a_genuine_wavefront. Neither reconstruct_wavefront_nest nor '
-                   'normalize_loop_and_map_origin rescues it -- both were measured ON and the refusal is still :529.')
 def test_row_sweep_ti_wavefront_is_detected():
-    """Tripwire for the ``:529`` non-point-read refusal. Fails today; ``strict`` makes it fail
-    LOUDLY the day the guard learns to derive a distance from a range read, so this file is
-    revisited instead of quietly keeping a stale xfail."""
+    """The row-granularity wavefront, found through a RANGE read rather than a point one.
+
+    Two things had to give. The column axis is the same ``1:N-1`` span in the write and in every
+    read and never mentions ``t`` or ``i``, so it carries no dependence and is dropped
+    (:func:`~dace.transformation.passes.canonicalize.wavefront_skew.uniform_axes`). What is left
+    is a ONE-axis carrier written at ``A[i]`` independently of ``t``, so the array cell no longer
+    names the iteration that wrote it -- the distances come from program order instead, and the
+    repeated per-step write becomes an output dependence that is what keeps ``t`` sequential.
+    Memlet consolidation had also folded the three neighbour reads into the single
+    ``A[i-1 : i+2, ...]``; expanding that constant-width range back into its three points is what
+    recovers ``(0, -1)``, ``(-1, 0)`` and ``(-1, 1)``, hence ``tau = (2, 1)`` -- the schedule
+    :func:`test_row_sweep_ti_is_a_genuine_wavefront` proves correct by execution."""
     sdfg = row_sweep_3pt.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
@@ -1370,27 +1373,24 @@ def test_lu_family_ij_is_a_genuine_wavefront(with_scalar_accumulator, label):
     assert got == reference, f'{label}: shuffling within an i + j diagonal must not change the answer'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) refuses because '
-                   'extract_two_level_nest requires exactly ONE inner LoopRegion, and lu\'s outer i loop holds TWO '
-                   'sibling j loops (j < i and j >= i). tau=(1, 1) is legal over the merged (i, j) space and proved '
-                   'parallel by test_lu_family_ij_is_a_genuine_wavefront. Note the cheaper win here is the j >= i '
-                   'loop, which is plain DOALL and is currently left pinned sequential.')
 def test_lu_ij_wavefront_is_detected():
-    """Tripwire for the ``:699`` sibling-loop refusal on lu."""
+    """lu's outer ``i`` loop holds TWO sibling ``j`` loops (``j < i`` and ``j >= i``), which
+    ``extract_two_level_nest`` refuses outright. ``plan_guarded_fusion`` recognises them as one
+    iteration space split in the source: adjacent, complementary ranges under a common iterator.
+    Analysed jointly -- each sibling's range becoming a guard on its own reads, so the ``A[j, j]``
+    read carries only where ``j < i`` -- ``tau = (1, 1)`` is legal, which
+    ``test_lu_family_ij_is_a_genuine_wavefront`` proves by shuffling within each diagonal."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
         f'lu (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) -- ludcmp\'s factorization has the same two '
-                   'sibling inner j loops as lu, so extract_two_level_nest refuses it the same way. tau=(1, 1) is '
-                   'legal and proved parallel for ludcmp INDEPENDENTLY (not inherited from lu) by the ludcmp '
-                   'parametrisation of test_lu_family_ij_is_a_genuine_wavefront.')
 def test_ludcmp_ij_wavefront_is_detected():
-    """Tripwire for the ``:699`` sibling-loop refusal on ludcmp."""
+    """ludcmp's factorization carries the same two sibling ``j`` loops as lu, and is found the
+    same way. Asserted in its OWN right rather than inherited: its scalar ``w`` accumulator makes
+    it a different program, and the ludcmp parametrisation of
+    ``test_lu_family_ij_is_a_genuine_wavefront`` proves ``tau = (1, 1)`` for it independently."""
     sdfg = ludcmp_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
