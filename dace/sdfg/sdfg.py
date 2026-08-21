@@ -540,15 +540,37 @@ class _UsedNames:
     answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
     arrays, constants and symbols on every mint. Not a container in any other sense --
     it is deliberately not iterable, because there is no cheap order to iterate in.
+
+    ``include_connectors`` additionally rejects names in use as a tasklet connector, because a
+    connector may not share its name with a data descriptor, constant or symbol -- see
+    ``validation.py``, "Connector name '%s' is already used as a symbol, constant, or array name".
+    That answer costs a walk over every state and every node, so it is opt in, and
+    :meth:`SDFG.find_new_name_avoiding_connectors` is the caller-visible name for the cost. The
+    walk is memoised per instance, so a name needing several attempts (``tmp``, ``tmp_0``, ...)
+    still walks once. ``states()`` stays inside this SDFG's own namespace: it descends into
+    control flow regions but not into NestedSDFG nodes, which have namespaces of their own.
     """
 
-    __slots__ = ('sdfg', )
+    __slots__ = ('sdfg', 'include_connectors', 'connectors')
 
-    def __init__(self, sdfg: 'SDFG') -> None:
+    def __init__(self, sdfg: 'SDFG', include_connectors: bool = False) -> None:
         self.sdfg = sdfg
+        self.include_connectors = include_connectors
+        self.connectors: Optional[Set[str]] = None
 
     def __contains__(self, name: str) -> bool:
-        return self.sdfg.is_name_used(name)
+        if self.sdfg.is_name_used(name):
+            return True
+        if not self.include_connectors:
+            return False
+        if self.connectors is None:
+            self.connectors = {
+                conn
+                for st in self.sdfg.states()
+                for n in st.nodes() if isinstance(n, nd.CodeNode)
+                for conn in (n.in_connectors.keys() | n.out_connectors.keys())
+            }
+        return name in self.connectors
 
 
 @make_properties
@@ -1961,6 +1983,18 @@ class SDFG(ControlFlowRegion):
         # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
         # instead of one set the size of every name in the SDFG per call.
         return dt.find_new_name(name, _UsedNames(self))
+
+    def find_new_name_avoiding_connectors(self, name: str) -> str:
+        """Like the private name minter, but also dodges names in use as a tasklet connector.
+
+        For a caller minting a GENERIC name (``tmp``, ``val``) into a graph whose connectors it did
+        not choose: an array named after an existing connector is a graph validation rejects
+        ("Connector name '%s' is already used as a symbol, constant, or array name").
+
+        Costs a walk over every state and every node, so it is separate from the ordinary minter
+        rather than folded into it -- the ordinary one runs thousands of times in a single parse.
+        """
+        return dt.find_new_name(name, _UsedNames(self, include_connectors=True))
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""
