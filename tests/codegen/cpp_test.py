@@ -5,6 +5,7 @@ from operator import mul
 import warnings
 
 from dace import SDFG, Memlet, dtypes, symbol
+from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import _use_aligned_operator_new
@@ -149,11 +150,15 @@ def test_reshape_strides_from_strided_and_offset_range():
 
 
 def test_arrays_bigger_than_max_stack_size_get_deallocated():
-    # Setup SDFG with array A that is too big to be allocated on the stack.
+    # Setup SDFG with array A that is too big to be allocated on the stack.  Size it off the
+    # configured threshold rather than a literal: the element count that overflows the stack is
+    # exactly what this asserts on, so a literal silently stops testing anything the moment the
+    # default moves.
     sdfg = SDFG("test")
     array_a_alignment = 128
+    over_the_limit = Config.get("compiler", "max_stack_array_size") // dtypes.float64.bytes + 1
     _, a_desc = sdfg.add_array(name="A",
-                               shape=(10000, ),
+                               shape=(over_the_limit, ),
                                dtype=dtypes.float64,
                                storage=dtypes.StorageType.Register,
                                transient=True,

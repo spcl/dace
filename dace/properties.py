@@ -651,13 +651,22 @@ class DictProperty(Property):
             saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}
 
         # Same as above, but for values
+        # NestedSDFG.symbol_mapping values are expressions in the parent scope and
+        # their dtype is part of the value itself; the enclosing scope's declared
+        # dtype for a name must not override it, or a round-trip can change the
+        # stored expression.
+        _symbol_mapping_values = getattr(self, 'attr_name', None) == 'symbol_mapping'
         if _is_symbolic_type(self.value_type):
             saved_dictionary = {
-                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v))
+                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v),
+                                               use_authority=not _symbol_mapping_values)
                 for k, v in saved_dictionary.items()
             }
         elif _is_symbolic_converter(self.value_type):
-            saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
+            saved_dictionary = {
+                k: symbolic.serialize_symbolic(v, use_authority=not _symbol_mapping_values)
+                for k, v in saved_dictionary.items()
+            }
         elif hasattr(self.value_type, "to_json"):
             saved_dictionary = {k: v.to_json() for k, v in saved_dictionary.items()}
         elif self.value_type not in (int, float, list, tuple, dict, str):
@@ -1234,7 +1243,11 @@ class SymbolicProperty(Property):
         if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        # Only raw Python/numpy literals and strings need parsing. An already-symbolic value
+        # must not be re-parsed from ``str(val)``: sympy prints floats at 15 significant
+        # digits, so the round-trip would silently perturb the last bits (sympy numbers are
+        # ``numbers.Number`` instances, so they would otherwise land here).
+        if not isinstance(val, sp.Basic) and isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)

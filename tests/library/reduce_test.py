@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
+import re
 import numpy as np
 import pytest
 
@@ -73,6 +74,12 @@ def test_multidim_gpu(impl, test_case):
     a = np.random.rand(*in_shape).astype(dtype)
     b = np.random.rand(*out_shape).astype(dtype)
     sdfg = multidimred.to_sdfg(a, b)
+    # Every (impl, test_case) variant must build under its own name: they otherwise all share the
+    # bare 'multidimred' SDFG name and thus the same name-keyed build folder / compiled library path,
+    # so one variant's compiled binary can be loaded in place of another's.
+    axes_tuple = axes if isinstance(axes, tuple) else (axes, )
+    variant_id = '_'.join(str(v) for v in (impl, *in_shape, *axes_tuple, dtype.__name__))
+    sdfg.name = 'multidimred_' + re.sub(r'\W+', '_', variant_id)
     sdfg.apply_gpu_transformations()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
     rednode.implementation = impl

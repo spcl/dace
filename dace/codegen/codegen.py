@@ -17,6 +17,7 @@ from dace.sdfg import infer_types
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
@@ -204,8 +205,22 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
+    # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
+    # at and the copy is free to move ahead of a write it must follow.
+    if config.Config.get_bool('compiler', 'cpu', 'explicit_copy'):
+        from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+        InsertExplicitCopies().apply_pass(sdfg, {})
+        # The nodes just inserted carry no inferred connector types, and the expansion below reads
+        # them to decide pointer vs. value. Storage defaults above already hold.
+        infer_types.infer_connector_types(sdfg)
+
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
+
+    # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.
+    if config.Config.get_bool('compiler', 'cpu', 'simd_maps'):
+        MarkSIMDMaps().apply_pass(sdfg, {})
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
@@ -240,6 +255,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # Preprocess SDFG
     for target in frame.targets:
         target.preprocess(sdfg)
+
+    # Ensure symbol-dependent allocations sit after the symbol's definition, not at a dominator preceding it
+    framecode.pad_control_flow_region_boundaries(sdfg)
 
     # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {

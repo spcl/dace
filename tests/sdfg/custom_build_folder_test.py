@@ -168,6 +168,11 @@ class OneRankOfAJob:
     def Barrier(self):
         pass
 
+    @property
+    def folder(self):
+        """The build folder out of the payload, which carries rank 0's error beside it."""
+        return None if self.broadcast is None else self.broadcast[1]
+
 
 def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_path):
     """Only rank 0 builds, so the others must look where it built and not where they would have."""
@@ -183,11 +188,11 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
     loader = OneRankOfAJob(1)
     loader.broadcast = builder.broadcast
     sdfg = customprog.to_sdfg()
-    assert sdfg.build_folder != builder.broadcast, "rank 1 was looking in rank 0's folder regardless"
+    assert sdfg.build_folder != builder.folder, "rank 1 was looking in rank 0's folder regardless"
 
     csdfg = sdfg_utils.distributed_compile(sdfg, loader)
 
-    assert sdfg.build_folder == builder.broadcast
+    assert sdfg.build_folder == builder.folder
     del csdfg
 
     # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
@@ -197,3 +202,27 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
 
 if __name__ == '__main__':
     print("Must be called using `pytest`.")
+
+
+def test_distributed_compile_reraises_rank_0_failure_on_every_rank(unlaunched, tmp_path):
+    """Rank 0's build error rides along with the folder, so the other ranks fail instead of blocking.
+
+    Rank 0 never reaches the broadcast when its build raises, so a payload carrying only the folder
+    leaves every other rank waiting at that collective forever.
+    """
+
+    class FailsToCompile:
+        build_folder = str(tmp_path)
+
+        def compile(self, validate: bool = True):
+            raise ValueError("deliberate build failure")
+
+    builder = OneRankOfAJob(0)
+    with pytest.raises(RuntimeError, match="deliberate build failure"):
+        sdfg_utils.distributed_compile(FailsToCompile(), builder)
+
+    # A rank that only loads reads the same payload, and must raise rather than wait.
+    loader = OneRankOfAJob(1)
+    loader.broadcast = builder.broadcast
+    with pytest.raises(RuntimeError, match="deliberate build failure"):
+        sdfg_utils.distributed_compile(None, loader)

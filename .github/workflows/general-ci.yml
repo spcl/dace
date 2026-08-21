@@ -20,6 +20,14 @@ jobs:
       matrix:
         python-version: ['3.10','3.14']
         simplify: [0,1,autoopt]
+    env:
+      OMP_STACKSIZE: 64M
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      VECLIB_MAXIMUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
+      DACE_compiler_max_stack_array_size: 65536
 
     steps:
     - uses: actions/checkout@v7
@@ -34,13 +42,29 @@ jobs:
         # Make dependency setup faster
         echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
         sudo dpkg-reconfigure man-db
-        # Install dependencies
+        # Install dependencies (cBLAS / LAPACK / FFTW3 / PAPI).
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
+        sudo apt-get install -y libyaml-dev cmake gpg-agent wget \
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev \
+          libpapi-dev papi-tools
+        # Intel oneAPI MKL — add the official Intel apt repo, then install
+        # the dev meta-package so headers (``mkl.h``) and link libs are
+        # both available to the codegen path.  Pinned-key + signed-by
+        # to keep the install reproducible.
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
         pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
+
+    - name: Enforce Release build type
+      run: |
+        python -c "import dace; bt = dace.Config.get('compiler', 'build_type'); assert bt == 'Release', bt"
 
     - name: Test dependencies
       run: |
@@ -59,8 +83,16 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        ulimit -s 65536 || true && pytest -n 2 --max-worker-restart=0 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -o faulthandler_timeout=180 --durations=40 --junitxml=pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
+
+    - name: Upload general test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: general-results-py${{ matrix.python-version }}-${{ matrix.simplify }}-${{ github.run_id }}
+        path: pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml
+        if-no-files-found: ignore
 
     - name: Test OpenBLAS LAPACK
       run: |
@@ -75,7 +107,52 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ulimit -s 65536 || true && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ./codecov
+
+    - name: Test cBLAS / MKL BLAS extension nodes
+      # Runs the ``mkl``-marked tests: the per-routine BLAS tests
+      # (Dot / Axpy / Gemm / etc.) that exercise the ``MKL`` backend
+      # explicitly.  oneMKL provides ``libmkl_rt`` and ``mkl.h`` for the
+      # MKL path.  The new SCAL/COPY/SWAP + TRSV/TRMV/SYMV +
+      # TRSM/TRMM/SYMM/SYRK extension-node tests drive the ``OpenBLAS``
+      # backend, so they carry the ``lapack`` marker and run in the
+      # "Test OpenBLAS LAPACK" step above instead.
+      run: |
+        # Source Intel oneAPI environment so ``MKLROOT`` / link flags
+        # are populated for the MKL expansion's CMake env.
+        source /opt/intel/oneapi/setvars.sh || true
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        ulimit -s 65536 || true && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
+        ./codecov
+
+    - name: Test FFTW3 FFT lowering
+      # ``libfftw3-dev`` is already installed in the "Install dependencies"
+      # step; this step runs the ``fftw``-marked tests for the FFT library's
+      # CPU backend.
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        ulimit -s 65536 || true && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
         ./codecov
 
     - name: Run sequential tests
@@ -91,7 +168,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        ulimit -s 65536 || true && pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -102,8 +179,8 @@ jobs:
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        ./tests/polybench_test.sh
-        ./tests/xform_test.sh
+        ulimit -s 65536 || true; ./tests/polybench_test.sh
+        ulimit -s 65536 || true; ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
 
     - uses: codecov/codecov-action@v6

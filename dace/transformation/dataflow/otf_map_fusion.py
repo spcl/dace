@@ -475,6 +475,12 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
             params = [s_ if p == s else p for p in node.map.params]
             node.map.params = params
         elif isinstance(node, nodes.NestedSDFG):
+            # The rename below reaches the nested SDFG's own symbol entry, so the ``symbol_mapping``
+            # key that names it has to move with it. Leaving the key behind maps a symbol the nested
+            # SDFG no longer declares while the one it does declare goes unmapped, which validation
+            # reports as a missing symbol.
+            if s in node.symbol_mapping and s_ not in node.symbol_mapping:
+                node.symbol_mapping[s_] = node.symbol_mapping.pop(s)
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
                 for cfg in nsdfg.all_control_flow_regions():

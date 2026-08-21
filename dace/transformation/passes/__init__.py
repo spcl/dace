@@ -8,9 +8,12 @@ from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
+from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion
+from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays
+from .parallelization_prep import ShortLoopUnroll
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse

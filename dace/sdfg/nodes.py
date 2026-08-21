@@ -384,6 +384,10 @@ class CodeNode(Node):
         """True if running this node may do more than write its outputs."""
         return False
 
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """True if this node's side effect must not be reordered relative to others."""
+        return self.has_side_effects(sdfg)
+
 
 @make_properties
 class Tasklet(CodeNode):
@@ -414,6 +418,13 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+    ordered_side_effects = Property(dtype=bool,
+                                    allow_none=True,
+                                    default=None,
+                                    desc='Whether this side effect is observable relative to other side '
+                                    'effects (and so must not be reordered or merged with them), as opposed '
+                                    'to merely not being visible in its outputs. Defaults to None, which '
+                                    'assumes ordered whenever the tasklet has side effects at all.')
     ignored_symbols = SetProperty(element_type=str,
                                   desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
@@ -503,6 +514,16 @@ class Tasklet(CodeNode):
                         if cname in sdfg.symbols or cname in sdfg.arrays:
                             return True
         return False
+
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """
+        Returns True if this tasklet's side effect is observable relative to other side effects, and so
+        must not be reordered or merged with them. ``ordered_side_effects`` overrides the default, which
+        is to assume ordered whenever the tasklet has side effects at all.
+        """
+        if self.ordered_side_effects is not None:
+            return self.ordered_side_effects
+        return self.has_side_effects(sdfg)
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
@@ -681,6 +702,12 @@ class NestedSDFG(CodeNode):
             isinstance(node, CodeNode) and not isinstance(node, NestedSDFG) and node.has_side_effects(parent.sdfg)
             for node, parent in self.sdfg.all_nodes_recursive())
 
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """True if any nested node has an ordered side effect. ``sdfg`` unused: inner ones apply."""
+        return any(
+            isinstance(node, CodeNode) and not isinstance(node, NestedSDFG)
+            and node.has_ordered_side_effects(parent.sdfg) for node, parent in self.sdfg.all_nodes_recursive())
+
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
 
@@ -790,6 +817,11 @@ class NestedSDFG(CodeNode):
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
 
+    @property
+    def dynamic_input_connectors(self) -> Set[str]:
+        """ Input connectors carrying dynamic scope inputs rather than a memlet path. """
+        return set(c for c in self.in_connectors if not c.startswith('IN_'))
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -879,9 +911,17 @@ class MapEntry(EntryNode):
         # its names untyped, while deserialization rebuilds them from the declared table. The same
         # map would then report two different parameter types across a save/load round trip.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        range_symbols = dict(symbols)
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                conn_type = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                result[e.dst_conn] = conn_type
+                range_symbols[e.dst_conn] = conn_type
+
+        # Add map params
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], range_symbols),
+                                              infer_expr_type(rng[1], range_symbols))
 
         # Add map params
         known = {**symbols, **result}
@@ -1042,6 +1082,17 @@ class Map(object):
                               default=0,
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    nowait = Property(dtype=bool,
+                      default=False,
+                      desc="Drop the implicit barrier at the end of the Map's OpenMP worksharing "
+                      "loop. Only meaningful for a CPU_Multicore Map nested in a CPU_Persistent "
+                      "scope, which is the only case that lowers to a bare `omp for`; ignored "
+                      "elsewhere, since `nowait` is not valid on a combined `parallel for`",
+                      serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_simd = Property(dtype=bool,
+                        default=False,
+                        desc="Vectorize the innermost loop with an OpenMP simd clause",
+                        serialize_if=lambda m: m.omp_simd)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
@@ -1358,6 +1409,11 @@ class LibraryNode(CodeNode):
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty(allow_none=True)
+    # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
+    # node, and expansion carries this onto whatever the node expands into.
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1376,6 +1432,10 @@ class LibraryNode(CodeNode):
         when expanded. ``sdfg`` is unused; taken to match :class:`CodeNode`.
         """
         return False
+
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """Returns True if this library node's side effect must not be reordered relative to others."""
+        return self.has_side_effects(sdfg)
 
     def to_json(self, parent):
         jsonobj = super().to_json(parent)

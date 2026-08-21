@@ -25,6 +25,34 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
+def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
+    """ Whether a symbolically-sized register array is declared as a stack variable-length array,
+        which GCC, Clang and NVHPC all accept. A VLA is defined at its declaration and dies with
+        its block, so a lifetime that outlives the block keeps the heap, and so does a split
+        declare/allocate: ``declare_array`` has already emitted the pointer at SDFG scope, and a
+        VLA here would shadow it. Allocation and deallocation both ask here so they cannot disagree.
+    """
+    return (nodedesc.storage == dtypes.StorageType.Register and not declared
+            and symbolic.issymbolic(arrsize, sdfg.constants) and lifetime
+            in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
+
+
+def restrict_qualifier(desc: data.Data, ctype: str) -> str:
+    """ ``__restrict__ `` for a pointer no other name in the same scope reaches, otherwise ``''``.
+
+        ``may_alias`` marks a descriptor deliberately reachable through a second pointer -- the
+        persistent-BFS frontiers are swapped between iterations -- so qualifying it promises the
+        compiler something the SDFG denies. An opaque handle is not a pointer type to qualify:
+        ``MPI_Comm`` is a struct pointer under OpenMPI but an int under MPICH, where the qualifier
+        does not compile. A ctype that already carries the qualifier must not get a second one.
+    """
+    if '__restrict__' in ctype or isinstance(desc.dtype, dtypes.opaque):
+        return ''
+    if isinstance(desc, data.Array) and desc.may_alias:
+        return ''
+    return '__restrict__ '
+
+
 def _use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
@@ -408,6 +436,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
+        variable_length_array = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime, declared)
+
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
@@ -485,7 +515,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not variable_length_array) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
@@ -523,9 +553,11 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
-            if node.setzero:
+            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment.
+            alignment = '' if variable_length_array else '  DACE_ALIGN(64)'
+            if node.setzero and not variable_length_array:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                     cfg,
                     state_id,
                     node,
@@ -533,11 +565,15 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                 cfg,
                 state_id,
                 node,
             )
+            if node.setzero:
+                allocation_stream.write(
+                    "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                    state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -594,7 +630,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
-        if self._dispatcher.declared_arrays.has(alloc_name):
+        declared = self._dispatcher.declared_arrays.has(alloc_name)
+        if declared:
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
@@ -603,7 +640,8 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
-                  (symbolic.issymbolic(arrsize, sdfg.constants) or
+                  ((symbolic.issymbolic(arrsize, sdfg.constants)
+                    and not stack_variable_length_array(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator
@@ -1301,19 +1339,41 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_scalar:
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
+                          and not isinstance(desc.dtype, dtypes.opaque)):
+                        # Scalar source feeding a pointer-typed connector (e.g. an external-call
+                        # marshal reading a staged scalar). The connector's pointer type wins over
+                        # the source's scalar ctypedef, and the address has to be taken. Skip for
+                        # opaque dtypes (MPI_Comm / MPI_Request / cuda handles): the value is already
+                        # a pointer-like handle, so address-of adds an indirection the libnode call
+                        # does not expect.
+                        result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
                     else:
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
+                              and not isinstance(desc.dtype, dtypes.opaque)):
+                            # Scalar source feeding a pointer-typed connector (e.g. CopyLibraryNode
+                            # -> cudaMemcpyAsync from a host scalar argument). The connector's
+                            # pointer type wins over the source's scalar ctypedef, and the address
+                            # of the variable is what the callee wants; `define_out_memlet` already
+                            # does this on the write side. Skip opaque dtypes (MPI_Comm /
+                            # MPI_Request / GPU handles) -- the value is already a pointer-like
+                            # handle, so address-of adds an indirection the callee rejects
+                            # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
+                            result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                         else:
-                            # Pointer reference
-                            result += "{} {} = {};".format(ctypedef, local_name, expr)
+                            # Pointer reference.
+                            result += "{} {}{} = {};".format(ctypedef, restrict_qualifier(desc, ctypedef), local_name,
+                                                             expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += "{} {}{} = {};".format(memlet_type, restrict_qualifier(desc, memlet_type), local_name,
+                                                         expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
@@ -1572,9 +1632,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                # A shared transient is declared at SDFG scope (in
+                # ``declared_arrays``) but its ``define_var`` runs in the
+                # allocating state's scope, which is popped before a
+                # pointer-write in a later state / nested control-flow region.
+                # Resolve via ``declared_arrays`` first -- mirroring the normal
+                # write path in ``process_out_memlets`` -- and only fall back to
+                # ``defined_vars`` so the SDFG-scope pointer still resolves.
+                try:
+                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                except KeyError:
+                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
-                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
+                restrict = restrict_qualifier(desc, cdtype.ctype)
+                callsite_stream.write(f'{cdtype.ctype} {restrict}{edge.src_conn} = {base_ptr};', cfg, state_id,
+                                      src_node)
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
@@ -1862,19 +1934,43 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP header
             in_persistent = False
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
-                in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                # Either an enclosing CPU_Persistent Map scope, or an enclosing ControlFlowRegion
+                # flagged ``omp_parallel_region``. The latter cannot be seen from here -- a Map
+                # node has no path to the regions above it -- so the control-flow generator sets a
+                # flag on the frame while it emits the wrapped body.
+                in_persistent = (is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                                 or getattr(self._frame, 'in_region_parallel', False))
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
-                    # TODO(later): barriers and map_header += " nowait"
+                    if node.map.nowait:
+                        map_header += " nowait"
                 else:
+                    # ``nowait`` is a worksharing clause: on the COMBINED `parallel for` emitted
+                    # here it is invalid OpenMP, and the implicit barrier being dropped is the one
+                    # at the end of the parallel region, which cannot be dropped at all. Refuse
+                    # loudly rather than emit code the compiler will reject (or worse, accept).
+                    if node.map.nowait:
+                        raise ValueError(f"Map {node.map.label} has nowait=True but is not nested in a "
+                                         f"CPU_Persistent scope, so it lowers to a combined '#pragma omp "
+                                         f"parallel for', where 'nowait' is invalid OpenMP")
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
+                # omp_get_max_threads() is the PROSPECTIVE team size; with OMP_DYNAMIC=true the
+                # region may be handed fewer threads. A thread-strided map whose stride is
+                # OMP_MAX_THREADS would then skip blocks -- a silent wrong answer. Forcing the team
+                # size makes stride and team provably equal.
+                if dtypes.OMP_MAX_THREADS_SYMBOL in {str(s) for s in sdfg.used_symbols(all_symbols=True)}:
+                    map_header += f" num_threads({dtypes.OMP_MAX_THREADS_SYMBOL})"
 
-            # OpenMP schedule properties
-            if not in_persistent:
+            # OpenMP schedule properties. ``schedule`` is a worksharing-loop clause, so it is valid
+            # on a bare ``omp for`` just as it is on a combined ``parallel for`` -- it must NOT be
+            # dropped inside an enclosing parallel region, or the region-parallel shape would
+            # silently lose the schedule. ``num_threads`` is a parallel-region clause and stays
+            # gated: on an ``omp for`` it is invalid.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -1890,12 +1986,18 @@ class CPUCodeGen(TargetCodeGenerator):
                     schedule += ")"
                     map_header += schedule
 
+            if not in_persistent:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 
             # OpenMP nested loop properties
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
+
+            # ``MarkSIMDMaps`` decided this; stamp the clause onto the existing pragma.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
+                head, sep, rest = map_header.partition(' for')
+                map_header = f'{head}{sep} simd{rest}'
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
@@ -1944,6 +2046,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+                elif (node.map.omp_simd and node.map.schedule == dtypes.ScheduleType.Sequential
+                      and i == len(node.map.range) - 1):
+                    # Innermost dimension only: the pragma must precede the ``for`` it vectorizes.
+                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %

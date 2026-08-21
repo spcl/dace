@@ -10,7 +10,6 @@ from typing import List, Tuple, Optional, Dict
 import dace.library
 import numpy as np
 import torch
-from torch.utils.cpp_extension import load as torch_load
 import dace
 from dace import config, dtypes as dt, data
 from dace.codegen import targets, compiler
@@ -632,12 +631,19 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     unique_build_dir = os.path.join(build_root, unique_name)
     os.makedirs(unique_build_dir, exist_ok=True)
 
+    # Deferred: importing torch.utils.cpp_extension runs a CUDA-installation probe that blocks on
+    # torch.cuda.is_available(), so it must not happen at module import (see PyTorch environment).
+    from torch.utils.cpp_extension import load as torch_load  # noqa: PLC0415
+
     # We pass unique name + unique build directory to avoid FileBaton contention
     torch_load(
         name=unique_name,
         sources=sources,
         build_directory=unique_build_dir,
-        extra_cflags=["-g"],
+        # torch's cpp_extension defaults to -std=c++17, while the DaCe runtime headers this
+        # translation unit includes are C++20 (``std::bit_cast`` in ``dace/types.h``, among
+        # others). Read the same config entry the DaCe build reads so the two never drift.
+        extra_cflags=["-g", f"-std=c++{config.Config.get('compiler', 'cpp_standard')}"],
         extra_include_paths=[
             p for p in {
                 include_path,

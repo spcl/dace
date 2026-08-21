@@ -921,17 +921,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets. Every edge on the matching connector
-                #   is inspected, since the data can go to more than one destination, and each is
-                #   followed to where it lands: one hop still names the inner transient whenever the
-                #   write leaves through more than one exit, as it does in a tiled map.
+                # Outgoing counterpart of the above. A source-relative Memlet's .data names the
+                # inner transient, not the written array, so resolve the real destination via the
+                # memlet-tree root -- else its shape/stride symbols drop from the kernel signature.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    outermost = self.graph.memlet_path(oedge)[-1].data
-                    if ((not outermost.is_empty()) and (outermost.data not in descs)
-                            and (outermost.data not in additional_descs)):
-                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
+                    if oedge.data.is_empty():
+                        continue
+                    root_dst = self.graph.memlet_tree(oedge).root().edge.dst
+                    dst_name = root_dst.data if isinstance(root_dst, nd.AccessNode) else oedge.data.data
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
@@ -2659,6 +2660,17 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
+    omp_parallel_region = Property(dtype=bool,
+                                   default=False,
+                                   desc="Emit this region's body inside a single '#pragma omp parallel'. Every "
+                                   "CPU_Multicore Map in it -- including maps nested inside a ConditionalBlock, which "
+                                   "no Map scope can reach -- then lowers to a worksharing '#pragma omp for' instead "
+                                   "of its own 'parallel for', so the team is forked once for the region rather than "
+                                   "once per map. ``SDFG`` inherits this, so setting it there wraps a whole routine. "
+                                   "Declared here rather than on ``ControlFlowRegion`` because this is the "
+                                   "``make_properties`` class in the chain: declaring it on a subclass would "
+                                   "re-register it for ``SDFG`` and raise PropertyError")
+
     def __init__(self,
                  label: str = '',
                  sdfg: Optional['SDFG'] = None,
@@ -2917,6 +2929,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             sdfg = self.sdfg
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
+            # ``sdfg``, not ``self.sdfg``: when ``self`` IS the SDFG its own ``sdfg`` attribute is
+            # not the one the subtree belongs to, and the blocks end up detached.
             for n in node.all_control_flow_blocks():
                 n.sdfg = sdfg
             # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
@@ -2937,10 +2951,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # It may already be out of range on entry (e.g. from deserialization); bounds-check it.
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:

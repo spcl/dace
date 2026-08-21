@@ -99,6 +99,9 @@ class CUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
+        # True while generating an SDFG nested below the one whose schedule established the current
+        # device-level scope, i.e. no longer the kernel's own state machine.
+        self._below_toplevel_sdfg = False
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
         """
         # Keep track of which kernels got a threadBlock map inserted
@@ -157,6 +160,8 @@ class CUDACodeGen(TargetCodeGenerator):
         ######################################
 
     def _emit_sync(self, codestream: CodeIOStream):
+        if not common.emit_gpu_synchronization():
+            return
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
             codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
             DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
@@ -409,6 +414,16 @@ class CUDACodeGen(TargetCodeGenerator):
     DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
+        if common.emit_gpu_synchronization():
+            exit_sync_block = ("// Synchronize and check for CUDA errors\n"
+                               "    int __err = static_cast<int>(__state->gpu_context->lasterror);\n"
+                               "    if (__err == 0)\n"
+                               f"        __err = static_cast<int>({self.backend}DeviceSynchronize());")
+        else:
+            exit_sync_block = ("// Check for CUDA errors; synchronization suppressed by "
+                               "compiler.cuda.emit_synchronization\n"
+                               "    int __err = static_cast<int>(__state->gpu_context->lasterror);")
+
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
@@ -480,10 +495,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
 int __dace_exit_cuda({sdfg_state_name} *__state) {{
     {exitcode}
 
-    // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>({backend}DeviceSynchronize());
+    {exit_sync_block}
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -541,6 +553,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
+           exit_sync_block=exit_sync_block,
            nstreams=max(1, self._cuda_streams),
            nevents=max(1, self._cuda_events),
            backend=self.backend,
@@ -1320,7 +1333,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 raise NotImplementedError("The requested copy operation is not implemented.")
 
             # Post-copy synchronization
-            if is_sync:
+            if not common.emit_gpu_synchronization():
+                # Host-side synchronization is opted out of wholesale, so neither the stream
+                # synchronize nor the cross-stream event pairs below may be emitted.
+                pass
+            elif is_sync:
                 # Every copy emitted above is asynchronous, so the host has to wait for the stream
                 # before it may read the destination.
                 callsite_stream.write('DACE_GPU_CHECK(%sStreamSynchronize(%s));\n' % (self.backend, cudastream), cfg,
@@ -1513,7 +1530,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for sd, name in to_remove:
                 del self.pool_release[sd, name]
 
-            if state.nosync == False:
+            if state.nosync == False and common.emit_gpu_synchronization():
                 # Ordered set: the default stream is named by a string, so a plain set would order the
                 # synchronizations below by hash and make the emitted code depend on PYTHONHASHSEED.
                 streams_to_sync = {}
@@ -1633,7 +1650,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
+            # A state machine needs a barrier between its states wherever it runs: a nested SDFG
+            # with several states (or control flow) below the kernel still synchronizes between
+            # them. An SDFG that is one lone state has no state transition to order, so below the
+            # kernel's own SDFG it emits no barrier -- it may run inside a single-thread-guarded
+            # component, where a barrier is reached by one thread and never releases. Its writes
+            # are ordered by the enclosing state's own barrier instead.
+            lone_state = sdfg.number_of_nodes() == 1 and isinstance(sdfg.nodes()[0], SDFGState)
+            if not (self._below_toplevel_sdfg and lone_state):
+                callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated
             return
@@ -1722,9 +1747,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    # A DefinedType.Pointer registers the POINTER ctype, as every other allocation
+                    # site does; the element type here makes consumers that adopt the defined ctype
+                    # (``emit_memlet_reference``) declare the parameter one indirection short.
                     self._dispatcher.defined_vars.add(inner_name,
                                                       DefinedType.Pointer,
-                                                      desc.dtype.ctype,
+                                                      dtypes.pointer(desc.dtype).ctype,
                                                       allow_shadowing=True)
                     extra_call_args.append(outer_name)
                     extra_call_args_typed.append(desc.as_arg(name=inner_name))
@@ -1994,7 +2022,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            if hasattr(e, '_cuda_event'):
+            if hasattr(e, '_cuda_event') and common.emit_gpu_synchronization():
                 ev = e._cuda_event
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
@@ -2936,9 +2964,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
+        old_below_toplevel = self._below_toplevel_sdfg
         nested_schedule = get_node_schedule(sdfg, dfg, node)
         if nested_schedule != dtypes.ScheduleType.Default:
             self._toplevel_schedule = nested_schedule
+        # A device-level scope is already open, so this SDFG sits inside one of its components
+        # rather than being the state machine that scope is made of.
+        self._below_toplevel_sdfg = old_schedule in dtypes.GPU_SCHEDULES
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
@@ -2946,6 +2978,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
+        self._below_toplevel_sdfg = old_below_toplevel
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

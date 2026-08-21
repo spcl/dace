@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -47,6 +47,9 @@ class DaCeCodeGenerator(object):
                                       List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
+        # Set by the control-flow generator while it emits a region flagged ``omp_parallel_region``,
+        # so a CPU_Multicore Map inside it knows to lower to a worksharing ``omp for``.
+        self.in_region_parallel: bool = False
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
@@ -583,6 +586,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
+        code_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
@@ -590,8 +594,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
+            code_uses: Dict[str, List[Tuple[SDFGState, nodes.Node]]] = collections.defaultdict(list)
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            # The stand-in nodes below are not in any state's graph, which a view's pointer needs.
+            standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
@@ -599,15 +606,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
+                # A container named in tasklet code alone is a use, with no access node to find it by.
+                for node in state.nodes():
+                    if not isinstance(node, nodes.CodeNode):
+                        continue
+                    for used in (node.free_symbols & standin_names):
+                        instances[used].append((state, nodes.AccessNode(used)))
+                        code_uses[used].append((state, node))
+
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
                 for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
+                for edge_array in edge_fsyms & standin_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
             #############################################
 
             access_instances[sdfg.cfg_id] = instances
+            code_instances[sdfg.cfg_id] = code_uses
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -722,15 +738,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if name in block_syms:
                         multistate = True
 
+                code_users = code_instances[sdfg.cfg_id].get(name, [])
                 for state in sdfg.states():
                     if multistate:
                         break
                     sdict = state.scope_dict()
+                    state_code_users = {n for s, n in code_users if s is state}
                     for node in state.nodes():
-                        if not isinstance(node, nodes.AccessNode):
-                            continue
-                        if node.root_data != name:
-                            continue
+                        if node not in state_code_users:
+                            if not isinstance(node, nodes.AccessNode):
+                                continue
+                            if node.root_data != name:
+                                continue
 
                         # If already found in another state, set scope to SDFG
                         if curstate is not None and curstate != state:
@@ -758,6 +777,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 if multistate:
                     alloc_scope = sdfg
+                elif (isinstance(curscope, SDFGState) and curstate is not None and desc.storage
+                      in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, dtypes.StorageType.Default)
+                      and scope_allocation_repeats_per_iteration(curstate)
+                      and first_node_instance is not None and not utils.is_nonfree_sym_dependent(
+                          first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id])):
+                    # Only the placement moves; ``desc.lifetime`` stays Scope.
+                    alloc_scope = sdfg
+                    alloc_state = curstate
                 else:
                     alloc_scope = curscope
                     alloc_state = curstate
@@ -892,6 +919,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_deallocation_end(sdfg, scope, callsite_stream)
 
+    @staticmethod
+    def _omp_max_threads_decl(sdfg: SDFG) -> str:
+        """``int OMP_MAX_THREADS = omp_get_max_threads();`` when ``sdfg`` uses the reserved symbol.
+
+        Emitted once per generated function body, not per referencing map: velocity's block maps
+        sit in four different top-level states, and four scope-local copies would make every
+        ``num_threads(OMP_MAX_THREADS)`` clause read a different variable that merely happens to
+        hold the same number. One definition per call also tracks a caller that changes
+        ``OMP_NUM_THREADS`` between calls, which a load-time capture in ``__dace_init_*`` would not.
+        """
+        if not DaCeCodeGenerator._uses_omp_max_threads(sdfg):
+            return ''
+        return f'\nint {dtypes.OMP_MAX_THREADS_SYMBOL} = omp_get_max_threads();\n'
+
+    @staticmethod
+    def _uses_omp_max_threads(sdfg: SDFG) -> bool:
+        return dtypes.OMP_MAX_THREADS_SYMBOL in {str(s) for s in sdfg.used_symbols(all_symbols=True)}
+
     def generate_code(self,
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
@@ -913,6 +958,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
+
+        # Gated on actual use, like the CPU_Persistent path's ``ntid_is_used``: an SDFG that never
+        # names the reserved symbol emits neither the include nor the declaration, and so comes out
+        # byte-identical to before this was added.
+        if self._uses_omp_max_threads(sdfg):
+            global_stream.write('#include <omp.h>', sdfg)
 
         is_top_level = sdfg.parent is None
 
@@ -1045,13 +1096,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             all_code = CodeIOStream()
             all_code.write(function_signature)
+            if self._uses_omp_max_threads(sdfg):
+                all_code.write(self._omp_max_threads_decl(sdfg))
             all_code.write(header_stream.getvalue())
             all_code.write(callsite_stream.getvalue())
             all_code.write(footer_stream.getvalue())
             generated_code = all_code.getvalue()
         else:
             generated_header = global_stream.getvalue()
-            generated_code = callsite_stream.getvalue()
+            # A nested SDFG becomes its own C++ function, so it re-declares the symbol at its own
+            # entry rather than taking it as a parameter: only the EXPORTED signatures must stay
+            # clean of it, and one read of omp_get_max_threads() per function is free.
+            generated_code = self._omp_max_threads_decl(sdfg) + callsite_stream.getvalue()
 
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)
@@ -1080,6 +1136,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
+
+
+def scope_allocation_repeats_per_iteration(state: SDFGState) -> bool:
+    """Whether a scope allocation placed at ``state`` re-runs on every iteration of an enclosing loop.
+
+    Ascends exactly as the dominator walk does: a block that is its region's entry is dominated by
+    whatever dominates the region, so the region collapses to a single node in its parent and the walk
+    continues. Reaching a :class:`LoopRegion` on that path means the allocation sits in a loop body.
+    """
+    block: ControlFlowBlock = state
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return True
+        block, region = region, region.parent_graph
+    return False
 
 
 def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
@@ -1117,3 +1189,21 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     # raise NotImplementedError
 
     return start_state, end_state
+
+
+def pad_control_flow_region_boundaries(top_sdfg: SDFG):
+    """Add an empty state before and after each loop / conditional block.
+
+    A transient whose shape depends on a symbol assigned *inside* such a block is
+    allocated at the closest common dominator state of its accesses; without a
+    state on the block's boundary that dominator can precede the symbol's
+    definition, emitting ``new T[sym]`` with an undefined ``sym``.  A landing
+    state on either side gives the allocator a valid placement where the symbol
+    is already defined.  Runs before codegen freezes the SDFG.
+    """
+    for cfg in list(top_sdfg.all_control_flow_regions()):
+        for block in list(cfg.nodes()):
+            if isinstance(block, (ConditionalBlock, LoopRegion)):
+                cfg.add_state_before(block, is_start_block=block is cfg.start_block)
+                cfg.add_state_after(block)
+    top_sdfg.reset_cfg_list()

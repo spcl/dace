@@ -813,11 +813,13 @@ def unparse_cr(sdfg, wcr_ast, dtype):
 
 
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
+    # Both ends of the path count: a host tasklet that only WRITES GPU memory needs the stream just
+    # as much as one that reads it. Same rule as the stream-retention walk in ``cuda.py``.
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if ((isinstance(path[0].src, nodes.AccessNode)
-             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
-            return True
+        for endpoint in (path[0].src, path[-1].dst):
+            if isinstance(endpoint, nodes.AccessNode) and endpoint.desc(sdfg).storage is dtypes.StorageType.GPU_Global:
+                return True
     return False
 
 
@@ -1332,6 +1334,8 @@ class StructInitializer(ExtNodeTransformer):
 def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                            callsite_stream: CodeIOStream):
     state_dfg: SDFGState = cfg.nodes()[state_id]
+    if not common.emit_gpu_synchronization():
+        return
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
     for e in state_dfg.in_edges(node):
@@ -1377,7 +1381,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
                                   scope_exit)
-            if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+            if Config.get_bool('compiler', 'cuda', 'syncdebug') and common.emit_gpu_synchronization():
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             to_remove.add((sd, name))
 
@@ -1390,7 +1394,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
 
     # Synchronize end of kernel with output data (multiple kernels
     # lead to same data node)
-    if max_streams >= 0 and hasattr(node, "_cuda_stream"):
+    if max_streams >= 0 and hasattr(node, "_cuda_stream") and common.emit_gpu_synchronization():
         backend = common.get_gpu_backend()
 
         for edge in dfg.out_edges(scope_exit):

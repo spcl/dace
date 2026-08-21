@@ -1,0 +1,487 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Unit tests for the length-1-array <-> scalar conversion passes.
+
+``ConvertLengthOneArraysToScalars`` rewrites every TRANSIENT length-1 ``Array`` (shape ``(1,)``) to a
+true ``Scalar`` in place and strips the redundant ``[0]`` accessors; with ``preserve_abi`` it
+additionally converts each non-transient length-1 array WITHOUT touching the signature, by STAGING it
+into a fresh transient scalar (copy-in in a new start state, copy-out in a new sink state).
+``ConvertScalarsToLengthOneArrays`` is the inverse. These are pure-SDFG (no Fortran) tests of the Pass
+classes, covering the staging, ``preserve_abi``, ``filter`` gating and ``opaque``/View exemptions.
+"""
+import ctypes
+
+import numpy as np
+
+import dace
+import dace.data as dd
+import pytest
+
+from dace.transformation.passes import (
+    ConvertLengthOneArraysToScalars,
+    ConvertScalarsToLengthOneArrays,
+)
+
+try:
+    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
+except OSError:
+    pass
+
+
+def _io_sdfg() -> dace.SDFG:
+    """SDFG with a non-transient length-1 input ``alpha`` and output ``beta``; ``beta = alpha * 2``."""
+    sdfg = dace.SDFG("io")
+    sdfg.add_array("alpha", [1], dace.float64, transient=False)
+    sdfg.add_array("beta", [1], dace.float64, transient=False)
+    st = sdfg.add_state("main")
+    ra, wb = st.add_read("alpha"), st.add_write("beta")
+    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a * 2.0")
+    st.add_edge(ra, None, t, "a", dace.Memlet("alpha[0]"))
+    st.add_edge(t, "b", wb, None, dace.Memlet("beta[0]"))
+    return sdfg
+
+
+def _run(sdfg: dace.SDFG, alpha_val: float) -> float:
+    a = np.array([alpha_val], dtype=np.float64)
+    b = np.array([0.0], dtype=np.float64)
+    sdfg(alpha=a, beta=b)
+    return float(b[0])
+
+
+# --- default: transient in place, non-transient untouched -------------------
+
+
+def test_default_scalarizes_transient_length_one_array():
+    sdfg = dace.SDFG("tr")
+    sdfg.add_state("s")
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    sdfg.add_array("b", [10], dace.float64, transient=False)
+    rewritten = ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert rewritten == {"a"}
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+    assert isinstance(sdfg.arrays["b"], dd.Array)  # multi-element array left alone
+
+
+def test_default_skips_signature_arrays():
+    """A non-transient (signature) length-1 array is NOT touched by default -- only staging does."""
+    sdfg = dace.SDFG("sig")
+    sdfg.add_state("s")
+    sdfg.add_array("a", [1], dace.float64, transient=False)
+    assert ConvertLengthOneArraysToScalars().apply_pass(sdfg, {}) is None
+    assert isinstance(sdfg.arrays["a"], dd.Array)
+
+
+def test_interstate_accessor_is_stripped():
+    sdfg = dace.SDFG("istrip")
+    s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
+    sdfg.add_array("a", [1], dace.int64, transient=True)
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "a[0] + 1"}))
+    ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+    assert list(sdfg.all_interstate_edges())[0].data.assignments["k"] == "a + 1"
+
+
+def test_scalarize_keeps_overlapping_name_subscript():
+    """A scalarized name that is a suffix of another array must not eat that array's literal ``[0]``
+    (scalarized ``ar`` vs multi-element ``bar``)."""
+    sdfg = dace.SDFG("overlap")
+    sdfg.add_array("ar", (1, ), dace.float64, transient=True)
+    sdfg.add_array("bar", (4, ), dace.float64)
+    s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "ar[0] + bar[0]"}))
+    ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["ar"], dd.Scalar)
+    assert isinstance(sdfg.arrays["bar"], dd.Array)
+    assert list(sdfg.all_interstate_edges())[0].data.assignments["k"] == "ar + bar[0]"
+
+
+def test_collapsed_memlet_preserves_dynamic():
+    sdfg = dace.SDFG("dynmem")
+    sdfg.add_array("a", (1, ), dace.float64, transient=True)
+    sdfg.add_array("b", (1, ), dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    an_a, an_b = state.add_access("a"), state.add_access("b")
+    state.add_nedge(an_a, an_b, dace.Memlet(data="a", subset="0", dynamic=True))
+    ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+    assert state.edges()[0].data.dynamic is True
+
+
+def test_recursive_descends_into_nested_sdfg():
+    sdfg = dace.SDFG("outer")
+    st = sdfg.add_state("s")
+    nested = dace.SDFG("inner")
+    nested.add_state("ns")
+    nested.add_array("z", [1], dace.float64, transient=True)
+    st.add_nested_sdfg(nested, {}, {})
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
+    assert isinstance(nested.arrays["z"], dd.Scalar)
+
+
+# --- staging non-transients -------------------------------------------------
+
+
+def test_stage_keeps_signature_arrays_and_adds_scalars():
+    sdfg = _io_sdfg()
+    rewritten = ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert rewritten == {"alpha", "beta"}
+    # Signature descriptors stay non-transient Arrays.
+    assert isinstance(sdfg.arrays["alpha"], dd.Array) and not sdfg.arrays["alpha"].transient
+    assert isinstance(sdfg.arrays["beta"], dd.Array)
+    # A fresh transient scalar was staged for each.
+    assert isinstance(sdfg.arrays["scal_alpha"], dd.Scalar) and sdfg.arrays["scal_alpha"].transient
+    assert isinstance(sdfg.arrays["scal_beta"], dd.Scalar)
+    labels = {s.label for s in sdfg.all_states()}
+    assert "stage_copyin" in labels and "stage_copyout" in labels
+    sdfg.validate()
+
+
+def _signature(sdfg):
+    """The caller-visible contract: each non-transient descriptor's kind, shape and dtype."""
+    return {nm: (type(d), tuple(d.shape), d.dtype) for nm, d in sdfg.arrays.items() if not d.transient}
+
+
+def test_preserve_abi_leaves_the_signature_byte_identical():
+    """The guarantee the flag is named for, in both directions: staging routes the conversion through
+    copy states, so no descriptor a caller binds to changes kind, shape or dtype."""
+    sdfg = _io_sdfg()
+    before = _signature(sdfg)
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert _signature(sdfg) == before, "forward pass moved the signature"
+    ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(sdfg, {})
+    assert _signature(sdfg) == before, "inverse pass moved the signature"
+
+
+def test_preserve_abi_stages_a_signature_scalar_into_a_length_one_array():
+    """The inverse direction end to end: a non-transient ``Scalar`` on the signature stays a Scalar and
+    the body is repointed at a staged length-1 array, wired through the copy states."""
+    sdfg = dace.SDFG("scal_sig")
+    sdfg.add_scalar("alpha", dace.float64, transient=False)
+    sdfg.add_array("beta", [1], dace.float64, transient=False)
+    st = sdfg.add_state("main")
+    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a * 3.0")
+    st.add_edge(st.add_read("alpha"), None, t, "a", dace.Memlet("alpha[0]"))
+    st.add_edge(t, "b", st.add_write("beta"), None, dace.Memlet("beta[0]"))
+
+    rewritten = ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(sdfg, {})
+    assert rewritten == {"alpha"}
+    assert isinstance(sdfg.arrays["alpha"], dd.Scalar) and not sdfg.arrays["alpha"].transient
+    staged = sdfg.arrays["arr_alpha"]
+    assert isinstance(staged, dd.Array) and staged.transient and tuple(staged.shape) == (1, )
+    labels = {s.label for s in sdfg.all_states()}
+    assert "stage_copyin" in labels, "a read signature scalar needs a copy-in"
+    assert "stage_copyout" not in labels, "alpha is never written -- no copy-out"
+    sdfg.validate()
+
+    beta = np.array([0.0], dtype=np.float64)
+    sdfg(alpha=2.0, beta=beta)
+    assert beta[0] == pytest.approx(6.0)
+
+
+def test_stage_is_numerically_correct():
+    sdfg = _io_sdfg()
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert _run(sdfg, 3.0) == pytest.approx(6.0)
+
+
+def test_stage_read_only_input_gets_copyin_not_copyout():
+    """A read-only non-transient input is staged with a copy-IN only (no spurious write-back)."""
+    sdfg = dace.SDFG("ro")
+    sdfg.add_array("inp", [1], dace.float64, transient=False)
+    sdfg.add_array("out", [4], dace.float64, transient=False)
+    st = sdfg.add_state("s")
+    ri = st.add_read("inp")
+    wo = st.add_write("out")
+    me, mx = st.add_map("m", dict(i="0:4"))
+    t = st.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    st.add_memlet_path(ri, me, t, dst_conn="a", memlet=dace.Memlet("inp[0]"))
+    st.add_memlet_path(t, mx, wo, src_conn="o", memlet=dace.Memlet("out[i]"))
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    labels = {s.label for s in sdfg.all_states()}
+    assert "stage_copyin" in labels  # inp is read
+    assert "stage_copyout" not in labels  # inp is never written -> no copy-out
+    sdfg.validate()
+
+
+def test_forward_then_inverse_stays_correct():
+    """X then X^-1 (both staging) leaves a valid, numerically-correct SDFG."""
+    sdfg = _io_sdfg()
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _run(sdfg, 3.0) == pytest.approx(6.0)
+
+
+def test_repeated_forward_is_idempotent_and_stays_correct():
+    """Applying the forward pass twice must be a no-op the second time and stay numerically
+    correct. Staging KEEPS the signature array, so without an already-staged check the array
+    stays eligible forever and each re-run chains another copy hop onto the last."""
+    sdfg = _io_sdfg()
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    before, before_states = set(sdfg.arrays), len(list(sdfg.all_states()))
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert set(sdfg.arrays) == before, "second application re-staged an already-staged array"
+    assert len(list(sdfg.all_states())) == before_states, "second application added copy states"
+    sdfg.validate()
+    assert _run(sdfg, 3.0) == pytest.approx(6.0)
+
+
+# --- inverse round-trip + opaque exemptions ---------------------------------
+
+
+def test_inverse_roundtrip_transient():
+    sdfg = dace.SDFG("rt")
+    sdfg.add_state("s")
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+    rewritten = ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+    assert rewritten == {"a"}
+    assert isinstance(sdfg.arrays["a"], dd.Array)
+    assert tuple(sdfg.arrays["a"].shape) == (1, )
+
+
+def test_opaque_length_one_array_is_not_scalarized():
+    sdfg = dace.SDFG("opaque_len1")
+    sdfg.add_state("s")
+    sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    rewritten = ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert rewritten == {"a"}
+    assert isinstance(sdfg.arrays["req"], dd.Array)
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
+def test_opaque_scalar_is_not_arrayized():
+    sdfg = dace.SDFG("opaque_scalar")
+    sdfg.add_state("s")
+    sdfg.add_scalar("comm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    sdfg.add_scalar("k", dace.int64, transient=True)
+    rewritten = ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+    assert rewritten == {"k"}
+    assert isinstance(sdfg.arrays["comm"], dd.Scalar)
+    assert isinstance(sdfg.arrays["k"], dd.Array)
+
+
+def test_passes_expose_property_options():
+    assert set(
+        ConvertLengthOneArraysToScalars.__properties__) == {"recursive", "preserve_abi", "filter", "single_element"}
+    assert set(ConvertScalarsToLengthOneArrays.__properties__) == {"recursive", "preserve_abi", "filter"}
+    for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
+        inst = cls(recursive=False, preserve_abi=True)
+        assert inst.recursive is False
+        assert inst.preserve_abi is True
+
+
+# --- filter knob ------------------------------------------------------------
+
+
+def _three_transient_len1() -> dace.SDFG:
+    """Three transient length-1 arrays referenced from one interstate edge."""
+    sdfg = dace.SDFG("flt")
+    for nm in ("keep_me", "skip_me", "local"):
+        sdfg.add_array(nm, (1, ), dace.float64, transient=True)
+    s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "keep_me[0] + skip_me[0] + local[0]"}))
+    return sdfg
+
+
+def test_filter_none_scalarizes_every_eligible():
+    sdfg = _three_transient_len1()
+    ConvertLengthOneArraysToScalars(recursive=False).apply_pass(sdfg, {})
+    for name in ("keep_me", "skip_me", "local"):
+        assert isinstance(sdfg.arrays[name], dd.Scalar), name
+
+
+def test_filter_set_restricts_to_listed_names():
+    sdfg = _three_transient_len1()
+    ConvertLengthOneArraysToScalars(recursive=False, filter={"keep_me"}).apply_pass(sdfg, {})
+    assert isinstance(sdfg.arrays["keep_me"], dd.Scalar)
+    assert isinstance(sdfg.arrays["skip_me"], dd.Array)
+    assert isinstance(sdfg.arrays["local"], dd.Array)
+    assigns = list(sdfg.all_interstate_edges())[0].data.assignments["k"]
+    assert assigns == "keep_me + skip_me[0] + local[0]", assigns
+
+
+def test_filter_with_unknown_name_does_nothing():
+    sdfg = _three_transient_len1()
+    assert ConvertLengthOneArraysToScalars(recursive=False, filter={"no_such_array"}).apply_pass(sdfg, {}) is None
+    for name in ("keep_me", "skip_me", "local"):
+        assert isinstance(sdfg.arrays[name], dd.Array), name
+
+
+def test_filter_empty_set_converts_nothing_both_directions():
+    """An EMPTY filter restricts eligibility to nothing (distinct from ``None`` = no restriction)."""
+    fwd = _three_transient_len1()
+    assert ConvertLengthOneArraysToScalars(recursive=False, filter=set()).apply_pass(fwd, {}) is None
+    assert all(isinstance(fwd.arrays[n], dd.Array) for n in ("keep_me", "skip_me", "local"))
+    inv = dace.SDFG("empty_inv")
+    inv.add_state("s")
+    inv.add_scalar("c", dace.float64, transient=True)
+    inv.add_scalar("d", dace.float64, transient=True)
+    assert ConvertScalarsToLengthOneArrays(recursive=False, filter=set()).apply_pass(inv, {}) is None
+    assert isinstance(inv.arrays["c"], dd.Scalar) and isinstance(inv.arrays["d"], dd.Scalar)
+
+
+def test_filter_only_gates_root_level_nested_recursion_unaffected():
+    inner = dace.SDFG("inner")
+    inner.add_array("inner_local", (1, ), dace.float64, transient=True)
+    inner.add_state("s")
+    outer = dace.SDFG("outer")
+    outer.add_array("outer_arr", (1, ), dace.float64, transient=True)
+    outer.add_array("outer_unrelated", (1, ), dace.float64, transient=True)
+    ostate = outer.add_state()
+    ostate.add_nested_sdfg(sdfg=inner, inputs=set(), outputs=set())
+    ConvertLengthOneArraysToScalars(recursive=True, filter={"outer_arr"}).apply_pass(outer, {})
+    assert isinstance(outer.arrays["outer_arr"], dd.Scalar)
+    assert isinstance(outer.arrays["outer_unrelated"], dd.Array)  # not in filter
+    assert isinstance(inner.arrays["inner_local"], dd.Scalar)  # recursion is not filter-gated
+
+
+def test_filter_restricts_scalars_to_length_one_arrays():
+    sdfg = dace.SDFG("inv_flt")
+    sdfg.add_state("s")
+    sdfg.add_scalar("keep_me", dace.float64, transient=True)
+    sdfg.add_scalar("skip_me", dace.float64, transient=True)
+    rewritten = ConvertScalarsToLengthOneArrays(recursive=False, filter={"keep_me"}).apply_pass(sdfg, {})
+    assert rewritten == {"keep_me"}
+    assert isinstance(sdfg.arrays["keep_me"], dd.Array)
+    assert isinstance(sdfg.arrays["skip_me"], dd.Scalar)
+
+
+# --- View / opaque / other_subset guards ------------------------------------
+
+
+def test_length_one_view_is_not_scalarized():
+    sdfg = dace.SDFG("len1_view")
+    sdfg.add_state("s")
+    sdfg.add_array("src", [4], dace.float64, transient=True)
+    sdfg.add_view("vw", [1], dace.float64)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    assert sdfg.arrays["vw"].transient
+    rewritten = ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert "vw" not in rewritten
+    assert isinstance(sdfg.arrays["vw"], dd.View)
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
+def test_length_one_view_source_is_not_scalarized():
+    sdfg = dace.SDFG("len1_view_src")
+    st = sdfg.add_state("s")
+    sdfg.add_array("src", [1], dace.float64, transient=True)
+    sdfg.add_view("vw", [1], dace.float64)
+    sdfg.add_array("a", [1], dace.float64, transient=True)
+    sn, vn = st.add_access("src"), st.add_access("vw")
+    st.add_edge(sn, None, vn, "views", dace.Memlet(data="src", subset="0"))
+    rewritten = ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    assert "src" not in rewritten
+    assert isinstance(sdfg.arrays["src"], dd.Array) and not isinstance(sdfg.arrays["src"], dd.View)
+    assert isinstance(sdfg.arrays["vw"], dd.View)
+    assert isinstance(sdfg.arrays["a"], dd.Scalar)
+
+
+def test_other_subset_of_scalarized_side_collapses():
+    """A copy edge names one side in ``Memlet.data``; the opposite side is addressed by
+    ``other_subset``. Scalarizing THAT side must collapse its ``other_subset`` too, else validation
+    rejects the stale rank. Reproduces the npbench ``vadv`` ``(1, 1)`` MapFusion scratch case."""
+    sdfg = dace.SDFG("len1_other_subset")
+    st = sdfg.add_state("s")
+    sdfg.add_array("big", [4, 4], dace.float64)
+    sdfg.add_array("scratch", [1, 1], dace.float64, transient=True)
+    rb, ws = st.add_access("big"), st.add_access("scratch")
+    st.add_nedge(rb, ws, dace.Memlet(data="big", subset="1, 1", other_subset="0, 0"))
+    sdfg.validate()
+    rewritten = ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
+    assert "scratch" in rewritten
+    assert isinstance(sdfg.arrays["scratch"], dd.Scalar)
+    assert next(iter(st.edges())).data.other_subset.dims() == 1
+    sdfg.validate()
+
+
+def test_control_flow_only_gate_gets_a_copyin():
+    """A signature length-1 array read ONLY from control flow (an interstate assignment gating the
+    kernel, QE's ``IF (.NOT.okvan) RETURN``). Staging repoints that reference to the scalar, so the
+    scalar needs a copy-in: without one it is declared, read and never written, and an uninitialized
+    stack value decides whether the kernel runs."""
+    sdfg = dace.SDFG("gate_len1")
+    sdfg.add_array("flag", (1, ), dace.bool_)
+    sdfg.add_array("y", (4, ), dace.float64)
+    sdfg.add_symbol("if_cond", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    sg = sdfg.add_state("gate")
+    s1 = sdfg.add_state("compute")
+    s2 = sdfg.add_state("end")
+    sdfg.add_edge(s0, sg, dace.InterstateEdge(assignments={"if_cond": "flag[0]"}))
+    sdfg.add_edge(sg, s1, dace.InterstateEdge(condition="if_cond"))
+    sdfg.add_edge(sg, s2, dace.InterstateEdge(condition="not if_cond"))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    # preserve_abi keeps the signature array itself.
+    assert "flag" in sdfg.arrays and not sdfg.arrays["flag"].transient
+    staged = [n for n in sdfg.arrays if n.startswith("scal_flag")]
+    assert len(staged) == 1, f"expected the gate to be staged once, got {staged}"
+    scal = staged[0]
+    assert any(scal in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), \
+        "the gate assignment was not repointed at the staged scalar"
+    writers = sum(
+        st.in_degree(nd) for st in sdfg.all_states() for nd in st.nodes()
+        if isinstance(nd, dace.nodes.AccessNode) and nd.data == scal)
+    assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
+    sdfg.validate()
+
+
+def test_interstate_condition_is_repointed():
+    """An interstate-edge CONDITION referencing a staged array must be rewritten alongside the
+    assignments; leaving it naming ``x[0]`` keeps two spellings of one value in the same SDFG."""
+    sdfg = dace.SDFG("cond_len1")
+    sdfg.add_array("flag", (1, ), dace.bool_)
+    sdfg.add_array("y", (4, ), dace.float64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("compute")
+    s2 = sdfg.add_state("end")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(condition="flag[0]"))
+    sdfg.add_edge(s0, s2, dace.InterstateEdge(condition="not flag[0]"))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    conditions = " ".join(e.data.condition.as_string for e in sdfg.all_interstate_edges())
+    assert "flag[0]" not in conditions, f"condition still reads the signature array: {conditions}"
+    assert "scal_flag" in conditions, f"condition was not repointed at the staged scalar: {conditions}"
+    sdfg.validate()
+
+
+def test_library_node_operand_is_not_scalarized():
+    """A length-1 array feeding an UNEXPANDED library node stays an ``Array``: the node's expansion
+    emits its own code against a pointer operand, which a ``Scalar`` cannot satisfy."""
+    from dace.libraries.standard.nodes import MergeLibraryNode
+    sdfg = dace.SDFG("len1_libnode")
+    st = sdfg.add_state("s")
+    sdfg.add_array("t", [1], dace.float64)
+    sdfg.add_array("f", [1], dace.float64)
+    sdfg.add_array("mask", [1], dace.int32)
+    sdfg.add_array("out", [1], dace.float64)
+    node = MergeLibraryNode("merge_main")
+    st.add_node(node)
+    st.add_edge(st.add_access("t"), None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME, dace.Memlet("t[0:1]"))
+    st.add_edge(st.add_access("f"), None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME, dace.Memlet("f[0:1]"))
+    st.add_edge(st.add_access("mask"), None, node, MergeLibraryNode.MASK_CONNECTOR_NAME, dace.Memlet("mask[0:1]"))
+    st.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, st.add_access("out"), None, dace.Memlet("out[0:1]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    for name in ("t", "f", "mask", "out"):
+        assert isinstance(sdfg.arrays[name], dd.Array), f"{name} feeds a library node and must stay an Array"
+    assert not [n for n in sdfg.arrays if n.startswith("scal_")], "a library-node operand was staged"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

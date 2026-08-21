@@ -239,6 +239,11 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
         return result
 
 
+def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
+    """Whether ``anode`` is the destination of a conflict-resolved write, which reads its prior value."""
+    return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(anode))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AccessSets(ppl.Pass):
@@ -281,6 +286,8 @@ class AccessSets(ppl.Pass):
                     for anode in block.data_nodes():
                         if block.in_degree(anode) > 0:
                             writeset.add(anode.data)
+                            if has_wcr_in_edge(block, anode):
+                                readset.add(anode.data)
                         if block.out_degree(anode) > 0:
                             readset.add(anode.data)
                 elif isinstance(block, AbstractControlFlowRegion):
@@ -288,6 +295,8 @@ class AccessSets(ppl.Pass):
                         for anode in state.data_nodes():
                             if state.in_degree(anode) > 0:
                                 writeset.add(anode.data)
+                                if has_wcr_in_edge(state, anode):
+                                    readset.add(anode.data)
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
@@ -688,6 +697,15 @@ class ScalarWriteShadowScopes(ppl.Pass):
                               OrderedSet[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
             anames = sdfg.arrays.keys()
+            # ``AccessSets`` returns ONE flat dict spanning every nested SDFG, whereas
+            # ``idom_dict`` and ``access_nodes`` here belong to THIS SDFG alone.  A name
+            # that exists in both this SDFG and a nested one would otherwise push a nested
+            # block through this SDFG's dominator tree, where it has no entry (KeyError).
+            # Each nested SDFG gets its own turn in the enclosing loop, so scoping the scan
+            # to this SDFG's own blocks loses nothing.  With no nested SDFG this is exactly
+            # the old iteration, in the same order: ``AccessSets`` fills its dict by walking
+            # ``all_control_flow_blocks()`` per SDFG.
+            own_blocks = [b for b in sdfg.all_control_flow_blocks() if b in access_sets]
             for desc in sdfg.arrays:
                 desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())
                 for state in desc_states_with_nodes:
@@ -696,8 +714,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                             access_sets)
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
-                for block, accesses in access_sets.items():
-                    if desc in accesses[0]:
+                for block in own_blocks:
+                    if desc in access_sets[block][0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames

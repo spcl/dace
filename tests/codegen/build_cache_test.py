@@ -202,6 +202,30 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
         assert ran_cmake(gpu_folder), 'the CPU+GPU shape records separately from the CPU one'
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_replayed_build_folder_rebuilds_in_place(tmp_path, private_cache):
+    """Editing a generated kernel and recompiling it is the whole numerical-debugging loop. A replayed
+    build never runs CMake, so its folder has no cache for ``cmake --build .`` ("could not load
+    cache") -- it ships ``rebuild.sh``, which replays the recorded commands."""
+    build_and_check(tmp_path, 'rebuildfirst')
+    folder = build_and_check(tmp_path, 'rebuildsecond')
+    assert not ran_cmake(folder), 'the second build ran CMake, so this is not the replay path'
+
+    build = os.path.join(folder, 'build')
+    script = os.path.join(build, 'rebuild.sh')
+    assert os.path.isfile(script), 'a replayed build folder has no in-place rebuild path'
+
+    kernel = os.path.join(folder, 'src', 'cpu', 'rebuildsecond.cpp')
+    library = os.path.join(build, 'librebuildsecond.so')
+    assert os.path.isfile(kernel) and os.path.isfile(library)
+    before = os.path.getmtime(library)
+    os.utime(kernel, (before + 10, before + 10))  # a hand-edit, without waiting a clock tick
+
+    res = subprocess.run(['sh', script], cwd=build, capture_output=True, text=True)
+    assert res.returncode == 0, f'rebuild.sh failed: {res.stderr[-400:]}'
+    assert os.path.getmtime(library) > before, 'rebuild.sh ran but produced no new library'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

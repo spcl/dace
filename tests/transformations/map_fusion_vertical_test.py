@@ -302,6 +302,80 @@ def fusion_indirect_access(A: dace.float32[100], B: dace.float32[100], idx: dace
     out[:] = tmp[idx]
 
 
+def make_empty_memlet_ordering_sdfg(ordering_only: bool, both: bool = False):
+    """Two fusable Maps with an empty memlet into the first MapEntry.
+
+    An empty memlet transfers no data and therefore carries no connector.
+    `find_subsets()` used to subscript that absent connector (`"OUT_" + e.dst_conn[3:]`
+    on `None`), which `can_be_applied()` reported as a swallowed `TypeError` -- so the
+    Maps silently never fused. `get_access_set()` additionally reported nodes reachable
+    only through such an edge, for which there is no subset to find at all.
+
+    `tmp` is read AND written by the first Map and is the intermediate, which is what
+    routes `has_read_write_dependency()` into `find_subsets()`.
+
+    :param ordering_only: order a node that has no data edge at all against the Map,
+        instead of putting the ordering edge on the intermediate's read node.
+    :param both: use both ordering edges at once. `relocate_nodes()` used to deduplicate
+        the empty Memlets of `all_edges()` by `dst`, which for an INCOMING edge is the
+        scope node itself -- so the second ordering edge was dropped whatever its source,
+        isolating a node whose only edge it was.
+    """
+    sdfg = dace.SDFG(unique_name("empty_memlet_ordering"))
+    state = sdfg.add_state("state", is_start_block=True)
+
+    for name in ["A", "B"]:
+        sdfg.add_array(name, shape=(20, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(20, ), dtype=dace.float64, transient=True)
+
+    A, B = (state.add_access(name) for name in ["A", "B"])
+    tmp_read, tmp_inter = (state.add_access("tmp") for _ in range(2))
+
+    _, me1, _ = state.add_mapped_tasklet(
+        "first",
+        map_ranges={"__i": "0:20"},
+        inputs={
+            "__a": dace.Memlet("A[__i]"),
+            "__t": dace.Memlet("tmp[__i]")
+        },
+        code="__out = __a + __t",
+        outputs={"__out": dace.Memlet("tmp[__i]")},
+        input_nodes={
+            "A": A,
+            "tmp": tmp_read
+        },
+        output_nodes={"tmp": tmp_inter},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        map_ranges={"__i": "0:20"},
+        inputs={"__t": dace.Memlet("tmp[__i]")},
+        code="__out = __t * 2.0",
+        outputs={"__out": dace.Memlet("B[__i]")},
+        input_nodes={"tmp": tmp_inter},
+        output_nodes={"B": B},
+        external_edges=True,
+    )
+
+    if ordering_only or both:
+        sdfg.add_array("C", shape=(20, ), dtype=dace.float64, transient=False)
+        state.add_edge(state.add_access("C"), None, me1, None, dace.Memlet())
+    if not ordering_only or both:
+        # Same node carries both a data edge and an ordering edge.
+        state.add_edge(tmp_read, None, me1, None, dace.Memlet())
+
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize(('ordering_only', 'both'), [(False, False), (True, False), (False, True)])
+def test_fusion_empty_memlet_ordering(ordering_only, both):
+    """An empty memlet into the MapEntry must not stop the two Maps from fusing."""
+    sdfg = make_empty_memlet_ordering_sdfg(ordering_only, both)
+    apply_fusion(sdfg, removed_maps=1)
+
+
 def make_interstate_transient_fusion_sdfg():
     sdfg = dace.SDFG(unique_name("interstate_transient_fusion"))
     state1 = sdfg.add_state("state1", is_start_block=True)
@@ -3212,6 +3286,176 @@ def test_map_fusion_stable_label(forward_fusion: bool):
 
     compile_and_run_sdfg(sdfg, **res)
     assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
+def test_ordering_edge_beside_an_inout_read():
+    """An ordering edge beside a read of an in/out array must not stop the read/write analysis.
+
+    `a` is read by the first Map and written by the second, so it is an in/out of the fused Map and
+    `has_read_write_dependency()` calls `find_subsets()` on it. `find_subsets()` walked EVERY edge
+    between the AccessNode and the MapEntry, including the empty ordering Memlet, and sliced its
+    `dst_conn` -- which an ordering edge does not have -- raising
+    `TypeError: 'NoneType' object is not subscriptable` from inside `can_be_applied`. The matcher
+    swallowed that as "cannot apply", so the pair silently never fused.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_beside_inout_read"))
+    sdfg.add_array("a", shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+
+    a_read = state.add_access("a")
+    t = state.add_access("t")
+    a_write = state.add_access("a")
+    _, first_entry, _ = state.add_mapped_tasklet("produce",
+                                                 map_ranges={"__i": "0:10"},
+                                                 inputs={"__in": dace.Memlet("a[__i]")},
+                                                 code="__out = __in + 10.0",
+                                                 outputs={"__out": dace.Memlet("t[__i]")},
+                                                 input_nodes={a_read},
+                                                 output_nodes={t},
+                                                 external_edges=True)
+    state.add_mapped_tasklet("consume",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("t[__i]")},
+                             code="__out = __in * 2.0",
+                             outputs={"__out": dace.Memlet("a[__i]")},
+                             input_nodes={t},
+                             output_nodes={a_write},
+                             external_edges=True)
+    # The extra empty Memlet `StateFusionExtended` leaves beside the real read of `a`.
+    state.add_nedge(a_read, first_entry, dace.Memlet())
+    sdfg.validate()
+
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+
+    # `apply_fusion` runs with `optimizer.match_exception` on, so a raising `can_be_applied` fails.
+    apply_fusion(sdfg, removed_maps=1)
+
+    res = {"a": a.copy()}
+    sdfg(**res)
+    assert np.allclose(res["a"], ref), "fusing beside the ordering edge changed the result"
+
+
+def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
+    """Builds the mark/search pattern of CloudSC's selection sort.
+
+    The mark Map contains a NestedSDFG that writes a single element
+    `A[i - 1, idx[i - 1] - 1]` per iteration, but its connector Memlet claims the
+    whole array (a frontend's conservative widening for a data dependent index).
+    The search Map contains a NestedSDFG that reads full rows of `A`, again with a
+    whole array connector Memlet. `A` is non transient, i.e. shared data, and
+    Fortran layout, matching the original bug.
+    """
+    N = dace.symbol("N")
+
+    # The inner mark SDFG: writes one element, the connector claims the full array.
+    inner_mark = dace.SDFG("mark_inner")
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    istate = inner_mark.add_state()
+    ia = istate.add_access("A")
+    iidx = istate.add_access("idx_at")
+    t = istate.add_tasklet("mark", {"_in_idx"}, {"_out"}, "_out = 0")
+    istate.add_edge(iidx, None, t, "_in_idx", dace.Memlet("idx_at[0]"))
+    istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, idx_at - 1]"))
+
+    # The inner search SDFG: reads one row, the connector claims the full array.
+    inner_search = dace.SDFG("search_inner")
+    inner_search.add_symbol("j", dace.int32)
+    inner_search.add_symbol("N", dace.int32)
+    inner_search.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_search.add_array("B", (N, ), dace.int32)
+    istate2 = inner_search.add_state()
+    ia2 = istate2.add_access("A")
+    ib2 = istate2.add_access("B")
+    t2i = istate2.add_tasklet("search", {"_a"}, {"_b"}, "_b = _a[0] + _a[1] + _a[2] + _a[3] + _a[4]")
+    istate2.add_edge(ia2, None, t2i, "_a", dace.Memlet("A[j - 1, 0:5]"))
+    istate2.add_edge(t2i, "_b", ib2, None, dace.Memlet("B[j - 1]"))
+
+    sdfg = dace.SDFG(unique_name("partial_write_shared_intermediate"))
+    sdfg.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    sdfg.add_array("idx", (N, ), dace.int32)
+    sdfg.add_array("B", (N, ), dace.int32)
+
+    # `A[:, :] = True`
+    s0 = sdfg.add_state("init")
+    a0 = s0.add_access("A")
+    me0, mx0 = s0.add_map("init_map", {"ii": "0:N", "jj": "0:5"})
+    t0 = s0.add_tasklet("one", {}, {"_o"}, "_o = 1")
+    s0.add_edge(me0, None, t0, None, dace.Memlet())
+    s0.add_edge(t0, "_o", mx0, "IN_1", dace.Memlet("A[ii, jj]"))
+    s0.add_edge(mx0, "OUT_1", a0, None, dace.Memlet("A[0:N, 0:5]"))
+    mx0.add_in_connector("IN_1")
+    mx0.add_out_connector("OUT_1")
+
+    s1 = sdfg.add_state("main")
+    a1 = s1.add_access("A")
+    idx1 = s1.add_access("idx")
+    b1 = s1.add_access("B")
+
+    me1, mx1 = s1.add_map("mark_map", {"i": "1:N + 1"})
+    me1.add_in_connector("IN_1")
+    me1.add_out_connector("OUT_1")
+    mx1.add_in_connector("IN_1")
+    mx1.add_out_connector("OUT_1")
+    nsdfg = s1.add_nested_sdfg(inner_mark, {"idx_at"}, {"A"}, symbol_mapping={"i": "i", "N": "N"})
+    s1.add_edge(idx1, None, me1, "IN_1", dace.Memlet("idx[0:N]"))
+    s1.add_edge(me1, "OUT_1", nsdfg, "idx_at", dace.Memlet("idx[i - 1]"))
+    s1.add_edge(nsdfg, "A", mx1, "IN_1", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(mx1, "OUT_1", a1, None, dace.Memlet("A[0:N, 0:5]"))
+
+    me2, mx2 = s1.add_map("search_map", {"j": "1:N + 1"})
+    me2.add_in_connector("IN_2")
+    me2.add_out_connector("OUT_2")
+    mx2.add_in_connector("IN_1")
+    mx2.add_out_connector("OUT_1")
+    nsdfg2 = s1.add_nested_sdfg(inner_search, {"A"}, {"B"}, symbol_mapping={"j": "j", "N": "N"})
+    s1.add_edge(a1, None, me2, "IN_2", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(me2, "OUT_2", nsdfg2, "A", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(nsdfg2, "B", mx2, "IN_1", dace.Memlet("B[0:N]"))
+    s1.add_edge(mx2, "OUT_1", b1, None, dace.Memlet("B[0:N]"))
+
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_map_fusion_partial_write_of_shared_intermediate_not_fused():
+    """A NestedSDFG producer that only partially writes its shared intermediate must
+    not be fused.
+
+    The connector Memlets of both Maps claim the whole array, so the claim based
+    coverage test sees a pointwise producer/consumer pair. But the mark NestedSDFG
+    writes a single element per iteration, so the privatized per-iteration buffer
+    is mostly undefined; the search Map then reads garbage and the shared mode
+    write back copies it over the whole shared array (the CloudSC `llindex1`/
+    `iorder` segfault). The fusion must be refused; without the guard this test
+    fails on the numerics comparison (or crashes).
+    """
+    sdfg = _make_partially_written_shared_intermediate_sdfg()
+
+    n = 8
+    idx = np.array([5, 4, 3, 2, 1, 5, 4, 3], dtype=np.int32)
+    A_ref = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_ref = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_ref, idx=idx, B=B_ref, N=n)
+    assert np.all(B_ref == 4), "reference broken"
+
+    maps_before = count_nodes(sdfg, nodes.MapEntry)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        applied = sdfg.apply_transformations_repeated(MapFusionVertical(strict_dataflow=True))
+    assert applied == 0, "partial write of a shared intermediate must not be fused"
+    assert count_nodes(sdfg, nodes.MapEntry) == maps_before
+
+    A_res = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_res = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_res, idx=idx, B=B_res, N=n)
+    assert np.array_equal(A_ref, A_res)
+    assert np.array_equal(B_ref, B_res)
 
 
 def test_map_fusion_is_deprecated() -> None:
