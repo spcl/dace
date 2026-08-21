@@ -34,6 +34,14 @@ npbench ``cavity_flow``'s 1,044,484-element pressure map ``Sequential`` because 
 entry count evaluated 4092 higher -- a map a thousand times above break-even, made serial by a
 quantity that cannot matter.
 
+A reduction nested in a sequential loop is the same case and is decided here too. There used to be
+a ``PinNestedSequentialLoops`` pass in the canonicalization band that kept such a loop a loop, so
+it never reached a schedule at all; it is gone. Measured against it at 8 threads: a 4096x4096 inner
+reduction ran 17.62 ms pinned against 10.98 ms as a WCR map, and on polybench ``nussinov`` -- the
+kernel the pin was written for -- the generated C++ was BYTE-IDENTICAL either way, because
+``WavefrontSkew`` now turns its ``(i, j)`` nest into a parallel diagonal map and rule 1 owns the
+k-reduction underneath it.
+
 Bulk transfers are decided one pass over in
 :mod:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers`: a copy / memset
 library node carries no map to measure until it expands, so

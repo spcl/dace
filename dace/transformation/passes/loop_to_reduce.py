@@ -47,26 +47,29 @@ _CALL_TO_WCR: Dict[str, str] = {
 _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
 
+#: The one map schedule that opens no parallel region. Everything else -- including ``Default``,
+#: which codegen turns into ``CPU_Multicore`` at the top level -- counts as an enclosing parallel
+#: scope, so a loop under it is the CPU cost model's nested-parallelism case, not this pass's.
+_SEQUENTIAL_SCHEDULES = (dtypes.ScheduleType.Sequential, )
+
 
 def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
     """True iff ``loop`` is lexically nested inside another (sequential) ``LoopRegion``,
-    crossing NestedSDFG boundaries.
+    crossing NestedSDFG boundaries, and no parallel map opens a scope on the way out.
 
-    Gate for the ``wcr-scalar`` lift: a nested scalar-accumulator reduction is still lifted,
-    but marked ``pinned_sequential`` so the downstream ``LoopToMap`` keeps it a sequential
-    per-thread inner loop instead of a parallel WCR-map. A parallel map nested inside a
-    sequential loop is re-entered once per outer iteration -- the OpenMP fork/join plus
-    per-entry accumulator privatization dominates the tiny inner reduction, so it runs far
-    slower than the plain sequential loop ``auto_optimize`` keeps. (nussinov's ``table[i,j] = max(table[i,j],
-    table[i,k] + table[k+1,j])`` k-reduction sits inside two sequential ``i``/``j`` loops and
-    is re-entered O(N^2) times: lifted to a parallel WCR-map it measured ~340x slower than
-    the sequential baseline.) The enclosing loop, if itself parallelizable, was already
-    turned into a Map by the earlier ``parallelize`` stage, so the reduction should stay a
-    sequential per-thread inner loop either way -- matching what ``auto_optimize`` produces.
+    Used to keep :class:`PinCarriedTopLevelLoops` to top-level loops. It is NOT a reason to
+    serialize: a region entered ``E`` times costs ``E * (fork + work / P)`` against ``E *
+    work`` sequential, so ``E`` cancels and only the region's own work decides. That decision
+    is the CPU cost model's, in
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`.
 
-    The reduce-libnode lift is NOT gated: a ``Reduce`` node nested in a sequential loop is
-    scheduled ``Sequential`` by ``finalize`` (no nested parallel region), so it carries no
-    such fork-per-iteration cost.
+    A PARALLEL map found on the way out ends the walk with ``False``. Such a loop is already
+    covered, and better, by the CPU cost model's nested-parallelism rule
+    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`),
+    which sequentializes it at specialization time and leaves the canonical form parallel. Pinning
+    it here instead would bake a CPU decision into the device-neutral graph for no gain -- measured
+    on nussinov, whose ``(i, j)`` nest ``WavefrontSkew`` now turns into a parallel diagonal map:
+    with and without the pin the generated C++ is BYTE-IDENTICAL, so the flag buys nothing there.
     """
     g = loop.parent_graph
     while g is not None:
@@ -76,9 +79,25 @@ def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
             # Cross the NestedSDFG boundary: continue from the state that holds this
             # SDFG's NestedSDFG node (``None`` at the top-level SDFG -> not nested).
             pstate = g.parent
-            g = pstate.parent_graph if pstate is not None else None
+            if pstate is None:
+                return False
+            if _inside_parallel_map(pstate, g.parent_nsdfg_node):
+                return False
+            g = pstate.parent_graph
             continue
         g = g.parent_graph
+    return False
+
+
+def _inside_parallel_map(state: SDFGState, node) -> bool:
+    """``node`` sits in a map scope of ``state`` that opens a parallel region."""
+    if node is None or node not in state.nodes():
+        return False
+    scope = state.entry_node(node)
+    while scope is not None:
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule not in _SEQUENTIAL_SCHEDULES:
+            return True
+        scope = state.entry_node(scope)
     return False
 
 
@@ -156,9 +175,8 @@ class LoopToReduce(ppl.Pass):
         alone, so cached analyses are reused and a ``FixedPointPipeline`` stops iterating.
         The normalization the matcher needs therefore does NOT live here -- it is
         :class:`~dace.transformation.passes.lift_preprocess.LiftPreprocess` (uniform augassign
-        bodies) and, in ``wcr-scalar`` mode, :class:`PinNestedSequentialLoops`, which the
-        canonicalization pipeline runs before this pass and which a direct caller must run
-        itself. The multi-tasklet shapes this matcher refuses belong to
+        bodies), which the canonicalization pipeline runs before this pass and which a direct
+        caller must run itself. The multi-tasklet shapes this matcher refuses belong to
         :class:`RetargetWCRAccumulator`, run after. Mirrored in ``LoopToScan``.
         """
         count = 0
@@ -257,99 +275,20 @@ def _loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
     return any(k in lo for k in ('carried', 'may overlap', 'read-after-write conflict'))
 
 
-@properties.make_properties
-@xf.explicit_cf_compatible
-class PinNestedSequentialLoops(ppl.Pass):
-    """Mark every loop nested inside another loop ``pinned_sequential``.
-
-    The flag makes the downstream ``LoopToMap`` / ``LoopToScan`` keep the loop sequential
-    (both honor it), so a nested reduction is NOT parallelized into an OpenMP region
-    re-forked once per outer iteration (see :func:`_nested_in_sequential_loop`; nussinov's
-    k-reduction). Companion to ``LoopToReduce(prefer='wcr-scalar')``, which carries the flag
-    onto the loops it lifts -- run this immediately before it. The pipeline's terminal
-    ``WCRToAugAssign`` then reverts the pinned WCR to a clean sequential accumulate, the form
-    ``auto_optimize`` keeps.
-    """
-
-    CATEGORY: str = 'Optimization Preparation'
-
-    exempt_scalar_reductions = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='Leave a nested loop that only accumulates into one body-local scalar UNPINNED, so the '
-        'WCR-map path may lift it. Off by default and deliberately so: the fork-per-outer-iteration '
-        'cost is what this pass exists to avoid, and it is not small -- nussinov measured ~340x '
-        'slower lifted. Turn it on only where the inner trip count is known to be large.')
-
-    def __init__(self, exempt_scalar_reductions: bool = False) -> None:
-        super().__init__()
-        self.exempt_scalar_reductions = exempt_scalar_reductions
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
-
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
-        """:returns: The number of loops newly pinned, or ``None`` if none was."""
-        pinned = 0
-        for node, _p in list(sdfg.all_nodes_recursive()):
-            if isinstance(node, LoopRegion) and node.loop_variable and _nested_in_sequential_loop(node):
-                if self.exempt_scalar_reductions and accumulates_only_a_local_scalar(node, sdfg):
-                    continue
-                # Only a flag that is not already set is a modification.
-                if not node.pinned_sequential:
-                    node.pinned_sequential = True
-                    pinned += 1
-        return pinned or None
-
-
-def accumulates_only_a_local_scalar(loop: LoopRegion, sdfg: SDFG) -> bool:
-    """``loop``'s only effect an outer iteration can observe is ONE fixed slot -- a reduction.
-
-    Every live (non-transient) write must land on a single element that does NOT move with the
-    loop variable, and there must be at most one such slot. Body-local transients are unconstrained:
-    they are scratch, gone at the end of the iteration. nussinov's ``table[i, j] = max(table[i, j],
-    ...)`` is the live-accumulator form of this; ``acc += val[k] * x[col[k]]`` the transient one.
-
-    Profitability only. Whether lifting it is SOUND stays with the passes that do the lifting
-    (``AccumulatorCopyChainToWCR`` checks the combine is WCR-safe, ``LoopToMap`` checks the
-    dependences); this decides nothing but whether they are allowed to look.
-    """
-    loop_var_sym = symbolic.symbol(loop.loop_variable, sdfg.symbols.get(loop.loop_variable))
-    live_slots = set()
-    for state in loop.all_states():
-        # A nested SDFG owns its own descriptors; asking the outer one returns ``None`` for every
-        # name inside it, which silently made this refuse every nested reduction.
-        owner = state.sdfg if state.sdfg is not None else sdfg
-        for node in state.data_nodes():
-            if state.in_degree(node) == 0:
-                continue
-            desc = owner.arrays.get(node.data)
-            if desc is None:
-                return False
-            if desc.transient:
-                continue
-            for edge in state.in_edges(node):
-                subset = edge.data.subset if edge.data is not None else None
-                if subset is None or _one_elem(subset) != 1 or _uses(subset, loop_var_sym):
-                    return False  # a live per-iteration store -- the loop emits a sequence, not a fold
-                live_slots.add((node.data, str(subset)))
-    return len(live_slots) <= 1
-
-
 @xf.explicit_cf_compatible
 class PinCarriedTopLevelLoops(ppl.Pass):
     """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
     loop-carried dependence.
 
-    ``PinNestedSequentialLoops`` only reaches lexically nested loops. A doubly-carried nest
-    such as nussinov's ``(i, j)`` outer loops has the inner axes pinned by nesting, but the
-    outermost carrier stays top-level and is otherwise left un-pinned. This pass re-uses
-    ``LoopToMap.can_be_applied`` as the dependence oracle: a top-level loop that is applicable
-    is left alone, while one refused because of a carried dependency is pinned so that the
-    downstream ``LoopToMap`` stage and the WCR-scalar reduction path keep it sequential.
+    The pin is a dependence fact, not a schedule preference: this pass re-uses
+    ``LoopToMap.can_be_applied`` as the oracle, leaves an applicable loop alone, and marks one
+    refused for a carried dependency so the downstream ``LoopToMap`` stage and the WCR-scalar
+    reduction path keep it sequential.
+
+    Scope is top-level only -- a loop nested in another loop is skipped. Nesting on its own is
+    not a reason to serialize anything; whether a parallel scope earns its OpenMP region is a
+    CPU question and belongs to
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`.
     """
 
     CATEGORY: str = 'Optimization Preparation'

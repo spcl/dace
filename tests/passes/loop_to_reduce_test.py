@@ -15,8 +15,7 @@ from dace import memlet as mm
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce,
-                                                       PinNestedSequentialLoops, RetargetWCRAccumulator)
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, RetargetWCRAccumulator)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -659,7 +658,6 @@ def _prep_and_lift(sdfg: dace.SDFG, prefer: str) -> int:
     PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
     if prefer != 'wcr-scalar':
         return LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
-    PinNestedSequentialLoops().apply_pass(sdfg, {})
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
     return lifted + (RetargetWCRAccumulator().apply_pass(sdfg, {}) or 0)
@@ -1199,7 +1197,6 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
 
     # Now run the wcr-scalar lift with its full prelude. It must NOT create any WCR-bearing
     # write on ``b`` (the recurrence target).
-    PinNestedSequentialLoops().apply_pass(sdfg, {})
     LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
     RetargetWCRAccumulator().apply_pass(sdfg, {})
@@ -1585,7 +1582,6 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
     assert 'dd' not in sdfg.arrays, 'fixture is vacuous: the caller must NOT define the accumulator'
 
-    PinNestedSequentialLoops().apply_pass(sdfg, {})
     LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
     retargeted = RetargetWCRAccumulator().apply_pass(sdfg, {})
