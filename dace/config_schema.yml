@@ -435,18 +435,16 @@ required:
 
                     parallel_min_work_per_region:
                         type: int
-                        default: 1024
-                        title: Parallel region break-even work
+                        default: 256
+                        title: Parallel region break-even iterations
                         description: >
-                            Elements a single OpenMP region must process to pay for its
-                            fork/join. The cpu_specialize band sequentializes a parallel
-                            map whose work per entry is PROVABLY below this, and a map
-                            re-entered by an enclosing loop whose work per entry does not
-                            outgrow the number of entries (both read with every symbol set
-                            to this value, since all symbols are assumed equally big). A
-                            symbolic count on its own is assumed big enough and stays
-                            parallel. 0 disables the cost model, leaving only the
-                            nested-parallelism rule.
+                            Iterations a top-level map must have to pay for the fork/join of
+                            its own OpenMP region. The cpu_specialize band sequentializes a
+                            parallel map whose iteration count is PROVABLY below this. A
+                            symbolic count is assumed big enough and stays parallel. An
+                            enclosing loop is NOT a reason to sequentialize: it multiplies
+                            the parallel and the sequential cost alike. 0 disables the size
+                            rule, leaving only the nested-parallelism rule.
 
                     implementation:
                         type: str

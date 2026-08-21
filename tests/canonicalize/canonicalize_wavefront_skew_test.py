@@ -17,6 +17,10 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, _SKEW_T_PREFIX, _SKEW_P_PREFIX)
 
+# The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
+# exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
+from tests.corpus.polybench.medley.nussinov import nussinov as corpus_nussinov
+
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
 
@@ -369,21 +373,6 @@ def test_wavefront_skew_five_point_gauss_seidel_value_preserving():
     assert np.allclose(got, ref)
 
 
-def _load_corpus_nussinov():
-    """Load the polybench ``nussinov`` program object from the corpus, or ``None`` if the
-    corpus tree is not present. Its ``@dace.tasklet`` bodies lower to the exact 2-D
-    wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew."""
-    import importlib.util
-    import os
-    path = os.path.join(os.path.dirname(__file__), '..', 'corpus', 'polybench', 'medley', 'nussinov.py')
-    if not os.path.exists(path):
-        return None
-    spec = importlib.util.spec_from_file_location('corpus_nussinov', path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return vars(mod)['nussinov']
-
-
 def _nussinov_oracle(seq, table):
     n = table.shape[0]
     for i in range(n - 1, -1, -1):
@@ -410,10 +399,6 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize import wavefront_skew as ws
 
-    nussinov = _load_corpus_nussinov()
-    if nussinov is None:
-        pytest.skip('corpus nussinov not available')
-
     fired = [0]
     original = ws.WavefrontSkew.apply_pass
 
@@ -424,7 +409,7 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
 
     ws.WavefrontSkew.apply_pass = counting
     try:
-        sdfg = nussinov.to_sdfg(simplify=True)
+        sdfg = corpus_nussinov.to_sdfg(simplify=True)
         canonicalize(sdfg, validate=True, target='cpu')
     finally:
         ws.WavefrontSkew.apply_pass = original
@@ -435,15 +420,11 @@ def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
     """The skewed, canonicalized ``nussinov`` reproduces the sequential reference exactly."""
     from dace.transformation.passes.canonicalize import canonicalize
 
-    nussinov = _load_corpus_nussinov()
-    if nussinov is None:
-        pytest.skip('corpus nussinov not available')
-
     n = 40
     seq = np.array([(i + 1) % 4 for i in range(n)], dtype=np.int32)
     ref = _nussinov_oracle(seq, np.zeros((n, n), dtype=np.int32))
 
-    sdfg = nussinov.to_sdfg(simplify=True)
+    sdfg = corpus_nussinov.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, target='cpu')
     got = np.zeros((n, n), dtype=np.int32)
     sdfg(seq=seq.copy(), table=got, N=n)

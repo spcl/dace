@@ -74,7 +74,7 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.cpu_specialization import (ChunkAntiDependence, SequentializeParallelScopes,
+from dace.transformation.passes.cpu_specialization import (ChunkAntiDependence, SequentializeUnprofitableParallelScopes,
                                                            SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
@@ -1537,7 +1537,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # cpu_specialize (terminal band): the canonical form is the maximally parallel one, so the
     # decision to make a scope sequential again belongs to the target, not to canonicalization.
-    # ``SequentializeParallelScopes`` is the single home of that CPU fork/join cost model: it pins
+    # ``SequentializeUnprofitableParallelScopes`` is the single home of that CPU fork/join cost model: it pins
     # a map whose work per region cannot pay for a ``#pragma omp parallel`` (and every scope nested
     # in a parallel map, which would fork a team per outer iteration).
     # ``SpecializeCpuTransfers`` then gives the transfers it just sequentialized their single
@@ -1549,7 +1549,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # magnitude), and a schedule set earlier would also block the map fusion stages, which only
     # fuse maps with equal schedules.
     if target == 'cpu':
-        s += [('cpu_specialize', SequentializeParallelScopes()), ('cpu_specialize', SpecializeCpuTransfers())]
+        s += [('cpu_specialize', SequentializeUnprofitableParallelScopes()),
+              ('cpu_specialize', SpecializeCpuTransfers())]
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
     # explicit and runtime-checked, by prepending a side-effecting

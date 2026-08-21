@@ -8,7 +8,7 @@ node carries no ``schedule`` property at all (only ``Map`` and ``LibraryNode`` d
 probe raised ``AttributeError: 'NestedSDFG' object has no attribute 'schedule'`` for any
 library node nested inside an SDFG that is itself nested inside another SDFG, whenever the
 node's own schedule had not already been pinned ``Sequential`` by the earlier
-``SequentializeParallelScopes`` pass (e.g. a top-level nsdfg call not itself wrapped
+``SequentializeUnprofitableParallelScopes`` pass (e.g. a top-level nsdfg call not itself wrapped
 in a map -- ``tests/numpy/lift_einsum_matmul_test.py::test_lift_via_canon[gemv_acc]``).
 
 The fix drops the broken probe: :func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes`
@@ -20,7 +20,7 @@ import dace
 from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.canonicalize.finalize import libnode_is_sequential
-from dace.transformation.passes.cpu_specialization import SequentializeParallelScopes
+from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes
 
 
 def _build_nested_reduce_in_parallel_map():
@@ -68,21 +68,21 @@ def _find_state(sdfg: dace.SDFG, node) -> dace.SDFGState:
     raise AssertionError('node not found in sdfg')
 
 
-def test_sequentialize_parallel_scopes_pins_nested_reduce():
-    """``SequentializeParallelScopes`` must not raise on a NestedSDFG nested inside a
+def test_sequentialize_unprofitable_parallel_scopes_pins_nested_reduce():
+    """``SequentializeUnprofitableParallelScopes`` must not raise on a NestedSDFG nested inside a
     parallel map, and must pin the nsdfg's body (the Reduce library node) to ``Sequential`` --
     the transitive behaviour its docstring promises."""
     sdfg, reduce_node = _build_nested_reduce_in_parallel_map()
     assert reduce_node.schedule == dtypes.ScheduleType.CPU_Multicore
 
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
 
     assert reduce_node.schedule == dtypes.ScheduleType.Sequential
 
 
 def test_libnode_is_sequential_survives_unpinned_schedule_in_nested_sdfg():
     """The actual crash site: ``libnode_is_sequential`` called on a library node whose own
-    schedule was NOT already pinned ``Sequential`` (``SequentializeParallelScopes``
+    schedule was NOT already pinned ``Sequential`` (``SequentializeUnprofitableParallelScopes``
     only pins a node re-entered under a parallel map/loop; a libnode inside an nsdfg called
     from a non-parallel context keeps its storage-derived schedule) but that still lives
     inside a nested SDFG (``state.sdfg.parent_nsdfg_node is not None``). Before the fix this
@@ -92,7 +92,7 @@ def test_libnode_is_sequential_survives_unpinned_schedule_in_nested_sdfg():
     state = _find_state(sdfg, reduce_node)
     assert state.sdfg.parent_nsdfg_node is not None
 
-    # No prior SequentializeParallelScopes call: the schedule is exactly the
+    # No prior SequentializeUnprofitableParallelScopes call: the schedule is exactly the
     # storage-derived CPU_Multicore that used to reach the broken parent_nsdfg.schedule probe.
     sequential = libnode_is_sequential(reduce_node, state, sdfg)
 
