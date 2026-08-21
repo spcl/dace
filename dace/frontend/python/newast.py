@@ -5683,6 +5683,65 @@ class ProgramVisitor(ExtNodeVisitor):
         edge.data.assignments = {str(sym): rhs}
         return sym
 
+    #: AST nodes a slice bound may be built from and still be read as plain integer arithmetic.
+    SLICE_ARITHMETIC_NODES = (ast.Expression, ast.Name, ast.Load, ast.Constant, ast.BinOp, ast.UnaryOp, ast.Add,
+                              ast.Sub, ast.Mult, ast.USub, ast.UAdd)
+
+    def slice_bound_over_promoted_leaves(self, node: ast.AST):
+        """A COMPOUND slice bound such as ``pad + N`` as one symbolic expression whose scalar
+        leaves are promoted individually, or ``None`` to fall back to materializing it.
+
+        Visiting the expression instead evaluates it into a scalar transient and promotes THAT to
+        a single opaque symbol, which loses the arithmetic: ``buf[pad : pad + N] = x`` then sizes
+        its target ``__sym_buf_slice - __sym_pad``. That is ``N``, but no consumer can see it, so
+        the frontend rejects the copy as a shape mismatch even though the extents are identical.
+        Promoting ``pad`` alone and keeping ``+ N`` symbolic makes the extent literally ``N``.
+
+        Refuses anything that is not integer arithmetic over names already in scope -- a call, a
+        subscript, a float, a name that is an array rather than a scalar -- so the fallback still
+        handles every shape it handled before.
+        """
+        if not isinstance(node, (ast.BinOp, ast.UnaryOp)):
+            return None  # a bare name or constant already promotes exactly; leave that path alone
+        for sub in ast.walk(node):
+            if not isinstance(sub, self.SLICE_ARITHMETIC_NODES):
+                return None
+            if isinstance(sub, ast.Constant) and not isinstance(sub.value, (int, numpy.integer)):
+                return None
+        try:
+            expr = symbolic.pystr_to_symbolic(astutils.unparse(node))
+        except Exception:  # noqa: BLE001 - an unparseable bound simply falls back
+            return None
+
+        defined_vars = {**self.variables, **self.scope_vars}
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+        repl = {}
+        for leaf in sorted(expr.free_symbols, key=str):
+            name = str(leaf)
+            # ``variables`` maps symbols onto themselves as well as data onto their descriptors, so
+            # membership there says nothing; what the name RESOLVES to is the question. The value
+            # is not always a string (a symbol maps to its own symbol object), hence ``str``.
+            resolved = str(defined_vars.get(name, name))
+            desc = defined_arrays.get(resolved)
+            if isinstance(desc, data.Scalar):
+                if desc.dtype not in dtypes.INTEGER_TYPES:
+                    return None
+                repl[leaf] = self.promote_scalar_to_symbol(resolved, key=name)
+            elif desc is not None:
+                return None  # an array cannot be a bound
+            elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):
+                repl[leaf] = int(self.sdfg.constants[resolved])
+            elif resolved != name:
+                return None  # the source name is not the SDFG name; only ``visit`` knows the mapping
+            elif name in self.sdfg.symbols or isinstance(self.globals.get(name), symbolic.symbol):
+                continue  # already a symbol of this SDFG -- keep it as written
+            else:
+                return None
+        # Nothing to promote means the bound is pure symbol arithmetic, which the fallback already
+        # handles correctly -- and handles in the scope's own symbol instances rather than in ones
+        # minted from the source text. Only the scalar case is this method's business.
+        return expr.subs(repl) if repl else None
+
     def _parse_subscript_slice(self,
                                s: ast.AST,
                                multidim: bool = False) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
@@ -5695,6 +5754,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(node, str):
                 scalar = node_str
             else:
+                folded = self.slice_bound_over_promoted_leaves(node)
+                if folded is not None:
+                    return folded
                 scalar = self.visit(node)
                 # Replacements return their results as a list of data names (a ufunc may have several
                 # outputs), but an index is a single value. Only a list/tuple display is a literal index
