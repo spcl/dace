@@ -22,8 +22,6 @@ jobs:
   cloudsc-e2e:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
-    env:
-      UV_SYSTEM_PYTHON: '1'
     strategy:
       matrix:
         python-version: ['3.14']
@@ -32,16 +30,13 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Install uv
+    - name: Set up uv
       uses: astral-sh/setup-uv@v7
       with:
+        python-version: ${{ matrix.python-version }}
         enable-cache: true
         pyproject-file: pyproject.toml
         cache-dependency-glob: pyproject.toml
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         # Make dependency setup faster
@@ -50,7 +45,7 @@ jobs:
         # Install dependencies
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
-        uv pip install -e ".[testing]"
+        uv sync --extra testing
 
     - name: CloudSC corpus tests
       run: |
@@ -60,9 +55,9 @@ jobs:
         # so the automatic heuristic must not have run first.
         export DACE_optimizer_automatic_simplification=0
         # Ask the installed package where it lives instead of assuming the job's directory.
-        ROOT=$(python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
+        ROOT=$(uv run python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
         # No xdist: the SDFG is parsed once per process and memoized, so a worker per test would
         # pay the multi-minute parse again instead of sharing one.
-        pytest --tb=short --timeout_method thread --timeout=3600 \
+        uv run pytest --tb=short --timeout_method thread --timeout=3600 \
           "$ROOT/tests/corpus/cloudsc_regression_test.py" \
           "$ROOT/tests/passes/constant_propagation_on_cloudsc_test.py"

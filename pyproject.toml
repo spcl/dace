@@ -40,7 +40,11 @@ dependencies = [
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 testing = [
     "coverage",
+    "pytest",
     "pytest-cov",
+    "pytest-timeout",
+    "pytest-xdist",
+    "flake8",
     "scipy",
     "absl-py",
     "opt_einsum",
@@ -48,8 +52,9 @@ testing = [
     "click",
     "ipykernel",
     "nbconvert",
-    "pytest-timeout",
 ]
+mpi = ["mpi4py", "pytest-mpi"]
+gpu = ["cupy", "cutensor-cu12"]
 ml-testing = [
     "coverage",
     "pytest-cov",

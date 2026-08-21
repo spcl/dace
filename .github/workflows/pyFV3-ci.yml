@@ -19,8 +19,6 @@ concurrency:
 jobs:
   configure:
     runs-on: ubuntu-latest
-    env:
-      UV_SYSTEM_PYTHON: '1'
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     name: "Read test configuration"
     outputs:
@@ -45,8 +43,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
     name: "${{ matrix.module }} regression test"
-    env:
-      UV_SYSTEM_PYTHON: '1'
 
     steps:
     - name: Checkout pyFV3
@@ -61,17 +57,13 @@ jobs:
         path: 'dace'
         submodules: 'recursive'
 
-    - name: Install uv
+    - name: Set up uv
       uses: astral-sh/setup-uv@v7
       with:
+        python-version: 3.12
         enable-cache: true
         pyproject-file: dace/pyproject.toml
         cache-dependency-glob: dace/pyproject.toml
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v6
-      with:
-        python-version: 3.12
 
     - name: Install OpenMPI
       run: |
@@ -81,6 +73,11 @@ jobs:
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
+        uv venv .venv
+        export VIRTUAL_ENV="$PWD/.venv"
+        export PATH="$VIRTUAL_ENV/bin:$PATH"
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
+        echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
         uv pip install ./pyFV3[ndsl,test]
         uv pip install ./dace
 
@@ -88,8 +85,8 @@ jobs:
       run: |
         gcc --version
         python --version
-        pip --version
-        pip list
+        uv --version
+        uv pip list
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)

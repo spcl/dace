@@ -4,8 +4,6 @@ on: workflow_dispatch
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-latest
-    env:
-      UV_SYSTEM_PYTHON: '1'
     permissions:
       contents: read
     steps:
@@ -14,12 +12,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install uv
+      - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
+          python-version: '3.11'
           enable-cache: true
           pyproject-file: pyproject.toml
           cache-dependency-glob: pyproject.toml
+
       - name: Set up C++ compiler
         run: |
           sudo apt-get update
@@ -29,19 +29,10 @@ jobs:
         run: |
           sudo apt-get install -y cmake
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
       - name: Install Python dependencies
-        run: |
-          # Install additional testing dependencies
-          uv pip install pytest pytest-cov
-          uv pip install flake8 pytest-xdist coverage
+        run: uv sync --extra testing,linting,ml
 
       - name: Install DaCe in development mode
         run: |
-          uv pip install --editable ".[testing,linting,ml]"
-          pre-commit install
-          pre-commit run
+          uv run pre-commit install
+          uv run pre-commit run
