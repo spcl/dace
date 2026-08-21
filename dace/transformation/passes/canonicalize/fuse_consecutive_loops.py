@@ -293,10 +293,9 @@ __all__ = ['FuseConsecutiveLoops', 'GuardedFusionPlan', 'plan_guarded_fusion', '
 #
 # That rewrite is NOT unconditionally desirable, which is why it is a plan/commit pair rather
 # than part of the pass above: if one sibling is a recurrence and the other is DOALL, fusing them
-# makes the whole range a recurrence and LOSES the parallel half (the shape
-# ``ConditionalRecurrenceSplit`` exists to undo). Only a caller that has already proved it wins
-# something -- ``WavefrontSkew``, which needs the merged 2-D space to find a diagonal -- may
-# commit it.
+# makes the whole range a recurrence and LOSES the parallel half, and nothing downstream splits
+# that back apart. Only a caller that has already proved it wins something -- ``WavefrontSkew``,
+# which needs the merged 2-D space to find a diagonal -- may commit it.
 
 
 class GuardedFusionPlan:
