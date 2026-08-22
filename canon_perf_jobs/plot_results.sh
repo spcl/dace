@@ -2,8 +2,8 @@
 # Plot bar charts from a finished local array + loops sweep.
 #
 # Usage:
-#   bash canon_corpus_perf_job/plot_results.sh [PRESET] [OUT_DIR]
-# Defaults: PRESET=S, OUT_DIR=canon_corpus_perf_job/corpus_perf_results_${PRESET}_plots
+#   bash canon_perf_jobs/plot_results.sh [PRESET] [OUT_DIR]
+# Defaults: PRESET=S, OUT_DIR=canon_perf_jobs/corpus_perf_results_${PRESET}_plots
 
 set -euo pipefail
 

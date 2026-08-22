@@ -1,13 +1,20 @@
 # Corpus perf job
 
-ONE job: four in-repo corpora, eight comparison arms plus the `seq-cpp` denominator, TWO figures
-(the corpora split into two denominator groups, see below). Three files, nothing else.
+Four in-repo corpora, eight comparison arms plus the `seq-cpp` denominator, TWO figures (the
+corpora split into two denominator groups, see below).
 
 | file | what it does |
 |:--|:--|
-| `submit_corpus_perf.sh` | sbatch submission. Pins the environment, probes every arm, fans out `X` nodes x 4 ranks, aggregates |
+| `submit_daint.sh` | **the entry point.** Preflight, then one sbatch per corpus: 1 node = 4 ranks x 72 threads |
+| `submit_corpus_perf.sh` | the job body. Pins the environment, probes every arm, fans the ranks out, aggregates |
 | `corpus_perf_job.py` | the rank. Picks its kernels, takes a private build folder, unblocks SIGCHLD, drives the measurement |
+| `run_local.sh` | the same measurement on this machine, no Slurm |
 | `plot_corpus_perf.py` | the two figures, from the aggregated results |
+
+There is exactly ONE submitter. The old per-group ones (`submit_daint_array.sh`,
+`submit_daint_loops.sh`, `run_sweep.sh`, `run_local_{array,loops}.sh`) are deleted -- they differed
+only in a suite string, and a second copy of a submitter is how two sweeps end up measuring
+different things.
 
 (`cloudsc/` next door is an unrelated job.)
 
@@ -91,34 +98,60 @@ Two reasons, both load-bearing:
 
 The order is fixed, so a re-submission lines up with the per-kernel JSONs already on disk.
 
-## Submit
+## How to run
 
 ```bash
-sbatch canon_corpus_perf_job/submit_corpus_perf.sh          # 1 node,  4 ranks
-sbatch canon_corpus_perf_job/submit_corpus_perf.sh 4        # 4 nodes, 16 ranks
+# 0. ALWAYS FIRST: 2 kernels per corpus per rank on the debug partition, ~3 min.
+#    Proves the toolchain, the arms and the SIGCHLD/cmake chain before a real allocation is spent.
+bash canon_perf_jobs/submit_daint.sh smoke
+
+# 1. One corpus, one node (4 ranks x 72 threads):
+bash canon_perf_jobs/submit_daint.sh tsvc
+bash canon_perf_jobs/submit_daint.sh poly 2          # ...or 2 nodes = 8 ranks
+
+# 2. All four corpora, as four independent jobs:
+bash canon_perf_jobs/submit_daint.sh all
+
+squeue --me
 ```
 
-Arg 1 = node count. Everything after it goes to the rank script: `--preset` `--facet` `--limit`
-`--check` `--force` `--out`. The script re-submits itself with `--nodes`, so `--nodes` is never an
-`#SBATCH` line. The `#SBATCH` defaults are CSCS values; set `ACCOUNT` / `PARTITION` / `TIMELIMIT`
-for any other site.
+Corpora are `poly`, `np` (array kernels, divided by the corpus numpy reference) and `tsvc`,
+`tsvc25` (loop kernels, divided by `seq-cpp`). One job each rather than one job per group: every
+corpus then gets its own queue slot, time limit and results directory, so a slow polybench sweep
+cannot consume the wall clock npbench needed. Results land in `results_<corpus>_<preset>/`.
 
-No Slurm? The same script falls back to `mpirun`, then to a single rank, so it is also the local
-smoke test:
+A Grace-Hopper node is four modules, each a 72-core Grace CPU with its own H100, so one node is
+4 ranks x 72 threads with nothing left over. `corpus_perf_job.py` shards that corpus's kernels
+across the ranks positionally (`SLURM_PROCID` of `SLURM_NTASKS`) and gives each rank a private
+build scratch, so no two ranks share a `.dacecache`.
+
+Locally, without Slurm:
 
 ```bash
-bash canon_corpus_perf_job/submit_corpus_perf.sh 1 --preset S --limit 2       # smoke run
-python canon_corpus_perf_job/corpus_perf_job.py --preset S --limit 2          # bare: rank 0 of 1
+bash canon_perf_jobs/run_local.sh tsvc                 # PRESET=S by default
+PRESET=paper OMP_NUM_THREADS=8 bash canon_perf_jobs/run_local.sh poly
 ```
 
-Before any rank starts, the submit script runs one ~2 s preflight on the node that will do the
-work: it resolves the interpreter, proves `DACE_cache_distaware` reached DaCe, and probes every
-arm. Each external pass must report itself on a known SCoP (`Adding SCoP`, `SCoP begins here`) and
-emit a parallel region (`GOMP_parallel` as an undefined symbol of the probe object), and gcc's
-compile-time `-ftree-parallelize-loops=N` must equal `OMP_NUM_THREADS`. A missing binary, a
-rejected flag or a silent pass aborts the job there, with the reason, instead of publishing plain
-`-O3` timings under an autopar label hours later. The evidence lines go to the job log and into
-every result JSON under `arms`.
+### The preflight is not optional courtesy
+
+`submit_daint.sh` resolves the spack toolchain, pins `gcc@16.1.0 +graphite` and `llvm@22.1.5 +mlir`
+(both are installed twice, and the other variant kills the autopar arms), pins a per-compiler
+OpenBLAS, and PROVES Polly emits a parallel region on two probe shapes. A missing package degrades
+a column **silently**: no clang kills four arms, a Polly-less clang takes the flags and measures
+plain `-O3` under an autopar label, and a missing OpenBLAS drops the DaCe arms to `pure` BLAS
+(-20-40x) while still printing a number. `PREFLIGHT=0` skips it -- only for a site where these
+spack specs do not resolve.
+
+### Do not replace the sbatch with a bare srun
+
+`slurmstepd` starts every task with **SIGCHLD blocked**. The mask survives fork+exec, reaches cmake,
+and cmake's KWSys -- which learns its helpers exited by *receiving* SIGCHLD -- then waits in
+`select()` forever. It looks like a stuck configure; it is a lost wakeup. The only place the unblock
+works is `corpus_perf_job.py`'s module scope, because `srun` execs it directly with no shell in
+between, and `submit_corpus_perf.sh` preserves that chain. A wrapper shell, `setsid`, `nohup`,
+`timeout` or `env --ignore-signal=CHLD` all bring the hang back. The rank re-checks the mask at
+entry and refuses to start if it is still set, so a broken chain fails in the first second rather
+than after an hour of apparently-running cmake.
 
 ## Resume
 
@@ -144,7 +177,7 @@ cmake/compiler child inherits. Do not vary them between compared arms.
 | `MPI4PY_RC_INITIALIZE=0` `OMPI_MCA_pml=ob1` `OMPI_MCA_btl=self,vader` `UCX_VFS_ENABLE=n` | every python invocation |
 | `REPS` | best-of repetitions, default 50 (exported as `CANON_PERF_REPS`) |
 | `PYTHON` | interpreter. A batch script does not inherit the interactive PATH; the preflight dies loudly if `import dace` fails |
-| `OUT_DIR` | results (default `canon_corpus_perf_job/corpus_perf_results`) |
+| `OUT_DIR` | results (default `canon_perf_jobs/corpus_perf_results`) |
 | `ACCOUNT` `PARTITION` `TIMELIMIT` | sbatch settings, CSCS defaults (`g34` / `normal` / `04:00:00`) |
 
 ## Time budget
@@ -171,7 +204,7 @@ parallelism_rank<NNNN>.csv        per-rank, per-kernel loop/map counts
 The post-step runs automatically once the ranks exit. Re-run it alone with:
 
 ```bash
-python canon_corpus_perf_job/corpus_perf_job.py --out "$OUT_DIR" --aggregate
+python canon_perf_jobs/corpus_perf_job.py --out "$OUT_DIR" --aggregate
 ```
 
 Exit code is non-zero if any kernel errored or miscompiled.
@@ -193,9 +226,9 @@ that is not valid, so each figure carries a caption naming its denominator in wo
 geomean table, and there is NO geomean anywhere that pools the two.
 
 ```bash
-python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR"
-python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25
-python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --arm dace-canon-gcc,dace-canon-llvm
+python canon_perf_jobs/plot_corpus_perf.py --results "$OUT_DIR"
+python canon_perf_jobs/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25
+python canon_perf_jobs/plot_corpus_perf.py --results "$OUT_DIR" --arm dace-canon-gcc,dace-canon-llvm
 ```
 
 Default prefix is `<results>/corpus_speedup_<preset>`; each figure appends its own slug and writes
