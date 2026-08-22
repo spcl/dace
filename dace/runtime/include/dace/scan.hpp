@@ -86,6 +86,12 @@
 #include <omp.h>
 #endif
 
+#if defined(__has_include)
+#if __has_include(<unistd.h>)
+#include <unistd.h>
+#endif
+#endif
+
 // NON-NESTED CONTEXT IS ASSUMED, and there is no runtime check for it: the
 // expansion only emits these where the scan is not already inside a parallel
 // scope (a scan in a parallel scope lowers to the sequential naked-loop shape
@@ -129,19 +135,58 @@ struct alignas(64) TeamSlot {
 /// team 2.1x at n=8192; one thread 2.6x and a team 3.8x at n=16384.
 constexpr long PARALLEL_MIN_ELEMENTS_CONTIGUOUS = 1L << 14;
 
-/// Bytes per thread per tile. The reduce pass and the scan pass walk the same
-/// block back to back, so a tile that fits in L2 keeps the second walk off the
-/// memory bus. Measured at n=4e6 and n=1.6e7 the 64 KB - 256 KB range is flat and
-/// 1 MB (>= L2) loses 20-30%; 128 KB sits inside the L2 of every target this
-/// backend compiles for.
+/// Fallback tile, used when the cache hierarchy cannot be queried. Was the fixed value before
+/// :func:`tile_bytes` derived one, and equals ``L2 / 8`` on the machine it was measured on.
 constexpr long TILE_BYTES = 1L << 17;
+
+/// One level's size in bytes, or 0 when it cannot be determined. Queried ONCE -- ``sysconf`` walks
+/// sysfs, which is far more expensive than the scan it would be sizing.
+inline long cache_bytes(int level) {
+#if defined(_SC_LEVEL2_CACHE_SIZE) && defined(_SC_LEVEL1_DCACHE_SIZE) && defined(_SC_LEVEL3_CACHE_SIZE)
+    static const long sizes[3] = {sysconf(_SC_LEVEL1_DCACHE_SIZE), sysconf(_SC_LEVEL2_CACHE_SIZE),
+                                  sysconf(_SC_LEVEL3_CACHE_SIZE)};
+    const long v = (level >= 1 && level <= 3) ? sizes[level - 1] : 0;
+    return v > 0 ? v : 0;
+#else
+    (void)level;
+    return 0;
+#endif
+}
+
+/// Bytes per thread per tile, derived from the L2 this build is RUNNING on rather than assumed.
+///
+/// The reduce pass and the scan pass walk the same block back to back, so the tile has to be small
+/// enough that the second walk finds the block still in cache. L2 is the level that decides it: the
+/// block is private to one thread, and L1 is far too small to hold a re-read block (a 32 KB tile
+/// measured no better than 128 KB anywhere). The block is not the only thing in L2 either -- the
+/// scan pass streams ``out`` through it as well -- which is why the measured optimum sits well
+/// below the full L2: sweeping 32 KB - 4 MB per thread at 4 and 8 threads over 1 MB - 256 MB
+/// arrays, the flat optimum is 64 KB - 256 KB with ``L2 / 8`` inside it at every size, while a tile
+/// at full L2 loses up to 1.54x.
+///
+/// The clamp keeps a machine with an unusually large or small L2 inside the measured range instead
+/// of extrapolating a ratio that was only ever observed on one hierarchy.
+inline long tile_bytes() {
+    const long l2 = cache_bytes(2);
+    if (l2 <= 0) return TILE_BYTES;
+    const long derived = l2 / 8;
+    if (derived < (1L << 15)) return 1L << 15;
+    if (derived > (1L << 19)) return 1L << 19;
+    return derived;
+}
 
 /// Elements one thread takes per tile. A one-thread team takes the whole range in
 /// a single tile: with no block totals to exchange it needs no tiling either, and
 /// the scan collapses to one seeded ``simd inscan`` pass.
+///
+/// Always tiled otherwise. A scan whose whole working set fits the shared last level does better
+/// untiled -- the second read hits L3 regardless, so each tile only adds two barriers, measured
+/// 1.47x at 8 MB / 8 threads -- but that case is deliberately NOT special-cased: the working set is
+/// assumed big, and one rule that is right where the time actually goes beats two rules.
 inline long block_span(long n, long team, long elem_bytes) {
     if (team <= 1) return n;
-    const long cap = (elem_bytes > 0 && TILE_BYTES / elem_bytes > 0) ? TILE_BYTES / elem_bytes : 1;
+    const long budget = tile_bytes();
+    const long cap = (elem_bytes > 0 && budget / elem_bytes > 0) ? budget / elem_bytes : 1;
     const long even = (n + team - 1) / team;
     return (cap < even) ? cap : even;
 }
