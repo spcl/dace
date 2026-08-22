@@ -433,6 +433,24 @@ required:
                             Minimum element count (symbolic size counts as large) for a
                             copy/fill to lower to an OpenMP element map instead of memcpy/memset.
 
+                    explicit_copy:
+                        type: bool
+                        default: false
+                        title: Lower implicit copies to explicit copy nodes
+                        description: >
+                            If set to true, codegen lifts every implicit copy edge to a
+                            CopyLibraryNode before expansion. An implicit copy is a write no node
+                            performs, so an empty memlet ordering that write has nothing to point
+                            at; giving the copy a node is what makes it orderable.
+
+                            Applies to the CLASSIC CPU generator only, and defaults OFF there: it
+                            emits implicit copy edges correctly without the lift, and holding its
+                            output byte-identical to upstream is what makes it the A/B reference
+                            for the new generators. The experimental readable CPU generator and
+                            the experimental CUDA generator REQUIRE the lowering -- every copy has
+                            to be a node an ordering edge can point at -- and run it regardless of
+                            this key.
+
                     parallel_min_work_per_region:
                         type: int
                         default: 256
@@ -938,35 +956,6 @@ required:
                                     block and invisible to later readers, so a candidate whose writing
                                     tasklet is braced falls back to a plain ``T x;`` line immediately ahead
                                     of that tasklet, with the write kept inside.
-
-                            explicit_copy:
-                                type: str
-                                default: 'off'
-                                title: Lower implicit copies through explicit CopyLibraryNodes
-                                description: >
-                                    Applies to: the CLASSIC CPU generator only. The experimental readable
-                                    CPU generator and the experimental CUDA generator ALWAYS run the
-                                    lowering -- they require every copy to be a node an ordering edge can
-                                    point at -- so this key has no effect on them.
-
-                                    ``on`` lifts every implicit copy edge to a
-                                    :class:`~dace.libraries.standard.nodes.copy_node.CopyLibraryNode`
-                                    (:class:`~dace.transformation.passes.insert_explicit_copies.InsertExplicitCopies`)
-                                    and expands the nodes it inserted; ``off`` (the default) keeps the
-                                    classic generator's implicit copy-edge emission byte-identical to
-                                    upstream.
-
-                                    Going through the library node lets ``ExpandAuto`` pick per copy: a
-                                    single-element copy becomes a plain ``=`` tasklet and a contiguous
-                                    same-layout multi-element copy becomes ``std::memcpy`` -- both faster
-                                    than instantiating ``dace::CopyND``. Only a GPU_Shared copy still
-                                    needs ``dace::CopyND``.
-
-                                    The pass itself is shared, and its other callers
-                                    (``transformation/layout/prepare.py``, the GPU-specialization pipeline)
-                                    need the ``CopyLibraryNode`` LEFT UNEXPANDED -- ``RewriteCopyForLayout``
-                                    rewrites it to a ``TensorTranspose``. So the expansion belongs to
-                                    ``codegen.py``, not to the pass.
 
             #############################################
             # GPU (CUDA/HIP) compiler

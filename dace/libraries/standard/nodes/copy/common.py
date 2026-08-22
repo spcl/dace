@@ -58,7 +58,7 @@ def _copy_waives_volume_check(copy_node: "CopyLibraryNode", parent_state: dace.S
 
     ``SDFGState.validate`` (``validation.py``) skips its own equal-volume check on such an edge, and
     plain copy-edge codegen sizes the transfer from the source subset. A lifted ``CopyLibraryNode``
-    must honour the same waiver, else an SDFG that is legal as a direct copy edge stops expanding.
+    must honor the same waiver, else an SDFG that is legal as a direct copy edge stops expanding.
     """
     return any(e.data.allow_oob for e in parent_state.all_edges(copy_node) if not e.data.is_empty())
 
@@ -393,7 +393,7 @@ def _build_shmem_collective_copy_code(node: "CopyLibraryNode", parent_state: dac
             stride_args.append(dst_stride_strs[d])
 
     all_args = [in_conn, out_conn] + stride_args
-    # ``CopyND`` makes every thread copy the whole region, so a shared SOURCE is read across thread
-    # boundaries and needs the block's writes to have landed first.
-    preamble = "__syncthreads();\n" if inp.storage == dtypes.StorageType.GPU_Shared else ""
-    return f"{preamble}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n__syncthreads();"
+    # Synchronize if moving to/from shared memory collectively, and the sync flag is set (default on)
+    sync_barrier = "__syncthreads();\n" if node.sync and (inp.storage == dtypes.StorageType.GPU_Shared
+                                                          or out.storage == dtypes.StorageType.GPU_Shared) else ""
+    return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
