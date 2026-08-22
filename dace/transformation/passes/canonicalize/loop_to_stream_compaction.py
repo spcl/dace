@@ -161,8 +161,18 @@ IDX_PREFIX = 'compaction_rank_'
 TOTAL_PREFIX = 'compaction_total_'
 BASE_PREFIX = 'compaction_base_'
 
-#: Index dtype of the mask / rank buffers.
+#: Index dtype of the rank buffer, the total and the cursor base symbol. An index stays int64.
 COUNT_DTYPE = dtypes.int64
+
+#: Element type of the predicate mask. ONE BYTE, not an index width: ``mask`` holds 0 or 1, and it
+#: is the buffer the phases touch most -- phase 1 writes it, the ``Scan`` reads it and the ``Reduce``
+#: reads it again. At int64 the three phases moved ~40N bytes of auxiliary traffic against the
+#: sequential original's ~16N; at int8 that is ~19N, which is what takes the lift from a loss to
+#: roughly parity on a narrow machine and keeps its win on a wide one. The consumers accumulate in
+#: the OUTPUT type, so the sum never runs at this width: see ``Scan``'s
+#: :func:`~dace.libraries.standard.nodes.scan.widening_is_value_preserving` and
+#: ``dace::reduce::sum<T, U>``. ``rank`` is NOT narrowed -- it is a write cursor, i.e. an index.
+MASK_DTYPE = dtypes.int8
 
 
 class NestLevel(NamedTuple):
@@ -637,7 +647,7 @@ class LoopToStreamCompaction(ppl.Pass):
     def rewrite(self, m: CompactionMatch) -> None:
         sdfg, parent, root = m.sdfg, m.parent, m.root
         shape = [level.trip for level in m.levels]
-        mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
+        mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, MASK_DTYPE, transient=True, find_new_name=True)
         idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
         total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, COUNT_DTYPE, transient=True, find_new_name=True)
         base_sym = BASE_PREFIX + root.label
@@ -764,6 +774,11 @@ class LoopToStreamCompaction(ppl.Pass):
         Every buffer here has exactly ONE writer. A partial second write to ``mask`` -- padding a
         spare slot to carry the total, say -- survives this pass but not state fusion, which splits
         the two writers onto two access nodes and leaves the reader on the wrong one.
+
+        Both consumers WIDEN: ``mask`` is ``int8`` (see :data:`MASK_DTYPE`) while ``rank`` and
+        ``total`` are ``int64``, and each accumulates in its OUTPUT type -- the ``Scan`` through
+        :func:`~dace.libraries.standard.nodes.scan.widening_is_value_preserving`, the ``Reduce``
+        through ``dace::reduce::sum<T, U>``. Summing at the mask's width would wrap at 127.
         """
         from dace.libraries.standard.nodes.reduce import Reduce
         from dace.libraries.standard.nodes.scan import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp)

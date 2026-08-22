@@ -282,7 +282,12 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                         strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
                         storage=output_data.storage)
 
-        nsdfg.add_transient('acc', [1], nsdfg.arrays['_in'].dtype, dtypes.StorageType.Register)
+        # The accumulator is the OUTPUT element type. That is THE CONTRACT -- ``dace::reduce::sum<T, U>``
+        # names ``T`` the seed/output type and ``U`` the input's and casts per element, and
+        # ``reduce_scan_dtype_matrix_test.test_reduce_accumulates_in_the_output_dtype`` pins it. This
+        # expansion used to keep the INPUT's type, which disagreed with the OpenMP one on every
+        # mixed-width pair: an int8 predicate mask summed into an int64 total wrapped at 127.
+        nsdfg.add_transient('acc', [1], nsdfg.arrays['_out'].dtype, dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
 
@@ -329,15 +334,10 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         nstate.add_memlet_path(r, ome, ime, t, dst_conn=_IN, memlet=inmm)
         nstate.add_memlet_path(accread, ime, t, dst_conn=_ACC, memlet=dace.Memlet('acc[0]'))
         nstate.add_memlet_path(t, imx, accwrite, src_conn=_OUT, memlet=dace.Memlet('acc[0]', wcr=node.wcr))
-        if nsdfg.arrays['acc'].dtype == nsdfg.arrays['_out'].dtype:
-            nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
-        else:
-            # The accumulator keeps the input type so partial results are not truncated; a
-            # mixed-type reduction (summing an integer array into a real) then needs a tasklet to
-            # carry the cast, since an access-to-access edge copies raw bytes.
-            cast = nstate.add_tasklet('store', {_ACC}, {_OUT}, f'{_OUT} = {_ACC}')
-            nstate.add_edge(accwrite, None, cast, _ACC, dace.Memlet('acc[0]'))
-            nstate.add_memlet_path(cast, omx, w, src_conn=_OUT, memlet=outm)
+        # Same dtype by construction now, so the store is a plain copy edge; the cast tasklet the
+        # input-typed accumulator needed is gone with it. The widening happens per element instead,
+        # on the identity tasklet's connectors, which is where it belongs.
+        nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
 
         inedge._dst_conn = '_in'
         outedge._src_conn = '_out'

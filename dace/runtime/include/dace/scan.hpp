@@ -248,37 +248,39 @@ constexpr T max_identity() {
 // identifier is not a template parameter -- the op has to be spelled into the
 // clause. Each is a single vectorised pass over one thread's block.
 
-template <typename It>
-inline typename std::iterator_traits<It>::value_type fold_sum(It f, long lo, long hi) {
-    typename std::iterator_traits<It>::value_type s = 0;
+// ``A`` is the ACCUMULATOR type and is named explicitly rather than deduced from the input
+// iterator: the scan's accumulator is the OUTPUT element type, and a widening scan (an int8
+// predicate mask prefix-summed into int64 ranks) folds a block into a value the input type
+// cannot hold. Deducing from ``It`` overflowed silently at 127.
+template <typename A, typename It>
+inline A fold_sum(It f, long lo, long hi) {
+    A s = 0;
     #pragma omp simd reduction(+:s)
     for (long i = lo; i < hi; ++i) s = s + f[i];
     return s;
 }
 
-template <typename It>
-inline typename std::iterator_traits<It>::value_type fold_product(It f, long lo, long hi) {
-    typename std::iterator_traits<It>::value_type s = 1;
+template <typename A, typename It>
+inline A fold_product(It f, long lo, long hi) {
+    A s = 1;
     #pragma omp simd reduction(*:s)
     for (long i = lo; i < hi; ++i) s = s * f[i];
     return s;
 }
 
-template <typename It>
-inline typename std::iterator_traits<It>::value_type fold_min(It f, long lo, long hi) {
-    using T = typename std::iterator_traits<It>::value_type;
-    T s = min_identity<T>();
+template <typename A, typename It>
+inline A fold_min(It f, long lo, long hi) {
+    A s = min_identity<A>();
     #pragma omp simd reduction(min:s)
-    for (long i = lo; i < hi; ++i) s = std::min<T>(s, f[i]);
+    for (long i = lo; i < hi; ++i) s = std::min<A>(s, static_cast<A>(f[i]));
     return s;
 }
 
-template <typename It>
-inline typename std::iterator_traits<It>::value_type fold_max(It f, long lo, long hi) {
-    using T = typename std::iterator_traits<It>::value_type;
-    T s = max_identity<T>();
+template <typename A, typename It>
+inline A fold_max(It f, long lo, long hi) {
+    A s = max_identity<A>();
     #pragma omp simd reduction(max:s)
-    for (long i = lo; i < hi; ++i) s = std::max<T>(s, f[i]);
+    for (long i = lo; i < hi; ++i) s = std::max<A>(s, static_cast<A>(f[i]));
     return s;
 }
 
@@ -433,62 +435,64 @@ inline void blocked_scan(long n, long elem_bytes, T seed, Reduce reduce, Scan sc
 
 template <typename It, typename OutIt, typename T>
 inline void inclusive_sum(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_sum(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_sum<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_incl_sum(first, out_first, lo, hi, off); },
         [](E a, E b) { return a + b; });
 }
 
 template <typename It, typename OutIt>
 inline void inclusive_sum(It first, It last, OutIt out_first) {
-    inclusive_sum(first, last, out_first, typename std::iterator_traits<It>::value_type(0));
+    inclusive_sum(first, last, out_first, typename std::iterator_traits<OutIt>::value_type(0));
 }
 
 template <typename It, typename OutIt, typename T>
 inline void inclusive_product(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_product(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_product<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_incl_product(first, out_first, lo, hi, off); },
         [](E a, E b) { return a * b; });
 }
 
 template <typename It, typename OutIt>
 inline void inclusive_product(It first, It last, OutIt out_first) {
-    inclusive_product(first, last, out_first, typename std::iterator_traits<It>::value_type(1));
+    inclusive_product(first, last, out_first, typename std::iterator_traits<OutIt>::value_type(1));
 }
 
 template <typename It, typename OutIt, typename T>
 inline void inclusive_min(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_min(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_min<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_incl_min(first, out_first, lo, hi, off); },
         [](E a, E b) { return std::min<E>(a, b); });
 }
 
 template <typename It, typename OutIt>
 inline void inclusive_min(It first, It last, OutIt out_first) {
-    inclusive_min(first, last, out_first, detail::min_identity<typename std::iterator_traits<It>::value_type>());
+    inclusive_min(first, last, out_first,
+                 detail::min_identity<typename std::iterator_traits<OutIt>::value_type>());
 }
 
 template <typename It, typename OutIt, typename T>
 inline void inclusive_max(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_max(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_max<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_incl_max(first, out_first, lo, hi, off); },
         [](E a, E b) { return std::max<E>(a, b); });
 }
 
 template <typename It, typename OutIt>
 inline void inclusive_max(It first, It last, OutIt out_first) {
-    inclusive_max(first, last, out_first, detail::max_identity<typename std::iterator_traits<It>::value_type>());
+    inclusive_max(first, last, out_first,
+                 detail::max_identity<typename std::iterator_traits<OutIt>::value_type>());
 }
 
 // --- EXCLUSIVE -----------------------------------------------------------------
@@ -496,40 +500,40 @@ inline void inclusive_max(It first, It last, OutIt out_first) {
 
 template <typename It, typename OutIt, typename T>
 inline void exclusive_sum(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_sum(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_sum<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_excl_sum(first, out_first, lo, hi, off); },
         [](E a, E b) { return a + b; });
 }
 
 template <typename It, typename OutIt, typename T>
 inline void exclusive_product(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_product(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_product<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_excl_product(first, out_first, lo, hi, off); },
         [](E a, E b) { return a * b; });
 }
 
 template <typename It, typename OutIt, typename T>
 inline void exclusive_min(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_min(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_min<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_excl_min(first, out_first, lo, hi, off); },
         [](E a, E b) { return std::min<E>(a, b); });
 }
 
 template <typename It, typename OutIt, typename T>
 inline void exclusive_max(It first, It last, OutIt out_first, T seed) {
-    using E = typename std::iterator_traits<It>::value_type;
+    using E = typename std::iterator_traits<OutIt>::value_type;
     detail::blocked_scan<E>(
         static_cast<long>(last - first), static_cast<long>(sizeof(E)), static_cast<E>(seed),
-        [first](long lo, long hi) { return detail::fold_max(first, lo, hi); },
+        [first](long lo, long hi) { return detail::fold_max<E>(first, lo, hi); },
         [first, out_first](long lo, long hi, E off) { detail::scan_excl_max(first, out_first, lo, hi, off); },
         [](E a, E b) { return std::max<E>(a, b); });
 }

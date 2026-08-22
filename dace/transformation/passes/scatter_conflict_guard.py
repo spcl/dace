@@ -317,9 +317,9 @@ def _build_guard_states(sdfg: SDFG,
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
     ``int64`` host collision count, with a domain-sized tag array wired in when derivable.
-    ``trap`` (emitted iff ``emit_trap``) reads the count via the ``trap_sym`` interstate
-    binding and ``std::abort()``s if positive; a count (not a boolean) gives a free
-    duplicate-pair diagnostic on abort.
+    ``trap`` (emitted iff ``emit_trap``) reads the flag via the ``trap_sym`` interstate
+    binding and ``std::abort()``s if it is positive. The check OR-reduces rather than
+    counting, so the flag says THAT a duplicate exists, not how many.
 
     Without ``index_slice`` the scan covers ``idx_name[0 : shape[0]]`` (the whole 1-D array).
     With it, the scan is the 1-D window ``index_slice`` describes into a rank>=2 ``idx_name``:

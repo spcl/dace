@@ -4,5 +4,7 @@ therefore NOT part of the device-neutral canonical output.
 """
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
+    RecomputeOversizedIntermediates)
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import SequentializeUnprofitableParallelScopes
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers

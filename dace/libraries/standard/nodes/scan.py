@@ -41,6 +41,8 @@ op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
 
+import numpy
+
 import dace
 from dace import library, nodes, symbolic
 from dace.codegen.common import sym2cpp
@@ -171,13 +173,17 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
         raise ValueError(f"Scan requires Array inputs/outputs; got {type(in_desc).__name__} -> "
                          f"{type(out_desc).__name__}.")
-    if in_desc.dtype != out_desc.dtype:
-        raise ValueError(f"Scan input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}.")
+    if in_desc.dtype != out_desc.dtype and not widening_is_value_preserving(in_desc.dtype, out_desc.dtype):
+        raise ValueError(f"Scan input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}. Only a "
+                         f"value-preserving integer WIDENING is allowed, and only on the unit-stride "
+                         f"single-chain host expansions.")
     if init_edges:
         init_desc = sdfg.arrays[init_edges[0].data.data]
-        if init_desc.dtype != in_desc.dtype:
+        # The OUTPUT dtype, not the input's: ``_scan_init`` is the accumulator's entry value, and
+        # the accumulator is the output element type (identical to the input's unless widening).
+        if init_desc.dtype != out_desc.dtype:
             raise ValueError(f"Scan node {node.label}: ``{init_conn}`` dtype "
-                             f"{init_desc.dtype} must match input dtype {in_desc.dtype}.")
+                             f"{init_desc.dtype} must match output dtype {out_desc.dtype}.")
     return in_desc, out_desc, in_edges[0], out_edges[0], (init_edges[0] if init_edges else None)
 
 
@@ -194,14 +200,53 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
         if first is None:
             first = (in_desc, out_desc, in_edge, out_edge)
             continue
-        if in_desc.dtype != first[0].dtype:
-            raise ValueError(f"Scan node {node.label}: chain {chain} dtype {in_desc.dtype} differs from "
-                             f"chain 0 dtype {first[0].dtype}; chains share one scan loop.")
+        if in_desc.dtype != first[0].dtype or out_desc.dtype != first[1].dtype:
+            raise ValueError(f"Scan node {node.label}: chain {chain} dtypes {in_desc.dtype} -> "
+                             f"{out_desc.dtype} differ from chain 0's {first[0].dtype} -> "
+                             f"{first[1].dtype}; chains share one scan loop.")
         if symbolic.equal(in_edge.data.subset.num_elements(), first[2].data.subset.num_elements()) is False:
             raise ValueError(f"Scan node {node.label}: chain {chain} spans "
                              f"{in_edge.data.subset.num_elements()} elements against chain 0's "
                              f"{first[2].data.subset.num_elements()}; chains share one scan loop.")
     return first
+
+
+def widening_is_value_preserving(in_dtype, out_dtype) -> bool:
+    """Whether a scan may read ``in_dtype`` and accumulate into a wider ``out_dtype``.
+
+    The accumulator is the OUTPUT element type, so a narrow input is read and widened per element.
+    That is what lets stream compaction carry its predicate mask as ``int8`` -- one byte per
+    element instead of eight -- while the ranks it prefix-sums into stay ``int64``, which they must
+    (a rank is an index). Summing in the input type would wrap at 127.
+
+    Only integers, only strictly wider, and never signed -> unsigned: every other pair either loses
+    range (``float64 -> float32``) or reinterprets negatives, and a scan that silently changes a
+    value is worse than one that refuses.
+
+    :param in_dtype: the input array's element type.
+    :param out_dtype: the output array's element type, which is also the accumulator's.
+    :returns: True if the widening is value-preserving.
+    """
+    if not (numpy.issubdtype(in_dtype.type, numpy.integer) and numpy.issubdtype(out_dtype.type, numpy.integer)):
+        return False
+    if out_dtype.bytes <= in_dtype.bytes:
+        return False
+    return not (numpy.issubdtype(in_dtype.type, numpy.signedinteger)
+                and numpy.issubdtype(out_dtype.type, numpy.unsignedinteger))
+
+
+def refuse_widening(node: "Scan", in_desc, out_desc, shape: str) -> None:
+    """Raise when a widening scan reaches a shape that has no widening implementation.
+
+    The widening accumulator lives in the unit-stride single-chain host routines only. The strided
+    form carries one accumulator per residue class seeded from the input, the multi-chain form
+    spells K accumulators into one ``inscan`` clause at a single ctype, and ``cub::DeviceScan``
+    deduces its accumulator from the input iterator -- each would need its own widening design.
+    Refuse loudly; a silent narrow accumulator is a wrong answer, not a slow one.
+    """
+    if in_desc.dtype != out_desc.dtype:
+        raise NotImplementedError(f"Scan {node.label}: a widening scan ({in_desc.dtype} -> {out_desc.dtype}) "
+                                  f"is not supported with {shape}.")
 
 
 def _has_init(node: "Scan", chain: int = 0) -> bool:
@@ -250,8 +295,11 @@ def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
                          language=dace.Language.Python)
 
 
-def _identity_expr(node: "Scan", in_desc) -> str:
-    """C++ expression for the exclusive-scan identity element.
+def _identity_expr(node: "Scan", acc_desc) -> str:
+    """C++ expression for the exclusive-scan identity element, at the ACCUMULATOR's type.
+
+    ``acc_desc`` is the OUTPUT descriptor: the identity is the accumulator's entry value, and on a
+    widening scan the accumulator is wider than the input.
 
     The user-supplied ``identity`` property wins. Otherwise the per-op default
     from :data:`_OP_TO_IDENTITY_CPP` is used; if the op has no universal
@@ -263,8 +311,8 @@ def _identity_expr(node: "Scan", in_desc) -> str:
     if default is None:
         raise ValueError(f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
                          f"set ``identity`` explicitly when using ``exclusive=True``.")
-    # Cast to the element type for completeness (avoids signed/unsigned warnings on integer dtypes).
-    return f"static_cast<{in_desc.dtype.ctype}>({default})"
+    # Cast to the accumulator type for completeness (avoids signed/unsigned warnings on integers).
+    return f"static_cast<{acc_desc.dtype.ctype}>({default})"
 
 
 def _combine_expr(op: ScanOp, ctype: str, a: str, b: str) -> str:
@@ -523,18 +571,21 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        in_desc, _out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         if node.chains > 1:
+            refuse_widening(node, in_desc, out_desc, 'chains > 1')
             return _multi_chain_tasklet(node, state, sdfg, parallel=False)
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         op_cpp = _OP_TO_STD_CPP[node.op]
-        ctype = in_desc.dtype.ctype
+        # The ACCUMULATOR's type, which is the output's: a widening scan reads a narrower input.
+        ctype = out_desc.dtype.ctype
         stride_expr = sym2cpp(node.stride)
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
         if not is_stride_one:
+            refuse_widening(node, in_desc, out_desc, 'stride > 1')
             # No ``inscan`` here: the reduction spans one canonical loop, and a strided scan is one
             # independent chain PER RESIDUE CLASS, so the vectorizable axis is across classes -- not
             # the axis the dependence runs along. The classes stay scalar.
@@ -556,7 +607,7 @@ class ExpandPure(ExpandTransformation):
                     f"  }}\n"
                     f"}}")
         elif node.exclusive:
-            body = single_block_scan_call(node.op, True, n_expr, _identity_expr(node, in_desc))
+            body = single_block_scan_call(node.op, True, n_expr, _identity_expr(node, out_desc))
         elif _has_init(node):
             # Inclusive with an explicit init: ``out[k] = init OP in[0] OP ... OP in[k]``. The seed
             # is the accumulator's entry value, which the inscan prefix carries.
@@ -601,7 +652,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         # SCOPE decides the shape, not ``node.schedule``: that is storage-derived, so a Scan
         # nested in a parallel map (directly, or one level down through a NestedSDFG) arrives
         # carrying ``CPU_Multicore``. A re-entered node opens no region of its own.
@@ -612,6 +663,7 @@ class ExpandCPU(ExpandTransformation):
         if node.chains > 1:
             # K independent chains, ONE ``inscan`` loop == one fork/join. See
             # :func:`_multi_chain_tasklet` for the OpenMP-spec argument.
+            refuse_widening(node, in_desc, out_desc, 'chains > 1')
             return _multi_chain_tasklet(node, state, sdfg, parallel=True)
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
@@ -621,6 +673,7 @@ class ExpandCPU(ExpandTransformation):
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
         if not is_stride_one:
+            refuse_widening(node, in_desc, out_desc, 'stride > 1')
             if node.exclusive:
                 raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
             if _has_init(node):
@@ -628,7 +681,7 @@ class ExpandCPU(ExpandTransformation):
             call = (f"::dace::scan::strided_inclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));")
         elif node.exclusive:
-            seed = _identity_expr(node, in_desc)
+            seed = _identity_expr(node, out_desc)
             call = (f"::dace::scan::exclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
                     f"{OUTPUT_CONNECTOR_NAME}, {seed});")
@@ -674,7 +727,8 @@ class ExpandCUDA(ExpandTransformation):
         if not ExpandCUDA.environments:
             from dace.libraries.sort.environments.cub import ScanScratch
             ExpandCUDA.environments = [ScanScratch]
-        in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        refuse_widening(node, in_desc, out_desc, 'the CUDA expansion')
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
@@ -761,7 +815,8 @@ class ExpandCUDAStrided(ExpandTransformation):
         if not ExpandCUDAStrided.environments:
             from dace.libraries.standard.environments.scan_strided import ScanStrided
             ExpandCUDAStrided.environments = [ScanStrided]
-        in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        refuse_widening(node, in_desc, out_desc, 'the CUDA_strided expansion')
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)

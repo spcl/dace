@@ -77,6 +77,7 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.cpu_specialization import (CalibrateCpuThresholds, ChunkAntiDependence,
+                                                           RecomputeOversizedIntermediates,
                                                            SequentializeUnprofitableParallelScopes,
                                                            SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
@@ -1133,19 +1134,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += _inline_single_state('post_l2m')
     s += _structural_cleanup('post_l2m')
 
-    # cpu_specialize: trade the device-neutral anti-dependence snapshot for per-chunk
-    # seam buffers (sequential-within-chunk = CPU scheduling; matcher refuses GPU maps).
-    #
-    # Placed HERE, not directly after ``parallelize``. ``LoopToMap`` leaves the map body as an
-    # un-inlined NestedSDFG and the snapshot copy in its own predecessor state, so the read that
-    # decides the rewrite (``snap[i + 1]``) is not visible at the map's own state and the copy is
-    # not adjacent to it. The ``post_l2m`` band above is where the pipeline ALREADY inlines the
-    # body and fuses the copy state in -- which is exactly the flat, single-state canonical form
-    # the pass documents. Matching it before that band would mean reimplementing InlineSDFG's
-    # traversal inside the matcher.
-    if break_anti_dependence and target == 'cpu':
-        s += [('cpu_specialize', ChunkAntiDependence())]
-
     # coalesce: prepare the graph for maximal map fusion now that the DOALL
     # loops have become maps -- see ``_coalesce`` for the per-step rationale.
     s += _coalesce()
@@ -1569,12 +1557,35 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # read off the FINAL map shapes (fusion and collapse change the work per region by orders of
     # magnitude), and a schedule set earlier would also block the map fusion stages, which only
     # fuse maps with equal schedules.
+    #
+    # ``ChunkAntiDependence`` belongs to the same band and for the same reason: it trades the
+    # device-neutral anti-dependence snapshot for per-chunk seam buffers, and
+    # sequential-within-chunk is a CPU scheduling decision (the matcher refuses GPU maps). It
+    # ran directly after ``post_l2m`` before, on the argument that that band is the first one to
+    # inline the map body and fuse the snapshot copy in. It is -- but not into the shape the
+    # matcher needs: measured over the corpus it matched ZERO maps there and matches on the
+    # final SDFG, because the fuse / collapse / terminal-``LoopToMap`` stages in between are
+    # what put the copy and its consumer map in one state with the read spelled as a point.
+    # Placed before the two cost-model passes so they read the chunked shape: the prologue and
+    # the seam-iteration map it emits are a 1-iteration and an ``nchunks``-iteration region, and
+    # sequentializing those is exactly the verdict the fork/join model exists to give.
+    #
+    # ``RecomputeOversizedIntermediates`` is the third device decision in the band: it collapses a
+    # producer map into its single consumer and drops the intermediate, but only when that
+    # intermediate provably does not fit in the host's last-level cache. ``recompute_fuse_for_gpu``
+    # does the same unconditionally on the device; the CPU keeps a cache-resident intermediate
+    # materialized (reading it back is cheaper than recomputing it) and only pays ALU for the ones
+    # that would cost a full DRAM round-trip -- the grid-sized half-step buffers of heat3d and the
+    # split-statement temporaries every slice-vectorized stencil leaves behind.
     if target == 'cpu':
-        # First in the band: both passes below read fork/join thresholds out of the config, and
-        # those shipped as constants measured on one development box. Calibrate them to the host's
-        # own core count before anyone reads them, so a 72-core machine stops inheriting an
-        # 8-core machine's break-even points. A user-set value is left alone.
-        s += [('cpu_specialize', CalibrateCpuThresholds()),
+        # First in the band: both cost-model passes below read fork/join thresholds out of the
+        # config, and those shipped as constants measured on one development box. Calibrate them to
+        # the host's own core count before anyone reads them, so a 72-core machine stops inheriting
+        # an 8-core machine's break-even points. A user-set value is left alone.
+        s += [('cpu_specialize', CalibrateCpuThresholds())]
+        if break_anti_dependence:
+            s += [('cpu_specialize', ChunkAntiDependence())]
+        s += [('cpu_specialize', RecomputeOversizedIntermediates()),
               ('cpu_specialize', SequentializeUnprofitableParallelScopes()),
               ('cpu_specialize', SpecializeCpuTransfers())]
 
