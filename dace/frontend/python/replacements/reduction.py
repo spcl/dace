@@ -7,10 +7,11 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.nested_call import NestedCall
 from dace.frontend.python.replacements.utils import ProgramVisitor, normalize_axes
-from dace import dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
+from dace import data, dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 import copy
 import functools
+import numpy
 from numbers import Integral, Number
 from typing import Any, Dict, Callable, Optional, Union
 
@@ -396,3 +397,112 @@ def _ndarray_argmin(pv: ProgramVisitor,
         state.add_nedge(r, w, Memlet.from_array(newarr, sdfg.arrays[newarr]))
         newarr = out
     return newarr
+
+
+#: numpy's dtype rule for the cumulative functions: an integer input accumulates in the widest
+#: integer of its OWN signedness -- bool and every signed width in int64, every unsigned width in
+#: uint64 -- and every other dtype keeps itself. Not the elementwise promotion rule, which is why
+#: it is spelled out here rather than deferred to ``result_type``.
+def cumulative_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
+    """Result dtype of ``numpy.cumsum``/``numpy.cumprod`` over ``dtype``."""
+    kind = dtype.as_numpy_dtype().kind
+    if kind == 'u':
+        return dtypes.uint64
+    if kind in ('b', 'i'):
+        return dtypes.int64
+    return dtype
+
+
+def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, dtype, op, funcname: str) -> str:
+    """``numpy.cumsum``/``numpy.cumprod`` lowered onto the ``Scan`` library node.
+
+    A prefix scan is NOT a reduction: every partial result stays visible, so ``Reduce`` cannot
+    express it. The libnode already carries the implementations that matter -- the blocked OpenMP
+    header on CPU, ``cub::DeviceScan`` on GPU, a portable loop -- so the frontend's whole job is to
+    name the op and wire the memlets. Lowering the recurrence into an explicit loop here would hand
+    every backend the shape only one of them wants.
+
+    Only the LAST axis is lowered, which is the one the operand's layout makes contiguous. A scan
+    along an inner axis is a strided chain per outer index; the libnode's ``stride`` property
+    expresses one such chain, not a batch of them. Over a rank > 1 operand the lowering is a Map
+    across the leading axes with the scan inside, which is also where the parallelism is -- the
+    recurrence itself is sequential.
+    """
+    from dace.libraries.standard.nodes.scan import Scan  # Avoid import loop
+    if not isinstance(a, str) or a not in sdfg.arrays:
+        raise SyntaxError(f'{funcname} expects an array operand, got {a}')
+    desc = sdfg.arrays[a]
+    if not isinstance(desc, data.Array):
+        raise SyntaxError(f'{funcname} expects an array operand, got a {type(desc).__name__}')
+    rank = len(desc.shape)
+    if axis is None:
+        # numpy FLATTENS an axis-less cumulative over a rank > 1 operand. Refusing is deliberate:
+        # the flatten is a reshape only when the operand is contiguous, and quietly scanning the
+        # last axis instead would return the right SHAPE holding the wrong numbers.
+        if rank != 1:
+            raise NotImplementedError(f'{funcname} without an axis flattens a {rank}-D operand; '
+                                      f'pass axis={rank - 1} to scan the last axis instead')
+        axis = 0
+    else:
+        axis = normalize_axes((axis, ), rank)[0]
+    if axis != rank - 1:
+        raise NotImplementedError(f'{funcname} is lowered along the last axis only; axis={axis} of a '
+                                  f'{rank}-D operand is a strided chain per outer index')
+    if dtype is None:
+        out_dtype = cumulative_dtype(desc.dtype)
+    elif isinstance(dtype, dtypes.typeclass):
+        out_dtype = dtype
+    else:
+        out_dtype = dtypes.typeclass(numpy.dtype(dtype).type)
+
+    indices = ', '.join(f'__i{d}' for d in range(rank))
+    source, read = a, None
+    if out_dtype != desc.dtype:
+        # The libnode scans in ONE dtype and numpy's rule can widen it, so cast first: the
+        # accumulation then happens at the output width, which is what numpy does. The cast's WRITE
+        # node is reused as the scan's read node -- a second access node for the same array would
+        # leave the two unordered inside one state, which is a race, not a copy.
+        source, _ = pv.add_temp_transient(desc.shape, out_dtype, storage=desc.storage)
+        _tasklet, _entry, cast_exit = state.add_mapped_tasklet(f'{funcname}_cast', {
+            f'__i{d}': f'0:{s}'
+            for d, s in enumerate(desc.shape)
+        }, {'__inp': Memlet.simple(a, indices)},
+                                                               '__out = __inp',
+                                                               {'__out': Memlet.simple(source, indices)},
+                                                               external_edges=True)
+        read = next(e.dst for e in state.out_edges(cast_exit))
+    if read is None:
+        read = state.add_read(source)
+
+    out, _out_desc = pv.add_temp_transient(desc.shape, out_dtype, storage=desc.storage)
+    scan = Scan(funcname, op=op)
+    length = desc.shape[axis]
+    write = state.add_write(out)
+    if rank == 1:
+        state.add_edge(read, None, scan, Scan.INPUT_CONNECTOR_NAME, Memlet.simple(source, f'0:{length}'))
+        state.add_edge(scan, Scan.OUTPUT_CONNECTOR_NAME, write, None, Memlet.simple(out, f'0:{length}'))
+        return out
+    outer = {f'__s{d}': f'0:{s}' for d, s in enumerate(desc.shape[:-1])}
+    entry, exit_node = state.add_map(f'{funcname}_batch', outer)
+    row = ', '.join([*outer, f'0:{length}'])
+    state.add_memlet_path(read, entry, scan, dst_conn=Scan.INPUT_CONNECTOR_NAME, memlet=Memlet.simple(source, row))
+    state.add_memlet_path(scan, exit_node, write, src_conn=Scan.OUTPUT_CONNECTOR_NAME, memlet=Memlet.simple(out, row))
+    return out
+
+
+@oprepo.replaces('dace.cumsum')
+@oprepo.replaces('numpy.cumsum')
+def _cumsum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, dtype=None, out=None):
+    from dace.libraries.standard.nodes.scan import ScanOp  # Avoid import loop
+    if out is not None:
+        raise NotImplementedError('numpy.cumsum(out=...) is not supported; assign the result instead')
+    return cumulative(pv, sdfg, state, a, axis, dtype, ScanOp.SUM, 'cumsum')
+
+
+@oprepo.replaces('dace.cumprod')
+@oprepo.replaces('numpy.cumprod')
+def _cumprod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, dtype=None, out=None):
+    from dace.libraries.standard.nodes.scan import ScanOp  # Avoid import loop
+    if out is not None:
+        raise NotImplementedError('numpy.cumprod(out=...) is not supported; assign the result instead')
+    return cumulative(pv, sdfg, state, a, axis, dtype, ScanOp.PRODUCT, 'cumprod')

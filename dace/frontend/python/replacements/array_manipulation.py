@@ -17,6 +17,61 @@ from typing import Any, Optional, List, Sequence, Tuple, Union
 import numpy as np
 
 
+@oprepo.replaces('dace.roll')
+@oprepo.replaces('numpy.roll')
+def _numpy_roll(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, shift, axis=None) -> str:
+    """Circular shift, lowered onto the ``CShift`` library node.
+
+    ``CShift`` rotates in either direction and the node says which: Fortran ``CSHIFT(x, s)(i)``
+    reads ``x(mod(i + s, n))`` where ``numpy.roll(x, s)[i]`` reads ``x[(i - s) % n]``. Passing
+    :attr:`ShiftDirection.NUMPY` keeps the sign flip inside the expansion instead of open-coding a
+    negation here -- a node rotated the wrong way has the right shape, dtype and even the right
+    multiset of values, so nothing downstream can catch it.
+
+    numpy takes a TUPLE of shifts and axes and applies them in order; each one becomes its own
+    node, and the write node of one is reused as the read node of the next so the chain is ordered
+    by dataflow rather than by two access nodes for the same array sitting unordered in one state.
+    """
+    from dace.libraries.standard.nodes.cshift import CShift, ShiftDirection  # Avoid import loop
+    if arr not in sdfg.arrays:
+        raise mem_parser.DaceSyntaxError(pv, None, f'numpy.roll argument {arr} is not SDFG data')
+    desc = sdfg.arrays[arr]
+    if isinstance(desc, data.Scalar):
+        return arr
+    ndim = len(desc.shape)
+    shifts = list(shift) if isinstance(shift, (list, tuple)) else [shift]
+    if axis is None:
+        # numpy FLATTENS an axis-less roll, which is a reshape only when the operand is contiguous.
+        # Rolling the last axis instead would return the right shape holding the wrong numbers.
+        if ndim != 1:
+            raise NotImplementedError(f'numpy.roll without an axis flattens a {ndim}-D operand; '
+                                      f'pass an axis instead')
+        axes = [0]
+    else:
+        axes = list(axis) if isinstance(axis, (list, tuple)) else [axis]
+    if len(shifts) == 1 and len(axes) > 1:
+        shifts = shifts * len(axes)
+    if len(shifts) != len(axes):
+        raise mem_parser.DaceSyntaxError(pv, None,
+                                         f'numpy.roll got {len(shifts)} shifts for {len(axes)} axes; they must agree')
+    axes = [ax if ax >= 0 else ax + ndim for ax in axes]
+    if any(not 0 <= ax < ndim for ax in axes):
+        raise mem_parser.DaceSyntaxError(pv, None, f'numpy.roll axis out of range for a {ndim}-D operand')
+
+    source, node = arr, state.add_read(arr)
+    for amount, ax in zip(shifts, axes):
+        out, out_desc = pv.add_temp_transient(desc.shape, desc.dtype, storage=desc.storage)
+        write = state.add_write(out)
+        cshift = CShift(f'roll_{ax}',
+                        dim=ax + 1,
+                        shift=symbolic.pystr_to_symbolic(str(amount)),
+                        direction=ShiftDirection.NUMPY)
+        state.add_edge(node, None, cshift, '_x', Memlet.from_array(source, sdfg.arrays[source]))
+        state.add_edge(cshift, '_out', write, None, Memlet.from_array(out, out_desc))
+        source, node = out, write
+    return source
+
+
 @oprepo.replaces('numpy.flip')
 def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis=None):
     """ Reverse the order of elements in an array along the given axis.
@@ -214,10 +269,13 @@ def _transpose(pv: ProgramVisitor,
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
     if axes == (1, 0):  # 2D transposition
-        # The Transpose library node squeezes a unit axis to a vector and then rejects it as "not a
-        # matrix", so a ``(N, 1)`` / ``(1, N)`` array cannot use it. Fall back to a plain index-swap
-        # copy (``out[j, i] = in[i, j]``) whenever an extent is 1; it is general over 2D and
-        # stride-safe. Genuine matrices keep the optimized library node.
+        # A unit extent stays OFF the library node. Its validation accepts one now
+        # (``blas_helpers.matrix_view`` returns a 2-D subset unsquashed), and the ``pure`` expansion
+        # handles ``(N, 1)``, ``(1, N)`` and ``(1, 1)`` bit-exactly -- but the BLAS expansions do
+        # not: OpenBLAS fails to BUILD a ``(1, 1)`` transpose, where a single-element subset is
+        # typed as a scalar rather than a buffer. Fall back to a plain index-swap copy
+        # (``out[j, i] = in[i, j]``), which is general over 2D and stride-safe, whenever an extent
+        # is 1. Genuine matrices keep the optimized library node.
         if 1 in arr1.shape:
             state.add_mapped_tasklet("transpose",
                                      map_ranges={
