@@ -5,8 +5,9 @@ Scalar reduction (``acc += A[i]``, ``max``, ``min``, ``acc = acc * A[i]``) on CP
 tile folds with ``dace::tileops::tile_reduce`` (within-tile horizontal fold); map-exit
 WCR lifts to OpenMP ``reduction(op:var)`` on ``#pragma omp parallel for`` (per-thread
 privatized accumulator + end tree-reduce), not a contended per-iteration atomic.
-Partial ``_nmr_out`` = single-element register; accumulator ``acc`` stays a true
-``Scalar`` (clause needs a scalar, not a pointer-passed array slot).
+Partial ``_nmr_out`` = single-element register; the accumulator the clause names
+(``ReductionScalarLocalPrep`` privatizes ``acc`` into ``_priv_acc``) stays a true
+``Scalar`` -- the clause needs a scalar, not a pointer-passed array slot.
 
 ``min``/``max``/``*`` reach this path only via ``AugAssignToWCR``, which converts
 their loop-carried ``acc = f(acc, A[i])`` (frontend emits combine-then-copyback
@@ -20,6 +21,7 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import re
 import shutil
 
 import numpy as np
@@ -120,16 +122,27 @@ def test_emits_omp_reduction_clause(kind):
 def test_partial_folds_to_single_element(kind):
     """The interposed reduction partial (``NormalizeWCRSource``'s ``_wcr_priv_*_acc`` on the
     ``NSDFG -> AccessNode -[wcr]-> MapExit`` boundary) folds onto a single element -- a scalar,
-    not a widened tile buffer -- and the accumulator ``acc`` stays a true Scalar (required by
-    the OMP ``reduction`` clause)."""
+    not a widened tile buffer -- and the accumulator the clause names stays a true Scalar
+    (the clause needs a scalar, not a pointer-passed array slot).
+
+    The accumulator is read out of the emitted ``reduction(op:VAR)`` clause rather than looked up
+    under the program's own ``acc``: ``ReductionScalarLocalPrep`` privatizes the accumulator slot
+    into a fresh ``_priv_acc`` scalar, so the name in the clause is the one that has to be a
+    Scalar, and pinning the source name would test a descriptor the pragma never mentions."""
     sdfg = _vectorized(_PROGRAMS[kind][0])
     parts = [(k, d) for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items()
              if k.startswith("_wcr_priv") and k.endswith("_acc")]
     assert parts, "expected an interposed _wcr_priv reduction partial"
     for k, d in parts:
         assert d.total_size == 1, f"{k} reduction partial must fold onto a single element, got {d.total_size}"
-    accs = [d for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items() if k == "acc"]
-    assert accs and all(isinstance(d, dace.data.Scalar) for d in accs), "accumulator acc must stay a Scalar"
+
+    clause = set(re.findall(r"reduction\([^:)]+:([^)]+)\)", _cpu_code(sdfg)))
+    assert clause, "expected an OpenMP reduction clause to name the accumulator"
+    for name in clause:
+        descs = [d for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items() if k == name]
+        assert descs, f"reduction clause names {name}, which is not a descriptor of the SDFG"
+        assert all(isinstance(d, dace.data.Scalar) for d in descs), \
+            f"accumulator {name} must stay a Scalar, got {[type(d).__name__ for d in descs]}"
 
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
