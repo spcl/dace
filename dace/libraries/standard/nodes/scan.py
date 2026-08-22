@@ -41,8 +41,6 @@ op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
 
-import numpy
-
 import dace
 from dace import library, nodes, symbolic
 from dace.codegen.common import sym2cpp
@@ -475,61 +473,43 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
                          language=dace.Language.CPP)
 
 
-def simd_inscan_loop(op: ScanOp,
-                     ctype: str,
-                     n_expr: str,
-                     start: str,
-                     seed_stmt: str,
-                     exclusive: bool,
-                     vectorize: bool = True) -> str:
-    """A unit-stride scan as ONE ``#pragma omp simd reduction(inscan, op:_acc)`` loop.
+#: Map op enum to the identity the header's single-block scan is seeded with when the caller
+#: supplies none. ``min``/``max`` have no C++ literal identity, so the header's own neutral
+#: elements are named instead of a number.
+_OP_TO_SEED_CPP = {
+    ScanOp.SUM: '{ct}(0)',
+    ScanOp.PRODUCT: '{ct}(1)',
+    ScanOp.MIN: '::dace::scan::detail::min_identity<{ct}>()',
+    ScanOp.MAX: '::dace::scan::detail::max_identity<{ct}>()',
+}
 
-    This is the sequential scan's whole body: no parallel region, no allocation, no barrier, so it
-    is what a scan that is already inside an OpenMP region or a loop should be. GCC lowers the
-    ``inscan`` reduction to an in-register shift-combine network writing straight to ``out``
-    (measured against the scalar dependent loop, fp64, one thread, GCC 15.2: 2.4x at n=1024, 2.5x at
-    n=65536, 1.5x at n=8.4M). Clang 21 declines to vectorize it and stays at 1.0x; the shape is
-    correct either way, so it is emitted unconditionally.
 
-    The accumulator's value ON ENTRY takes part in the prefix (verified on GCC 15 and Clang 21),
-    which is what lets the inclusive shapes seed from ``in[0]`` or from ``_scan_init`` without an
-    identity element -- ``min``/``max`` have none in C++ literal form.
+def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) -> str:
+    """A unit-stride scan as ONE call into the runtime header's single-block routine.
 
-    FP association is the vector network's, not left-to-right, so a float result MOVES: measured
-    3e-10 relative against the scalar loop over a 1M-element random walk. ``min``/``max`` and every
-    integer type are exact.
+    That routine is a ``#pragma omp simd reduction(inscan, op:acc)`` loop and nothing else: no
+    parallel region, no allocation, no barrier -- which is what a scan that already sits inside an
+    OpenMP region or a loop should be. It is also the SAME function the blocked parallel shape runs
+    per block, so there is one implementation of the vector scan rather than one per call site.
+    (The four op variants exist because an OpenMP reduction identifier cannot be a template
+    parameter; ``complex`` works through them because the header declares its ``+``/``*`` UDRs in
+    the same namespace, where unqualified lookup finds them.)
 
-    ``vectorize=False`` drops both pragmas and leaves the identical loop as a scalar dependent
-    chain -- the element type is not one OpenMP takes a built-in reduction on (``std::complex``),
-    so there is nothing to reduce with.
+    Measured against the scalar dependent loop, fp64, one thread, GCC 15.2: 2.5x at n=1024, 2.5x at
+    n=65536, 1.3x at n=8.4M. Clang 21 declines to vectorize the pragma and stays at 1.0x -- correct
+    either way. FP association becomes the vector network's, not left-to-right, so a float result
+    moves by ~3e-10 relative; ``min``/``max`` and every integer type stay exact.
 
     :param op: the scan's binary operator.
-    :param ctype: element type, for the ``min``/``max`` combine spelling.
+    :param exclusive: call the exclusive variant.
     :param n_expr: C++ expression for the element count.
-    :param start: first index the loop covers.
-    :param seed_stmt: statement(s) establishing ``_acc`` (and any pre-loop output write).
-    :param exclusive: emit the exclusive shape (scan phase first) instead of the inclusive one.
-    :param vectorize: emit the ``simd``/``scan`` pragmas; ``False`` gives the plain scalar loop.
-    :returns: the tasklet body, braces included.
+    :param seed: C++ expression the accumulator starts at; it takes part in the prefix.
+    :returns: the tasklet body.
     """
-    reduction = _OP_TO_OMP_REDUCTION[op]
-    combine = _combine_expr(op, ctype, '_acc', f'{INPUT_CONNECTOR_NAME}[_i]')
-    write = f'{OUTPUT_CONNECTOR_NAME}[_i] = _acc;'
-    # The ``scan`` directive splits the body: for an inclusive scan the input phase precedes it, for
-    # an exclusive one the scan phase does. Swapping them is not a reordering, it is the difference
-    # between the two scans.
-    first, kind, second = ((f'_acc = {combine};', 'inclusive', write) if not exclusive else
-                           (write, 'exclusive', f'_acc = {combine};'))
-    simd_pragma = f'  #pragma omp simd reduction(inscan, {reduction}:_acc)\n' if vectorize else ''
-    scan_pragma = f'      #pragma omp scan {kind}(_acc)\n' if vectorize else ''
-    return (f'{{ {seed_stmt}\n'
-            f'{simd_pragma}'
-            f'  for (decltype({n_expr}) _i = {start}; _i < ({n_expr}); ++_i) {{\n'
-            f'      {first}\n'
-            f'{scan_pragma}'
-            f'      {second}\n'
-            f'  }}\n'
-            f'}}')
+    kind = 'excl' if exclusive else 'incl'
+    fn = f'::dace::scan::detail::scan_{kind}_{_OP_TO_OMP_SUFFIX[op]}'
+    return (f'{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, '
+            f'static_cast<long>({n_expr}), {seed});')
 
 
 @library.expansion
@@ -548,9 +528,6 @@ class ExpandPure(ExpandTransformation):
         n_expr = _resolve_length(node, state, sdfg)
         op_cpp = _OP_TO_STD_CPP[node.op]
         ctype = in_desc.dtype.ctype
-        # OpenMP's built-in reductions are defined on arithmetic types; ``std::complex`` is a class
-        # type and ``reduction(inscan, +:acc)`` on one is a hard compile error, so it stays scalar.
-        vectorize = not numpy.issubdtype(in_desc.dtype.as_numpy_dtype(), numpy.complexfloating)
         stride_expr = sym2cpp(node.stride)
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
@@ -576,34 +553,13 @@ class ExpandPure(ExpandTransformation):
                     f"  }}\n"
                     f"}}")
         elif node.exclusive:
-            body = simd_inscan_loop(node.op,
-                                    ctype,
-                                    n_expr,
-                                    start='0',
-                                    seed_stmt=f'auto _acc = {_identity_expr(node, in_desc)};',
-                                    exclusive=True,
-                                    vectorize=vectorize)
+            body = single_block_scan_call(node.op, True, n_expr, _identity_expr(node, in_desc))
         elif _has_init(node):
-            # Inclusive scan with explicit init: ``out[k] = init OP in[0] OP ... OP in[k]``.
-            # The seed rides in as the accumulator's entry value, which the inscan prefix carries.
-            body = simd_inscan_loop(node.op,
-                                    ctype,
-                                    n_expr,
-                                    start='0',
-                                    seed_stmt=f'auto _acc = {INIT_CONNECTOR_NAME};',
-                                    exclusive=False,
-                                    vectorize=vectorize)
+            # Inclusive with an explicit init: ``out[k] = init OP in[0] OP ... OP in[k]``. The seed
+            # is the accumulator's entry value, which the inscan prefix carries.
+            body = single_block_scan_call(node.op, False, n_expr, INIT_CONNECTOR_NAME)
         else:
-            # Seeded from element 0, so ``min``/``max`` -- which have no identity in C++ literal
-            # form -- need none.
-            body = simd_inscan_loop(node.op,
-                                    ctype,
-                                    n_expr,
-                                    start='1',
-                                    seed_stmt=(f'auto _acc = {INPUT_CONNECTOR_NAME}[0];\n'
-                                               f'  {OUTPUT_CONNECTOR_NAME}[0] = _acc;'),
-                                    exclusive=False,
-                                    vectorize=vectorize)
+            body = single_block_scan_call(node.op, False, n_expr, _OP_TO_SEED_CPP[node.op].format(ct=ctype))
         inputs = {INPUT_CONNECTOR_NAME}
         if _has_init(node):
             inputs.add(INIT_CONNECTOR_NAME)

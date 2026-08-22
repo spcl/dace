@@ -205,7 +205,8 @@ def test_scan_in_parallel_map_lowers_to_sequential_form():
     assert '#pragma omp parallel' not in body[len('#pragma omp parallel for'):], \
         'a nested OpenMP region was emitted inside the parallel Map'
     assert '::dace::scan::inclusive_' not in code, 'parallel scan entry point called inside a parallel Map'
-    assert 'simd reduction(inscan' in code, 'the sequential shape should still vectorize through simd inscan'
+    assert '::dace::scan::detail::scan_incl_' in code, \
+        'the sequential shape should call the header single-block simd inscan'
 
 
 def test_scan_in_parallel_map_is_numerically_correct():
@@ -307,7 +308,8 @@ def test_scan_in_nested_sdfg_inside_parallel_map_lowers_to_sequential_form():
         'a nested OpenMP region was emitted inside the parallel Map'
     assert '::dace::scan::inclusive_' not in code, (
         'parallel scan entry point called inside a NestedSDFG in a parallel Map')
-    assert 'simd reduction(inscan' in code, 'the sequential shape should still vectorize through simd inscan'
+    assert '::dace::scan::detail::scan_incl_' in code, \
+        'the sequential shape should call the header single-block simd inscan'
 
 
 def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():
