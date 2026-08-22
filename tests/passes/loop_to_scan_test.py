@@ -1387,8 +1387,8 @@ def test_scalar_carry_acc_not_used_post_loop_no_writeback():
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
-    # Inspect: the rewrite added s_build, s_scan, s_write. The writeback state
-    # name suffix is ``_scan_acc_post`` -- absent here.
+    # Inspect: the rewrite added the scan state, plus whichever staging states its buffers
+    # needed. The writeback state name suffix is ``_scan_acc_post`` -- absent here.
     state_labels = {s.label for s in sdfg.all_states()}
     assert not any('_scan_acc_post' in lbl for lbl in state_labels)
 
@@ -1416,14 +1416,22 @@ def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
     assert in_edges, 'test fixture: loop should have at least one in-edge'
     # Add a marker assignment to the first in-edge.
     in_edges[0].data.assignments['_marker_pre_loop'] = '42'
+    loop_label = loop.label
 
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
-    # After the rewrite, the marker must still be on an iedge feeding the new
-    # head state (``*_scan_build``).
-    new_head = next(s for s in sdfg.all_states() if s.label.endswith('_scan_build'))
-    head_in_edges = list(sdfg.in_edges(new_head))
+    # After the rewrite, the marker must still be on an iedge feeding the new head state.
+    # The head is found STRUCTURALLY -- the one state of the rewritten chain that is entered
+    # from outside it -- not by a label suffix: the chain is only ``build -> scan -> write``
+    # when both staging buffers are needed, and a contiguous 1-D delta/output elides the copy
+    # states around the libnode, which would leave a name-based lookup asserting on a state
+    # the rewrite is entitled not to emit.
+    chain = [s for s in sdfg.all_states() if s.label.startswith(loop_label)]
+    assert chain, f'the rewrite should have left states named after {loop_label}'
+    heads = [s for s in chain if any(e.src not in chain for e in sdfg.in_edges(s))]
+    assert len(heads) == 1, f'expected exactly one entry into the scan chain, got {[s.label for s in heads]}'
+    head_in_edges = list(sdfg.in_edges(heads[0]))
     found = any(e.data.assignments.get('_marker_pre_loop') == '42' for e in head_in_edges)
     assert found, 'iedge assignment ``_marker_pre_loop=42`` lost during rewrite'
 
