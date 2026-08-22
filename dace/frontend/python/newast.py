@@ -5714,7 +5714,6 @@ class ProgramVisitor(ExtNodeVisitor):
             return None
 
         defined_vars = {**self.variables, **self.scope_vars}
-        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
         repl = {}
         for leaf in sorted(expr.free_symbols, key=str):
             name = str(leaf)
@@ -5722,7 +5721,13 @@ class ProgramVisitor(ExtNodeVisitor):
             # membership there says nothing; what the name RESOLVES to is the question. The value
             # is not always a string (a symbol maps to its own symbol object), hence ``str``.
             resolved = str(defined_vars.get(name, name))
-            desc = defined_arrays.get(resolved)
+            # Only THIS SDFG's data can be promoted: the promotion reads the descriptor from
+            # ``self.sdfg.arrays`` and writes the assignment on an interstate edge of this SDFG.
+            # A scalar that lives in an enclosing scope (a program argument used inside a map body,
+            # say) is not there, so it goes back to the materializing path that handled it before.
+            if resolved not in self.sdfg.arrays and resolved in self.scope_arrays:
+                return None
+            desc = self.sdfg.arrays.get(resolved)
             if isinstance(desc, data.Scalar):
                 if desc.dtype not in dtypes.INTEGER_TYPES:
                     return None
@@ -5749,12 +5754,17 @@ class ProgramVisitor(ExtNodeVisitor):
             Scalar data are promoted to symbols.
         """
 
-        def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
+        def _promote(node: ast.AST, slice_bound: bool = False) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             if isinstance(node, str):
                 scalar = node_str
             else:
-                folded = self.slice_bound_over_promoted_leaves(node)
+                # Only a SLICE bound needs its leaves promoted separately: the extent is a
+                # difference of two bounds, and one opaque symbol per bound hides the arithmetic
+                # that makes it readable. A bare index has no extent, so promoting the expression
+                # whole is exact -- and leaves no redundant symbol for the passes downstream, which
+                # promote the scalar itself and would then carry two names for one value.
+                folded = self.slice_bound_over_promoted_leaves(node) if slice_bound else None
                 if folded is not None:
                     return folded
                 scalar = self.visit(node)
@@ -5783,13 +5793,13 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(s, ast.Slice):
             lower = s.lower
             if isinstance(lower, ast.AST):
-                lower = _promote(lower)
+                lower = _promote(lower, slice_bound=True)
             upper = s.upper
             if isinstance(upper, ast.AST):
-                upper = _promote(upper)
+                upper = _promote(upper, slice_bound=True)
             step = s.step
             if isinstance(step, ast.AST):
-                step = _promote(step)
+                step = _promote(step, slice_bound=True)
             if multidim:
                 res = (lower, upper, step)
             else:

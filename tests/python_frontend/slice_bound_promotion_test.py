@@ -80,6 +80,26 @@ def test_expression_bound_in_several_dimensions_at_once():
     assert np.array_equal(padded, expected)
 
 
+def test_a_compound_index_is_not_a_slice_bound():
+    """An INDEX is not a bound: it has no extent, so promoting the whole expression is
+    already exact and folding its leaves only mints a second symbol for a value the later
+    scalar-to-symbol promotion already names. Worse, a leaf from an ENCLOSING scope -- a
+    program argument read inside a map body -- has no descriptor in the body's own SDFG,
+    which is where the promotion writes its interstate assignment.
+    """
+
+    @dace.program
+    def index_by_outer_scalar(a: dace.float64[M, N], b: dace.float64[M], pad: dace.int64):
+        for i in dace.map[0:M]:
+            b[i] = a[i, pad + 1] + a[i, pad]
+
+    m, n, p = 6, 9, 3
+    a = np.random.default_rng(2).random((m, n))
+    out = np.zeros(m)
+    index_by_outer_scalar(a=a, b=out, pad=p, M=m, N=n)
+    np.testing.assert_allclose(out, a[:, p + 1] + a[:, p])
+
+
 def test_a_float_bound_is_still_refused():
     """The fold must not widen what a slice bound may be: a non-integer bound has no symbol to
     promote to, and silently accepting one would index by a truncated value."""

@@ -214,9 +214,13 @@ def test_hybrid_sparse_is_value_preserving():
     assert np.allclose(got, expected), 'the conditional recurrence must be preserved'
 
 
-@pytest.mark.xfail(strict=True, reason='needs an SMT oracle to refute FULL sequentiality and split at K')
 def test_hybrid_sparse_partitions_at_k():
-    """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop."""
+    """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop.
+
+    Reached without a solver: the index-set split at ``K`` partitions the range, and the
+    ``[0,K)`` segment carries nothing once its branch is specialized. Flipped from
+    ``xfail`` to a plain assertion per this file's contract when it started passing.
+    """
     sdfg = cpu_canon(hybrid_sparse.to_sdfg(simplify=True))
     assert residual_loops(sdfg) == 1
 

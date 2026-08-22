@@ -890,7 +890,83 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # five different carriers) is likewise untouched.
     if not allow_multi_slot and any(c > 1 for c in infos_per_array.values()):
         return []
+
+    # A masked scan -- the update sitting in one ``ConditionalBlock`` branch -- is only
+    # liftable when every OTHER branch HOLDS the carrier (``else: out[i] = out[i-1]``).
+    # The rewrite zero-fills the delta buffer for the skipped iterations and drops the
+    # sibling's write, which reproduces a hold and nothing else: a sibling that writes a
+    # value of its own would lose it, and the scan would carry a running sum through
+    # iterations that never had one.
+    if any(not _sibling_branches_hold_the_carry(s, loop) for s in matched):
+        return []
     return matched
+
+
+def _enclosing_masked_conditional(state: SDFGState) -> Optional[ConditionalBlock]:
+    """The ``ConditionalBlock`` that masks ``state`` INSIDE its scan loop, or ``None``.
+
+    Walking up from the body state, a ``ConditionalBlock`` reached before the enclosing
+    loop is the mask; reaching the loop first means any conditional above it is a WRAPPER
+    (the symbolic-stride ``if K >= 1: scan else: seq`` specialization), whose other branch
+    is the sequential fallback and has nothing to do with masking.
+    """
+    cur = state.parent_graph
+    while cur is not None and not isinstance(cur, ConditionalBlock):
+        if isinstance(cur, LoopRegion) and cur.loop_variable:
+            return None
+        cur = cur.parent_graph
+    return cur
+
+
+def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, info: '_Scan', loop_var: str) -> bool:
+    """``True`` iff every value reaching ``write_an`` comes from reading the carrier at
+    its own carry slot -- i.e. the branch is the hold ``out[i + k_w] = out[i + k_r]``."""
+    roots: List[nodes.AccessNode] = []
+    seen = set()
+    worklist = [write_an]
+    while worklist:
+        cur = worklist.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        in_edges = state.in_edges(cur)
+        if not in_edges:
+            if not isinstance(cur, nodes.AccessNode):
+                return False  # a source that is not data cannot be the held carrier
+            roots.append(cur)
+            continue
+        worklist.extend(e.src for e in in_edges)
+    if not roots:
+        return False
+    for root in roots:
+        if root.data != info.out_name:
+            return False
+        for oe in state.out_edges(root):
+            if oe.data is None or oe.data.is_empty():
+                continue
+            axis, k, others, coef = _classify_subset(oe.data.subset, loop_var)
+            if (axis != info.scan_axis or coef != info.coef or symbolic.equal(k, info.k_r) is False
+                    or not _same_other_indices(others, info.other_indices)):
+                return False
+    return True
+
+
+def _sibling_branches_hold_the_carry(info: '_Scan', loop: LoopRegion) -> bool:
+    """``True`` when the matched update is unmasked, or when every sibling branch either
+    leaves the carrier alone or holds it (see :func:`_writes_only_the_carry_slot`)."""
+    cond = _enclosing_masked_conditional(info.body_state)
+    if cond is None:
+        return True
+    for _cond_expr, branch in cond.branches:
+        for state in branch.all_states():
+            if state is info.body_state:
+                continue
+            write_an = _find_carried_write_an(state, info.out_name)
+            if write_an is None:
+                continue
+            if not _writes_only_the_carry_slot(state, write_an, info, loop.loop_variable):
+                return False
+    return True
 
 
 def _other_indices_match_inner(other_indices: List[Any], inner_var: str) -> bool:
@@ -3448,11 +3524,7 @@ def _mutate_sibling_branches_to_zero_delta(info: _Scan, sdfg: SDFG):
     # stride ``if K>=1: scan else: seq`` specialization) whose sibling is the
     # sequential fallback -- neutralising it would delete the fallback's real
     # recurrence write. Only descend into a conditional strictly below the loop.
-    cond = getattr(info.body_state, 'parent_graph', None)
-    while cond is not None and not isinstance(cond, ConditionalBlock):
-        if isinstance(cond, LoopRegion) and cond.loop_variable:
-            return  # reached the scan loop first -> the conditional (if any) is a wrapper
-        cond = getattr(cond, 'parent_graph', None)
+    cond = _enclosing_masked_conditional(info.body_state)
     if cond is None:
         return
     for _cond_expr, branch in cond.branches:

@@ -1865,6 +1865,45 @@ def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
     assert np.allclose(out, exp), f'masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
 
 
+def test_masked_scan_with_a_non_hold_sibling_is_refused():
+    """The sibling branch here writes a value of its OWN (``out[i] = delta[i]``), not a
+    hold of the carrier. The masked rewrite zero-fills the delta buffer for skipped
+    iterations and drops the sibling's write, which reproduces a hold and nothing else --
+    so lifting this shape would silently discard the sibling's value and run the scan's
+    running sum through iterations that never had one. Refusing is the only sound answer.
+
+    The shape is the ``[0,K)`` half of an index-set-split hybrid-sparse loop, where the
+    segment's clamped ``i < min(K, N)`` bound leaves the ``i < K`` guard standing.
+    """
+
+    @dace.program
+    def masked_non_hold(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
+        for i in range(1, N):
+            if mask[i] > 0:
+                out[i] = out[i - 1] + delta[i]
+            else:
+                out[i] = delta[i]
+
+    sdfg = masked_non_hold.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not res, f'a non-hold sibling must refuse the lift; got {res} rewrites'
+    assert _num_scan_nodes(sdfg) == 0
+    assert _num_loops(sdfg) == 1, 'the loop must survive as the sequential recurrence'
+
+    n = 32
+    rng = np.random.default_rng(11)
+    delta = rng.standard_normal(n)
+    mask = (rng.standard_normal(n) > 0.0).astype(np.int64)
+    out = rng.standard_normal(n)
+    exp = out.copy()
+    for i in range(1, n):
+        exp[i] = exp[i - 1] + delta[i] if mask[i] > 0 else delta[i]
+    sdfg(out=out, delta=delta, mask=mask, N=n)
+    assert np.allclose(out, exp), f'refused masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
+
+
 def test_multi_slot_same_array_five_carries():
     """Five INDEPENDENT prefix sums carried in one loop body writing distinct
     constant slots of ONE array (TSVC-2.5 ``scan_multi_5carry`` / cloudsc
