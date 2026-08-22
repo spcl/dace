@@ -16,14 +16,15 @@ class IntelMKLScaLAPACKOpenMPI:
     # typical Ubuntu installation on an AVX2 machine with OpenMPI.
 
     cmake_minimum_version = None
+    # mpi.h is not on the default include path (it lives under the OpenMPI package
+    # directory), so the MPI package must be resolved to get its header directory.
     cmake_packages = ["MPI"]
-    cmake_packages = []
     cmake_variables = {}
-    cmake_compile_flags = []
+    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_libraries = []
     cmake_files = []
 
-    headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
+    headers = ["mpi.h", "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
     state_fields = [
         "MKL_INT __mkl_scalapack_context;", "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
         "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
@@ -43,7 +44,10 @@ class IntelMKLScaLAPACKOpenMPI:
     }}\n
     """
     finalize_code = """
-    if (__state->__mkl_scalapack_grid_init) {{
+    // blacs_gridexit frees the grid communicator; illegal once MPI is finalized.
+    int __mkl_scalapack_mpi_finalized = 0;
+    MPI_Finalized(&__mkl_scalapack_mpi_finalized);
+    if (__state->__mkl_scalapack_grid_init && !__mkl_scalapack_mpi_finalized) {{
         blacs_gridexit(&__state->__mkl_scalapack_context);
     }}
     // blacs_exit(&__state->__mkl_int_zero);

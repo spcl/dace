@@ -230,10 +230,15 @@ class ProcessGrid(DistributedDescriptor):
 
     def exit_code(self):
         """ Outputs MPI deallocation code for the process-grid. """
+        # Freeing after MPI_Finalize is illegal; another program or the host may have finalized already.
         return f"""
             if (__state->{self.name}_valid) {{
-                MPI_Group_free(&__state->{self.name}_group);
-                MPI_Comm_free(&__state->{self.name});
+                int __state_{self.name}_finalized = 0;
+                MPI_Finalized(&__state_{self.name}_finalized);
+                if (!__state_{self.name}_finalized) {{
+                    MPI_Group_free(&__state->{self.name}_group);
+                    MPI_Comm_free(&__state->{self.name});
+                }}
             }}
         """
 

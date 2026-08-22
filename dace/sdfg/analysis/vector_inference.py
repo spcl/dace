@@ -1,5 +1,5 @@
 from enum import Flag
-from networkx import DiGraph
+from dace import graphlib
 from dace.memlet import Memlet
 from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.graph import MultiConnectorEdge
@@ -62,7 +62,7 @@ class InferenceNode():
         self.inferred = inf_type
 
 
-class VectorInferenceGraph(DiGraph):
+class VectorInferenceGraph:
     # Default propagation mode, where vectors propagate forwards and scalars propagate backwards.
     Propagate_Default = 0
 
@@ -88,7 +88,9 @@ class VectorInferenceGraph(DiGraph):
                                         or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
             :param flags: Additional flags to limit the vectorization.
         """
-        super().__init__()
+        # Composition, not inheritance: graphlib.DiGraph() is a backend-selecting FACTORY, so there
+        # is no stable class to subclass (see dace/graphlib/__init__.py).
+        self.graph = graphlib.DiGraph()
         self.sdfg = sdfg
         self.state = state
 
@@ -144,7 +146,7 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for _, dst, data in self.out_edges(node, data=True):
+        for _, dst, data in self.graph.out_edges(node, data=True):
             # In default mode, vector constraints are propagated forwards
             if data['mode'] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
                 dst.infer_as(InferenceNode.Vector)
@@ -158,7 +160,7 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for src, _, data in self.in_edges(node, data=True):
+        for src, _, data in self.graph.in_edges(node, data=True):
             # In default mode, scalar constraints are propagated backwards
             if data['mode'] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
                 src.infer_as(InferenceNode.Scalar)
@@ -173,13 +175,13 @@ class VectorInferenceGraph(DiGraph):
             Infers by propagating the constraints through the graph.
         """
         # Propagate constraints forwards from source and backwards from sink
-        for node in [n for n in self.nodes() if self.in_degree(n) == 0]:
+        for node in [n for n in self.graph.nodes() if self.graph.in_degree(n) == 0]:
             self._forward(node)
-        for node in [n for n in self.nodes() if self.out_degree(n) == 0]:
+        for node in [n for n in self.graph.nodes() if self.graph.out_degree(n) == 0]:
             self._backward(node)
 
         # Make everything else scalar
-        for node in self.nodes():
+        for node in self.graph.nodes():
             if not node.is_inferred():
                 node.infer_as(InferenceNode.Scalar)
 
@@ -270,7 +272,7 @@ class VectorInferenceGraph(DiGraph):
             This is used when building the graph and some connector might be dropped.
         """
         if src is not None and dst is not None:
-            self.add_edge(src, dst, mode=mode)
+            self.graph.add_edge(src, dst, mode=mode)
 
     def _get_propagation_mode(self, edge: MultiConnectorEdge):
         """
@@ -302,7 +304,7 @@ class VectorInferenceGraph(DiGraph):
                     n = InferenceNode((node, conn, True))
                     self.conn_to_node[(node, conn, True)] = n
                     in_nodes[conn] = n
-                    self.add_node(n)
+                    self.graph.add_node(n)
 
                 # Create a node for every non-pointer output connector
                 out_nodes = {}
@@ -310,12 +312,12 @@ class VectorInferenceGraph(DiGraph):
                     n = InferenceNode((node, conn, False))
                     self.conn_to_node[(node, conn, False)] = n
                     out_nodes[conn] = n
-                    self.add_node(n)
+                    self.graph.add_node(n)
 
                 # Connect the inputs of every union to its corresponding output
                 for out, inputs in self._get_output_subsets(node).items():
                     for inp in inputs:
-                        self.add_edge(in_nodes[inp], out_nodes[out], mode=VectorInferenceGraph.Propagate_Default)
+                        self.graph.add_edge(in_nodes[inp], out_nodes[out], mode=VectorInferenceGraph.Propagate_Default)
 
             elif isinstance(node, nodes.AccessNode):
                 desc = node.desc(self.sdfg)
@@ -323,7 +325,7 @@ class VectorInferenceGraph(DiGraph):
                     # Only create nodes for Scalar AccessNodes (they can get a vector dtype)
                     n = InferenceNode(node)
                     self.conn_to_node[node] = n
-                    self.add_node(n)
+                    self.graph.add_node(n)
 
             else:
                 # Some other node occurs in the graph, not supported
@@ -433,9 +435,8 @@ class VectorInferenceGraph(DiGraph):
 
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
-        loop_sym = symbolic.pystr_to_symbolic(self.param)
         for dim, sub in enumerate(edge.data.subset):
-            if loop_sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols:
+            if self.param in {str(sym) for sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols}:
                 if vec_dim is None:
                     vec_dim = dim
                 else:
@@ -455,7 +456,7 @@ class VectorInferenceGraph(DiGraph):
             Also sets the dtypes accordingly.
         """
         infer_types.apply_connector_types(self.inf)
-        for node in self.nodes():
+        for node in self.graph.nodes():
             if isinstance(node.belongs_to, nodes.AccessNode):
                 t = node.belongs_to.desc(self.sdfg).dtype
                 node.belongs_to.desc(self.sdfg).dtype = self._as_type(t, node.inferred)

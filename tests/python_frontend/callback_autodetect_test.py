@@ -4,6 +4,7 @@ from typing import Dict, Union
 import dace
 import numpy as np
 import pytest
+import re
 import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
@@ -358,8 +359,13 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
-def test_gpu_callback_without_stream_warns():
-    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn.
+@pytest.mark.parametrize('simplify', [None, False, True])
+def test_gpu_callback_without_stream_warns(simplify):
+    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn,
+    # and every component touching its data must be moved off the async streams onto the null stream.
+    # Without simplification the feeding and draining copies sit in states of their own, so the pin
+    # has to reach across states -- `simplify` is pinned here rather than left to the config so that
+    # both shapes are covered on every CI axis.
     @dace_inhibitor
     def cb_no_stream(arr):
         arr *= 2
@@ -372,9 +378,42 @@ def test_gpu_callback_without_stream_warns():
         A[:] = tmp
 
     with pytest.warns(match="Automatically creating callback"):
-        sdfg = gpucallback.to_sdfg()
+        sdfg = gpucallback.to_sdfg(simplify=simplify)
     with pytest.warns(UserWarning, match="not stream-aware"):
-        sdfg.generate_code()
+        code = sdfg.generate_code()
+
+    for obj in code:
+        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
+
+
+def test_gpu_callback_in_nested_sdfg_without_stream_warns():
+    # Same as above, but the callback sits in a nested SDFG where the array goes by its connector
+    # name: the pin has to follow the data out of the nested SDFG to reach the copies around it.
+    @dace_inhibitor
+    def cb_no_stream(arr):
+        arr *= 2
+
+    @dace.program
+    def callee(buf: dace.float64[20]):
+        cb_no_stream(buf)
+
+    @dace.program
+    def gpucallback(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        for _ in range(2):
+            callee(tmp)
+        A[:] = tmp
+
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = gpucallback.to_sdfg(simplify=False)
+    assert any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
+
+    with pytest.warns(UserWarning, match="not stream-aware"):
+        code = sdfg.generate_code()
+
+    for obj in code:
+        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
 
 
 def test_bad_closure():
@@ -460,7 +499,7 @@ def test_inout_same_name():
 
 
 def test_inhibit_state_fusion():
-    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    """ Tests that state fusion never merges states carrying side-effect callbacks. """
 
     @dace_inhibitor
     def add(a, b):
@@ -471,15 +510,12 @@ def test_inhibit_state_fusion():
         A[:] = add(B, C)
         D[:] = add(A, C)
 
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 5
-
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 1
+    # A side-effect node pins state order regardless of the callback-fusion config.
+    for dont_fuse in (True, False):
+        with config.set_temporary('frontend', 'dont_fuse_callbacks', value=dont_fuse):
+            with pytest.warns(match="Automatically creating callback"):
+                sdfg = calladd.to_sdfg(simplify=True)
+            assert sdfg.number_of_nodes() == 5
 
 
 def test_two_callbacks():
@@ -1153,7 +1189,10 @@ if __name__ == '__main__':
     test_reorder_nested()
     test_callback_samename()
     test_gpu_callback()
-    test_gpu_callback_without_stream_warns()
+    test_gpu_callback_without_stream_warns(None)
+    test_gpu_callback_without_stream_warns(False)
+    test_gpu_callback_without_stream_warns(True)
+    test_gpu_callback_in_nested_sdfg_without_stream_warns()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()

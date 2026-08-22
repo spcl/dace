@@ -146,12 +146,42 @@ def test_free_tasklet(transient, scalar):
     sdfg.validate()
 
 
+def test_free_tasklet_connectorless_dependency_edge():
+    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge --
+    e.g. an edge sequencing a reduction-init tasklet -- must wrap in the GPU_Device map
+    without crashing. Pre-fix the connector rebuild did ``'IN_' + e.dst_conn`` and threw
+    ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
+    dependency edge with no IN_/OUT_ connector."""
+    sdfg = dace.SDFG("gcode_depedge")
+    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
+    state = sdfg.add_state("main")
+
+    seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
+    state.add_edge(seed, "_o", state.add_access(arr_name), None, dace.memlet.Memlet("A[0]"))
+
+    follow = state.add_tasklet("follow", {}, {"_o2"}, "_o2 = 1.0")
+    state.add_edge(follow, "_o2", state.add_access(arr_name), None, dace.memlet.Memlet("A[1]"))
+
+    # Connector-less empty-memlet dependency edge: seed must run before follow.
+    state.add_nedge(seed, follow, dace.memlet.Memlet())
+
+    sdfg.validate()
+    sdfg.apply_gpu_transformations(validate=True,
+                                   validate_all=True,
+                                   permissive=True,
+                                   sequential_innermaps=True,
+                                   register_transients=False,
+                                   simplify=False)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
     test_write_full()
     test_write_subset_dynamic()
+    test_free_tasklet_connectorless_dependency_edge()
     for scalar in [False, True]:
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)

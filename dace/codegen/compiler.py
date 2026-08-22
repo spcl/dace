@@ -3,7 +3,9 @@
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
+import atexit
 import collections
+import contextlib
 import getpass
 import glob
 import hashlib
@@ -14,15 +16,18 @@ import platform
 import re
 import shutil
 import shlex
+import signal
 import subprocess
 import tempfile
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from typing import Callable, Dict, Iterator, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 from functools import lru_cache
 
 import dace
 from dace.config import Config
+from dace.codegen import build_cache
 from dace.codegen import command_db
+from dace.codegen import common
 from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
@@ -31,6 +36,21 @@ from dace.codegen import compiled_sdfg as csd
 from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
+
+# Only readability-* fixes safe on include-stripped code (the experimental readable generator's
+# clang-tidy pass strips the header block, so a fix depending on types or a variable's full
+# use-set rewrites on a half-parse). Excluded: identifier naming/length, magic-numbers,
+# cognitive-complexity, uppercase-suffix (noise); non-const-parameter (const-qualifies a pointer
+# only forwarded to a nested-SDFG writer -> const vs non-const clash nvcc rejects); and
+# modernize-* (type-dependent -> miscompiled the CUDA block-reduction: an empty ``using`` alias
+# and a reduction index turned into a range-for value).
+# NOTE: the clang-tidy invocation itself (``apply_clang_tidy``) was dropped from
+# ``generate_program_folder`` by the build-caching refactor; nothing in ``dace/`` reads this
+# constant anymore. Kept only so ``tests/codegen/readable/test_clang_tidy.py`` still collects.
+CLANG_TIDY_CHECKS = ('readability-*,'
+                     '-readability-identifier-naming,-readability-identifier-length,-readability-magic-numbers,'
+                     '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
+                     '-readability-avoid-const-params-in-decls,-readability-non-const-parameter')
 
 
 def generate_program_folder(
@@ -289,6 +309,7 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
+        build_cache.touch(entry)
         return True
     except OSError:
         shutil.rmtree(os.path.join(build_folder, 'CMakeFiles'), ignore_errors=True)
@@ -311,6 +332,7 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.copy2(os.path.join(build_folder, 'CMakeCache.txt'), staging)
         shutil.copytree(versions[0], os.path.join(staging, 'CMakeFiles', os.path.basename(versions[0])))
         os.rename(staging, entry)  # atomic, and loses harmlessly to a concurrent publisher
+        build_cache.prune(os.path.join(build_cache_root(), 'configure'))
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -331,8 +353,8 @@ def prepare_precompiled_header(targets) -> Optional[str]:
         return None
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     cxx = make_absolute(compiler_family.host_compiler())
-    flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
+    flags = ([f'-std=c++{common.cpp_standard()}', '-fPIC', '-fopenmp'] + shlex.split(compiler_family.cpu_args() or '') +
+             build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
@@ -350,6 +372,10 @@ def prepare_precompiled_header(targets) -> Optional[str]:
                            check=True,
                            capture_output=True)
             os.replace(staging, header + '.gch')
+            # ~110 MB just landed in the cache, whose default root is RAM. Bound it here, at the
+            # only point where it grows.
+            build_cache.prune(os.path.join(build_cache_root(), 'pch'))
+        build_cache.touch(pch)
         return pch
     except (OSError, subprocess.SubprocessError):
         return None
@@ -426,6 +452,13 @@ def configure_and_compile(
         folder_mode = Config.get('compiler.build_folder_mode')
     assert folder_mode in ["development", "production"]
 
+    # Rejected before any folder is made or any code compiled, so a typo'd mode cannot silently
+    # fall back to the other backend after doing half the work.
+    build_mode = Config.get('compiler', 'build_mode').strip().lower()
+    if build_mode not in ('cmake', 'native'):
+        raise cgx.CompilerConfigurationError(
+            f"Unknown compiler.build_mode {Config.get('compiler', 'build_mode')!r}; expected 'cmake' or 'native'.")
+
     if program_name is None:
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
@@ -467,6 +500,69 @@ def configure_and_compile(
         elif '/MT' not in os.environ['_CL_']:
             os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
+    # Resolve the environments the SDFG uses; both build backends take their flags from these.
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
+    environments = dace.library.get_environments_and_dependencies(environments)
+
+    # Build the shared library either directly (native) or through CMake. Both write it to the same
+    # development-mode location that the shared tail below expects.
+    if build_mode == 'native':
+        # Lazy: native_compiler imports from this module, so a top-level import would be a cycle.
+        from dace.codegen import native_compiler
+        native_compiler.build_native(program_folder=program_folder,
+                                     program_name=program_name,
+                                     files=files,
+                                     targets=targets,
+                                     environments=environments,
+                                     build_folder=build_folder,
+                                     output_stream=output_stream)
+    else:
+        cmake_configure_and_build(program_folder=program_folder,
+                                  program_name=program_name,
+                                  src_folder=src_folder,
+                                  build_folder=build_folder,
+                                  files=files,
+                                  targets=targets,
+                                  environments=environments,
+                                  output_stream=output_stream)
+
+    # Get the names of the library files that were generated.
+    #  Currently we are still in the `development` folder mode.
+    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
+    libstub_path = _get_stub_library_path(lib_path)
+
+    # In production mode, we are now deleting what we need and relocating it.
+    if folder_mode == "production":
+        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
+        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+        program_folder = pathlib.Path(program_folder)
+        # TODO: Find out where `sample/` are generated and suppress their generation.
+        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
+            if (program_folder / to_delete).is_dir():
+                shutil.rmtree(os.path.join(program_folder, to_delete))
+            else:
+                (program_folder / to_delete).unlink()
+
+    return lib_path
+
+
+def cmake_configure_and_build(
+    program_folder: str,
+    program_name: str,
+    src_folder: str,
+    build_folder: str,
+    files: List[str],
+    targets: Dict,
+    environments,
+    output_stream=None,
+) -> None:
+    """Configure and build a prepared program folder with CMake (the default ``build_mode``).
+
+    :param files: source paths relative to ``<program_folder>/src`` (from ``dace_files.csv``).
+    :param targets: ``{target name: TargetCodeGenerator}`` for the linkable sources.
+    :param environments: resolved environment classes the SDFG uses.
+    """
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # Ninja's global dependency graph parallelizes a multi-source build better than Make's
@@ -481,14 +577,8 @@ def configure_and_compile(
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
-        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
+        "-DDACE_CPP_STANDARD={}".format(common.cpp_standard()),
     ]
-
-    # Get required environments are retrieve the CMake information
-    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
-        environments = set(l.strip() for l in f)
-
-    environments = dace.library.get_environments_and_dependencies(environments)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
     cmake_command += sorted(environment_flags)
@@ -514,6 +604,10 @@ def configure_and_compile(
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+    # Additive static archive next to the .so (opt-in; matches native build mode). Part of the
+    # command ``shape`` below, so a static-archive build never reuses a non-archive recording.
+    cmake_command.append(
+        "-DDACE_STATIC_ARCHIVE={}".format("ON" if Config.get_bool('compiler', 'static_archive') else "OFF"))
     # Free -- the generator already knows the commands -- and lets tooling see a generated source's
     # exact compile flags.
     cmake_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
@@ -563,24 +657,50 @@ def configure_and_compile(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
 
-    # Get the names of the library files that were generated.
-    #  Currently we are still in the `development` folder mode.
-    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
-    libstub_path = _get_stub_library_path(lib_path)
 
-    # In production mode, we are now deleting what we need and relocating it.
-    if folder_mode == "production":
-        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
-        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
-        program_folder = pathlib.Path(program_folder)
-        # TODO: Find out where `sample/` are generated and suppress their generation.
-        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
-            if (program_folder / to_delete).is_dir():
-                shutil.rmtree(os.path.join(program_folder, to_delete))
-            else:
-                (program_folder / to_delete).unlink()
+def build_folder_is_disposable(sdfg: 'dace.SDFG') -> bool:
+    """Whether ``sdfg``'s build folder is garbage the moment this process is done with it.
 
-    return lib_path
+    Only under ``cache: unique``, which names the folder after the PID: nothing outside this
+    process can ever address it, so the folder is pure garbage once the run ends -- yet it
+    survives, and a test sweep leaves one behind per (SDFG name, worker); this repo's tree had 540
+    of them at 238 MB. Every other policy names the folder so that a later run finds it again,
+    which makes the folder the build cache itself; deleting it would turn every rerun into a full
+    recompile.
+
+    An explicitly assigned build folder is the caller's, never ours to remove.
+    """
+    return sdfg.build_folder_is_default and Config.get('cache') == 'unique'
+
+
+#: Program folders this process built that no later run could ever address, dropped on the way out.
+#: Not tied to ``CompiledSDFG`` lifetime: CPython frees that object through the garbage collector,
+#: so "the folder goes when the handle goes" is not a moment anything can observe -- a reference
+#: cycle anywhere in the call graph defers it arbitrarily.
+_disposable_folders: Set[str] = set()
+
+
+def register_disposable_folder(sdfg: 'dace.SDFG') -> None:
+    """Take ``sdfg``'s build folder into the set dropped when this process ends.
+
+    Called from ``SDFG.compile()`` rather than from the handle that ends up owning the folder,
+    because compilation hands the folder to a deepcopy of the SDFG by assigning it -- at which
+    point the copy looks like a caller-assigned folder and the policy that produced it is no
+    longer visible.
+    """
+    if build_folder_is_disposable(sdfg):
+        _disposable_folders.add(os.path.abspath(sdfg.build_folder))
+
+
+@atexit.register
+def drop_disposable_folders() -> None:
+    """Drop every disposable folder on the way out -- past here nothing can name one again.
+
+    Deleting a folder whose library is still mapped is safe on POSIX (the inode outlives the
+    unlink); on Windows the delete simply fails and the folder is left behind as before.
+    """
+    for folder in _disposable_folders:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def get_program_handle(
@@ -890,8 +1010,70 @@ def identical_file_exists(filename: str, file_contents: str):
     return True
 
 
+#: Environment-variable prefixes an MPI/PMI launcher (srun, mpirun) exports to mark a process as a
+#: rank of its job. A child that inherits these and links a PMI/PMIx client -- directly, or
+#: transitively through an MPI-wrapper compiler -- treats itself as that rank and blocks in
+#: MPI_Init/PMIx_Init awaiting a rendezvous that never comes.
+MPI_RANK_ENV_PREFIXES = (
+    'PMI_',  # MPICH / Cray / Slurm PMI: PMI_RANK, PMI_SIZE, PMI_FD, PMI_JOBID, ...
+    'PMIX_',  # PMIx (OpenMPI 4+): PMIX_RANK, PMIX_NAMESPACE, PMIX_SERVER_URI*, ...
+    'OMPI_COMM_WORLD_',  # OpenMPI: OMPI_COMM_WORLD_RANK/SIZE/LOCAL_RANK, ...
+    'OMPI_UNIVERSE_',
+    'MV2_COMM_WORLD_',  # MVAPICH2
+    'MPI_LOCALRANKID',
+    'MPI_LOCALNRANKS',
+    'SLURM_PROCID',  # Slurm's PMI plugins derive rank from these
+    'SLURM_LOCALID',
+)
+
+
+def build_subprocess_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """``base`` (default ``os.environ``) with this process's MPI-rank identity stripped.
+
+    CMake -- and the try_compile test binaries, make/ninja and the compiler driver it spawns --
+    otherwise inherit the launcher's rank-identity variables and hang forever in a PMI/PMIx init
+    call, which surfaces as a stuck ``cmake`` with defunct children. Compilation never needs an MPI
+    identity; everything else (PATH, compiler flags, MCA tuning, ...) is preserved."""
+    env = os.environ if base is None else base
+    return {k: v for k, v in env.items() if not k.startswith(MPI_RANK_ENV_PREFIXES)}
+
+
+@contextlib.contextmanager
+def build_subprocess_sigmask() -> Iterator[None]:
+    """Temporarily unblock ``SIGCHLD`` on the calling thread, so a subprocess forked inside this
+    context inherits an unblocked ``SIGCHLD``.
+
+    MPI/Slurm launchers (``srun``, ``mpirun``) start their tasks with ``SIGCHLD`` *blocked*, and
+    every child inherits that mask. CMake (KWSys) learns that the helpers it spawns during
+    *configure* -- ``uname``, the compiler-id / ABI test binaries, ``make``/``ninja`` -- have
+    finished by receiving ``SIGCHLD``; blocked, it is never woken to reap them and spins forever in
+    ``select()``. That is the daint compile hang: it looks like a stuck ``cmake`` even though
+    nothing is compiling. (Confirmed under srun: every task's ``/proc/self/status`` shows ``SigBlk``
+    with the ``SIGCHLD`` bit set, and a trivial ``project()`` configure hangs until the child mask
+    is cleared.)
+
+    A child inherits the *forking thread's* mask and ``Popen`` does not reset it, so unblocking
+    immediately around the fork is enough. ``pthread_sigmask`` is per-thread, so this never disturbs
+    another thread or the process's steady-state mask. No-op where ``pthread_sigmask``/``SIGCHLD``
+    are unavailable (Windows)."""
+    if os.name != 'posix' or signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        yield  # Windows has neither call, or SIGCHLD is already deliverable (the common case).
+        return
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
+
+
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    # Every build subprocess is forked here -- CMake configure/build and the native backend's
+    # compile/link lines alike -- so both launcher safeguards belong at this one point rather than
+    # at each call site, where a new caller silently reintroduces the hang. Only the fork itself has
+    # to happen inside the sigmask context.
+    kwargs['env'] = build_subprocess_env(kwargs.get('env'))
+    with build_subprocess_sigmask():
+        process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()

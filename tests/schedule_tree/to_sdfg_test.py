@@ -280,14 +280,22 @@ def test_create_tasklet_waw():
     )
 
     sdfg = stree.as_sdfg()
-    assert len(sdfg.states()) == 2
-    s1, s2 = sdfg.states()
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    assert len(sdfg.states()) == 1
+    state, = sdfg.states()
 
-    s1_tasklet, s1_anode = s1.nodes()
-    assert [(s1_tasklet, s1_anode)] == [(edge.src, edge.dst) for edge in s1.edges()]
+    bla, first_anode, bla2, second_anode = state.nodes()
+    assert bla.label == "bla"
+    assert bla2.label == "bla2"
+    assert isinstance(first_anode, nodes.AccessNode) and first_anode.data == "A"
+    assert isinstance(second_anode, nodes.AccessNode) and second_anode.data == "A"
 
-    s2_tasklet, s2_anode = s2.nodes()
-    assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
+    edges = {(edge.src, edge.dst): edge.data for edge in state.edges()}
+    assert set(edges.keys()) == {(bla, first_anode), (first_anode, bla2), (bla2, second_anode)}
+    assert edges[(bla, first_anode)].data == "A"
+    assert edges[(bla2, second_anode)].data == "A"
+    assert edges[(first_anode, bla2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_tasklet_war():
@@ -342,12 +350,22 @@ def test_create_loop_for():
     assert loop.update_statement == CodeBlock("i = i+1")
 
     loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
-    assert len(loop_states) == 2, "Loop contains two states"
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    assert len(loop_states) == 1, "Loop contains one state"
 
-    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
-    assert tasklet_1.label == "assign_1"
-    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
-    assert tasklet_2.label == "assign_2"
+    body = loop_states[0]
+    tasklets: list[nodes.Tasklet] = [n for n in body.nodes() if isinstance(n, nodes.Tasklet)]
+    assert [t.label for t in tasklets] == ["assign_1", "assign_2"]
+    tasklet_1, tasklet_2 = tasklets
+
+    anodes: list[nodes.AccessNode] = [n for n in body.nodes() if isinstance(n, nodes.AccessNode)]
+    assert [n.data for n in anodes] == ["A", "A"]
+    first_anode, second_anode = anodes
+
+    edges = {(edge.src, edge.dst): edge.data for edge in body.edges()}
+    assert set(edges.keys()) == {(tasklet_1, first_anode), (first_anode, tasklet_2), (tasklet_2, second_anode)}
+    assert edges[(first_anode, tasklet_2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_loop_for_same_name() -> None:
@@ -407,12 +425,22 @@ def test_create_loop_while():
     assert loop.update_statement == None
 
     loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
-    assert len(loop_states) == 2, "Loop contains two states"
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    assert len(loop_states) == 1, "Loop contains one state"
 
-    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
-    assert tasklet_1.label == "assign_1"
-    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
-    assert tasklet_2.label == "assign_2"
+    body = loop_states[0]
+    tasklets: list[nodes.Tasklet] = [n for n in body.nodes() if isinstance(n, nodes.Tasklet)]
+    assert [t.label for t in tasklets] == ["assign_1", "assign_2"]
+    tasklet_1, tasklet_2 = tasklets
+
+    anodes: list[nodes.AccessNode] = [n for n in body.nodes() if isinstance(n, nodes.AccessNode)]
+    assert [n.data for n in anodes] == ["A", "A"]
+    first_anode, second_anode = anodes
+
+    edges = {(edge.src, edge.dst): edge.data for edge in body.edges()}
+    assert set(edges.keys()) == {(tasklet_1, first_anode), (first_anode, tasklet_2), (tasklet_2, second_anode)}
+    assert edges[(first_anode, tasklet_2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_if_else():

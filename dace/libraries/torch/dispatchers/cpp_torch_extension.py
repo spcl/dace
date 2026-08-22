@@ -22,6 +22,11 @@ from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
 
 from dace.libraries.torch.dispatchers.common import DaceTorchFunction, compile_and_init_sdfgs, get_arglist
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -105,14 +110,22 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # Format the values as a C++ initializer list
         values_str = ', '.join(format_value(v, desc.dtype) for v in values)
 
+        # ``from_blob`` wraps the given HOST pointer without copying; passing
+        # ``.device(kCUDA)`` here does NOT move the data to the GPU, it just
+        # mislabels a host buffer as CUDA (torch then raises "pointer resides on
+        # host memory ..." on the first device op). Always build on kCPU from the
+        # host initializer list, then ``.to(kCUDA)`` to actually copy device-side
+        # (mirrors ``constant_initializer_code``). For a host descriptor, a plain
+        # ``.clone()`` takes ownership of the leaked buffer as before.
+        to_device = ('.to(torch::kCUDA)' if desc.storage in GPU_RESIDENT_STORAGES else '.clone()')
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
-                    .layout(torch::kStrided)).clone();
+                    .device(torch::kCPU)
+                    .layout(torch::kStrided)){to_device};
             """
     else:
         # Initialize with zeros or empty
@@ -121,7 +134,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in GPU_RESIDENT_STORAGES else 'kCPU'})
                     .layout(torch::kStrided));
             """
 
@@ -572,6 +585,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     environments = {
         PyTorch.full_class_path(),
     }
+    bwd_sdfg = None
     if module.backward:
         compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
         compiled_sdfgs = [compiled, compiled_bwd] if compiled_bwd is not None else [compiled]
@@ -626,7 +640,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
                                  f"{compiled.sdfg.name}_backward.cpp")
     torch_code_path = os.path.join(dace_build_root, base_libname, "src", "cpu", f"{base_libname}.cpp")
 
-    sources = [p for p in [code_path, torch_code_path, code_path_bwd] if os.path.exists(p)]
+    sources = [p for p in [code_path, torch_code_path, code_path_bwd] if p and os.path.exists(p)]
 
     pid = os.getpid()
     salt = hashlib.sha1(("".join(sources)).encode("utf-8")).hexdigest()[:8]
@@ -653,7 +667,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
         extra_include_paths=[
             p for p in {
                 include_path,
-                include_path_bwd if os.path.exists(include_path_bwd) else None,
+                include_path_bwd if include_path_bwd and os.path.exists(include_path_bwd) else None,
                 dace_include_path,
                 dace_include_blas,
                 dace_include_onnx,

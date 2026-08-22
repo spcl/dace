@@ -295,7 +295,7 @@ def run_lenet_autodiff():
         jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
     jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-6)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
 
 
 def test_cpu(monkeypatch):

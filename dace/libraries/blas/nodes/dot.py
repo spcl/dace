@@ -7,7 +7,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -38,22 +38,27 @@ class ExpandDotPure(ExpandTransformation):
         sdfg.add_array("_y", [n], dtype_y, strides=[stride_y], storage=desc_y.storage)
         sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
 
-        mul_program = "__out = __x * __y"
+        # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
+        # default Dot models ?dotu (no conjugation). conj on a real type would promote to
+        # complex, so only apply it for complex operands.
+        if node.conjugate and desc_x.dtype.is_complex():
+            mul_program = "__out = conj(__x) * __y"
+        else:
+            mul_program = "__out = __x * __y"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
-                                      "_out = 0", {"_out": dace.Memlet("_result[0]")},
-                                      external_edges=True)
+        # A one-iteration map here would fork a thread team to write a single scalar
+        init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
+        init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
 
         # Multiplication map
         state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
             "__x": dace.Memlet("_x[__i]"),
             "__y": dace.Memlet("_y[__i]")
         },
-                                 mul_program, {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+                                 mul_program, {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=None)
 
@@ -70,6 +75,11 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
+
+        # A conjugated (?dotc) complex dot is not modelled by this cblas_?dot emission; route it
+        # to the pure conj expansion rather than silently emit an unconjugated ?dotu.
+        if node.conjugate and desc_x.dtype.is_complex():
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
@@ -111,6 +121,11 @@ class ExpandDotCuBLAS(ExpandTransformation):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
+
+        # Conjugated (?dotc) complex dot is not emitted here; use the pure conj expansion
+        # rather than a silently unconjugated cublas ?dotu.
+        if node.conjugate and desc_x.dtype.is_complex():
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
@@ -168,11 +183,16 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     accumulator_type = dace.properties.TypeClassProperty(default=None,
                                                          allow_none=True,
                                                          desc="Accumulator or intermediate storage type")
+    conjugate = dace.properties.Property(dtype=bool,
+                                         default=False,
+                                         desc="Conjugate operand _x (BLAS ?dotc / Fortran complex "
+                                         "DOT_PRODUCT); no-op for real operands")
 
-    def __init__(self, name, n=None, accumulator_type=None, **kwargs):
+    def __init__(self, name, n=None, accumulator_type=None, conjugate=False, **kwargs):
         super().__init__(name, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
         self.n = n
         self.accumulator_type = accumulator_type
+        self.conjugate = conjugate
 
     def validate(self, sdfg, state):
         """
@@ -220,7 +240,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         stride_x = desc_x.strides[sqdims1[0]]
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
-        if squeezed1.num_elements() != squeezed2.num_elements():
+        if symbolic.inequal_symbols(squeezed1.num_elements(), squeezed2.num_elements()):
             raise ValueError('Size mismatch in inputs')
 
         return (desc_x, stride_x), (desc_y, stride_y), desc_res, n

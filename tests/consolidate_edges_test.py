@@ -2,6 +2,7 @@
 
 from typing import Tuple
 import dace
+import numpy as np
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import consolidate_edges
@@ -37,6 +38,81 @@ def test_consolidate_edges():
     assert len(state.edges()) == 8
     consolidate_edges(sdfg)
     assert len(state.edges()) == 6
+
+
+def _make_write_merge_sdfg(sub1: str, sub2: str, n1: int, n2: int,
+                           array_size: int) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.MapExit]:
+    # Two exit connectors of the same map, both writing directly into B, one connector
+    # per tasklet so consolidate_edges_scope sees them as two independent write paths
+    # to the same outer data container.
+    sdfg = dace.SDFG(utility.unique_name('write_merge'))
+    sdfg.add_array('B', [array_size], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+
+    me, mx = state.add_map('trivial', dict(__i='0:1'))
+    code1 = '\n'.join(f'out[{k}] = 1.0' for k in range(n1))
+    code2 = '\n'.join(f'out[{k}] = 2.0' for k in range(n2))
+    t1 = state.add_tasklet('t1', {}, {'out': None}, code1)
+    t2 = state.add_tasklet('t2', {}, {'out': None}, code2)
+    w = state.add_write('B')
+
+    state.add_nedge(me, t1, dace.Memlet())
+    state.add_nedge(me, t2, dace.Memlet())
+    mx.add_scope_connectors('1')
+    mx.add_scope_connectors('2')
+    state.add_edge(t1, 'out', mx, 'IN_1', dace.Memlet(f'B[{sub1}]'))
+    state.add_edge(t2, 'out', mx, 'IN_2', dace.Memlet(f'B[{sub2}]'))
+    state.add_edge(mx, 'OUT_1', w, None, dace.Memlet(f'B[{sub1}]'))
+    state.add_edge(mx, 'OUT_2', w, None, dace.Memlet(f'B[{sub2}]'))
+
+    sdfg.validate()
+    return sdfg, state, mx
+
+
+def test_consolidate_edges_refuses_overlapping_writes():
+    # B[0:6] and B[3:9] overlap on [3:6) -- consolidating would fold two independently
+    # ordered writes into one connector, which can silently change which write lands
+    # in the overlap. The pass must refuse the merge and leave the SDFG untouched.
+    sdfg, state, mx = _make_write_merge_sdfg('0:6', '3:9', n1=6, n2=6, array_size=10)
+    edges_before = len(state.edges())
+    in_conn_before = dict(mx.in_connectors)
+    out_conn_before = dict(mx.out_connectors)
+
+    ref = np.zeros(10)
+    sdfg(B=ref)
+
+    ret = consolidate_edges(sdfg, propagate=False)
+
+    assert ret is None or ret == 0
+    assert len(state.edges()) == edges_before
+    assert dict(mx.in_connectors) == in_conn_before
+    assert dict(mx.out_connectors) == out_conn_before
+    sdfg.validate()
+
+    # A refused merge must not perturb execution either.
+    res = np.zeros(10)
+    sdfg(B=res)
+    assert np.array_equal(ref, res)
+
+
+def test_consolidate_edges_merges_disjoint_writes():
+    # B[0:4] and B[6:10] cannot overlap -- the legitimate case must still consolidate,
+    # otherwise the overlap guard is just disabling the pass outright.
+    sdfg, state, mx = _make_write_merge_sdfg('0:4', '6:10', n1=4, n2=4, array_size=10)
+    edges_before = len(state.edges())
+
+    ret = consolidate_edges(sdfg, propagate=False)
+
+    assert ret == 1
+    assert len(state.edges()) == edges_before - 1
+    assert len(mx.in_connectors) == 1
+    assert len(mx.out_connectors) == 1
+    sdfg.validate()
+
+    res = np.zeros(10)
+    sdfg(B=res)
+    assert np.array_equal(res[0:4], np.ones(4))
+    assert np.array_equal(res[6:10], np.full(4, 2.0))
 
 
 def _make_sdfg_multi_usage_input(

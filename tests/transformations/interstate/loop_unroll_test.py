@@ -2,6 +2,9 @@
 
 import re
 
+import numpy as np
+import pytest
+
 import dace
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -201,6 +204,215 @@ def test_replace_dict_inner_loop():
     assert "jn" not in {str(s) for s in sdfg.arglist()}
 
 
+def test_start_block_loop_with_successors():
+    """Unrolling a constant-trip loop that is its region's *start block* and is
+    followed by sibling blocks must keep the region connected (the unrolled chain
+    head replaces it; its successors stay attached). Regression for the start-block
+    fixup that previously promoted the loop's successor and severed the chain."""
+    sdfg = dace.SDFG("start_loop_with_succ")
+    sdfg.add_array("B", shape=(4, ), dtype=dace.float64)
+
+    loop = LoopRegion(label="counted",
+                      condition_expr=CodeBlock("i < 3"),
+                      loop_var="i",
+                      initialize_expr=CodeBlock("i = 0"),
+                      update_expr=CodeBlock("i = i + 1"),
+                      sdfg=sdfg)
+    # The loop is the region's start block and is followed by two sibling states.
+    sdfg.add_node(loop, is_start_block=True)
+    after1 = sdfg.add_state(label="after1")
+    after2 = sdfg.add_state(label="after2")
+    sdfg.add_edge(loop, after1, InterstateEdge())
+    sdfg.add_edge(after1, after2, InterstateEdge())
+
+    bstate = loop.add_state(label="b", is_start_block=True)
+    b_an = bstate.add_access("B")
+    t = bstate.add_tasklet(name="w", inputs={}, outputs={"_out"}, code="_out = i")
+    bstate.add_edge(t, "_out", b_an, None, Memlet(expr="B[i]"))
+
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+
+    assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+    src_nodes = {n for n in sdfg.nodes() if sdfg.in_degree(n) == 0}
+    dst_nodes = {n for n in sdfg.nodes() if sdfg.out_degree(n) == 0}
+    assert len(src_nodes) == 1 and len(dst_nodes) == 1
+    middle = set(sdfg.nodes()) - src_nodes - dst_nodes
+    assert all(sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1 for n in middle)
+
+
+def test_unroll_loop_body_with_nested_sdfg():
+    """Unrolling a loop whose body holds a NestedSDFG must keep that nested SDFG's parent
+    pointers valid. Copying the body by deepcopy detaches the nested SDFG's ``parent_sdfg``
+    (the outer SDFG is outside the block's copy memo), so it has to be restored -- otherwise
+    validation fails with 'Parent SDFG not properly set for nested SDFG node'. The nested SDFG
+    reads the loop variable through its symbol mapping, so the per-iteration replace must reach
+    it too."""
+    sdfg = dace.SDFG("unroll_body_nsdfg")
+    sdfg.add_array("A", shape=(4, ), dtype=dace.int32)
+
+    loop = LoopRegion(label="counted",
+                      condition_expr=CodeBlock("i < 4"),
+                      loop_var="i",
+                      initialize_expr=CodeBlock("i = 0"),
+                      update_expr=CodeBlock("i = i + 1"),
+                      sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state(label="body", is_start_block=True)
+
+    # A nested SDFG that writes its loop-index value into a scalar output ``y``.
+    nsdfg = dace.SDFG("inner")
+    nsdfg.add_symbol("ii", dace.int32)
+    nsdfg.add_array("y", shape=(1, ), dtype=dace.int32)
+    inner = nsdfg.add_state("inner")
+    itk = inner.add_tasklet(name="w", inputs=set(), outputs={"_out"}, code="_out = ii")
+    inner.add_edge(itk, "_out", inner.add_access("y"), None, Memlet(expr="y[0]"))
+
+    nsdfg_node = body.add_nested_sdfg(nsdfg, set(), {"y"}, symbol_mapping={"ii": "i"})
+    body.add_edge(nsdfg_node, "y", body.add_access("A"), None, Memlet(expr="A[i]"))
+
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+    sdfg.validate()  # would raise 'Parent SDFG not properly set' if the deepcopy left it detached
+
+    assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+
+    A = np.full(4, -1, dtype=np.int32)
+    sdfg(A=A)
+    assert np.array_equal(A, np.arange(4, dtype=np.int32)), A
+
+
+def _sibling_loops_sdfg(n_loops: int, trip: int) -> tuple:
+    """``n_loops`` sibling loops in one parent, ALL sharing one label -- the state that unrolling an
+    enclosing loop leaves behind (each iterate deepcopies the inner loop, preserving its label). The
+    iteration-region label is derived from that shared loop label, so unrolling all of them must not
+    collide."""
+    sdfg = dace.SDFG("siblings")
+    sdfg.add_array("A", shape=(trip, ), dtype=dace.float64)
+    loops = []
+    prev = None
+    for k in range(n_loops):
+        loop = LoopRegion(label="loop_ss",
+                          condition_expr=CodeBlock(f"_loop_it < {trip}"),
+                          loop_var="_loop_it",
+                          initialize_expr=CodeBlock("_loop_it = 0"),
+                          update_expr=CodeBlock("_loop_it = _loop_it + 1"),
+                          sdfg=sdfg)
+        # add_node WITHOUT ensure_unique_name: the siblings deliberately keep the identical label.
+        sdfg.add_node(loop, is_start_block=(k == 0))
+        if prev is not None:
+            sdfg.add_edge(prev, loop, InterstateEdge())
+        body = ControlFlowRegion(label="body", sdfg=sdfg, parent=loop)
+        loop.add_node(body, is_start_block=True)
+        s = body.add_state(label="s", is_start_block=True)
+        t = s.add_tasklet(name="w", inputs=set(), outputs={"_o"}, code="_o = 1.0")
+        s.add_edge(t, "_o", s.add_access("A"), None, Memlet(expr="A[_loop_it]"))
+        prev = loop
+        loops.append(loop)
+    return sdfg, loops
+
+
+def test_unroll_sibling_loops_sharing_label():
+    """Regression: iteration regions were labelled purely from ``loop.label`` + iterate, with no
+    uniqueness check -- sibling loops sharing a label produced ``multiple blocks with the same name``.
+    Exercised on the no-inline path, where the iteration regions persist as blocks (as in the
+    failing CloudSC unroll)."""
+    for inline in (False, True):
+        sdfg, loops = _sibling_loops_sdfg(n_loops=3, trip=4)
+        for loop in list(loops):
+            LoopUnroll.apply_to(sdfg, options={'inline_iterations': inline}, verify=False, annotate=False, loop=loop)
+        # No LoopRegion left, and validation (per-parent label uniqueness) holds.
+        assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+        sdfg.validate()
+
+
+N_STRIDED = 8
+
+
+def strided_loop_sdfg(start: int, stop: int, step: int, start_block_loop: bool) -> dace.SDFG:
+    """``for i in range(start, stop, step): out[i] = i + 1``, as a LoopRegion.
+
+    The written value is ``i + 1`` so a dropped iteration is visible both in WHICH slot stays at the
+    zero fill and in the value landing there -- a body emitted for the wrong iterate is caught too, not
+    just a body that went missing.
+    """
+    sdfg = dace.SDFG(f'strided_{start}_{stop}_{step}_{int(start_block_loop)}'.replace('-', 'm'))
+    sdfg.add_array('out', shape=(N_STRIDED, ), dtype=dace.float64)
+    loop = LoopRegion(label='strided',
+                      condition_expr=CodeBlock(f'i > {stop}' if step < 0 else f'i < {stop}'),
+                      loop_var='i',
+                      initialize_expr=CodeBlock(f'i = {start}'),
+                      update_expr=CodeBlock(f'i = i + ({step})'),
+                      sdfg=sdfg)
+    if start_block_loop:
+        sdfg.add_node(loop, is_start_block=True)
+    else:
+        pre = sdfg.add_state(label='pre', is_start_block=True)
+        sdfg.add_node(loop, is_start_block=False)
+        sdfg.add_edge(pre, loop, InterstateEdge())
+    body = ControlFlowRegion(label='body', sdfg=sdfg, parent=loop)
+    loop.add_node(body, is_start_block=True)
+    state = body.add_state(label='s', is_start_block=True)
+    tasklet = state.add_tasklet(name='w', inputs=set(), outputs={'_o'}, code='_o = i + 1')
+    state.add_edge(tasklet, '_o', state.add_access('out'), None, Memlet(expr='out[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('start, stop, step', [
+    (N_STRIDED - 1, -1, -1),
+    (N_STRIDED - 1, -1, -2),
+    (N_STRIDED - 1, -1, -3),
+    (N_STRIDED - 2, -1, -3),
+    (N_STRIDED - 1, 0, -1),
+    (N_STRIDED - 1, 1, -2),
+    (0, N_STRIDED, 1),
+    (0, N_STRIDED, 3),
+    (1, N_STRIDED, 3),
+    (N_STRIDED - 1, N_STRIDED, -1),
+    (0, 0, 1),
+])
+@pytest.mark.parametrize('start_block_loop', [False, True])
+def test_unroll_strided_loop_keeps_every_iteration(start: int, stop: int, step: int, start_block_loop: bool):
+    """Unrolling must emit exactly the loop's iterations, whichever way the iterate travels.
+
+    Regression: the iterate offsets were enumerated as ``range(0, end - start + 1, stride)``, but
+    ``get_loop_end`` reports an INCLUSIVE end, so the exclusive ``range`` bound has to sit one unit past
+    it in the DIRECTION OF TRAVEL -- below it for a negative stride, not above. The hardcoded ``+1``
+    put a descending loop's bound two units short and silently dropped the last ``ceil(2 / |stride|)``
+    iterations while still reporting the transformation as applied. Covers strides that do and do not
+    divide the range evenly, and zero-trip loops of either direction.
+    """
+    expected_iterates = list(range(start, stop, step))
+
+    reference = strided_loop_sdfg(start, stop, step, start_block_loop)
+    expected = np.zeros(N_STRIDED)
+    reference(out=expected)
+
+    unrolled = strided_loop_sdfg(start, stop, step, start_block_loop)
+    assert unrolled.apply_transformations_repeated(LoopUnroll, validate_all=True) == 1
+    unrolled.validate()
+    assert not [n for n in unrolled.all_control_flow_regions() if isinstance(n, LoopRegion)]
+
+    # One body per iteration -- catches a drop even where two iterations write the same slot.
+    emitted = [n for state in unrolled.all_states() for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(emitted) == len(expected_iterates), (len(emitted), expected_iterates)
+
+    got = np.zeros(N_STRIDED)
+    unrolled(out=got)
+    assert np.array_equal(expected, got), (expected, got)
+
+
+def test_unroll_refuses_zero_stride():
+    """A never-advancing loop has no finite unrolling; the transformation must decline rather than
+    raise out of ``range(0, diff, 0)`` midway through mutating the graph."""
+    sdfg = strided_loop_sdfg(0, N_STRIDED, 1, start_block_loop=False)
+    loop = next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
+    loop.update_statement = CodeBlock('i = i + 0')
+    assert sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True) == 0
+    assert [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+
+
 def test_unroll_loop_with_negative_iterate_values():
     """A descending loop must unroll every iteration, under a label that stays a valid name once
     the iterate goes negative."""
@@ -237,4 +449,14 @@ if __name__ == "__main__":
     test_melt_kernel()
     test_triang_elim()
     test_replace_dict_inner_loop()
+    test_start_block_loop_with_successors()
+    test_unroll_loop_body_with_nested_sdfg()
+    test_unroll_sibling_loops_sharing_label()
+    for cfg_start_block_loop in (False, True):
+        for cfg_start, cfg_stop, cfg_step in [(N_STRIDED - 1, -1, -1), (N_STRIDED - 1, -1, -2), (N_STRIDED - 1, -1, -3),
+                                              (N_STRIDED - 2, -1, -3), (N_STRIDED - 1, 0, -1), (N_STRIDED - 1, 1, -2),
+                                              (0, N_STRIDED, 1), (0, N_STRIDED, 3), (1, N_STRIDED, 3),
+                                              (N_STRIDED - 1, N_STRIDED, -1), (0, 0, 1)]:
+            test_unroll_strided_loop_keeps_every_iteration(cfg_start, cfg_stop, cfg_step, cfg_start_block_loop)
+    test_unroll_refuses_zero_stride()
     test_unroll_loop_with_negative_iterate_values()

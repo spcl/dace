@@ -13,6 +13,7 @@ env:
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  PYTHONHASHSEED: '0'
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -22,15 +23,18 @@ jobs:
   test-heterogeneous:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, linux]
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Install dependencies
+    - uses: ./.github/actions/setup-dace-venv
+      with:
+        pip-packages: flake8 pytest-xdist coverage mpi4py pytest-mpi
+        codecov: 'true'
+
+    - name: Check mpi4py
       run: |
-        rm -f ~/.dace.conf
-        rm -rf .dacecache tests/.dacecache
-        python -m venv ~/.venv      # create venv so we can use pip
         source ~/.venv/bin/activate # activate venv
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
@@ -50,11 +54,14 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl or papi or datainstrument"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "papi or datainstrument"
 
     - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
@@ -65,6 +72,9 @@ jobs:
     - name: Test MPI with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
@@ -74,6 +84,9 @@ jobs:
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
@@ -85,14 +98,4 @@ jobs:
         done
 
     - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        source ~/.venv/bin/activate # activate venv
-        coverage combine . */; coverage report; coverage xml
-        reachable=0
-        ping -W 2 -c 1 codecov.io || reachable=$?
-        if [ $reachable -eq 0 ]; then
-          ./codecov
-        else
-          echo "Codecov.io is unreachable"
-        fi
+      uses: ./.github/actions/report-coverage

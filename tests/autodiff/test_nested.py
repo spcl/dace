@@ -11,7 +11,7 @@ import dace
 from dace.transformation.interstate import StateFusion
 
 import dace.libraries.onnx as donnx
-from test_single_state import SDFGBackwardRunner, run_correctness
+from test_single_state import SDFGBackwardRunner, run_correctness, _pin_reduce_to_pure
 
 
 @dace.program
@@ -135,6 +135,7 @@ def test_view_forwarding():
 
     sdfg = add_reshape_grad_test_nested.to_sdfg(simplify=True)
 
+    _pin_reduce_to_pure(sdfg)
     sdfg.expand_library_nodes()
     del sdfg.arrays["target_shape"]
 
@@ -168,7 +169,7 @@ def test_view_forwarding():
 
 
 if __name__ == "__main__":
-    test_nested()
-    test_nested_forwarding()
-    test_triple_nested_forwarding()
-    test_view_forwarding()
+    test_nested(device="cpu")
+    test_nested_forwarding(device="cpu")
+    test_triple_nested_forwarding(device="cpu")
+    test_view_forwarding(device="cpu")

@@ -2,6 +2,8 @@
 import dace
 import numpy as np
 
+N = dace.symbol('N', dtype=dace.int64)
+
 
 def test_cache_same_args():
     """
@@ -69,8 +71,30 @@ def test_cache_argument_names():
     assert np.allclose(a, rega) and np.allclose(c, regc)
 
 
+def test_cache_skips_autoopt_specialized_symbols():
+    """
+    Tests that a call whose symbol values were baked in by auto-optimization is not served from
+    the cache. The key carries argument types, not values, so such an entry would be handed back
+    for every later value of the symbol.
+    """
+
+    @dace.program(auto_optimize=True)
+    def test(x: dace.float64[10]):
+        if N == 0:
+            x[:] = 1.0
+        else:
+            x[:] = 2.0
+
+    for n, expected in ((0, 1.0), (5, 2.0)):
+        x = np.zeros(10, dtype=np.float64)
+        test(x, N=n)
+        assert np.allclose(x, expected), f'N={n} ran an SDFG specialized for another value: {x[0]}'
+        assert not test._cache.cache, 'a value-specialized SDFG was added to the program cache'
+
+
 if __name__ == '__main__':
     test_cache_same_args()
     test_cache_different_args()
     test_cache_return_values()
     test_cache_argument_names()
+    test_cache_skips_autoopt_specialized_symbols()

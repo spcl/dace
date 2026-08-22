@@ -8,7 +8,7 @@ from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
+from dace.symbolic import pystr_to_symbolic, shapes_equal, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
@@ -22,6 +22,9 @@ class MemletExpr:
     subset: subsets.Range
     new_axes: List[int]
     arrdims: Dict[int, str]
+    #: ``subset`` indices of dims from a slice/full-range (kept as axes) vs a scalar index (collapsed).
+    #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. ``None`` = untracked (squeeze all singletons).
+    slice_dims: Optional[List[int]] = None
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -125,6 +128,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             remaining_dims = len(ast_ndslice) - num_new_axes - idx - 1
             for j in range(idx, len(ndslice) - remaining_dims):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
+                offsets.append(idx)  # ellipsis full ranges keep their axis
                 idx += 1
                 new_idx += 1
         elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
@@ -148,6 +152,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 rs = 1
 
             ndslice[idx] = (rb, re - 1, rs)
+            offsets.append(idx)  # a slice keeps its axis, even length-1
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array)):
@@ -157,7 +162,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 # Boolean array indexing
                 if len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(array.shape):
+                if not shapes_equal(desc.shape, array.shape):
                     raise IndexError(f'Invalid indexing into array "{dim.id}". '
                                      'Shape of boolean index must match original array.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
@@ -199,10 +204,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     return ndslice, offsets, new_axes, arrdims
 
 
-def parse_memlet_subset(array: data.Data,
-                        node: Union[ast.Name, ast.Subscript],
-                        das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
+def parse_memlet_subset(
+        array: data.Data,
+        node: Union[ast.Name, ast.Subscript],
+        das: Dict[str, Any],
+        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], Dict[int, str], Optional[List[int]]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -211,7 +217,9 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
-    :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
+    :return: A 4-tuple of (subset, list of new axis indices, index-to-array-dimension correspondence,
+             list of subset dimensions that came from a slice/full range and must not be squeezed --
+             or ``None`` when that provenance was not tracked).
     """
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
@@ -249,10 +257,13 @@ def parse_memlet_subset(array: data.Data,
         for i in range(1, len(subset_array)):
             subset = subset.compose(subset_array[i])
 
-    else:  # Use entire range
+        # 1:1 with ``subset`` only for a single subscript; nested A[i][j] narrows the space, leave untracked.
+        slice_dims = list(offsets) if len(ast_ndslices) == 1 else None
+    else:  # entire range -- every dim survives
         subset = _ndslice_to_subset(ndslice)
+        slice_dims = list(range(len(array.shape)))
 
-    return subset, extra_dims, arrdims
+    return subset, extra_dims, arrdims, slice_dims
 
 
 # Parses a memlet statement
@@ -289,7 +300,7 @@ def ParseMemlet(visitor,
             write_conflict_resolution = node.value.args[1]
 
     try:
-        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+        subset, new_axes, arrdims, slice_dims = parse_memlet_subset(array, node, das, parsed_slice)
     except IndexError:
         raise DaceSyntaxError(
             visitor, node, 'Failed to parse memlet expression due to dimensionality. '
@@ -299,7 +310,7 @@ def ParseMemlet(visitor,
     if num_accesses is None:
         num_accesses = subset.num_elements()
 
-    return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims)
+    return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims, slice_dims)
 
 
 def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: Dict[str, data.Data]):

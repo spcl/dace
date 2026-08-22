@@ -48,7 +48,11 @@ def test_symmap():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    # One atomic for the whole map -- that is what tiling the conflict buys. The tile-local
+    # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
+    # loop now accumulates in a register and stores once, so assert the register instead of
+    # the memory round-trip it replaced.
+    assert '__acc_' in code and code.count('atomic') == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -60,10 +64,22 @@ def test_libnode():
         dace.reduce(lambda a, b: a + b, A, output, identity=0)
 
     sdfg = sum.to_sdfg()
+    # This test is about TILING a write-conflict reduction, so it needs the expansion that
+    # actually produces a WCR edge.  Reduce's default dispatches on schedule and lands on the
+    # OpenMP expansion here, which emits a ``reduction()`` clause instead -- nothing for
+    # TileWCR to act on -- so ask for the pure lowering explicitly rather than depending on
+    # whichever one happens to be the default.
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.libraries.standard.nodes.Reduce):
+            n.implementation = 'pure'
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    # One atomic for the whole map -- that is what tiling the conflict buys. The tile-local
+    # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
+    # loop now accumulates in a register and stores once, so assert the register instead of
+    # the memory round-trip it replaced.
+    assert '__acc_' in code and code.count('atomic') == 1
     _runtest(sdfg, 257)
     del sdfg
 

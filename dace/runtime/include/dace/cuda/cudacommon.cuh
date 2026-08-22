@@ -3,6 +3,8 @@
 #define __DACE_CUDACOMMON_CUH
 
 #if defined(__HIPCC__) || defined(WITH_HIP)
+// The precompiled runtime header is force-included ahead of the generated file's own includes.
+#include <hip/hip_runtime.h>
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;

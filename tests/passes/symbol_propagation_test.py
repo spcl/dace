@@ -7,6 +7,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import SymbolPropagation, ScalarToSymbolPromotion
+from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 
 
 def _count_loops(sdfg: dace.SDFG):
@@ -697,3 +698,94 @@ def test_propagated_value_keeps_its_python_call_spelling():
     assert 'Abs' not in condition, f'sympy name leaked into the branch condition: {condition}'
     assert 'abs(z)' in condition, condition
     sdfg.validate()
+
+
+def test_resolve_bindings_recovers_a_loop_variable_relation_without_touching_the_sdfg():
+    """``SymbolPropagation`` deliberately leaves ``__sym = i * inc`` in the graph -- substituting a
+    loop-variable RHS through ``replace_dict`` would size descriptors by it. A structural matcher
+    asking ``coeff(i)`` about the opaque symbol therefore reads 0, i.e. "loop-invariant", which is
+    how a scatter gets mistaken for one. :func:`resolve_bindings` answers the relation as a QUERY:
+    the expression comes back related to ``i``, and the SDFG is byte-identical afterwards."""
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('resolve_bindings')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_symbol('inc', dace.int64)
+    sdfg.add_symbol('__sym_idx', dace.int64)
+
+    loop = LoopRegion('L', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('first', is_start_block=True)
+    body = loop.add_state('body')
+    loop.add_edge(first, body, dace.InterstateEdge(assignments={'__sym_idx': 'i * inc'}))
+    tasklet = body.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[__sym_idx]'))
+    sdfg.validate()
+
+    before = sdfg.to_json()
+    i, inc = dace.symbolic.symbol('i'), dace.symbolic.symbol('inc')
+    opaque = dace.symbolic.pystr_to_symbolic('__sym_idx')
+    assert opaque.coeff(i) == 0, 'the opaque symbol must be the "loop-invariant"-looking case'
+
+    assert consistent_bindings(sdfg)['__sym_idx'] == 'i * inc'
+    resolved = resolve_bindings(opaque, sdfg)
+    assert resolved.coeff(i) == inc, resolved
+    assert sdfg.to_json() == before, 'resolve_bindings must not mutate the SDFG'
+
+
+def test_resolve_bindings_leaves_a_data_dependent_index_opaque():
+    """A binding that is a bare data read (``bsym = b_scal``) has no compile-time value; expanding
+    it would put a container name in the answer. It must stay opaque, so a caller sees an
+    unresolved symbol and can fail closed instead of reading it as loop-invariant."""
+    sdfg = dace.SDFG('resolve_bindings_data')
+    sdfg.add_array('hist', [16], dace.float64)
+    sdfg.add_scalar('b_scal', dace.int64, transient=True)
+    sdfg.add_symbol('bsym', dace.int64)
+
+    first = sdfg.add_state('first', is_start_block=True)
+    body = sdfg.add_state('body')
+    sdfg.add_edge(first, body, dace.InterstateEdge(assignments={'bsym': 'b_scal'}))
+
+    opaque = dace.symbolic.pystr_to_symbolic('bsym')
+    assert resolve_bindings(opaque, sdfg) == opaque
+
+
+def test_resolve_bindings_expands_data_reads_only_when_asked():
+    """The frontend mints a FRESH symbol per use of the same read: a branch condition on
+    ``idx[i] * idx[i - 1]`` and the subscript it guards get four names for two values. A solver
+    handed those four sees four unrelated variables and can prove nothing about the guard, so
+    ``expand_data_reads`` puts both back in terms of the container -- and, in doing so, back in
+    terms of the loop variable, which is what makes the two iterations distinguishable.
+
+    Default-off is the other half of the contract: a structural matcher that expanded a bare data
+    read would only swap a symbol for a container name and then read it as loop-invariant."""
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('resolve_bindings_expand')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('idx', [N], dace.int64)
+    for name in ('p_cond', 'q_cond', 'p_read', 'q_read'):
+        sdfg.add_symbol(name, dace.int64)
+
+    loop = LoopRegion('L', 'i < N', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('first', is_start_block=True)
+    mid = loop.add_state('mid')
+    body = loop.add_state('body')
+    loop.add_edge(first, mid, dace.InterstateEdge(assignments={'p_cond': 'idx[i]', 'q_cond': 'idx[i - 1]'}))
+    loop.add_edge(mid, body, dace.InterstateEdge(assignments={'p_read': 'idx[i]', 'q_read': 'idx[i - 1]'}))
+    tasklet = body.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[p_read * q_read]'))
+    sdfg.validate()
+
+    before = sdfg.to_json()
+    guard = dace.symbolic.pystr_to_symbolic('p_cond * q_cond > i')
+    read = dace.symbolic.pystr_to_symbolic('p_read * q_read')
+    assert not (read.free_symbols & guard.free_symbols), 'the premise: nothing links the two spellings'
+
+    assert resolve_bindings(read, sdfg) == read, 'a bare data read must stay opaque by default'
+
+    expanded_read = resolve_bindings(read, sdfg, expand_data_reads=True)
+    expanded_guard = resolve_bindings(guard, sdfg, expand_data_reads=True)
+    assert expanded_read != read, 'expansion must actually replace the promoted symbols'
+    assert {str(s) for s in expanded_read.free_symbols} == {'i'}, expanded_read
+    assert expanded_guard.args[0] == expanded_read, (expanded_guard, expanded_read)
+    assert sdfg.to_json() == before, 'resolve_bindings must not mutate the SDFG'

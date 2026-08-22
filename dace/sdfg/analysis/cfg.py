@@ -2,11 +2,113 @@
 """ Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
-import networkx as nx
+from dace import graphlib as nx
+from dace import symbolic
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+
+
+def collect_enclosing_conditions(block: ControlFlowBlock, stop: Optional[ControlFlowRegion] = None) -> sp.Basic:
+    """The conjunction of branch conditions that must hold for ``block`` to execute.
+
+    Walks out through every enclosing :class:`ConditionalBlock`, accumulating the guard of the
+    branch that contains ``block``; an ``else`` branch (``cond is None``) contributes the
+    negation of all preceding conditions. Returns ``sp.true`` when nothing guards ``block``.
+
+    ``stop`` bounds the walk at a region: guards at or above it are not collected. Pass the
+    enclosing loop when the caller reasons in that loop's iteration space, so a condition
+    written in terms of symbols an interstate edge reassigns on the way in never enters the
+    answer. Left ``None`` the walk runs to the root.
+
+    A condition that does not parse is dropped rather than guessed at. Every consumer uses the
+    result to SHRINK the set of states it must consider, so a missing conjunct can only make an
+    answer more conservative, never wrong.
+    """
+    conditions: List[sp.Basic] = []
+    current: Optional[ControlFlowBlock] = block
+    while current is not None and current is not stop:
+        parent = current.parent_graph
+        if parent is None or parent is stop:
+            break
+        # ``block`` lives inside a branch region; the ConditionalBlock is that region's parent.
+        cond_block = parent.parent_graph
+        if isinstance(cond_block, ConditionalBlock):
+            our_cond: Optional[str] = None
+            seen_else = False
+            for cond_codeblock, branch in cond_block.branches:
+                if branch is parent:
+                    if cond_codeblock is not None and cond_codeblock.as_string:
+                        our_cond = cond_codeblock.as_string
+                    else:
+                        seen_else = True
+                    break
+            if our_cond is not None:
+                parsed = parse_condition(our_cond)
+                if parsed is not None:
+                    conditions.append(parsed)
+            elif seen_else:
+                negs: List[sp.Basic] = []
+                for cond_codeblock, _branch in cond_block.branches:
+                    if cond_codeblock is None:
+                        break
+                    if cond_codeblock.as_string:
+                        parsed = parse_condition(cond_codeblock.as_string)
+                        negated = negate_condition(parsed) if parsed is not None else None
+                        if negated is not None:
+                            negs.append(negated)
+                if negs:
+                    conditions.append(sp.And(*negs) if len(negs) > 1 else negs[0])
+        current = parent
+    if not conditions:
+        return sp.true
+    if len(conditions) == 1:
+        return conditions[0]
+    try:
+        return sp.And(*conditions)
+    except TypeError:
+        # ``sp.And`` rejects DaCe's own ``AND`` / ``OR`` nodes -- ``pystr_to_symbolic`` builds
+        # them with ``evaluate=False`` and sympy does not count a Function as Boolean. Fold with
+        # DaCe's connective instead of dropping the guard; both consumers understand it.
+        out = conditions[0]
+        for cond in conditions[1:]:
+            out = symbolic.AND(out, cond)
+        return out
+
+
+def parse_condition(cond_str: str) -> Optional[sp.Basic]:
+    """``cond_str`` as a sympy expression, or ``None`` if it does not parse."""
+    try:
+        return symbolic.pystr_to_symbolic(cond_str)
+    except Exception:
+        return None
+
+
+def negate_condition(expr: sp.Basic) -> Optional[sp.Basic]:
+    """``not expr``, or ``None`` when it has no form the callers can use.
+
+    ``sp.Not`` RAISES on DaCe's own ``AND`` / ``OR`` nodes: ``pystr_to_symbolic`` builds them with
+    ``evaluate=False`` to keep parse trees verbatim, and sympy does not count a Function as
+    Boolean. So the connectives are negated by De Morgan here instead of being handed to sympy,
+    and only a bare relational reaches ``sp.Not``.
+    """
+    func = str(expr.func) if isinstance(expr, sp.Basic) else ''
+    if func == 'NOT':
+        return expr.args[0]
+    if func in ('AND', 'OR'):
+        parts = [negate_condition(a) for a in expr.args]
+        if any(part is None for part in parts):
+            return None
+        joiner = symbolic.OR if func == 'AND' else symbolic.AND
+        out = parts[0]
+        for part in parts[1:]:
+            out = joiner(out, part)
+        return out
+    try:
+        return sp.Not(expr)
+    except TypeError:
+        return None  # not a form sympy can negate; dropping the guard stays conservative
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
@@ -40,11 +142,34 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     return dom_frontiers
 
 
+def block_immediate_dominators(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    """ Returns the immediate dominator of every block, including those unreachable from the start block.
+
+    ``nx.immediate_dominators`` only covers what the start block reaches, which leaves a legitimately
+    unreachable block -- dead code the frontend emitted, a branch never taken -- absent from the map
+    rather than mapped. A block nothing can reach is dominated by nothing, so it is its own immediate
+    dominator: a root, exactly like the start block. That keeps every dominator-based analysis total
+    over the whole CFG instead of raising ``KeyError`` on part of it.
+
+    Note that this deliberately does not distinguish dead code from a region some transformation
+    severed by mistake -- the two are the same graph shape, and nothing local to the CFG can tell them
+    apart. Codegen is what catches the severed case, by refusing to emit a program that is missing a
+    block (see ``DaCeCodeGenerator.generate_code``).
+
+    :param cfg: The control flow graph to compute immediate dominators for.
+    :return: A dictionary mapping each block to its immediate dominator.
+    """
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    for block in cfg.nodes():
+        idom.setdefault(block, block)
+    return idom
+
+
 def all_dominators(
         cfg: ControlFlowRegion,
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or block_immediate_dominators(cfg)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
@@ -52,7 +177,9 @@ def all_dominators(
             continue
         g.add_edge(node, dom)
     tc = nx.transitive_closure_dag(g)
-    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {cfg.start_block: set()}
+    # Seeded with every block, not just the start one: a root is dominated by nothing, and an
+    # unreachable block is a root, so both need an entry the transitive closure will never supply.
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {block: set() for block in cfg.nodes()}
     for node in tc:
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
 
@@ -311,7 +438,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or block_immediate_dominators(cfg)
     merges = branch_merges(cfg, idom)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
@@ -544,7 +671,7 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     """
     # Get parent states
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = block_immediate_dominators(cfg)
     ptree = block_parent_tree(cfg, loopexits, idom=idom)
 
     # Annotate branches

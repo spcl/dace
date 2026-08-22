@@ -17,12 +17,15 @@ import pytest
 import dace
 import dace.libraries.onnx as donnx
 
+from tests.ml_gpu_utils import DEVICES, run_sdfg
+
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("simplify", [True, False])
-def test_squeeze(simplify: bool):
+def test_squeeze(simplify: bool, device):
 
-    sdfg = dace.SDFG("test_squeeze")
+    sdfg = dace.SDFG(f"test_squeeze_{device}")
 
     sdfg.add_array("X_arr", [1], dace.float32)
     sdfg.add_array("axes", [1], dace.int64, transient=True)
@@ -65,16 +68,17 @@ def test_squeeze(simplify: bool):
         sdfg.simplify()
 
     sdfg.expand_library_nodes()
-    result = sdfg(X_arr=X)
+    result = run_sdfg(sdfg, device, X_arr=X)
 
     assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
     assert result[0] == X, f"Expected value {X}, got {result[0]}"
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("simplify", [True, False])
-def test_shape(simplify: bool):
-    sdfg = dace.SDFG("test_shape")
+def test_shape(simplify: bool, device):
+    sdfg = dace.SDFG(f"test_shape_{device}")
 
     sdfg.add_array("X_arr", [2, 4], dace.float32)
     sdfg.add_array("__return", [2], dace.int64)
@@ -97,15 +101,16 @@ def test_shape(simplify: bool):
         sdfg.expand_library_nodes()
         sdfg.simplify()
 
-    result = sdfg(X_arr=X)
+    result = run_sdfg(sdfg, device, X_arr=X)
 
     assert np.all(result == (2, 4))
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("simplify", [True, False])
-def test_unsqueeze(simplify: bool):
-    sdfg = dace.SDFG("test_unsqueeze")
+def test_unsqueeze(simplify: bool, device):
+    sdfg = dace.SDFG(f"test_unsqueeze_{device}")
 
     sdfg.add_scalar("X_arr", dace.float32)
     sdfg.add_array("axes", [1], dace.int64, transient=True)
@@ -140,17 +145,18 @@ def test_unsqueeze(simplify: bool):
         sdfg.expand_library_nodes()
         sdfg.simplify()
 
-    result = sdfg(X_arr=X)
+    result = run_sdfg(sdfg, device, X_arr=X)
 
     assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
     assert X == result[0], f"Expected value {X}, got {result[0]}"
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("scalars", [True, False])
 @pytest.mark.parametrize("simplify", [True, False])
-def test_add(scalars: bool, simplify: bool):
-    sdfg = dace.SDFG("test_add")
+def test_add(scalars: bool, simplify: bool, device):
+    sdfg = dace.SDFG(f"test_add_{device}")
 
     if scalars:
         sdfg.add_scalar("X_arr", dace.float32)
@@ -211,7 +217,7 @@ def test_add(scalars: bool, simplify: bool):
         sdfg.expand_library_nodes()
         sdfg.simplify()
 
-    result = sdfg(X_arr=X, W_arr=W)
+    result = run_sdfg(sdfg, device, X_arr=X, W_arr=W)
 
     numpy_result = X + W
 
@@ -220,10 +226,10 @@ def test_add(scalars: bool, simplify: bool):
 
 if __name__ == "__main__":
     for simplify in [True, False]:
-        test_squeeze(simplify=simplify)
-        test_shape(simplify=simplify)
-        test_unsqueeze(simplify=simplify)
+        test_squeeze(simplify=simplify, device="cpu")
+        test_shape(simplify=simplify, device="cpu")
+        test_unsqueeze(simplify=simplify, device="cpu")
 
     for scalars in [True, False]:
         for simplify in [True, False]:
-            test_add(scalars=scalars, simplify=simplify)
+            test_add(scalars=scalars, simplify=simplify, device="cpu")

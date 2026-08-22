@@ -182,23 +182,40 @@ def from_json(obj, context=None, known_type=None):
         raise TypeError("Type mismatch in JSON, found " + t + ", expected " + known_type.__name__)
 
     if t:
+        # Two failures used to share one handler, which is what made a bad parse surface as nonsense
+        # far away: an unparsable shape became a placeholder, the Subset holding it became one too,
+        # then the Memlet, then the whole block, and the load finally died on "Expected
+        # ControlFlowBlock, got SerializableObject" -- naming neither the real error nor where it was.
         try:
             serializer = get_serializer(t)
+        except KeyError as ex:
+            # UNREGISTERED type: exactly what the placeholder is for (see the ``deserialize_exception``
+            # config text -- "e.g., due to missing library node"). Keeping the raw JSON lets an SDFG
+            # carrying a third-party node still round-trip through a build that never defined it.
+            if config.Config.get_bool('testing', 'deserialize_exception'):
+                raise
+            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
+            return SerializableObject.from_json(obj, context=context, typename=t)
+
+        # REGISTERED type: this build knows how to read it, so a raised exception is a genuine parse
+        # failure on data we understand. Substituting a placeholder here is silent corruption, so
+        # report it where it happened, with the type that failed and the original error chained.
+        try:
             if is_dataclass(serializer):
                 # Special case for dataclasses
                 field_values = {}
                 for field in serializer.__dataclass_fields__.values():
                     if field.name in obj:
                         field_values[field.name] = from_json(obj[field.name], context, known_type=field.type)
-                deserialized = serializer(**field_values)
-            else:
-                deserialized = serializer.from_json(obj, context=context)
+                return serializer(**field_values)
+            return serializer.from_json(obj, context=context)
         except Exception as ex:
-            if config.Config.get_bool('testing', 'deserialize_exception'):
-                raise
-            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
-            deserialized = SerializableObject.from_json(obj, context=context, typename=t)
-        return deserialized
+            # A note rather than a rewrap: reconstructing the type would break every exception whose
+            # constructor takes more than a message (InvalidSDFGError wants the SDFG and a block id),
+            # and callers already catch these by type. Not ``add_note``: that is 3.11+, and on 3.10 it
+            # raised an AttributeError here that replaced the parse failure it was annotating.
+            ex.__dict__.setdefault('__notes__', []).append(f'while deserializing a {t}')
+            raise
 
     # No type was found, so treat this as a regular dictionary
     return {from_json(k, context): from_json(v, context) for k, v in obj.items()}

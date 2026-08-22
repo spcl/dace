@@ -6,8 +6,8 @@ import copy
 import warnings
 from typing import Dict, List, Optional, Tuple, Sequence
 
-import networkx as nx
-from networkx.exception import NetworkXError, NodeNotFound
+from dace import graphlib as nx
+from dace.graphlib import NetworkXError, NodeNotFound
 
 from dace import data, dtypes
 from dace import memlet as mm
@@ -24,6 +24,16 @@ def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicTy
     """Check if `subset` has the size given in `shape`."""
     return subset.dims() == len(shape) and all((m == a) == True  # SymPy comparison
                                                for m, a in zip(subset.size(), shape))
+
+
+def squeezed_shape(shape: Sequence[symbolic.SymbolicType]) -> List[symbolic.SymbolicType]:
+    """`shape` without its size-1 dimensions, to compare against a squeezed subset.
+
+    `Range.squeeze` keeps one dimension rather than producing a zero-dimensional subset, so an
+    all-size-1 shape (a Scalar, or an array of shape `(1, 1)`) must keep one too.
+    """
+    squeezed = [size for size in shape if size != 1]
+    return squeezed or [1]
 
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
@@ -45,7 +55,8 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
     if not src_subset and not dst_subset:
-        # NOTE: This should never happen
+        # Reached only for an empty (happens-before ordering) memlet, which carries no data and is not a
+        # copy candidate -- callers must filter those out before asking for its subsets.
         raise NotImplementedError('Neither source nor destination subsets are defined')
     # NOTE: If any of the subsets is None, it means that we proceed in
     # experimental mode. The base case here is that we just copy the other
@@ -249,23 +260,35 @@ def find_dims_to_pop2(
     return dims_to_pop
 
 
-def pop_dims(subset, dims):
-    popped = []
+#: A dimension removed by ``pop_dims()``: its ``(start, end, step)`` range and its tile size.
+PoppedDim = Tuple[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], symbolic.SymbolicType]
+
+
+def pop_dims(subset: subsets.Range, dims: Sequence[int]) -> Tuple[subsets.Range, List[PoppedDim]]:
+    """
+    Remove the dimensions listed in ``dims`` from ``subset``.
+
+    ``subsets.Indices`` is handled as well, in which case an ``Indices`` is returned, since it is a
+    ``subsets.Range`` whose every dimension is a single point.
+
+    Returns:
+        The reduced subset and the removed ``(range, tile_size)`` pairs, in removal order. Feed both,
+        together with the very same ``dims``, into ``compose_and_push_back()`` to restore them.
+
+    :param subset: The subset to remove dimensions from.
+    :param dims: Dimensions to remove, indexing ``subset`` as it is passed in.
+    """
+    popped: List[PoppedDim] = []
+    ranges = copy.deepcopy(subset.ranges)
+    tsizes = copy.deepcopy(subset.tile_sizes)
+    # `dims` indexes the original subset, so removing low-to-high would shift every later index.
+    for i in sorted(dims, reverse=True):
+        popped.append((ranges.pop(i), tsizes.pop(i)))
     if isinstance(subset, subsets.Indices):
-        indices = copy.deepcopy(subsets.Indices)
-        for i in dims:
-            popped.append(indices.pop(i))
-        return subsets.Indices(indices)
-    else:
-        ranges = copy.deepcopy(subset.ranges)
-        tsizes = copy.deepcopy(subset.tile_sizes)
-        for i in dims:
-            r = ranges.pop(i)
-            t = tsizes.pop(i)
-            popped.append((r, t))
-        new_subset = subsets.Range(ranges)
-        new_subset.tile_sizes = tsizes
-        return new_subset, popped
+        return subsets.Indices([rb for rb, _, _ in ranges]), popped
+    new_subset = subsets.Range(ranges)
+    new_subset.tile_sizes = tsizes
+    return new_subset, popped
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
@@ -273,7 +296,8 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         ranges = subset.ranges
         tsizes = subset.tile_sizes
-        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+        # Exact inverse of `pop_dims()`: it removed high-to-low, so re-insert low-to-high.
+        for d, (r, t) in zip(sorted(dims), reversed(popped)):
             ranges.insert(d, r)
             tsizes.insert(d, t)
         subset = subsets.Range(ranges)
@@ -321,6 +345,10 @@ class RedundantArray(pm.SingleStateTransformation):
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
@@ -355,7 +383,7 @@ class RedundantArray(pm.SingleStateTransformation):
             # Make sure the memlet covers the removed array
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
-            shape = [sz for sz in in_desc.shape if sz != 1]
+            shape = squeezed_shape(in_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -389,6 +417,24 @@ class RedundantArray(pm.SingleStateTransformation):
                                     desc = sdfg.arrays[n.data]
                                     if desc is true_out_desc:
                                         return False
+
+            # A second write landing on the same region of out_array is sequenced against this one
+            # only by the copy: the value reaches out_array after in_array's producer completed,
+            # which puts it behind anything that producer's scope already wrote. Folding the copy
+            # away turns both into direct writes of out_array out of one scope, and siblings in a
+            # scope have no relative order -- codegen may replay the superseded value last. Only
+            # provably disjoint regions, and equal WCRs (accumulation commutes), stay safe.
+            if out_array is true_out_array:
+                for e in graph.in_edges(true_out_array):
+                    if e is e1 or e.data.is_empty():
+                        continue
+                    if e.data.wcr is not None and e.data.wcr == e1.data.wcr:
+                        continue
+                    other_subset = e.data.get_dst_subset(e, graph)
+                    if other_subset is None:
+                        return False
+                    if any(subsets.intersects(oset, other_subset) is not False for oset in true_out_subsets):
+                        return False
 
             # In non-permissive mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
@@ -730,7 +776,6 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
-            print(f"CREATED VIEW(2): {in_array}")
             return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -836,6 +881,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
@@ -882,7 +931,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
-            shape = [sz for sz in out_desc.shape if sz != 1]
+            shape = squeezed_shape(out_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -1033,12 +1082,20 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             # (should not be needed for valid SDGs)
             path = graph.memlet_tree(e2)
             for e3 in path:
-                if e3 is not e2:
-                    try:
-                        _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
-                    except (NotImplementedError, ValueError) as ex:
-                        warnings.warn(f'validate_subsets failed: {ex}')
+                if e3 is e2:
+                    continue
+                if not path.downwards and e3.src is not out_array:
+                    # Above the scope exit the memlet is in the destination array's terms and the scope
+                    # supplies the dimensions out_array lacks, so ``apply`` leaves it alone -- but only
+                    # if it does not still name the array being deleted.
+                    if e3.data.data == out_array.data:
                         return False
+                    continue
+                try:
+                    _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
+                except (NotImplementedError, ValueError) as ex:
+                    warnings.warn(f'validate_subsets failed: {ex}')
+                    return False
 
             # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
             if in_desc.strides != out_desc.strides:
@@ -1162,12 +1219,15 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if not path.downwards and e3.src is not out_array:
+                    # Says nothing about out_array (can_be_applied refuses otherwise), so redirecting
+                    # the innermost edge to A leaves it correct as it stands.
+                    continue
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # 2-b. Modify memlet to match array A. Example:
                 # A -- (0, a:b)/(c:c+b) --> B -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
-                e3.data.data = in_array.data
                 # (c+d) - (c:c+b) = (d)
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
@@ -1176,15 +1236,24 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     bset, _ = pop_dims(b3_subset, b_dims_to_pop)
                 else:
                     bset = b3_subset
+                a3_subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
 
-                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
-                # NOTE: This fixes the following case:
-                # A ----> A[subset] ----> ... -----> Tasklet
-                # Tasklet is not data, so it doesn't have an other subset.
-                if isinstance(e3.dst, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                if path.downwards:
+                    e3.data.data = in_array.data
+                    e3.data.subset = a3_subset
+                    # NOTE: This fixes the following case:
+                    # A ----> A[subset] ----> ... -----> Tasklet
+                    # Tasklet is not data, so it doesn't have an other subset.
+                    if isinstance(e3.dst, nodes.AccessNode):
+                        e3.data.other_subset = other_subset
+                    else:
+                        e3.data.other_subset = None
                 else:
-                    e3.data.other_subset = None
+                    # out_array is a leaf of an upward tree: only the side of the memlet that reads it
+                    # moves to A. The other side is the index the scope writes and must survive.
+                    if e3.data.data == out_array.data:
+                        e3.data.data = in_array.data
+                    e3.data.src_subset = a3_subset
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -1485,7 +1554,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == out_desc.shape
         if not (a_subset and v_subset):
             return False
-        out_shape = [s for s in out_desc.shape if s != 1]
+        out_shape = squeezed_shape(out_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1636,7 +1705,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == in_desc.shape
         if not (a_subset and v_subset):
             return False
-        in_shape = [s for s in in_desc.shape if s != 1]
+        in_shape = squeezed_shape(in_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1824,6 +1893,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
+                if e.data.is_empty():
+                    # Empty memlets carry no data -- they exist only for node/scope
+                    # ordering. Filling in a subset here would turn a legal empty
+                    # ordering edge into a malformed one (subset stays None while
+                    # other_subset gets set).
+                    continue
                 if e.data.data == self.view.data:
                     e.data.data = viewed.data
 

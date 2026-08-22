@@ -94,8 +94,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
                 copy_mapping = {}
+                # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+                # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+                # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+                memo = {}
                 for n in body:
-                    new_n = copy.deepcopy(n)
+                    new_n = copy.deepcopy(n, memo)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 

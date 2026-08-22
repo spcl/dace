@@ -1,4 +1,4 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Work depth analysis for any input SDFG. Can be used with the DaCe VS Code extension or
 from command line as a Python script. """
 

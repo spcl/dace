@@ -413,7 +413,9 @@ class CompiledSDFG(object):
     def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
-            if res == ctypes.c_void_p(0):
+            # ctypes pointers compare by identity, so the old ``== c_void_p(0)`` never matched and a
+            # failed initializer went on to be called with a null handle.
+            if res.value is None:
                 raise RuntimeError('DaCe application failed to initialize')
 
             self._libhandle = res

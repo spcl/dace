@@ -84,6 +84,36 @@ def test_an_to_an_memlet_with_negative_size():
         sdfg.validate()
 
 
+def test_veclen_lookup_guarded_on_non_accessnode_endpoint():
+    """``validate_state``'s dimensionality-mismatch check used to dereference
+    ``sdfg.arrays[src_node.data].veclen`` unconditionally; scope nodes
+    (NestedSDFG / MapEntry / MapExit / ConsumeEntry / ConsumeExit) don't expose
+    ``.data`` and crashed with ``AttributeError`` whenever the edge carried
+    both ``src_subset`` and ``dst_subset`` (``other_subset is not None``).
+
+    Build a NestedSDFG-output -> AccessNode edge with a reshape memlet (which
+    sets the other-subset) and assert validation reaches a verdict instead of
+    blowing up. Pre-fix this raised ``AttributeError: 'NestedSDFG' object has
+    no attribute 'data'``."""
+    sdfg = dace.SDFG('veclen_guard_nsdfg_to_an')
+    sdfg.add_array('Y', [10], dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+
+    inner = dace.SDFG('inner')
+    inner.add_array('out_inner', [5], dace.float64)
+    istate = inner.add_state('s', is_start_block=True)
+    t = istate.add_tasklet('w', set(), {'_o'}, '_o = 1.0')
+    iw = istate.add_write('out_inner')
+    istate.add_edge(t, '_o', iw, None, dace.Memlet('out_inner[0]'))
+
+    nsdfg = state.add_nested_sdfg(inner, {}, {'out_inner'})
+    y = state.add_write('Y')
+    state.add_edge(nsdfg, 'out_inner', y, None, dace.Memlet('Y[0:5] -> [0:5]'))
+
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_to_an_memlet_with_zero_size()
     test_an_to_an_memlet_with_negative_size()
+    test_veclen_lookup_guarded_on_non_accessnode_endpoint()

@@ -57,14 +57,17 @@ def test_the_cub_workspace_size_query_is_checked(in_shape, axes, out_shape):
 
 @pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
 def test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(in_shape, axes, out_shape):
-    """``cudaMalloc(&p, 0)`` returns a null pointer and ``cudaSuccess``, and CUB then does nothing."""
+    """The workspace now comes from the per-stream scratch pool (``get_scratch``), not a direct
+    ``cudaMalloc`` -- the pool floors a zero-byte request and reports allocation failure itself (see
+    ``test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failure`` below), so the
+    call site only has to check the pointer it gets back.
+    """
     code = generated_code_for(in_shape, axes, out_shape)
-    alloc = re.search(r'^.*cudaMalloc\(&__cub_storage_\w+,(?:.|\n)*?\);', code, re.MULTILINE)
-    assert alloc, 'no CUB workspace allocation was emitted'
-    text = alloc.group(0)
-    assert 'DACE_GPU_CHECK' in text, f'the CUB workspace allocation is unchecked: {text.strip()}'
-    assert '? ' in text and ': 1' in text, (f'the CUB workspace allocation can request zero bytes, which yields a null '
-                                            f'pointer that CUB reads as a size query: {text.strip()}')
+    fetch = re.search(r'^.*get_scratch<::dace::cub::ReduceTag>\(_cub_needed, stream, &_cub_status\);$', code,
+                      re.MULTILINE)
+    assert fetch, 'no CUB scratch-pool fetch was emitted'
+    checked = re.search(r'^\s*if \(_cub_scratch == nullptr\) return.*$', code, re.MULTILINE)
+    assert checked, 'the CUB scratch pointer is not checked for allocation failure'
 
 
 @pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
@@ -74,7 +77,12 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     assert re.search(
         r'cudaError_t __dace_reduce_\w+\(',
         code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
-    call = re.search(r'^.*__dace_reduce_\w+\(_in, _out,.*$', code, re.MULTILINE)
+    # experimental_readable (the default CPU codegen) inlines the tasklet's _in/_out connectors to
+    # the actual pointers they read/write; legacy keeps the literal connector names in the call.
+    if dace.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        call = re.search(r'^.*__dace_reduce_\w+\(gpu_a, b_slice,.*$', code, re.MULTILINE)
+    else:
+        call = re.search(r'^.*__dace_reduce_\w+\(_in, _out,.*$', code, re.MULTILINE)
     assert call, 'no call to the reduce helper was emitted'
     assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
 
@@ -84,6 +92,27 @@ def cudacommon_source() -> str:
     path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cuda', 'cudacommon.cuh')
     with open(path) as fp:
         return fp.read()
+
+
+def cub_scratch_source() -> str:
+    """The runtime header implementing the per-stream CUB scratch pool (``get_scratch``)."""
+    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cub_scratch.cuh')
+    with open(path) as fp:
+        return fp.read()
+
+
+def test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failure():
+    """``cudaMalloc(&p, 0)`` returns a null pointer with ``cudaSuccess``, so ``get_scratch`` must
+    never issue that call, and a real allocation failure must reach the caller through ``status``
+    rather than a stale pointer.
+    """
+    source = cub_scratch_source()
+    floor = re.search(r'cudaMalloc\(&e\.storage, bytes_needed \? bytes_needed : 1\);', source)
+    assert floor, 'get_scratch no longer floors a zero-byte request to 1 byte'
+    failure = re.search(r'if \(err != cudaSuccess\) \{(?:.|\n)*?return nullptr;\n\s*\}', source)
+    assert failure, 'get_scratch does not handle a failed allocation'
+    assert 'if (status) *status = err;' in failure.group(0), (
+        'a failed allocation does not report its error through status')
 
 
 def test_the_check_macro_evaluates_its_argument_once():
@@ -122,3 +151,4 @@ if __name__ == '__main__':
         test_the_reduction_itself_reports_its_status(shape, ax, out)
     test_the_check_macro_evaluates_its_argument_once()
     test_the_recorded_error_is_the_first_one()
+    test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failure()

@@ -98,6 +98,11 @@ from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:
@@ -472,7 +477,8 @@ class ONNXModel:
                                         dace.Memlet.from_array(clean_onnx_name(name), data_desc))
 
         # scalars need to be promoted to arrays so that we can return them from the dace program
-        # however, this is only for CPU: on GPU, scalars are already pointers
+        # (top-level scalar "__return" descriptors are rejected by SDFG validation); the caller
+        # reshapes them back to () after the call
         self._promoted_scalars = set()
 
         # insert copies from outputs to __return arrays
@@ -486,8 +492,8 @@ class ONNXModel:
             new_output_names.append(new_output_name)
 
             desc = copy.deepcopy(self.sdfg.arrays[clean_name])
-            if isinstance(desc, dt.Scalar) and not self.cuda:
-                desc = dt.Array(desc.dtype, (1, ))
+            if isinstance(desc, dt.Scalar):
+                desc = dt.Array(desc.dtype, (1, ), storage=desc.storage)
                 self._promoted_scalars.add(new_output_name)
 
             # insert new descriptor
@@ -503,7 +509,15 @@ class ONNXModel:
         sdfg_utils.fuse_states(self.sdfg)
 
         if self.cuda:
-            self.sdfg.apply_gpu_transformations()
+            # GPU-transform, then simplify -- but SKIP the array-elimination / reference-to-view
+            # passes. Those inline a reshape's copy (``expanded[:] = np.reshape(data)``) into a view;
+            # the single-state autodiff engine (``make_backward_function``) can only build a correct
+            # backward for a reshape *copy* -- a view has no gradient-accumulation buffer, so the
+            # reshaped tensor's gradient silently comes out zero (e.g. ``test_reshape_on_memlet_path``,
+            # HF decoders). ``FuseStates`` still runs, so the graph stays the single state the backward
+            # generator expects.
+            self.sdfg.apply_gpu_transformations(simplify=False)
+            self.sdfg.simplify(skip={'ArrayElimination', 'ReferenceToView'})
 
     def _add_constant_tensor(self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]],
                              storage: dtypes.StorageType):
@@ -608,7 +622,7 @@ class ONNXModel:
         for name, arr in self.weights.items():
             if clean_onnx_name(name) in compiled_sdfg.sdfg.arrays:
                 desc = self.sdfg.arrays[clean_onnx_name(name)]
-                cuda = desc.storage in dace.dtypes.GPU_STORAGES
+                cuda = desc.storage in GPU_RESIDENT_STORAGES
                 if type(desc) is dt.Scalar:
                     self.initialized_parameters[clean_onnx_name(name)] = arr.cuda() if cuda else arr.cpu().numpy()[()]
                 else:
@@ -713,7 +727,7 @@ class ONNXModel:
         inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
 
         if torch_outputs is None:
-            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_STORAGES
+            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in GPU_RESIDENT_STORAGES
                                 for o in self.outputs) or any(
                                     isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
 
@@ -765,7 +779,7 @@ def create_output_array(inferred_symbols: Dict[str, int],
             dim = dim.subs(sym, inferred_symbols[sym.name])
         return dim
 
-    cuda = desc.storage in dace.dtypes.GPU_STORAGES
+    cuda = desc.storage in GPU_RESIDENT_STORAGES
     if cuda and not use_torch:
         raise ValueError("Got use_torch=False, but received a GPU descriptor")
 

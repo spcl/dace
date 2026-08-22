@@ -141,6 +141,49 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
     return arr_copy
 
 
+@oprepo.replaces('numpy.triu')
+def _numpy_triu(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k: int = 0) -> str:
+    """Copy of ``m`` with the elements below the k-th diagonal zeroed (upper triangle kept). For an input
+    with more than two dimensions the mask applies to the final two axes, matching numpy."""
+    return _triangle_mask(pv, sdfg, state, m, k, upper=True)
+
+
+@oprepo.replaces('numpy.tril')
+def _numpy_tril(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k: int = 0) -> str:
+    """Copy of ``m`` with the elements above the k-th diagonal zeroed (lower triangle kept). For an input
+    with more than two dimensions the mask applies to the final two axes, matching numpy."""
+    return _triangle_mask(pv, sdfg, state, m, k, upper=False)
+
+
+def _triangle_mask(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, m: str, k: int, upper: bool) -> str:
+    if m not in sdfg.arrays:
+        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=m))
+    desc = sdfg.arrays[m]
+    if not isinstance(desc, (data.Array, data.View)):
+        raise mem_parser.DaceSyntaxError(pv, None, "numpy.triu/numpy.tril only support Arrays and Views!")
+    ndim = len(desc.shape)
+    if ndim < 2:
+        raise mem_parser.DaceSyntaxError(pv, None, "numpy.triu/numpy.tril require an at least two-dimensional input.")
+
+    out_name, _ = sdfg.add_temp_transient_like(desc, name=pv.get_target_name())
+
+    # Element (i, j) on the last two axes lies on diagonal ``j - i``; triu keeps ``j - i >= k`` (zeroing
+    # below the k-th diagonal), tril keeps ``j - i <= k``. Every masked-out element is set to zero.
+    row, col = f'__i{ndim - 2}', f'__i{ndim - 1}'
+    cmp = '>=' if upper else '<='
+    idx = ','.join(f'__i{i}' for i in range(ndim))
+    state.add_mapped_tasklet(name='triu' if upper else 'tril',
+                             map_ranges={
+                                 f'__i{i}': f'0:{s}:1'
+                                 for i, s in enumerate(desc.shape)
+                             },
+                             inputs={'__inp': Memlet(f'{m}[{idx}]')},
+                             code=f'__out = __inp if ({col} - {row} {cmp} ({k})) else 0',
+                             outputs={'__out': Memlet(f'{out_name}[{idx}]')},
+                             external_edges=True)
+    return out_name
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -170,7 +213,22 @@ def _transpose(pv: ProgramVisitor,
         outname = pv.get_target_name()
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
-    if axes == (1, 0):  # Special case for 2D transposition
+    if axes == (1, 0):  # 2D transposition
+        # The Transpose library node squeezes a unit axis to a vector and then rejects it as "not a
+        # matrix", so a ``(N, 1)`` / ``(1, N)`` array cannot use it. Fall back to a plain index-swap
+        # copy (``out[j, i] = in[i, j]``) whenever an extent is 1; it is general over 2D and
+        # stride-safe. Genuine matrices keep the optimized library node.
+        if 1 in arr1.shape:
+            state.add_mapped_tasklet("transpose",
+                                     map_ranges={
+                                         "__i": "0:%s" % arr1.shape[0],
+                                         "__j": "0:%s" % arr1.shape[1]
+                                     },
+                                     inputs={"__inp": Memlet("%s[__i, __j]" % inpname)},
+                                     code="__out = __inp",
+                                     outputs={"__out": Memlet("%s[__j, __i]" % outname)},
+                                     external_edges=True)
+            return outname
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop
@@ -208,6 +266,38 @@ def _ndarray_transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
     elif len(axes) == 1:
         axes = axes[0]
     return _transpose(pv, sdfg, state, arr, axes)
+
+
+@oprepo.replaces('numpy.broadcast_to')
+def broadcast_to(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str,
+                 shape: Union[str, symbolic.SymbolicType, Sequence[Union[str, symbolic.SymbolicType]]]) -> str:
+    """Replicate ``arr`` across ``shape`` by the NumPy broadcasting rule.
+
+    NumPy returns a zero-stride VIEW; DaCe materializes a transient instead, because a
+    stride of 0 makes every write to the result alias and there is no way to tell here
+    whether the caller only reads it.
+    """
+    from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
+
+    if isinstance(arr, (list, tuple)) and len(arr) == 1:
+        arr = arr[0]
+    desc = sdfg.arrays[arr]
+    if isinstance(shape, (str, symbolic.symbol)) or isinstance(shape, Integral):
+        shape = [shape]
+    newshape = [symbolic.pystr_to_symbolic(s) for s in shape]
+    if len(newshape) < len(desc.shape):
+        raise ValueError(f'Cannot broadcast a rank-{len(desc.shape)} array to the '
+                         f'rank-{len(newshape)} shape {tuple(newshape)}')
+
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), newshape, desc.dtype, desc.storage, find_new_name=True)
+    node = Broadcast('broadcast_to', dim=None)
+    state.add_node(node)
+    state.add_edge(state.add_read(arr), None, node, '_src', Memlet.from_array(arr, desc))
+    state.add_edge(node, '_dst', state.add_write(out), None, Memlet.from_array(out, out_desc))
+    # The node's own validate() is what rejects a shape that does not broadcast; run it here
+    # so the error names the numpy call instead of surfacing at expansion time.
+    node.validate(sdfg, state)
+    return out
 
 
 @oprepo.replaces('numpy.reshape')
@@ -553,7 +643,7 @@ def _concat(visitor: ProgramVisitor,
         for i, d in enumerate(descs[1:]):
             other_shape = list(d.shape)
             other_shape[axis] = 0
-            if other_shape != first_shape:
+            if not symbolic.shapes_equal(other_shape, first_shape):
                 raise ValueError(f'Array shapes do not match at index {i}')
 
     shape[axis] = sum(desc.shape[axis] for desc in descs)
@@ -570,16 +660,46 @@ def _concat(visitor: ProgramVisitor,
         name = out
         odesc = sdfg.arrays[out]
 
-    # Make copies
-    w = state.add_write(name)
-    offset = 0
-    subset = subsets.Range.from_array(odesc)
-    for arr, desc in zip(arrays, descs):
-        r = state.add_read(arr)
-        subset = copy.deepcopy(subset)
-        subset[axis] = (offset, offset + desc.shape[axis] - 1, 1)
-        state.add_edge(r, None, w, None, Memlet(data=name, subset=subset))
-        offset += desc.shape[axis]
+    if out is None:
+        # Fast path: a single write node with per-array subset edges is enough
+        # for most cases. A single write access node with multiple incoming direct
+        # edges can be mis-optimized when the output is also an input/argument
+        # (see numpy.concatenate(..., out=...)), so we use explicit tasklets there.
+        w = state.add_write(name)
+        offset = 0
+        subset = subsets.Range.from_array(odesc)
+        for arr, desc in zip(arrays, descs):
+            r = state.add_read(arr)
+            subset = copy.deepcopy(subset)
+            subset[axis] = (offset, offset + desc.shape[axis] - 1, 1)
+            state.add_edge(r, None, w, None, Memlet(data=name, subset=subset))
+            offset += desc.shape[axis]
+    else:
+        # The output array is reused from the caller; materialize the copy with
+        # per-array tasklets so the simplifier cannot drop a partial write.
+        offset = 0
+        for arr, desc in zip(arrays, descs):
+            map_ranges = {}
+            inpidx = []
+            outidx = []
+            for i, s in enumerate(desc.shape):
+                var = f'__i{i}'
+                map_ranges[var] = f'0:{s}:1'
+                inpidx.append(var)
+                if i == axis:
+                    outidx.append(f'{offset} + {var}')
+                else:
+                    outidx.append(var)
+            inpidx = ','.join(inpidx)
+            outidx = ','.join(outidx)
+            state.add_mapped_tasklet(name='_concat_copy_',
+                                     map_ranges=map_ranges,
+                                     inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+                                     code='__out = __inp',
+                                     outputs={'__out': Memlet(f'{name}[{outidx}]')},
+                                     external_edges=True,
+                                     propagate=True)
+            offset += desc.shape[axis]
 
     return name
 
@@ -610,7 +730,7 @@ def _stack(visitor: ProgramVisitor,
     descs = [sdfg.arrays[a] for a in arrays]
     shape = descs[0].shape
     for i, d in enumerate(descs[1:]):
-        if d.shape != shape:
+        if not symbolic.shapes_equal(d.shape, shape):
             raise ValueError(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
 
     if axis > len(shape):

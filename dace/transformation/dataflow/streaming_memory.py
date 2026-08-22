@@ -3,7 +3,7 @@
 from collections import defaultdict
 import copy
 from typing import Dict, List, Tuple
-import networkx as nx
+from dace import graphlib as nx
 import warnings
 import sympy
 

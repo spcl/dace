@@ -50,6 +50,44 @@ def test_library_node_expand_reduce_pure():
     assert np.allclose(wantC, gotC)
 
 
+@pytest.mark.parametrize('implementation', ['pure', 'pure-seq'])
+def test_expansion_inside_a_map_does_not_shadow_its_parameter(implementation):
+    """A reduce expanded inside a map must not name its own maps after a parameter already in scope.
+
+    The expansion's maps are ``_o<n>`` / ``_i<n>``. Nested under a map that uses the same name, the
+    inner map rebinds it, and the boundary memlet that names the OUTER parameter then reads the inner
+    map's value -- every output element comes out as the first one, with nothing to see in the graph.
+    """
+    N, M = 20, 30
+    sdfg = SDFG('reduce_under_o0')
+    sdfg.add_array('inp', (M, N), dace.float64)
+    sdfg.add_array('out', (N, ), dace.float64)
+    state = sdfg.add_state()
+
+    entry, exit_ = state.add_map('outer', {'_o0': f'0:{N}'})
+    red = state.add_reduce('lambda a, b: a + b', axes=(0, ), identity=0.0)
+    red.implementation = implementation
+    state.add_memlet_path(state.add_read('inp'), entry, red, memlet=Memlet('inp[0:%d, _o0]' % M))
+    state.add_memlet_path(red, exit_, state.add_write('out'), memlet=Memlet('out[_o0]'))
+    sdfg.validate()
+
+    sdfg.expand_library_nodes()
+    for nested, _ in sdfg.all_nodes_recursive():
+        if not isinstance(nested, dace.nodes.NestedSDFG):
+            continue
+        inherited = {str(s) for s in nested.symbol_mapping.keys()}
+        for n, _ in nested.sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.MapEntry):
+                clash = set(n.map.params) & inherited
+                assert not clash, f'expansion map rebinds inherited symbol(s) {sorted(clash)}'
+
+    inp = np.random.rand(M, N)
+    out = np.zeros(N)
+    sdfg(inp=inp, out=out)
+    assert np.allclose(out, inp.sum(axis=0))
+    assert not np.allclose(out, out[0]), 'every element equal: the reduction read one column for all outputs'
+
+
 _impls = ['pure', 'CUDA (device)', 'pure-seq', 'GPUAuto']
 _case_params = [([1, 64, 60, 60], (0, 2, 3), [64], np.float32), ([8, 512, 4096], (0, 1), [4096], np.float32),
                 ([8, 512, 4096], (0, 1), [4096], np.float64), ([1024, 8], (0), [8], np.float32),
@@ -82,7 +120,31 @@ def test_multidim_gpu(impl, test_case):
     assert np.allclose(b, np.sum(a, axis=axes))
 
 
+def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
+    """The GPU-auto expansion may FLATTEN the planner input (``(M, N, K) -> (M*N, K)``); the
+    reassigned shape/strides must be accompanied by a matching-rank offset, or the descriptor is
+    invalid and the host-side inline at codegen dies with 'Offset must be the same size as shape'
+    (samples/optimization/matmul.py under GPUTransformSDFG). Codegen-only: no GPU needed."""
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    @dace.program
+    def flat_reduce(inp_tensor: dace.float64[16, 8, 32], out_matrix: dace.float64[16, 8]):
+        out_matrix[:] = np.sum(inp_tensor, axis=2)
+
+    sdfg = flat_reduce.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(GPUTransformSDFG) == 1
+    sdfg.expand_library_nodes()
+    for sub in sdfg.all_sdfgs_recursive():
+        for name, desc in sub.arrays.items():
+            if isinstance(desc, dace.data.Array):
+                assert len(desc.offset) == len(desc.shape), \
+                    f'{sub.name}::{name}: offset rank {len(desc.offset)} != shape rank {len(desc.shape)}'
+    sdfg.generate_code()
+
+
 if __name__ == '__main__':
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])
     test_library_node_expand_reduce_pure()
+    for impl in ['pure', 'pure-seq']:
+        test_expansion_inside_a_map_does_not_shadow_its_parameter(impl)

@@ -31,6 +31,10 @@ dependencies = [
     "typing-extensions",
     "ml_dtypes",
     "ordered-set>=4.0.0",
+    # SMT-backed dependence oracle. Not optional: LoopToMap and the canonicalize
+    # parallelization band query it, so an install without it silently refuses
+    # loops the shipped analysis can otherwise prove parallel.
+    "z3-solver",
     "scikit-build",
     "cmake",
     "ninja",
@@ -49,7 +53,13 @@ testing = [
     "ipykernel",
     "nbconvert",
     "pytest-timeout",
+    # Plotting the corpus perf results; analysis only, never imported by dace itself.
+    "matplotlib",
 ]
+# Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
+fastgraph = ["rustworkx"]
+# Optional: exact-integer polyhedral engine for WavefrontSkew canonicalization.
+polyhedral = ["islpy"]
 ml-testing = [
     "coverage",
     "pytest-cov",
@@ -66,7 +76,7 @@ ml-testing = [
     "efficientnet_pytorch",
 ]
 docs = ["jinja2<3.2.0", "sphinx-autodoc-typehints", "sphinx-rtd-theme>=0.5.1"]
-linting = ["pre-commit==4.1.0", "yapf==0.43.0"]
+linting = ["pre-commit==4.1.0", "yapf==0.43.0", "ruff==0.15.5"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"

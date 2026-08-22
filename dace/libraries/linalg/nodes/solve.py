@@ -8,6 +8,7 @@ import numpy as np
 
 from dace import Memlet, SDFG, SDFGState
 from dace import symbolic
+from dace.libraries.standard.helper import host_accessible_info_storage
 from dace.libraries.lapack import Getrf, Getrs
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
@@ -32,7 +33,12 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
     binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True, storage=storage)
     bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True, storage=storage)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
+    # cuSOLVER writes ``devInfo`` through a raw pointer; the status scalar is host-checkable, so it
+    # must live in host-accessible (pinned) memory instead of the input's GPU_Global storage.
+    info_arr = sdfg.add_array('_info', [1],
+                              dtype=dace.int32,
+                              transient=True,
+                              storage=host_accessible_info_storage(storage))
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
