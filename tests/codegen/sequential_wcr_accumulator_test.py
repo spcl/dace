@@ -19,6 +19,7 @@ from dace.codegen.codegen import generate_code
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+K = dace.symbol('K')
 
 
 def generated_cpu_code(sdfg: dace.SDFG) -> str:
@@ -162,6 +163,39 @@ def test_a_wcr_that_arrives_as_a_copy_is_not_hoisted():
     out = np.zeros(1)
     sdfg(x=x, out=out, N=n)
     assert np.isclose(out[0], x.sum()), f'{out[0]!r} != {x.sum()!r}'
+
+
+def test_a_wcr_a_nested_sdfg_resolves_is_not_hoisted():
+    """A NestedSDFG resolves the write conflict INSIDE its own body: codegen outlines that body
+    into its own function, which calls ``wcr_fixed::reduce`` through the connector pointer it was
+    handed. The caller's register is never added to, so hoisting stores the pre-loop value back
+    over the real result -- silently, with a valid SDFG and C++ that compiles.
+
+    Spelled through the frontend rather than hand-built, because whether the body stays outlined
+    is the whole point: a nested SDFG holding a single tasklet is inlined during codegen
+    preprocessing, which turns the source into a Tasklet and makes hoisting correct again.
+    """
+
+    @dace.program
+    def rowsums(x: dace.float64[N, K], out: dace.float64[N]):
+
+        @dace.mapscope
+        def rows(i: _[0:N]):
+
+            @dace.map
+            def cols(k: _[0:K]):
+                inp << x[i, k]
+                o >> out(1, lambda a, b: a + b)[i]
+                o = inp
+
+    sdfg = rowsums.to_sdfg()
+    assert '__acc_' not in generated_cpu_code(sdfg), 'a WCR a nested SDFG resolves must not be hoisted'
+
+    n, k = 32, 7
+    x = np.random.default_rng(4).random((n, k))
+    out = np.zeros(n)
+    sdfg(x=x, out=out, N=n, K=k)
+    assert np.allclose(out, x.sum(axis=1)), f'{out!r} != {x.sum(axis=1)!r}'
 
 
 if __name__ == '__main__':

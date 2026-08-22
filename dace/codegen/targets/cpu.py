@@ -2955,12 +2955,15 @@ class CPUCodeGen(TargetCodeGenerator):
           ``wcr_fixed`` path, which is already the non-atomic one here);
         * the array is not also READ through the map entry. The accumulator holds the running value
           in a register until the exit, so such a read would see the stale memory copy;
-        * the value reaches the exit from a Tasklet or a NestedSDFG connector. Only those writes
-          are resolved through :meth:`write_and_resolve_expr`, which is where the accumulation is
-          redirected into the register. An AccessNode source is a memlet COPY, emitted as a
-          ``CopyND::Accumulate`` that goes straight to memory -- hoisting one would declare and
-          drain a register the loop never accumulated into, storing the pre-loop value back over
-          the real result.
+        * the value reaches the exit from a TASKLET. That is the only write resolved through
+          :meth:`write_and_resolve_expr`, which is where the accumulation is redirected into the
+          register. Every other source writes the destination directly and never sees the
+          register, so hoisting one declares an accumulator the loop never adds to and then
+          stores the pre-loop value back over the real result at the exit. Two such sources
+          exist: an AccessNode is a memlet COPY, emitted as a ``CopyND::Accumulate``; and a
+          NestedSDFG resolves the conflict INSIDE its own body -- codegen outlines that body
+          into its own function, which calls ``wcr_fixed::reduce`` through the connector
+          pointer it was handed.
         """
         out = []
         seen = set()
@@ -2995,7 +2998,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if cpp.is_write_conflicted(state, iedge, sdfg_schedule=self._toplevel_schedule):
                 continue
             path = state.memlet_path(iedge)
-            if not path or not isinstance(path[0].src, (nodes.Tasklet, nodes.NestedSDFG)):
+            if not path or not isinstance(path[0].src, nodes.Tasklet):
                 continue
             key = (iedge.data.data, str(iedge.data.subset))
             if key in seen:
