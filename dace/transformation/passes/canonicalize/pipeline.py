@@ -39,6 +39,8 @@ from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.canonicalize.prune_unreferenced_transients import (PruneUnreferencedTransients)
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -1525,6 +1527,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # drops it to a plain indexed write. The injectivity gate still keeps genuine reductions (a
     # real ``w[i] += ...`` k-reduction whose write does NOT vary with the map lane).
     s += [('end', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+
+    # cleanup (terminal): drop transients nothing names any more. The stages above delete a
+    # temporary's last reader without deleting its descriptor, and ``ArrayElimination`` -- the only
+    # reclaimer that erases a descriptor -- runs well before them and skips ``Scalar`` outright, so
+    # the frontend's per-expression scalars (``b_index``, ``a_slice_times_b_slice``) survive a full
+    # canonicalize with no node left referring to them. Codegen ignores them; a re-run does not, and
+    # neither does anything that reads the serialized SDFG.
+    s += [('end', PruneUnreferencedTransients())]
+
+    # cleanup (terminal): inline the plain control-flow regions the middle stages leave standing.
+    # ``rotate`` splits a block and no ``clean`` stage runs after it, so the recipe can finish
+    # holding regions that carry a single body each (tsvc s255 ends with two). They are not a state
+    # fusion -- ``StateFusionExtended`` matches ``SDFGState`` and has nothing to say about a region
+    # -- so only an inline reclaims them. Defaults skip LoopRegion / ConditionalBlock / named /
+    # function-call regions, i.e. every region whose structure carries meaning; a bare
+    # ``ControlFlowRegion`` carries none, which is why it is the one safe to flatten here.
+    s += [('end', InlineControlFlowRegions())]
 
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
