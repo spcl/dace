@@ -155,11 +155,8 @@ jobs:
         # far longer than the 600s per-test cap here (the staged CloudSC walk builds and verifies the
         # kernel once per phase; the determinism probe spawns a 1800s subprocess). They are marked
         # ``integration`` and run in the dedicated integration workflow, which budgets 7200s per test.
-        # ``not idempotence``: the fixed-point suites assert a second canonicalize moves nothing,
-        # which the pipeline does not hold yet. Deselected until it does, so this gate tracks
-        # correctness rather than a known-open property.
         pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration and not idempotence"
+          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration"
 
   # --- Vectorization (was vectorization-ci.yml) ---
   vectorization:
