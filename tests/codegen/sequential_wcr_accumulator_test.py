@@ -133,5 +133,36 @@ def test_a_scattered_target_is_not_hoisted():
     assert '__acc_' not in generated_cpu_code(sdfg), 'a param-dependent destination must not be hoisted'
 
 
+def test_a_wcr_that_arrives_as_a_copy_is_not_hoisted():
+    """The register is only ever accumulated into from :meth:`write_and_resolve_expr`, which sees
+    Tasklet and NestedSDFG connector writes. A WCR whose source is an AccessNode is a memlet COPY,
+    emitted as a ``CopyND::Accumulate`` straight to memory -- hoisting it would declare a register,
+    never add to it, and store the pre-loop value back over the real result at the exit."""
+    sdfg = dace.SDFG('seq_wcr_copy_source')
+    sdfg.add_array('x', [N], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('tmp', dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('acc', {'i': '0:N'}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet('t', {'__x'}, {'__o'}, '__o = __x')
+    tmp = state.add_access('tmp')
+    state.add_memlet_path(state.add_read('x'), entry, tasklet, dst_conn='__x', memlet=dace.Memlet('x[i]'))
+    state.add_edge(tasklet, '__o', tmp, None, dace.Memlet('tmp[0]'))
+    state.add_memlet_path(tmp,
+                          exit_node,
+                          state.add_write('out'),
+                          memlet=dace.Memlet('out[0]', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    code = generated_cpu_code(sdfg)
+    assert '__acc_' not in code, 'a WCR reaching the exit as a copy must not be hoisted'
+
+    n = 512
+    x = np.random.default_rng(2).random(n)
+    out = np.zeros(1)
+    sdfg(x=x, out=out, N=n)
+    assert np.isclose(out[0], x.sum()), f'{out[0]!r} != {x.sum()!r}'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

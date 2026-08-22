@@ -2954,7 +2954,13 @@ class CPUCodeGen(TargetCodeGenerator):
         * the operator has a plain C++ infix form (``min`` / ``max`` do not, and keep the
           ``wcr_fixed`` path, which is already the non-atomic one here);
         * the array is not also READ through the map entry. The accumulator holds the running value
-          in a register until the exit, so such a read would see the stale memory copy.
+          in a register until the exit, so such a read would see the stale memory copy;
+        * the value reaches the exit from a Tasklet or a NestedSDFG connector. Only those writes
+          are resolved through :meth:`write_and_resolve_expr`, which is where the accumulation is
+          redirected into the register. An AccessNode source is a memlet COPY, emitted as a
+          ``CopyND::Accumulate`` that goes straight to memory -- hoisting one would declare and
+          drain a register the loop never accumulated into, storing the pre-loop value back over
+          the real result.
         """
         out = []
         seen = set()
@@ -2987,6 +2993,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # target shared, and a register accumulator would drop every other thread's
             # contribution where the atomic the conflict check asks for would not.
             if cpp.is_write_conflicted(state, iedge, sdfg_schedule=self._toplevel_schedule):
+                continue
+            path = state.memlet_path(iedge)
+            if not path or not isinstance(path[0].src, (nodes.Tasklet, nodes.NestedSDFG)):
                 continue
             key = (iedge.data.data, str(iedge.data.subset))
             if key in seen:
