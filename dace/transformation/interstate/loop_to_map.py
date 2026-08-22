@@ -282,29 +282,34 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
 
 
 def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
-    """Ask the SMT oracle whether a non-affine write touches a distinct element on
+    """Ask the SMT oracle whether a non-affine write touches a distinct location on
     every iteration.
 
-    Conservative: returns ``False`` whenever z3 is unavailable, the subset is not a
-    single point, or the solver returns ``unknown``.
+    A point subset must be injective in the iteration variable; a range subset must have
+    intervals that never intersect across iterations. Conservative: returns ``False`` whenever z3
+    is unavailable, the subset is multi-dimensional, or the solver returns ``unknown``.
     """
     if not smt_dependence.has_z3():
         return False
     nd = list(dst_subset.ndrange())
-    if not nd:
-        return False
-    if any(rb != re_ for rb, re_, _ in nd):
-        return False  # only point subsets
     if len(nd) != 1:
-        return False  # multi-dimensional non-affine writes are out of scope
-    expr = symbolic.pystr_to_symbolic(str(nd[0][0]))
+        return False  # nothing to write, or a multi-dimensional non-affine write: out of scope
     itervar = str(itersym)
+    rb, re_, _ = nd[0]
     try:
-        r = smt_dependence.prove_injective_write(expr,
-                                                 itervar,
-                                                 symbolic.pystr_to_symbolic(str(start)),
-                                                 symbolic.pystr_to_symbolic(str(end)),
-                                                 step=symbolic.pystr_to_symbolic(str(step)))
+        args = (itervar, symbolic.pystr_to_symbolic(str(start)), symbolic.pystr_to_symbolic(str(end)))
+        kwargs = dict(step=symbolic.pystr_to_symbolic(str(step)))
+        if rb == re_:
+            r = smt_dependence.prove_injective_write(symbolic.pystr_to_symbolic(str(rb)), *args, **kwargs)
+        else:
+            # A RANGE write: the iteration owns the whole interval, so the property that makes the
+            # loop parallel is that two iterations' intervals never intersect. Chunked rewrites land
+            # here -- anti-dependence chunking writes ``[i, Min(N - 2, i + 4095)]`` at ``step = 4096``,
+            # disjoint by construction but not of the ``a*i+b`` form the affine matcher accepts. An
+            # inner stride only thins the interval, so proving the intervals disjoint proves the
+            # written sets disjoint whatever that stride is.
+            r = smt_dependence.prove_disjoint_write_ranges(symbolic.pystr_to_symbolic(str(rb)),
+                                                           symbolic.pystr_to_symbolic(str(re_)), *args, **kwargs)
     except Exception:
         return False
     return r is True

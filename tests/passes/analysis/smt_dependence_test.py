@@ -93,6 +93,42 @@ def test_dace_connectives_reach_the_solver():
     assert smt_dependence.prove_read_ahead(p, I, 'i', 0, N, read_guard=guard) is True
 
 
+def test_chunked_ranges_are_proven_disjoint():
+    """The anti-dependence chunk shape: iteration ``i`` owns ``[i, Min(N - 2, i + 4095)]`` and the
+    loop steps by 4096, so the intervals tile the array without overlapping. The tail clamp is the
+    whole point -- it is what defeats the affine ``a*i+b`` matcher, so the oracle has to carry the
+    ``Min`` through to the solver rather than give up on it."""
+    hi = sp.Min(N - 2, I + 4095)
+    assert smt_dependence.prove_disjoint_write_ranges(I, hi, 'i', 1, N - 2, 4096) is True
+
+
+def test_the_same_chunk_shape_at_unit_step_is_refused():
+    """Identical intervals, ``step = 1``: every chunk now overlaps its neighbour, so the verdict
+    has to flip. This is what pins the step onto the solver's domain -- without that constraint
+    the oracle sees the same formula for both loops and cannot answer them differently."""
+    hi = sp.Min(N - 2, I + 4095)
+    assert smt_dependence.prove_disjoint_write_ranges(I, hi, 'i', 1, N - 2, 1) is False
+
+
+def test_overlapping_chunks_are_refused():
+    """Same shape, one element too wide: chunk ``i`` reaches ``i + 4096`` while chunk ``i + 4096``
+    starts there, so consecutive chunks share an element and the loop is NOT parallel. The oracle
+    must refuse -- certifying this would parallelize a genuine write-write conflict."""
+    assert smt_dependence.prove_disjoint_write_ranges(I, I + 4096, 'i', 1, N - 2, 4096) is False
+
+
+def test_a_range_wider_than_the_step_is_refused():
+    """A unit-step loop writing ``[i, i + 1]`` overlaps every neighbour. Refusing is the whole
+    guard against reading interval disjointness off the lower bound alone."""
+    assert smt_dependence.prove_disjoint_write_ranges(I, I + 1, 'i', 0, N, 1) is False
+
+
+def test_an_empty_interval_never_collides():
+    """``[i + 1, i]`` is empty, so no iteration writes anything and disjointness is vacuous. The
+    intersection test has to yield that on its own rather than needing an emptiness special case."""
+    assert smt_dependence.prove_disjoint_write_ranges(I + 1, I, 'i', 0, N, 1) is True
+
+
 if __name__ == '__main__':
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -101,3 +137,8 @@ if __name__ == '__main__':
     test_disjoint_accesses_carry_nothing()
     test_a_guard_can_break_the_raw_chain()
     test_an_untranslatable_expression_is_inconclusive()
+    test_chunked_ranges_are_proven_disjoint()
+    test_the_same_chunk_shape_at_unit_step_is_refused()
+    test_overlapping_chunks_are_refused()
+    test_a_range_wider_than_the_step_is_refused()
+    test_an_empty_interval_never_collides()

@@ -258,9 +258,13 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
     try:
         step_v = int(symbolic.evaluate(step, {}))
         if step_v != 1:
-            # (i - start) % step == 0
-            diff = i - start_z
-            cons.append(z3.SRem(diff, z3.IntVal(step_v)) == 0)
+            # (i - start) % step == 0, so the solver knows two distinct iterations are a whole
+            # stride apart rather than adjacent. ``z3.SRem`` is bitvector-only and raises on an
+            # Int term, so it silently lost this constraint to the ``except`` below and every
+            # strided loop was reasoned about as if it stepped by one. ``%`` is SMT-LIB ``mod``,
+            # non-negative for a positive divisor, and ``i >= start`` above makes the dividend
+            # non-negative too, so the two agree here.
+            cons.append((i - start_z) % z3.IntVal(step_v) == 0)
     except Exception:
         pass
     return cons
@@ -340,6 +344,62 @@ def prove_injective_write(write_expr: sp.Basic,
             antecedent = z3.And(antecedent, dom)
 
     consequent = w1 != w2
+    return _prove_unsat(antecedent, consequent, timeout_ms)
+
+
+def prove_disjoint_write_ranges(lo_expr: sp.Basic,
+                                hi_expr: sp.Basic,
+                                itervar: str,
+                                start: Any,
+                                end: Any,
+                                step: Any = 1,
+                                domain_assumptions: Optional[sp.Basic] = None,
+                                timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+    """Prove that distinct iterations write to non-overlapping RANGES.
+
+    The range form of :func:`prove_injective_write`: an iteration writes the inclusive interval
+    ``[lo(i), hi(i)]`` rather than the single element ``write_expr(i)``, and the property that
+    makes the loop parallel is that two distinct iterations' intervals never intersect. Chunked
+    rewrites produce exactly this shape -- anti-dependence chunking writes
+    ``[i, Min(N - 2, i + 4095)]`` with ``step = 4096``, where the tail clamp defeats the affine
+    ``a*i+b`` matcher even though the chunks are plainly disjoint.
+
+    Two inclusive intervals intersect iff ``lo1 <= hi2 and lo2 <= hi1``; an empty interval
+    (``lo > hi``) makes that conjunction false, so an iteration that writes nothing is handled by
+    the same formula.
+
+    :param lo_expr: Lower bound of the written interval, in terms of ``itervar``.
+    :param hi_expr: Upper (inclusive) bound of the written interval, in terms of ``itervar``.
+    :returns: ``True`` if z3 proves disjointness; ``False``/``None`` otherwise.
+    """
+    if not _HAS_Z3:
+        return None
+
+    sym_cache: Dict[str, Any] = {}
+    arr_cache: Dict[str, Any] = {}
+
+    i1 = z3.Int(f'{itervar}_1')
+    i2 = z3.Int(f'{itervar}_2')
+    sym_cache[itervar] = i1
+    lo1 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
+    hi1 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
+    sym_cache[itervar] = i2
+    lo2 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
+    hi2 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
+    if lo1 is None or hi1 is None or lo2 is None or hi2 is None:
+        return None
+
+    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    if not bounds:
+        return None
+
+    antecedent = z3.And(i1 != i2, *bounds)
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            antecedent = z3.And(antecedent, dom)
+
+    consequent = z3.Not(z3.And(lo1 <= hi2, lo2 <= hi1))
     return _prove_unsat(antecedent, consequent, timeout_ms)
 
 
@@ -455,6 +515,7 @@ def classify_read_write_pair(read_expr: sp.Basic,
 __all__ = [
     'has_z3',
     'prove_injective_write',
+    'prove_disjoint_write_ranges',
     'prove_read_ahead',
     'classify_read_write_pair',
     # Re-exported from ``sdfg.analysis.cfg``: the branch guards a read executes under are a
