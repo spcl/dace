@@ -7,12 +7,14 @@ prefix-sums it into ``int64`` ranks, which stay int64 because a rank is a write 
 index. Every test here uses more than 127 set elements, so an accumulator at the INPUT's width wraps
 and the assertion fails rather than passing on a lucky size.
 
-The contract is one line: **the accumulator is the OUTPUT element type**. ``dace::reduce::sum<T, U>``
-already spelled it (``T`` seed/output, ``U`` input, cast per element) and
-``reduce_scan_dtype_matrix_test.test_reduce_accumulates_in_the_output_dtype`` pins it for the
-OpenMP expansion; the ``pure`` expansion disagreed until now, and the ``Scan`` refused the pair
-outright. Refusals are asserted too: a widening that is not value-preserving, and the three shapes
-that have no widening implementation.
+The contract is one line: **the accumulator is the OUTPUT element type**. Two of ``Reduce``'s three
+host expansions already held it -- ``ExpandReduceOpenMP`` through ``dace::reduce::sum<T, U>``
+(``T`` seed/output, ``U`` input, cast per element) and ``ExpandReducePure`` by writing its WCR
+straight into ``_out``. ``ExpandReducePureSequentialDim`` (``pure-seq``) did NOT: it staged an
+accumulator at the INPUT's dtype, and that is the expansion ``ExpandReduceAuto`` dispatches to for
+any ``Sequential`` reduction carrying an identity -- so the wrap was reachable, not theoretical.
+``Scan`` refused a mismatched pair outright. Refusals are asserted here too: a widening that is not
+value-preserving, and the shapes that have no widening implementation.
 """
 import numpy as np
 import pytest
@@ -79,9 +81,9 @@ def test_inclusive_scan_widens_int8_to_int64(implementation):
     assert np.array_equal(out, np.arange(1, _N + 1, dtype=np.int64))
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['pure', 'pure-seq', 'OpenMP'])
 def test_reduce_widens_int8_into_an_int64_total(implementation):
-    """The other half of the compaction phase. ``pure`` kept the INPUT's accumulator and wrapped."""
+    """The other half of the compaction phase. ``pure-seq`` staged the INPUT's accumulator and wrapped."""
     sdfg = reduce_sdfg(dace.int8, dace.int64, implementation)
     total = np.zeros(1, np.int64)
     sdfg(A=np.ones(_N, np.int8), B=total, N=_N)
@@ -126,6 +128,6 @@ if __name__ == '__main__':
     for impl in ('pure', 'CPU'):
         test_exclusive_scan_widens_int8_ranks_to_int64(impl)
         test_inclusive_scan_widens_int8_to_int64(impl)
-    for impl in ('pure', 'OpenMP'):
+    for impl in ('pure', 'pure-seq', 'OpenMP'):
         test_reduce_widens_int8_into_an_int64_total(impl)
     test_the_widening_rule_is_value_preserving_only()

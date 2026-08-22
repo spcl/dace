@@ -284,9 +284,12 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         # The accumulator is the OUTPUT element type. That is THE CONTRACT -- ``dace::reduce::sum<T, U>``
         # names ``T`` the seed/output type and ``U`` the input's and casts per element, and
-        # ``reduce_scan_dtype_matrix_test.test_reduce_accumulates_in_the_output_dtype`` pins it. This
-        # expansion used to keep the INPUT's type, which disagreed with the OpenMP one on every
-        # mixed-width pair: an int8 predicate mask summed into an int64 total wrapped at 127.
+        # ``reduce_scan_dtype_matrix_test.test_reduce_accumulates_in_the_output_dtype`` pins it. Of the
+        # three host expansions this was the only one that broke it: ``ExpandReduceOpenMP`` goes
+        # through that runtime entry point and ``ExpandReducePure`` writes its WCR straight into
+        # ``_out``, while this one STAGES an accumulator and used to stage it at the INPUT's type. It
+        # is also the one ``ExpandReduceAuto`` dispatches to for every ``Sequential`` reduction that
+        # carries an identity, so an int8 predicate mask summed into an int64 total wrapped at 127.
         nsdfg.add_transient('acc', [1], nsdfg.arrays['_out'].dtype, dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
