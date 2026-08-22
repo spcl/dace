@@ -3,6 +3,7 @@ import functools
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import symbolic
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
@@ -27,6 +28,21 @@ def _get_transpose_output(node, state, sdfg):
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError("Transpose output connector \"_out\" not found.")
+
+
+def _is_single_element(node, state, sdfg) -> bool:
+    """``True`` when the operand provably holds exactly one element.
+
+    A 1x1 transpose is a one-element copy, but every BLAS path below takes ``_inp`` / ``_out`` as
+    BUFFERS, and the codegen types a single-element subset as a SCALAR -- so the emitted
+    ``omatcopy`` / ``geam`` call is handed a value where it declared a pointer and the build fails.
+    :class:`ExpandTransposePure` already carries the one-element tasklet for exactly this case.
+
+    A symbolic extent answers ``None``, which reads as False: an extent that is not KNOWN to be one
+    keeps the BLAS path it has today.
+    """
+    _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
+    return symbolic.equal(m * n, 1) is True
 
 
 @dace.library.expansion
@@ -90,6 +106,10 @@ class ExpandTransposeMKL(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
 
+        # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
+        if _is_single_element(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         # Fall back to native implementation if input and output types are not the same
         if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
                 != sdfg.arrays[list(state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
@@ -136,6 +156,10 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+
+        # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
+        if _is_single_element(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
         # Fall back to native implementation if input and output types are not the same
         if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
@@ -189,6 +213,10 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
     def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
+
+        # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
+        if _is_single_element(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
         # Fall back to native implementation if input and output types are not the same
         if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype

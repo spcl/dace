@@ -269,24 +269,11 @@ def _transpose(pv: ProgramVisitor,
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
     if axes == (1, 0):  # 2D transposition
-        # A unit extent stays OFF the library node. Its validation accepts one now
-        # (``blas_helpers.matrix_view`` returns a 2-D subset unsquashed), and the ``pure`` expansion
-        # handles ``(N, 1)``, ``(1, N)`` and ``(1, 1)`` bit-exactly -- but the BLAS expansions do
-        # not: OpenBLAS fails to BUILD a ``(1, 1)`` transpose, where a single-element subset is
-        # typed as a scalar rather than a buffer. Fall back to a plain index-swap copy
-        # (``out[j, i] = in[i, j]``), which is general over 2D and stride-safe, whenever an extent
-        # is 1. Genuine matrices keep the optimized library node.
-        if 1 in arr1.shape:
-            state.add_mapped_tasklet("transpose",
-                                     map_ranges={
-                                         "__i": "0:%s" % arr1.shape[0],
-                                         "__j": "0:%s" % arr1.shape[1]
-                                     },
-                                     inputs={"__inp": Memlet("%s[__i, __j]" % inpname)},
-                                     code="__out = __inp",
-                                     outputs={"__out": Memlet("%s[__j, __i]" % outname)},
-                                     external_edges=True)
-            return outname
+        # A unit extent used to be routed around the library node with a hand-written index-swap
+        # map, on two grounds that no longer hold: ``blas_helpers.matrix_view`` stopped squeezing,
+        # so validation accepts a ``(N, 1)``, and the BLAS expansions now hand a one-element
+        # operand to the pure single-element tasklet instead of building an omatcopy call around a
+        # scalar (``linalg/nodes/transpose._is_single_element``). Every 2D shape goes to the node.
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop
