@@ -76,7 +76,8 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.cpu_specialization import (ChunkAntiDependence, SequentializeUnprofitableParallelScopes,
+from dace.transformation.passes.cpu_specialization import (CalibrateCpuThresholds, ChunkAntiDependence,
+                                                           SequentializeUnprofitableParallelScopes,
                                                            SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
@@ -1569,7 +1570,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # magnitude), and a schedule set earlier would also block the map fusion stages, which only
     # fuse maps with equal schedules.
     if target == 'cpu':
-        s += [('cpu_specialize', SequentializeUnprofitableParallelScopes()),
+        # First in the band: both passes below read fork/join thresholds out of the config, and
+        # those shipped as constants measured on one development box. Calibrate them to the host's
+        # own core count before anyone reads them, so a 72-core machine stops inheriting an
+        # 8-core machine's break-even points. A user-set value is left alone.
+        s += [('cpu_specialize', CalibrateCpuThresholds()),
+              ('cpu_specialize', SequentializeUnprofitableParallelScopes()),
               ('cpu_specialize', SpecializeCpuTransfers())]
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on

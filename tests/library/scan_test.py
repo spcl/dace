@@ -254,17 +254,17 @@ def test_scan_refuses_dtype_mismatch():
         sdfg.compile()
 
 
-#: ``dace::scan::detail::PARALLEL_MIN_ELEMENTS_CONTIGUOUS``. Below it the CPU
-#: expansion's blocked shape collapses to one vectorised pass on one thread, which
-#: is all the sizes above (32 - 4096) ever reach. These two put the per-thread block
-#: folds, the cross-thread offset prefix and the barriers under test.
-_PARALLEL_MIN_ELEMENTS = 1 << 14
+#: Big enough that a realistic team splits it into several per-thread blocks, each
+#: still inside one tile. The sizes above (32 - 4096) leave most of the team with an
+#: empty block, so they never exercise the cross-thread prefix; these two put the
+#: per-thread block folds, the cross-thread offset prefix and the barriers under test.
+_MULTI_BLOCK_N = 1 << 14
 #: Past one tile (``TILE_BYTES`` per thread), so the tile loop runs several times
 #: and the carry from one tile to the next is exercised as well.
 _MULTI_TILE_N = 300000
 
 
-@pytest.mark.parametrize('n', [_PARALLEL_MIN_ELEMENTS, _MULTI_TILE_N])
+@pytest.mark.parametrize('n', [_MULTI_BLOCK_N, _MULTI_TILE_N])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.MIN, ScanOp.MAX])
 def test_blocked_parallel_scan_is_exact_on_integers(op: ScanOp, n: int):
     """Above the parallel threshold the CPU scan splits into per-thread blocks and
@@ -279,7 +279,7 @@ def test_blocked_parallel_scan_is_exact_on_integers(op: ScanOp, n: int):
     assert np.array_equal(arr_out, _numpy_inclusive(arr_in, op))
 
 
-@pytest.mark.parametrize('n', [_PARALLEL_MIN_ELEMENTS, _MULTI_TILE_N])
+@pytest.mark.parametrize('n', [_MULTI_BLOCK_N, _MULTI_TILE_N])
 def test_blocked_parallel_exclusive_scan_is_exact_on_integers(n: int):
     """The exclusive shape shifts inside each block, so its block boundaries are a
     separate risk from the inclusive one's; int64 pins them exactly."""
@@ -343,7 +343,7 @@ def test_multi_chain_blocked_parallel_matches_numpy(op: ScanOp, seeded: bool):
         assert worst <= 1e-12, f'{op.value} chain {c} drifted {worst:.3e} scale-relative (seeded={seeded}).'
 
 
-@pytest.mark.parametrize('n', [_PARALLEL_MIN_ELEMENTS, _MULTI_TILE_N])
+@pytest.mark.parametrize('n', [_MULTI_BLOCK_N, _MULTI_TILE_N])
 @pytest.mark.parametrize('chains', [2, 5])
 @pytest.mark.parametrize('seeded', [False, True])
 def test_multi_chain_blocked_parallel_is_exact_on_integers(chains: int, n: int, seeded: bool):

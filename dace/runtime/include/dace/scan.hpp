@@ -47,8 +47,8 @@
 //
 // 1. Its floating-point association is block-wise, so it does NOT reproduce the
 //    sequential left-to-right order and the result MOVES WITH ``OMP_NUM_THREADS``.
-//    Below ``PARALLEL_MIN_ELEMENTS_CONTIGUOUS`` it runs on one thread and does come
-//    out stable, so small-n tests will not catch this. A caller that needs a
+//    With a one-thread team it runs on one thread and does come out stable, so
+//    small-n tests will not catch this. A caller that needs a
 //    reproducible scan must use the sequential shape, not this header. (Blocking
 //    shortens the dependent chains, so it is more accurate, not less: against a
 //    long-double reference at n=4e6 it lands 1.1e-13 closer, scale-relative.)
@@ -128,12 +128,6 @@ template <typename T, int K = 1>
 struct alignas(64) TeamSlot {
     T v[K];
 };
-
-/// Below this element count a scan runs faster on one thread than on a team: the
-/// fork plus two barriers costs more than the extra lanes save. Measured (fp64
-/// sum, 8 threads, against a sequential single pass) one thread runs 2.5x and a
-/// team 2.1x at n=8192; one thread 2.6x and a team 3.8x at n=16384.
-constexpr long PARALLEL_MIN_ELEMENTS_CONTIGUOUS = 1L << 14;
 
 /// Fallback tile, used when the cache hierarchy cannot be queried. Was the fixed value before
 /// :func:`tile_bytes` derived one, and equals ``L2 / 8`` on the machine it was measured on.
@@ -386,11 +380,16 @@ inline void blocked_scan(long n, long elem_bytes, T seed, Reduce reduce, Scan sc
     if (n <= 0) return;
 #ifdef _OPENMP
     const int want = team_size();
-    // The size test has to sit OUTSIDE the pragma rather than in an ``if`` clause:
-    // a serialized region is not free -- an empty ``omp parallel if(0)`` measures
-    // 691 ns against the 90 ns a 137-element scan takes, so the cloudsc-sized
-    // scans would pay 8x their own cost just to enter and leave a one-thread team.
-    if (want > 1 && n >= PARALLEL_MIN_ELEMENTS_CONTIGUOUS) {
+    // NO SIZE TEST HERE. Whether a scan is worth a team is a SPECIALIZATION verdict, taken once at
+    // compile time against the host's calibrated break-even
+    // (``compiler.cpu.parallel_min_work_per_region``, see
+    // ``auto_optimize.libnode_work_is_below_break_even``): a scan that is provably too small never
+    // reaches this entry point at all, it is expanded to the sequential shape instead. Re-testing
+    // the count on every call would be that decision taken twice, in the one place that cannot
+    // know the machine it was taken for. ``want > 1`` stays because it is not a threshold -- with a
+    // one-thread team there is no team to block for, and the tiled path below would be pure
+    // overhead around a single seeded ``simd inscan``.
+    if (want > 1) {
         TeamSlot<T> totals[MAX_TEAM];
         #pragma omp parallel num_threads(want)
         {

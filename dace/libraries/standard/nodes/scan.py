@@ -362,7 +362,10 @@ def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_
         '    }',
         '};',
         f'const int __want = {d}::team_size();',
-        f'if (__want > 1 && __n >= {d}::PARALLEL_MIN_ELEMENTS_CONTIGUOUS) {{',
+        # No size test: the multi-chain shape follows the single-chain one, where whether a
+        # scan earns a team is decided ONCE at compile time against the host's calibrated
+        # break-even, not re-tested on every call. ``__want > 1`` is not a threshold.
+        'if (__want > 1) {',
         f'    {d}::TeamSlot<{ctype}, {k}> __tot[{d}::MAX_TEAM];',
         '    #pragma omp parallel num_threads(__want)',
         '    {',
