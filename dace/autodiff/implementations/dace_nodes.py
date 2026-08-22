@@ -9,7 +9,7 @@ import copy
 import numbers
 import astunparse
 import sympy as sp
-from typing import List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace
