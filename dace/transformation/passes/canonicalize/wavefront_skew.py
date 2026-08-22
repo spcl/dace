@@ -533,7 +533,12 @@ def reduced_points(extent: List[Tuple[object, object]], drop: List[int]) -> Opti
     A kept axis that is a range of CONSTANT width is the union of that many point accesses --
     memlet consolidation turns the three neighbour reads of a row sweep into the single
     ``A[i-1 : i+2, ...]``, and expanding it back is what recovers the three distances. A
-    symbolic or over-wide range has no such finite reading and refuses (``None``).
+    symbolic or over-wide range has no such finite reading, so it refuses (``None``) unless
+    ``endpoints_only`` says the caller only needs the extremes.
+
+    A wide range reaching here is a genuine sweep whose distances are not a small fixed set --
+    the reduction WINDOW of a lifted WCR map does not, because :func:`scan_state_accesses` reads
+    that map's in-scope point subsets instead of the widened memlet at its entry.
     """
     axes: List[List[object]] = []
     for axis, (lo, hi) in enumerate(extent):
@@ -703,6 +708,100 @@ def dependence_kind(du, dv) -> str:
     return 'flow'
 
 
+def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple[str, object, object]]]:
+    """The map scopes enclosing ``node`` in ``state``, innermost first, as ``[(param, lo, hi), ...]``.
+
+    A reduction lifted to a WCR map is the same shape as the sequential reduction loop it replaced
+    (:func:`nested_loop_context`), one level further in: its parameter reaches the distances and its
+    range bounds them. Reading the widened memlet at the map's entry instead would say the body
+    touches the whole array and refuse every schedule. ``None`` when a range is not a unit-stride
+    interval, which has no such reading.
+    """
+    ctx: List[Tuple[str, object, object]] = []
+    scope = state.scope_dict()
+    cur = scope[node]
+    while cur is not None:
+        if not isinstance(cur, nodes.MapEntry):
+            return None
+        for param, (lo, hi, step) in zip(cur.map.params, cur.map.range):
+            if symbolic.simplify(step) != 1:
+                return None
+            ctx.append((param, lo, hi))
+        cur = scope[cur]
+    return ctx
+
+
+def widened_beyond_reading(subset) -> bool:
+    """``subset`` has an axis whose width is symbolic or wider than a stencil's neighbourhood.
+
+    That is precisely what :func:`reduced_points` cannot enumerate, and precisely what memlet
+    propagation produces at a map scope boundary when the body's window is symbolic.
+    """
+    for (lo, hi, step) in subset.ndrange():
+        if symbolic.simplify(step) != 1:
+            return True
+        width = symbolic.simplify(hi - lo)
+        if not width.is_number or width > MAX_RANGE_READ_WIDTH:
+            return True
+    return False
+
+
+def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
+    """Whether ``data_name``'s accesses in ``state`` should be read at the map-scope leaves.
+
+    Only when a READ was widened past reading by propagation at a map entry -- the reduction window
+    of a lifted WCR map -- AND no write to the array is widened. All of an array's accesses have to
+    be described at the SAME level: :func:`uniform_axes` drops an axis only when every access spans
+    it identically, so pairing a leaf-level read against a range-level write hides the very axis a
+    row sweep depends on dropping. Asked per ARRAY, not per AccessNode: one state routinely holds
+    several nodes for the same array, and the widened write that pins the level can sit on a
+    different node than the widened read.
+    """
+    descend = False
+    for node in state.data_nodes():
+        if node.data != data_name:
+            continue
+        for e in state.in_edges(node):
+            if e.data is not None and e.data.subset is not None and widened_beyond_reading(e.data.subset):
+                return False
+        for e in state.out_edges(node):
+            if e.data is None or e.data.subset is None:
+                continue
+            if widened_beyond_reading(e.data.subset) and isinstance(e.dst, nodes.MapEntry):
+                descend = True
+    return descend
+
+
+def in_scope_accesses(state: SDFGState, edge, is_read: bool) -> Optional[List[Tuple[object, List[Tuple]]]]:
+    """``[(subset, map_ctx), ...]`` for the innermost edges ``edge`` stands for.
+
+    Normally the edge's own subset, which is what every previously-analysable shape uses: a
+    consolidated neighbourhood read (``A[i-1 : i+2, 1:N-1]``) says more about distances than its
+    per-element leaves do, because the column axis it spans uniformly is exactly what
+    :func:`uniform_axes` drops.
+
+    The exception is a subset propagation has WIDENED past reading -- ``A[0:N, 0:N]`` at the entry
+    of a map reducing over a symbolic window, once the ``k`` reduction is a WCR map instead of a
+    sequential loop. That says the body touches everything and refuses every schedule, while the
+    memlet tree's leaves carry the per-iteration subsets it actually reads (``A[i, _k]``) with
+    :func:`map_scope_context` supplying the ``_k`` range that bounds them.
+    """
+    other = edge.dst if is_read else edge.src
+    if not isinstance(other, (nodes.MapEntry, nodes.MapExit)) or not widened_beyond_reading(edge.data.subset):
+        return [(edge.data.subset, [])]
+
+    out: List[Tuple[object, List[Tuple]]] = []
+    for leaf in state.memlet_tree(edge).leaves():
+        endpoint = leaf.dst if is_read else leaf.src
+        if isinstance(endpoint, (nodes.MapEntry, nodes.MapExit)):
+            return None  # a scope that is not a plain map nest -> refuse
+        ctx = map_scope_context(state, endpoint)
+        if ctx is None or leaf.data is None or leaf.data.subset is None:
+            return None
+        out.append((leaf.data.subset, ctx))
+    return out or None
+
+
 def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str, v: str, v_local: str,
                         snap_src: Dict[str, str], sibling_cons: List[object], writes: Dict[str, List[List[object]]],
                         reads: Dict[str, List[Tuple]]) -> bool:
@@ -732,21 +831,36 @@ def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str,
             # An enclosing reduction loop's iterator reaches the distances too, so it needs
             # the same single spelling as ``u`` / ``v``.
             iters = (u, v, *(nm for (nm, _, _) in ctx))
+        descend = descend_into_map_scopes(state, data_name)
         for e in state.in_edges(node):
             if e.data is None or e.data.subset is None:
                 continue
-            idx = access_extent(e.data.subset, iters)
-            if idx is None:
-                return False  # strided write -> refuse
-            writes.setdefault(data_name, []).append([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx])
+            accesses = in_scope_accesses(state, e, is_read=False) if descend else [(e.data.subset, [])]
+            if accesses is None:
+                return False
+            for subset, map_ctx in accesses:
+                if map_ctx:
+                    return False  # a write parameterized by a map index names no single writer
+                idx = access_extent(subset, iters)
+                if idx is None:
+                    return False  # strided write -> refuse
+                writes.setdefault(data_name, []).append([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx])
         for e in state.out_edges(node):
             if e.data is None or e.data.subset is None:
                 continue
-            idx = access_extent(e.data.subset, iters)
-            if idx is None:
-                return False  # strided read of a 2-D carrier -> refuse
-            reads.setdefault(data_name, []).append(
-                ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], ctx, guard))
+            accesses = in_scope_accesses(state, e, is_read=True) if descend else [(e.data.subset, [])]
+            if accesses is None:
+                return False
+            for subset, map_ctx in accesses:
+                # A map index reaching the read is one more parametric dimension of the distance,
+                # exactly like an enclosing reduction loop's iterator, so it joins ``iters`` and
+                # travels with the read as part of its context.
+                read_iters = (*iters, *(nm for (nm, _, _) in map_ctx))
+                idx = access_extent(subset, read_iters)
+                if idx is None:
+                    return False  # strided read of a 2-D carrier -> refuse
+                reads.setdefault(data_name, []).append(
+                    ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], [*ctx, *map_ctx], guard))
     return True
 
 

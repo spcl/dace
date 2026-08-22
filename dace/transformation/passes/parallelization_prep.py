@@ -943,27 +943,44 @@ class BestEffortLoopPeeling(ppl.Pass):
                                     loop: LoopRegion,
                                     x,
                                     relations,
-                                    middle_singleton: bool = True) -> None:
+                                    middle_singleton: bool = True,
+                                    guarded: bool = False) -> None:
         """Replace ``loop`` with the index-set split at ``x``, in place.
 
         The split regroups the same iterations only inside the range (see :meth:`_split_loop_at`),
         and a loop-invariant ``x`` need not land there. Each side that cannot be proven in range is
-        CLAMPED to the loop's own bound, which makes the split total for any ``x`` -- an ``x`` past
-        the end leaves the whole loop in the ``before`` segment, an ``x`` below the start leaves it
-        in the ``after`` one, and neither invents an iteration.
+        CLAMPED to the loop's own bound by default, which makes the split total for any ``x`` -- an
+        ``x`` past the end leaves the whole loop in the ``before`` segment, an ``x`` below the start
+        leaves it in the ``after`` one, and neither invents an iteration. Clamping costs nothing at
+        runtime: no branch, and one copy of the nest.
 
-        The alternative -- emitting ``if in-range { split } else { original loop }`` -- keeps the
-        segment bounds bare but leaves a second, never-parallelized copy of the nest standing in the
-        else branch. That copy is the whole cost: on the hybrid sparse kernel it doubled the
-        residual sequential loops, and the fallback runs exactly when the split would have been
-        legal anyway once clamped. ``relations`` is kept in the signature because it is what the
-        caller already computed to decide the split is worth trying; the sides it names are the
-        sides that get clamped."""
+        ``guarded`` picks the other emission -- ``if relations { split with BARE bounds } else
+        { original loop }`` -- which :meth:`_best_split_for` asks for only when it has PROBED that
+        the bare bounds unlock strictly more maps. They can, because the clamp writes ``x`` into the
+        segment's own bound (``Min(x, end + 1)``) and the dependence test the split exists to
+        unblock then has to see through that ``Min`` to conclude ``x`` is outside the segment.
+        Otherwise clamping wins: the guarded form leaves a second, never-parallelized copy of the
+        nest in the else branch, which on the hybrid sparse kernel doubled the residual sequential
+        loops."""
         sides = self._split_sides_needing_clamp(loop, x)
         if sides is None:
             return
-        if self._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton, clamp=sides):
-            self._clean_peeled_remainder(sdfg)
+        if not guarded or not relations:
+            if self._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton, clamp=sides):
+                self._clean_peeled_remainder(sdfg)
+            return
+        # Avoid an import loop: loop_specialization imports this module's peeling helpers.
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+        # A ``CodeBlock`` condition is PYTHON (``and``, not ``&&``), and the relation is rendered by
+        # sympy's own printer -- not ``sym2cpp``, whose C ``/`` would turn an ``N // 2`` split point
+        # into a true division. ``int_floor`` and friends round-trip through ``pystr_to_symbolic``.
+        condition = ' and '.join(f'({r})' for r in sorted(relations, key=str))
+
+        def parallelize(par_loop, par_region, _owner):
+            if self._split_loop_at(sdfg, par_loop, x, middle_singleton=middle_singleton):
+                self._clean_peeled_remainder(par_region)
+
+        specialize_loop_under_condition(loop, condition, parallelize, sdfg)
 
     def _inner_loop_variables(self, loop: LoopRegion) -> set:
         """Iterator names bound by a ``LoopRegion`` nested strictly inside ``loop``.
@@ -1027,21 +1044,30 @@ class BestEffortLoopPeeling(ppl.Pass):
         best_count, best = baseline, None
         for x in candidates:
             singleton = x not in two_way
-            cand = copy.deepcopy(mini)
-            cloops = _loops(cand)
-            if not cloops:
-                continue
-            clamp = self._split_sides_needing_clamp(cloops[0], x) or frozenset()
-            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=clamp):
-                continue
-            self._clean_peeled_remainder(cand)
-            try:
-                cand.validate()
-                n_mappable = self._mappable_loop_count(cand)
-            except Exception:
-                continue
-            if n_mappable > best_count:
-                best_count, best = n_mappable, (x, singleton)
+            clamp = self._split_sides_needing_clamp(_loops(mini)[0], x) or frozenset()
+            # Probe the clamped form first; if it needs a clamp, probe the BARE-bound form too.
+            # Clamping writes the split point into the segment's own bound (``Min(x, end + 1)``),
+            # and the dependence test that the split exists to unblock then has to see ``x`` is
+            # outside ``[start, Min(x, end + 1) - 1]`` -- true, but not through the ``Min``. When
+            # the bare bound unlocks strictly more maps, the guarded emission is worth its
+            # sequential fallback; when it unlocks the same, clamping is free and keeps the
+            # fallback copy out (measured: the fallback doubled hybrid_sparse's residual loops).
+            for guarded in (False, True) if clamp else (False, ):
+                cand = copy.deepcopy(mini)
+                cloops = _loops(cand)
+                if not cloops:
+                    continue
+                sides = frozenset() if guarded else clamp
+                if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=sides):
+                    continue
+                self._clean_peeled_remainder(cand)
+                try:
+                    cand.validate()
+                    n_mappable = self._mappable_loop_count(cand)
+                except Exception:
+                    continue
+                if n_mappable > best_count:
+                    best_count, best = n_mappable, (x, singleton, guarded)
         return best
 
     def _prune_dead_loop_branches(self, sdfg: SDFG):
@@ -1569,11 +1595,16 @@ class BestEffortLoopPeeling(ppl.Pass):
             found = self._best_split_for(loop, sdfg)
             if found is None:
                 continue
-            x, middle_singleton = found
+            x, middle_singleton, guarded = found
             relations = self._split_range_relations(loop, x)
             if relations is None:
                 continue
-            self._specialize_index_set_split(sdfg, loop, x, relations, middle_singleton=middle_singleton)
+            self._specialize_index_set_split(sdfg,
+                                             loop,
+                                             x,
+                                             relations,
+                                             middle_singleton=middle_singleton,
+                                             guarded=guarded)
             applied += 1
         # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
         #    even for loops LoopToMap already maps (the wrap-around access otherwise

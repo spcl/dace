@@ -112,7 +112,7 @@ def test_split_range_relations_are_fully_discharged():
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
     assert found is not None, 'expected an index-set split point for the broadcast-conflict loop'
-    x, middle_singleton = found
+    x, middle_singleton, _guarded = found
     # A broadcast conflict is one iteration wide, so this is the carve-a-singleton family, not the
     # two-way range-guard split (715dfeb83).
     assert middle_singleton is True, 'broadcast-conflict split must carve the single conflicting iteration'
