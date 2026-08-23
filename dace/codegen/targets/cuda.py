@@ -2351,7 +2351,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'/*block*/ {tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
@@ -2782,13 +2782,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
                     block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
-                elif i == 1 and len(brange) == 2:
-                    block_expr = 'threadIdx.%s' % _named_idx(i+1)
                 else:
                     block_expr = 'threadIdx.%s' % _named_idx(i)
 
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                callsite_stream.write('/*threads*/ int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
             # Delinearize beyond the third dimension
