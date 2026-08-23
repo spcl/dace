@@ -121,6 +121,14 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             md.subset = dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in md.subset.ndrange()])
         self._repl_tasklets_on_node_list(state, list(scope.nodes()), repldict)
         for n in scope.nodes():
+            # An inner map's RANGE reads the rewritten parameter as often as a memlet does: a tiled
+            # nest spells the inner sweep as ``outer : min(outer + C - 1, hi)``, and after the outer
+            # param stops being an index and starts being a tile ordinal, that bound means something
+            # else entirely. Missing it made ChunkAntiDependence's in-chunk sweep start at the chunk
+            # ORDINAL (s212, wrong values in the first chunk's worth of elements).
+            if isinstance(n, nodes.MapEntry) and n is not me:
+                n.map.range = dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs))
+                                                  for rb, re, rs in n.map.range.ranges])
             if isinstance(n, nodes.NestedSDFG):
                 new_mapping = {}
                 for k, v in n.symbol_mapping.items():
