@@ -121,9 +121,8 @@ from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.loop_fission import _single_compute_state
 
 
 def is_opaque_code(node, sdfg: SDFG) -> bool:
@@ -197,6 +196,51 @@ def producer_edges(state, node) -> list:
     return value_edges(state.in_edges(node))
 
 
+def body_compute_states(loop: LoopRegion) -> list | None:
+    """The loop body's non-empty states, or ``None`` when the body is not a plain chain of them.
+
+    One state is what the frontend leaves for a simple body. A body that hands a value on through a
+    transient (TSVC ``s3251``) is several states joined by unconditional, assignment-free edges --
+    the same straight-line program written across more blocks, and splittable for the same reasons.
+    A branch, an interstate assignment or a nested region is a different program and is refused.
+
+    :param loop: The loop whose body is inspected.
+    """
+    from dace.sdfg import utils as sdutil
+    if any(not isinstance(blk, SDFGState) for blk in loop.nodes()):
+        return None
+    for e in loop.edges():
+        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+            return None
+    # Execution order, not insertion order: which state wrote a value before another read it is
+    # what :func:`split_order` reads off this list.
+    states = [blk for blk in sdutil.dfs_topological_sort(loop, [loop.start_block]) if blk.nodes()]
+    return states or None
+
+
+def staged_producer_edges(body, state, node, input_names: dict[str, None]) -> list:
+    """``(state, edge)`` for every VALUE producer of ``node``, following one staged transient back
+    into the state that wrote it.
+
+    A body of several states hands a value on through a transient: TSVC ``s3251`` computes
+    ``c_index_0`` in one state and multiplies it in the next, so a cone walk that only looks inside
+    one state stops on an access node with no in-edges and reads two dependent statements as
+    independent. Continuing from the transient's stores elsewhere in the body is what makes the
+    walk see the whole chain. A name in ``input_names`` is where the cone is MEANT to stop -- its
+    value comes from outside the body -- so it is never followed.
+
+    :param body: The body being walked.
+    :param state: The state holding ``node``.
+    :param node: The node whose producers are wanted.
+    :param input_names: The names whose values enter ``body`` from outside.
+    """
+    own = [(state, e) for e in producer_edges(state, node)]
+    if own or not isinstance(node, nodes.AccessNode) or node.data in input_names:
+        return own
+    return [(st, e) for st in body.all_states() if st is not state for n in st.data_nodes() if n.data == node.data
+            for e in producer_edges(st, n)]
+
+
 def loop_local_transients(loop: LoopRegion, sdfg: SDFG) -> dict[str, None]:
     """``sdfg``'s transients that nothing outside ``loop`` observes -- the loop's own temporaries.
 
@@ -233,18 +277,17 @@ def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = {}
-        stack = list(writers)
+        stack = [(state, w) for w in writers]
         while stack:
-            node = stack.pop()
-            if node in seen:
+            st, node = stack.pop()
+            if (st, node) in seen:
                 continue
-            seen[node] = None
+            seen[(st, node)] = None
             if isinstance(node, nodes.AccessNode):
                 if node.data in input_names:
                     continue
                 deps[node.data] = None
-            for e in producer_edges(state, node):
-                stack.append(e.src)
+            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names))
     return deps
 
 
@@ -262,17 +305,17 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     reads: dict[str, None] = {}
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
-        seen: dict = dict.fromkeys(writers)
-        stack = [e.src for w in writers for e in producer_edges(state, w)]
+        seen: dict = dict.fromkeys((state, w) for w in writers)
+        stack = [(s2, e.src) for w in writers for s2, e in staged_producer_edges(sdfg, state, w, input_names)]
         while stack:
-            node = stack.pop()
-            if node in seen:
+            st, node = stack.pop()
+            if (st, node) in seen:
                 continue
-            seen[node] = None
+            seen[(st, node)] = None
             if isinstance(node, nodes.AccessNode) and node.data in input_names:
                 reads[node.data] = None
                 continue
-            stack.extend(e.src for e in producer_edges(state, node))
+            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names))
     return reads
 
 
@@ -385,18 +428,18 @@ def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -
     found = []
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
-        seen: dict = dict.fromkeys(writers)
-        stack = [(state, e) for w in writers for e in producer_edges(state, w)]
+        seen: dict = dict.fromkeys((state, w) for w in writers)
+        stack = [pair for w in writers for pair in staged_producer_edges(sdfg, state, w, input_names)]
         while stack:
             st, edge = stack.pop()
             node = edge.src
             if isinstance(node, nodes.AccessNode) and node.data in input_names:
                 found.append((st, node, edge))
                 continue
-            if node in seen:
+            if (st, node) in seen:
                 continue
-            seen[node] = None
-            stack.extend((st, e) for e in producer_edges(st, node))
+            seen[(st, node)] = None
+            stack.extend(staged_producer_edges(sdfg, st, node, input_names))
     return found
 
 
@@ -434,7 +477,7 @@ def suppress_writes(body: SDFG, name: str) -> None:
 
 
 def drop_dataless_access_nodes(body: SDFG) -> None:
-    """Splice out access nodes the pruning left with no VALUE traffic, keeping the order they carry.
+    """Splice out what the pruning left with no live value traffic, keeping the order it carried.
 
     Cutting the other group's stores can leave an access node attached by nothing but empty
     memlets. Those are ORDERING edges, so the node is not dead weight to be dropped blindly -- it
@@ -443,27 +486,52 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
     later pass that derives its read/write sets from memlets builds a body SDFG without that
     descriptor and then dies looking the node up (``LoopToMap`` on TSVC ``s211``, ``KeyError: 'e'``).
 
+    A node whose STORED VALUE nothing reads any more is the same case one step later. The pruning
+    can leave the other group's staging transient still written -- ``c[i - 1] -> c_index`` in TSVC
+    ``s261`` -- with only ordering edges downstream. Its producer keeps a read of ANOTHER
+    iteration's element alive, which is what makes the clone look loop-carried and costs it the
+    map, and the ordering that read was under is vacuous once the read is gone. So the store goes
+    too, its producer follows it, and only a TRANSIENT qualifies: a connector array's value leaves
+    the clone and is read by definition.
+
     :param body: The clone to clean.
     """
-    for state in body.all_states():
-        for node in [n for n in state.data_nodes() if not value_edges(state.in_edges(n) + state.out_edges(n))]:
-            preds = [e.src for e in state.in_edges(node)]
-            succs = [e.dst for e in state.out_edges(node)]
-            state.remove_node(node)
-            for src in preds:
-                for dst in succs:
-                    state.add_nedge(src, dst, Memlet())
+    while True:
+        removed = False
+        read_for_value = {
+            n.data
+            for state in body.all_states()
+            for n in state.data_nodes() if value_edges(state.out_edges(n))
+        }
+        for state in body.all_states():
+            for node in [n for n in state.data_nodes() if not value_edges(state.out_edges(n))]:
+                if (value_edges(state.in_edges(node))
+                        and not (body.arrays[node.data].transient and node.data not in read_for_value)):
+                    continue
+                # Only the EMPTY in-edges carry order worth keeping; a value in-edge comes from the
+                # dead producer swept below.
+                preds = [e.src for e in state.in_edges(node) if e.data.is_empty()]
+                succs = [e.dst for e in state.out_edges(node)]
+                state.remove_node(node)
+                for src in preds:
+                    for dst in succs:
+                        state.add_nedge(src, dst, Memlet())
+                removed = True
+            for producer in [n for n in state.nodes() if isinstance(n, nodes.CodeNode) and state.out_degree(n) == 0]:
+                state.remove_node(producer)
+                removed = True
+        if not removed:
+            return
 
 
 def rmw_analyzable(body) -> bool:
     """Whether the cross-group read/write picture of ``body`` can be read off its dataflow at all.
 
     Shared precondition of both split policies: a branch guard or an index-symbol assignment is
-    re-evaluated inside every clone against already-updated data and is not dataflow, and the cone
-    walks look at one state at a time, so a producer chain crossing states is invisible to them.
+    re-evaluated inside every clone against already-updated data and is not dataflow. Several
+    states are fine -- :func:`staged_producer_edges` follows a producer chain across them.
     """
-    return not _has_conditional(body) and not _has_interstate_assignments(body) and sum(1
-                                                                                        for _ in body.all_states()) == 1
+    return not _has_conditional(body) and not _has_interstate_assignments(body)
 
 
 def iteration_distinct(subsets, loop_var: str) -> bool:
@@ -501,6 +569,28 @@ def carries_across_iterations(body, name: str, in_names: dict[str, None]) -> boo
         if node.data == name and {access_offset(edge_subset(edge, name), w) for w in stores} != {0}:
             return True
     return False
+
+
+def sees_written_value(body, name: str, state, node) -> bool:
+    """Whether the read at ``node`` sees ``name``'s store from the SAME iteration.
+
+    Within one state the answer is dataflow: an access node with producers is the post-write value,
+    one without is what the iteration started with. Across states it is block order -- a store in an
+    EARLIER state has already run, so a reader that has no producer of its own still sees the
+    updated value (TSVC ``s2251`` writes ``a[i]`` in one state and reads it in the next).
+
+    :param body: The body being split.
+    :param name: The array in question.
+    :param state: The state holding ``node``.
+    :param node: The reading access node.
+    """
+    if producer_edges(state, node):
+        return True
+    states = body_compute_states(body) or []
+    if state not in states:
+        return False
+    before = states[:states.index(state)]
+    return any(producer_edges(st, n) for st in before for n in st.data_nodes() if n.data == name)
 
 
 def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]):
@@ -545,23 +635,29 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
         writer = next((i for i, grp in enumerate(groups) if name in grp), None)
         if writer is None:
             return None
-        stores = write_subsets(body, name)
-        if not iteration_distinct(stores, body.loop_variable):
-            return None
+        stores: list | None = None
         for reader, grp in enumerate(groups):
             if reader == writer:
                 continue
             for state, node, edge in [r for oc in grp for r in output_read_edges(body, oc, in_names)]:
                 if node.data != name:
                     continue
+                if stores is None:
+                    # Asked here rather than per name: a name no OTHER group reads imposes no
+                    # order, so what its writes look like never comes up. A value the loop carries
+                    # is exactly that case once :func:`merge_carried_groups` has put its reader
+                    # and its writer in one group.
+                    stores = write_subsets(body, name)
+                    if not iteration_distinct(stores, body.loop_variable):
+                        return None
                 read = edge_subset(edge, name)
                 offsets = {access_offset(read, w) for w in stores}
                 if len(offsets) != 1 or None in offsets:
                     return None
                 offset = offsets.pop()
                 if offset == 0:
-                    # Same element, same iteration: the access node tells which value it is.
-                    first = writer if producer_edges(state, node) else reader
+                    # Same element, same iteration: whether the read already sees the write decides.
+                    first = writer if sees_written_value(body, name, state, node) else reader
                 else:
                     first = reader if offset > 0 else writer
                 after[first][writer if first == reader else reader] = None
@@ -594,6 +690,42 @@ def topological_group_order(after: list[dict[int, None]]) -> list[int] | None:
             if pending[j] == 0:
                 ready.append(j)
     return order if len(order) == len(after) else None
+
+
+def merge_carried_groups(body, groups: list[dict[str, None]], rmw: list[str],
+                         in_names: dict[str, None]) -> list[dict[str, None]]:
+    """``groups`` with the producer of a CARRIED value and everything that reads it merged into one.
+
+    A value the loop carries -- ``s`` in TSVC ``s2251``, written every iteration at the same element
+    -- cannot be put on either side of its reader: run the writer's loop first and the reader sees
+    the final value in every iteration, run it second and it sees the initial one, while the fused
+    loop saw the running one. No order is legal, so the only way to split a body holding one is not
+    to split around it. Merging its groups costs nothing and leaves the REST of the body free to
+    distribute, which is the difference between one sequential loop and one sequential loop beside a
+    map.
+
+    :param body: The body being split.
+    :param groups: The independent output groups.
+    :param rmw: Names ``body`` both reads and writes.
+    :param in_names: The names whose values enter ``body`` from outside.
+    """
+    merged = list(groups)
+    for name in rmw:
+        if iteration_distinct(write_subsets(body, name), body.loop_variable):
+            continue
+        writer = next((i for i, grp in enumerate(merged) if name in grp), None)
+        if writer is None:
+            continue
+        readers = [
+            i for i, grp in enumerate(merged)
+            if i != writer and any(n.data == name for oc in grp for _s, n, _e in output_read_edges(body, oc, in_names))
+        ]
+        if not readers:
+            continue
+        for i in readers:
+            merged[writer].update(merged[i])
+        merged = [grp for i, grp in enumerate(merged) if i not in readers]
+    return merged
 
 
 def independent_groups(body, out_names: list[str], in_names: dict[str, None]) -> list[dict[str, None]]:
@@ -922,15 +1054,16 @@ class SplitStatements(ppl.Pass):
         """
         from dace.transformation.passes.analysis import loop_analysis
 
-        state = _single_compute_state(loop)
-        if state is None:
+        states = body_compute_states(loop)
+        if states is None:
             return None
+        body_nodes = [n for state in states for n in state.nodes()]
         # A NestedSDFG body is _replicate_components' shape: it splits in place, no outlining needed.
-        if any(isinstance(n, nodes.NestedSDFG) for n in state.nodes()):
+        if any(isinstance(n, nodes.NestedSDFG) for n in body_nodes):
             return None
         # Same black-box refusal as the other two paths: the clones recompute the whole body per
         # output, which is only sound while every node's effect is exactly its out-memlets.
-        if any(is_opaque_code(n, sdfg) for n in state.nodes()):
+        if any(is_opaque_code(n, sdfg) for n in body_nodes):
             return None
         # Both clones must sweep the SAME iteration space, so the trip count may not depend on
         # anything the body writes: a counting loop whose bounds are pure symbols.
@@ -950,22 +1083,24 @@ class SplitStatements(ppl.Pass):
         # turns a plain input into a read-modify-write output and refuses the whole split.
         reads: dict[str, None] = {}
         writes: dict[str, None] = {}
-        for n in state.data_nodes():
-            if value_edges(state.out_edges(n)):
-                reads[n.data] = None
-            stores = producer_edges(state, n)
-            if not stores:
-                continue
-            writes[n.data] = None
-            # A WCR store is a reduction; it is not replicable per group.
-            if any(e.data.wcr is not None for e in stores):
-                return None
-        # A private temp read before anything writes it holds the PREVIOUS iteration's value (a
+        for state in states:
+            for n in state.data_nodes():
+                if value_edges(state.out_edges(n)):
+                    reads[n.data] = None
+                stores = producer_edges(state, n)
+                if not stores:
+                    continue
+                writes[n.data] = None
+                # A WCR store is a reduction; it is not replicable per group.
+                if any(e.data.wcr is not None for e in stores):
+                    return None
+        # A private temp the body READS but never WRITES holds the PREVIOUS iteration's value (a
         # scalar rotation). Each clone gets its own copy and its own dead-code pruning, so the
-        # producer of that value can be pruned out of the clone that consumes it.
-        for n in state.data_nodes():
-            if n.data in local and not producer_edges(state, n) and value_edges(state.out_edges(n)):
-                return None
+        # producer of that value can be pruned out of the clone that consumes it. The question is
+        # asked of the whole body, not of one state: a temp written in one state and read in the
+        # next is an ordinary staged value, not a carry.
+        if any(t in reads and t not in writes for t in local):
+            return None
 
         out_names = [w for w in writes if w not in local]
         in_names = dict.fromkeys(r for r in reads if r not in local)
@@ -975,6 +1110,9 @@ class SplitStatements(ppl.Pass):
         if len(groups) < 2:
             return None
         rmw = [o for o in out_names if o in in_names]
+        groups = merge_carried_groups(loop, groups, rmw, in_names)
+        if len(groups) < 2:
+            return None
         if not rmw or rmw_confined(loop, in_names, rmw, groups):
             minimal = SplitStatements._minimal_loops(loop, groups, rmw, in_names)
             return None if minimal is None else (minimal, False)
