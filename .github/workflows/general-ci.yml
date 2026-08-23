@@ -131,8 +131,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        # islpy: without it WavefrontSkew is a no-op and its tests skip.
-        extras: testing,polyhedral
+        extras: testing
 
     - name: Test with pytest
       run: |

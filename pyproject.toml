@@ -35,6 +35,11 @@ dependencies = [
     # parallelization band query it, so an install without it silently refuses
     # loops the shipped analysis can otherwise prove parallel.
     "z3-solver",
+    # Exact-integer polyhedral engine. Not optional for the same reason: WavefrontSkew is a silent
+    # no-op without it, so a wavefront nest (polybench nussinov, seidel_2d, the fdtd family) keeps
+    # its sequential loops and the canonical form an install produces depends on which extras were
+    # picked. Whether a scope is parallel is not allowed to be an install-time accident.
+    "islpy",
     "scikit-build",
     "cmake",
     "ninja",
@@ -64,8 +69,6 @@ mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
 # Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
 fastgraph = ["rustworkx"]
-# Optional: exact-integer polyhedral engine for WavefrontSkew canonicalization.
-polyhedral = ["islpy"]
 ml-testing = [
     "coverage",
     "pytest-cov",
