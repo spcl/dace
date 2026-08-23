@@ -28,7 +28,7 @@ from dace.libraries.blas.environments import openblas
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage,
                                                     libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
-from dace.transformation.passes.cpu_specialization.sequentialize_parallel_scopes import SequentializeParallelScopes
+from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import SequentializeUnprofitableParallelScopes
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
@@ -383,7 +383,7 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     if device == dtypes.DeviceType.GPU:
         SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     else:
-        SequentializeParallelScopes().apply_pass(sdfg, {})
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
         SpecializeCpuTransfers().apply_pass(sdfg, {})
 
     canonicalize_set_fast_implementations(sdfg, device)

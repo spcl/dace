@@ -872,7 +872,10 @@ def _assert_emitted_nest(sdfg, axes):
     emitted = [line.strip() for line in code.splitlines() if line.strip().startswith('for (')]
     assert len(emitted) == axes, f'expected {axes} emitted loops, got {len(emitted)}:\n' + '\n'.join(emitted)
     for line in emitted:
-        var = line.split('(', 1)[1].split('=', 1)[0].strip().removeprefix('auto ').strip()
+        # Last token of the declarator IS the name: the type spelling varies (``auto``,
+        # ``int64_t``, ``long long``) and stripping one fixed prefix left the type glued to
+        # the name, so the substring below could never match and every loop read as strided.
+        var = line.split('(', 1)[1].split('=', 1)[0].split()[-1]
         assert f'{var} += 1)' in line or f'{var} = ({var} + 1))' in line, f'emitted loop kept a tile stride: {line}'
 
 

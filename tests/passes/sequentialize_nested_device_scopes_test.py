@@ -13,7 +13,7 @@ from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.cpu_specialization import SequentializeParallelScopes
+from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
 
@@ -52,7 +52,7 @@ def test_nested_device_map_is_sequentialized():
 def test_cpu_cost_model_never_touches_device_maps():
     """The CPU band decides CPU schedules only -- a GPU graph is not its business."""
     sdfg = nested_device_maps()
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['outer'] == dtypes.ScheduleType.GPU_Device
     assert schedules(sdfg)['inner'] == dtypes.ScheduleType.GPU_Device
 

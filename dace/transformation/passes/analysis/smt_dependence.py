@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import sympy as sp
 
 from dace import symbolic
-from dace.sdfg.state import ConditionalBlock, SDFGState
+from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
 
 try:
     import z3
@@ -195,6 +195,25 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
             return lhs != rhs
         return None
 
+    # DaCe's own connectives, which a PARSED condition is built from: ``pystr_to_symbolic``
+    # keeps ``AND`` / ``OR`` / ``NOT`` as function nodes rather than folding them to sympy's,
+    # so a guard collected off a ConditionalBlock arrives in this form and used to fall through
+    # to ``None`` here -- silently disarming every guard-dependent proof.
+    func = str(expr.func) if isinstance(expr, sp.Basic) else ''
+    if func in ('AND', 'OR'):
+        args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+        if any(a is None for a in args):
+            return None
+        joiner = z3.And if func == 'AND' else z3.Or
+        out = args[0]
+        for a in args[1:]:
+            out = joiner(out, a)
+        return out
+
+    if func == 'NOT':
+        arg = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
+        return None if arg is None else z3.Not(arg)
+
     if isinstance(expr, sp.And):
         args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
         if any(a is None for a in args):
@@ -239,9 +258,13 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
     try:
         step_v = int(symbolic.evaluate(step, {}))
         if step_v != 1:
-            # (i - start) % step == 0
-            diff = i - start_z
-            cons.append(z3.SRem(diff, z3.IntVal(step_v)) == 0)
+            # (i - start) % step == 0, so the solver knows two distinct iterations are a whole
+            # stride apart rather than adjacent. ``z3.SRem`` is bitvector-only and raises on an
+            # Int term, so it silently lost this constraint to the ``except`` below and every
+            # strided loop was reasoned about as if it stepped by one. ``%`` is SMT-LIB ``mod``,
+            # non-negative for a positive divisor, and ``i >= start`` above makes the dividend
+            # non-negative too, so the two agree here.
+            cons.append((i - start_z) % z3.IntVal(step_v) == 0)
     except Exception:
         pass
     return cons
@@ -324,6 +347,62 @@ def prove_injective_write(write_expr: sp.Basic,
     return _prove_unsat(antecedent, consequent, timeout_ms)
 
 
+def prove_disjoint_write_ranges(lo_expr: sp.Basic,
+                                hi_expr: sp.Basic,
+                                itervar: str,
+                                start: Any,
+                                end: Any,
+                                step: Any = 1,
+                                domain_assumptions: Optional[sp.Basic] = None,
+                                timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+    """Prove that distinct iterations write to non-overlapping RANGES.
+
+    The range form of :func:`prove_injective_write`: an iteration writes the inclusive interval
+    ``[lo(i), hi(i)]`` rather than the single element ``write_expr(i)``, and the property that
+    makes the loop parallel is that two distinct iterations' intervals never intersect. Chunked
+    rewrites produce exactly this shape -- anti-dependence chunking writes
+    ``[i, Min(N - 2, i + 4095)]`` with ``step = 4096``, where the tail clamp defeats the affine
+    ``a*i+b`` matcher even though the chunks are plainly disjoint.
+
+    Two inclusive intervals intersect iff ``lo1 <= hi2 and lo2 <= hi1``; an empty interval
+    (``lo > hi``) makes that conjunction false, so an iteration that writes nothing is handled by
+    the same formula.
+
+    :param lo_expr: Lower bound of the written interval, in terms of ``itervar``.
+    :param hi_expr: Upper (inclusive) bound of the written interval, in terms of ``itervar``.
+    :returns: ``True`` if z3 proves disjointness; ``False``/``None`` otherwise.
+    """
+    if not _HAS_Z3:
+        return None
+
+    sym_cache: Dict[str, Any] = {}
+    arr_cache: Dict[str, Any] = {}
+
+    i1 = z3.Int(f'{itervar}_1')
+    i2 = z3.Int(f'{itervar}_2')
+    sym_cache[itervar] = i1
+    lo1 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
+    hi1 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
+    sym_cache[itervar] = i2
+    lo2 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
+    hi2 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
+    if lo1 is None or hi1 is None or lo2 is None or hi2 is None:
+        return None
+
+    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    if not bounds:
+        return None
+
+    antecedent = z3.And(i1 != i2, *bounds)
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            antecedent = z3.And(antecedent, dom)
+
+    consequent = z3.Not(z3.And(lo1 <= hi2, lo2 <= hi1))
+    return _prove_unsat(antecedent, consequent, timeout_ms)
+
+
 def _overlap_pair(write_expr: sp.Basic,
                   read_expr: sp.Basic,
                   read_guard: Optional[sp.Basic],
@@ -335,9 +414,10 @@ def _overlap_pair(write_expr: sp.Basic,
                   domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
     """Prove/disprove an overlap of the requested order.
 
-    ``order`` is ``'raw'`` (a write iteration precedes a read iteration) or
-    ``'war'`` (a write iteration follows a read iteration).  The read access is
-    optionally guarded by ``read_guard``.
+    ``order`` is ``'raw'`` (a write iteration precedes a read iteration),
+    ``'raw_le'`` (a write iteration precedes *or equals* it) or ``'war'`` (a write
+    iteration follows a read iteration).  The read access is optionally guarded by
+    ``read_guard``.
     """
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
@@ -356,7 +436,12 @@ def _overlap_pair(write_expr: sp.Basic,
     if not bounds:
         return None
 
-    order_cons = (i_w < i_r) if order == 'raw' else (i_w > i_r)
+    if order == 'raw':
+        order_cons = i_w < i_r
+    elif order == 'raw_le':
+        order_cons = i_w <= i_r
+    else:
+        order_cons = i_w > i_r
     antecedent = z3.And(order_cons, *bounds, gz)
     if domain_assumptions is not None:
         dom = _bool_to_z3(domain_assumptions, {}, {})
@@ -367,57 +452,27 @@ def _overlap_pair(write_expr: sp.Basic,
     return _prove_unsat(antecedent, consequent, timeout_ms=DEFAULT_TIMEOUT_MS)
 
 
-def collect_enclosing_conditions(state: SDFGState) -> sp.Basic:
-    """Return the conjunction of branch conditions that must hold when ``state`` executes.
+def prove_read_ahead(read_expr: sp.Basic,
+                     write_expr: sp.Basic,
+                     itervar: str,
+                     start: Any,
+                     end: Any,
+                     step: Any = 1,
+                     read_guard: Optional[sp.Basic] = None,
+                     domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+    """Prove that a read only ever touches elements no iteration up to and including its own
+    has written -- the precondition for breaking an anti-dependence by snapshotting.
 
-    Walks up from ``state`` through enclosing ``ConditionalBlock`` branches and
-    accumulates the guard for the branch that contains ``state``.  For the else
-    branch (the branch with ``cond is None``) the guard is the negation of all
-    preceding conditions.  Returns ``True`` when no guarding condition applies.
+    Stricter than a ``'WAR'`` verdict from :func:`classify_read_write_pair`, which excludes only
+    a STRICTLY earlier write. A same-iteration alias must be excluded too: redirecting such a
+    read to a pre-loop snapshot would hand it the stale original instead of the value its own
+    iteration just wrote.
+
+    :returns: ``True`` when the solver proves it, ``False``/``None`` otherwise.
     """
-    conditions: List[sp.Basic] = []
-    current: Any = state
-    while current is not None:
-        parent = current.parent_graph
-        if parent is None:
-            break
-        # ``state`` lives inside a branch region; the ConditionalBlock is the parent of that region.
-        cond_block = parent.parent_graph
-        if isinstance(cond_block, ConditionalBlock):
-            # Find which branch of ``cond_block`` equals ``parent``.
-            our_cond: Optional[str] = None
-            seen_else = False
-            for cond_codeblock, branch in cond_block.branches:
-                if branch is parent:
-                    if cond_codeblock is not None and cond_codeblock.as_string:
-                        our_cond = cond_codeblock.as_string
-                    else:
-                        seen_else = True
-                    break
-            if our_cond is not None:
-                try:
-                    conditions.append(symbolic.pystr_to_symbolic(our_cond))
-                except Exception:
-                    pass
-            elif seen_else:
-                # Negate all preceding conditions.
-                negs: List[sp.Basic] = []
-                for cond_codeblock, _branch in cond_block.branches:
-                    if cond_codeblock is None:
-                        break
-                    if cond_codeblock.as_string:
-                        try:
-                            negs.append(sp.Not(symbolic.pystr_to_symbolic(cond_codeblock.as_string)))
-                        except Exception:
-                            pass
-                if negs:
-                    conditions.append(sp.And(*negs) if len(negs) > 1 else negs[0])
-        current = parent
-    if not conditions:
-        return sp.true
-    if len(conditions) == 1:
-        return conditions[0]
-    return sp.And(*conditions)
+    if not _HAS_Z3:
+        return None
+    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'raw_le', domain_assumptions)
 
 
 def classify_read_write_pair(read_expr: sp.Basic,
@@ -460,5 +515,10 @@ def classify_read_write_pair(read_expr: sp.Basic,
 __all__ = [
     'has_z3',
     'prove_injective_write',
+    'prove_disjoint_write_ranges',
+    'prove_read_ahead',
     'classify_read_write_pair',
+    # Re-exported from ``sdfg.analysis.cfg``: the branch guards a read executes under are a
+    # plain control-flow fact, shared with the polyhedral engine in ``wavefront_skew``.
+    'collect_enclosing_conditions',
 ]

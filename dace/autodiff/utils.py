@@ -478,6 +478,10 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
     # bare name: minting here is the only place that still knows their dtypes.
     symbol_table: Dict[str, sp.Expr] = {}
 
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: Dict[str, sp.Expr] = {}
+
     # Add the definition of global constant symbols that are presen in the code
     # Prepare the Symbol declaration code
     symbol_code = ""

@@ -98,11 +98,11 @@ def const_init_heap_sdfg(name):
     ``_is_const_len1_array`` (Register only) claims it: it reaches the heap allocation path while
     being const-initialized, which is exactly the case a naive pointee-``const`` would miscompile.
 
-    The extent is 2, not 1, on purpose: ``scalar_emission_type`` (default ``scalar`` since
-    ``c027cdf12``) runs ``ConvertLengthOneArraysToScalars`` ahead of the const machinery, so a
-    length-1 transient never reaches the allocator as an Array at all -- it becomes a by-value Scalar
-    and takes the ``const T x = expr;`` path instead. 2 is still a COMPILE-TIME-CONSTANT extent,
-    which is the other property these tests need.
+    The extent is 2, not 1, on purpose: the readable pipeline runs
+    ``ConvertLengthOneArraysToScalars`` ahead of the const machinery, so a length-1 transient never
+    reaches the allocator as an Array at all -- it becomes a by-value Scalar and takes the
+    ``const T x = expr;`` path instead. 2 is still a COMPILE-TIME-CONSTANT extent, which is the
+    other property these tests need.
     """
     N = dace.symbol('N')
     sdfg = dace.SDFG(name)

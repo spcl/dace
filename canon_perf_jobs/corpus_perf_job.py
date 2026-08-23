@@ -33,10 +33,10 @@ disk and resumes.
 
 ``--aggregate`` is the post-step once every rank has exited: it folds the per-rank CSVs into one
 parallelism report and one speedup CSV + Markdown table, then hands the same per-kernel JSONs to
-``canon_corpus_perf_job/plot_corpus_perf.py`` for the figure. Run bare (no launcher) this script is rank 0 of
+``canon_perf_jobs/plot_corpus_perf.py`` for the figure. Run bare (no launcher) this script is rank 0 of
 1, i.e. the whole pooled list::
 
-    python canon_corpus_perf_job/corpus_perf_job.py --preset S --limit 2
+    python canon_perf_jobs/corpus_perf_job.py --preset S --limit 2
 """
 import signal
 

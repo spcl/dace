@@ -117,6 +117,40 @@ def _array_array_where(visitor: ProgramVisitor,
                     generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
+    elif (left_arr is not None and right_arr is not None and left_cast is None and right_cast is None
+          and list(cond_out_shape) == list(out_shape)):
+        # A per-element select IS Fortran ``MERGE``, so hand the whole thing to the library node
+        # and let its expansion do the broadcasting -- that keeps one implementation of the select
+        # for both frontends and leaves the choice of lowering (vectorised, GPU, a vendor call) to
+        # whoever picks the node's implementation later.
+        #
+        # Restricted to the case the node can express exactly: three real arrays, no cast to insert
+        # (the node's tasklet assigns straight across and has nowhere to put one), and a condition
+        # that broadcasts into the result rather than widening it.
+        from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
+
+        node = MergeLibraryNode('_where_')
+        state.add_node(node)
+        n_cond = state.add_read(cond_operand)
+        n_left = left_operand_node if left_operand_node else state.add_read(left_operand)
+        n_right = right_operand_node if right_operand_node else state.add_read(right_operand)
+        n_out = state.add_write(out_operand)
+        state.add_edge(n_left, None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME,
+                       Memlet.from_array(left_operand, left_arr))
+        state.add_edge(n_right, None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME,
+                       Memlet.from_array(right_operand, right_arr))
+        state.add_edge(n_cond, None, node, MergeLibraryNode.MASK_CONNECTOR_NAME,
+                       Memlet.from_array(cond_operand, cond_arr))
+        state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, n_out, None,
+                       Memlet.from_array(out_operand, out_arr))
+        if generated_nodes is not None:
+            generated_nodes.add(node)
+            generated_nodes.add(n_cond)
+            generated_nodes.add(n_out)
+            if not left_operand_node:
+                generated_nodes.add(n_left)
+            if not right_operand_node:
+                generated_nodes.add(n_right)
     else:
         inputs = {}
         inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)

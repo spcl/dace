@@ -14,9 +14,10 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes import CShift
+from dace.libraries.standard.nodes.cshift import ShiftDirection
 
 
-def _build(in_shape, dtype, *, dim=1, shift=None):
+def _build(in_shape, dtype, *, dim=1, shift=None, direction=ShiftDirection.FORTRAN):
     """Wire a CShift lib node into a fresh SDFG with full-array memlets.
 
     :param in_shape: source array shape (also the output shape).
@@ -24,6 +25,8 @@ def _build(in_shape, dtype, *, dim=1, shift=None):
     :param dim: Fortran 1-based rotation axis.
     :param shift: ``None`` means the runtime symbol ``__shift``; an
         integer or symbolic expression pins the value at construct time.
+    :param direction: FORTRAN rotates ``CSHIFT``'s way, NUMPY rotates
+        ``numpy.roll``'s way (the opposite sign).
     :returns: the constructed (unexpanded) SDFG.
     """
     label = f"cshift_dim{dim}_{'_'.join(map(str, in_shape))}"
@@ -33,7 +36,7 @@ def _build(in_shape, dtype, *, dim=1, shift=None):
     if shift is None and "__shift" not in sdfg.symbols:
         sdfg.add_symbol("__shift", dace.int64)
     state = sdfg.add_state()
-    node = CShift("cshift", dim=dim, shift=shift)
+    node = CShift("cshift", dim=dim, shift=shift, direction=direction)
     state.add_node(node)
     state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
     state.add_edge(node, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
@@ -174,3 +177,34 @@ def test_cshift_pure_expansion_2d_axis(dim, shift):
     out = np.zeros((3, 4), dtype=np.float64)
     sdfg(v=arr.copy(), out=out)
     np.testing.assert_allclose(out, np.roll(arr, -shift, axis=dim - 1))
+
+
+@pytest.mark.parametrize("shift", [2, -1, 0, 1, 4])
+def test_cshift_numpy_direction_rotates_the_other_way(shift):
+    """The same node with ``direction=NUMPY`` is ``numpy.roll``, not ``CSHIFT``. Both sit on one
+    expansion, so a regression that drops the sign shows up as one of these two matching the wrong
+    reference -- and at ``shift=0``, where the two agree, as neither of them failing."""
+    arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
+    sdfg = _build((5, ), dace.float64, dim=1, shift=shift, direction=ShiftDirection.NUMPY)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    out = np.zeros(5, dtype=np.float64)
+    sdfg(v=arr.copy(), out=out)
+    np.testing.assert_allclose(out, np.roll(arr, shift))
+
+
+@pytest.mark.parametrize("dim,shift", [(1, 1), (2, 1), (1, -1), (2, 2)])
+def test_cshift_numpy_direction_2d_axis(dim, shift):
+    arr = np.arange(12, dtype=np.float64).reshape((3, 4))
+    sdfg = _build((3, 4), dace.float64, dim=dim, shift=shift, direction=ShiftDirection.NUMPY)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    out = np.zeros((3, 4), dtype=np.float64)
+    sdfg(v=arr.copy(), out=out)
+    np.testing.assert_allclose(out, np.roll(arr, shift, axis=dim - 1))
+
+
+def test_cshift_defaults_to_the_fortran_direction():
+    """The node is Fortran's ``CSHIFT`` first; the HLFIR bridge builds it without naming a
+    direction and must keep getting that rotation."""
+    assert CShift("cshift", dim=1, shift=2).direction is ShiftDirection.FORTRAN

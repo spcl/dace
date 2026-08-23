@@ -3,10 +3,112 @@
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 from dace import graphlib as nx
+from dace import symbolic
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+
+
+def collect_enclosing_conditions(block: ControlFlowBlock, stop: Optional[ControlFlowRegion] = None) -> sp.Basic:
+    """The conjunction of branch conditions that must hold for ``block`` to execute.
+
+    Walks out through every enclosing :class:`ConditionalBlock`, accumulating the guard of the
+    branch that contains ``block``; an ``else`` branch (``cond is None``) contributes the
+    negation of all preceding conditions. Returns ``sp.true`` when nothing guards ``block``.
+
+    ``stop`` bounds the walk at a region: guards at or above it are not collected. Pass the
+    enclosing loop when the caller reasons in that loop's iteration space, so a condition
+    written in terms of symbols an interstate edge reassigns on the way in never enters the
+    answer. Left ``None`` the walk runs to the root.
+
+    A condition that does not parse is dropped rather than guessed at. Every consumer uses the
+    result to SHRINK the set of states it must consider, so a missing conjunct can only make an
+    answer more conservative, never wrong.
+    """
+    conditions: List[sp.Basic] = []
+    current: Optional[ControlFlowBlock] = block
+    while current is not None and current is not stop:
+        parent = current.parent_graph
+        if parent is None or parent is stop:
+            break
+        # ``block`` lives inside a branch region; the ConditionalBlock is that region's parent.
+        cond_block = parent.parent_graph
+        if isinstance(cond_block, ConditionalBlock):
+            our_cond: Optional[str] = None
+            seen_else = False
+            for cond_codeblock, branch in cond_block.branches:
+                if branch is parent:
+                    if cond_codeblock is not None and cond_codeblock.as_string:
+                        our_cond = cond_codeblock.as_string
+                    else:
+                        seen_else = True
+                    break
+            if our_cond is not None:
+                parsed = parse_condition(our_cond)
+                if parsed is not None:
+                    conditions.append(parsed)
+            elif seen_else:
+                negs: List[sp.Basic] = []
+                for cond_codeblock, _branch in cond_block.branches:
+                    if cond_codeblock is None:
+                        break
+                    if cond_codeblock.as_string:
+                        parsed = parse_condition(cond_codeblock.as_string)
+                        negated = negate_condition(parsed) if parsed is not None else None
+                        if negated is not None:
+                            negs.append(negated)
+                if negs:
+                    conditions.append(sp.And(*negs) if len(negs) > 1 else negs[0])
+        current = parent
+    if not conditions:
+        return sp.true
+    if len(conditions) == 1:
+        return conditions[0]
+    try:
+        return sp.And(*conditions)
+    except TypeError:
+        # ``sp.And`` rejects DaCe's own ``AND`` / ``OR`` nodes -- ``pystr_to_symbolic`` builds
+        # them with ``evaluate=False`` and sympy does not count a Function as Boolean. Fold with
+        # DaCe's connective instead of dropping the guard; both consumers understand it.
+        out = conditions[0]
+        for cond in conditions[1:]:
+            out = symbolic.AND(out, cond)
+        return out
+
+
+def parse_condition(cond_str: str) -> Optional[sp.Basic]:
+    """``cond_str`` as a sympy expression, or ``None`` if it does not parse."""
+    try:
+        return symbolic.pystr_to_symbolic(cond_str)
+    except Exception:
+        return None
+
+
+def negate_condition(expr: sp.Basic) -> Optional[sp.Basic]:
+    """``not expr``, or ``None`` when it has no form the callers can use.
+
+    ``sp.Not`` RAISES on DaCe's own ``AND`` / ``OR`` nodes: ``pystr_to_symbolic`` builds them with
+    ``evaluate=False`` to keep parse trees verbatim, and sympy does not count a Function as
+    Boolean. So the connectives are negated by De Morgan here instead of being handed to sympy,
+    and only a bare relational reaches ``sp.Not``.
+    """
+    func = str(expr.func) if isinstance(expr, sp.Basic) else ''
+    if func == 'NOT':
+        return expr.args[0]
+    if func in ('AND', 'OR'):
+        parts = [negate_condition(a) for a in expr.args]
+        if any(part is None for part in parts):
+            return None
+        joiner = symbolic.OR if func == 'AND' else symbolic.AND
+        out = parts[0]
+        for part in parts[1:]:
+            out = joiner(out, part)
+        return out
+    try:
+        return sp.Not(expr)
+    except TypeError:
+        return None  # not a form sympy can negate; dropping the guard stays conservative
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:

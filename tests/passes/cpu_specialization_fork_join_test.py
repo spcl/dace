@@ -2,7 +2,7 @@
 """The CPU fork/join cost model and the transfer specialization that follows it.
 
 Pins the decisions of
-:class:`~dace.transformation.passes.cpu_specialization.sequentialize_parallel_scopes.SequentializeParallelScopes`
+:class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
 and
 :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
 -- the single home of "make it sequential again" on CPU. The canonical form these run on is the
@@ -23,7 +23,7 @@ from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.cpu_specialization import SequentializeParallelScopes, SpecializeCpuTransfers
+from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes, SpecializeCpuTransfers
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -73,14 +73,14 @@ def schedules(sdfg):
 def test_map_below_break_even_goes_sequential():
     """A constant trip count under the threshold cannot pay for a fork/join, at any nesting."""
     sdfg = one_map_sdfg('small_top_level', [64], ['0:64'])
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
 
 
 def test_map_above_break_even_stays_parallel():
     """A constant trip count above the threshold keeps its region."""
     sdfg = one_map_sdfg('large_top_level', [4096], ['0:4096'])
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
@@ -92,34 +92,41 @@ def test_symbolic_extent_stays_parallel():
     over a runtime guard.
     """
     sdfg = one_map_sdfg('symbolic_top_level', [N], ['0:N-1'])
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
-def test_map_re_entered_by_symbolic_loop_goes_sequential():
-    """s115 / s119: a symbolic loop is LONG, and a map whose work does not outgrow the number of
-    entries pays more fork/join than it saves."""
+def test_map_re_entered_by_symbolic_loop_stays_parallel():
+    """An enclosing loop is not a reason to sequentialize: a region entered ``E`` times costs
+    ``E * (fork + work/P)`` against ``E * work``, so ``E`` multiplies both sides and cancels.
+
+    The extent is symbolic, hence big, so the map keeps its region -- the same ruling as
+    :func:`test_symbolic_extent_stays_parallel`, which the enclosing loop does not overturn. This
+    is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map was pinned
+    ``Sequential`` by the old work-vs-entries comparison."""
     sdfg = one_map_sdfg('map_in_long_loop', [N], ['0:N'], loop_end='N')
-    SequentializeParallelScopes().apply_pass(sdfg, {})
-    assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
-def test_triangular_map_in_loop_goes_sequential():
-    """s115 exactly: ``for j in 0:N { map i in j+1:N }``."""
+def test_triangular_map_in_loop_stays_parallel():
+    """s115 exactly: ``for j in 0:N { map i in j+1:N }``. The inner map IS data-parallel -- that is
+    why it is a Map -- and its extent averages ``N/2``, which is symbolic and therefore big. Reading
+    it at the last iteration (empty) is an artifact of substituting the sweep variable with the same
+    value as ``N``, not a property of the nest, so it must not decide the schedule."""
     sdfg = dace.SDFG('triangular')
     sdfg.add_array('a', [N], dace.float64)
     outer = loop(sdfg, 'outer', 'N', var='j')
     map_state(outer, sdfg, 'body', ['j+1:N'])
     sdfg.validate()
-    SequentializeParallelScopes().apply_pass(sdfg, {})
-    assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
 def test_wide_map_in_time_loop_stays_parallel():
-    """jacobi / heat: ``for t: map[i, j]`` keeps its map -- ``N*M`` work per entry outgrows the
-    ``N`` entries, which is the whole difference from s115."""
+    """jacobi / heat: ``for t: map[i, j]`` keeps its map. Symbolic work, so above break-even."""
     sdfg = one_map_sdfg('wide_map_in_loop', [N, M], ['0:N', '0:M'], loop_end='N')
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
@@ -127,7 +134,7 @@ def test_provably_short_loop_is_not_re_entry():
     """A provably short loop around real work keeps the map parallel -- the trip-count awareness
     that ``libnode_is_sequential`` lacks (it counts ANY enclosing loop as re-entry)."""
     sdfg = one_map_sdfg('map_in_short_loop', [N], ['0:N'], loop_end='4')
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
@@ -146,7 +153,7 @@ def test_nested_parallel_map_is_always_sequentialized():
     state.add_memlet_path(tasklet, inner_exit, outer_exit, access, src_conn='out', memlet=dace.Memlet('a[i, j]'))
     sdfg.validate()
 
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
 
     assert schedules(sdfg)['outer'] == dtypes.ScheduleType.CPU_Multicore
     assert schedules(sdfg)['inner'] == dtypes.ScheduleType.Sequential
@@ -174,7 +181,7 @@ def test_threshold_zero_disables_the_cost_model():
     survives, so a re-entered map keeps its region."""
     sdfg = one_map_sdfg('ab_off', [N], ['0:N'], loop_end='N')
     with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=0):
-        SequentializeParallelScopes().apply_pass(sdfg, {})
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
@@ -197,14 +204,14 @@ def reduce_in_loop(name, loop_end):
 def test_library_node_in_long_loop_goes_sequential():
     """A library node opens its own region per entry, so a long loop around it is a hazard."""
     sdfg, node = reduce_in_loop('reduce_long_loop', 'N')
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.Sequential
 
 
 def test_library_node_in_short_loop_stays_parallel():
     """...but a PROVABLY short loop is not re-entry -- the trip-count-aware half of the rule."""
     sdfg, node = reduce_in_loop('reduce_short_loop', '4')
-    SequentializeParallelScopes().apply_pass(sdfg, {})
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.CPU_Multicore
 
 
@@ -252,9 +259,9 @@ def test_top_level_transfer_keeps_the_parallel_element_map(kind):
 def test_passes_are_idempotent():
     """Both passes run in the canonicalize band AND in the ``finalize_for_target`` tail, so a
     second application must find nothing left to do."""
-    sdfg = one_map_sdfg('idempotent_map', [N], ['0:N'], loop_end='N')
-    assert SequentializeParallelScopes().apply_pass(sdfg, {}) == 1
-    assert SequentializeParallelScopes().apply_pass(sdfg, {}) is None
+    sdfg = one_map_sdfg('idempotent_map', [64], ['0:64'], loop_end='N')
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
 
     transfers, _node = transfer_sdfg('idempotent_copy', 'N', 'copy')
     assert SpecializeCpuTransfers().apply_pass(transfers, {}) == 2
@@ -262,8 +269,9 @@ def test_passes_are_idempotent():
 
 
 def test_canonicalize_wires_the_cpu_band():
-    """End to end: ``canonicalize(target='cpu')`` must leave TSVC s115's shape with no parallel
-    region inside the sweep loop -- the band is wired, not just importable."""
+    """End to end: ``canonicalize(target='cpu')`` must leave TSVC s115's shape parallel, and must
+    sequentialize the same nest once its extent is a constant below break-even -- the band is
+    wired, not just importable, and the only size rule left is the provable one."""
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
     @dace.program
@@ -279,7 +287,23 @@ def test_canonicalize_wires_the_cpu_band():
         n.map.label for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
     ]
-    assert not parallel, f"s115's inner map must not open a region per sweep iteration, got {parallel}"
+    assert parallel, 's115: a symbolic extent is big, so the inner map keeps its region'
+
+    # Constant extent, not a triangular one: ``j+1:16`` still carries the sweep variable, so its
+    # element count is symbolic and rule 2 cannot prove anything about it either.
+    @dace.program
+    def tiny_sweep(a: dace.float64[16], b: dace.float64[16]):
+        for j in range(16):
+            for i in range(16):
+                a[i] = a[i] - b[j]
+
+    tiny = tiny_sweep.to_sdfg(simplify=True)
+    canonicalize(tiny, validate=True)
+    still_parallel = [
+        n.map.label for n, _ in tiny.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
+    ]
+    assert not still_parallel, f'a provably 16-wide map cannot pay for a region, got {still_parallel}'
 
 
 def test_strided_re_entered_copy_is_sequential_but_not_memcpy():

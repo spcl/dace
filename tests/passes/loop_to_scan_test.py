@@ -1387,8 +1387,8 @@ def test_scalar_carry_acc_not_used_post_loop_no_writeback():
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
-    # Inspect: the rewrite added s_build, s_scan, s_write. The writeback state
-    # name suffix is ``_scan_acc_post`` -- absent here.
+    # Inspect: the rewrite added the scan state, plus whichever staging states its buffers
+    # needed. The writeback state name suffix is ``_scan_acc_post`` -- absent here.
     state_labels = {s.label for s in sdfg.all_states()}
     assert not any('_scan_acc_post' in lbl for lbl in state_labels)
 
@@ -1416,14 +1416,22 @@ def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
     assert in_edges, 'test fixture: loop should have at least one in-edge'
     # Add a marker assignment to the first in-edge.
     in_edges[0].data.assignments['_marker_pre_loop'] = '42'
+    loop_label = loop.label
 
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
-    # After the rewrite, the marker must still be on an iedge feeding the new
-    # head state (``*_scan_build``).
-    new_head = next(s for s in sdfg.all_states() if s.label.endswith('_scan_build'))
-    head_in_edges = list(sdfg.in_edges(new_head))
+    # After the rewrite, the marker must still be on an iedge feeding the new head state.
+    # The head is found STRUCTURALLY -- the one state of the rewritten chain that is entered
+    # from outside it -- not by a label suffix: the chain is only ``build -> scan -> write``
+    # when both staging buffers are needed, and a contiguous 1-D delta/output elides the copy
+    # states around the libnode, which would leave a name-based lookup asserting on a state
+    # the rewrite is entitled not to emit.
+    chain = [s for s in sdfg.all_states() if s.label.startswith(loop_label)]
+    assert chain, f'the rewrite should have left states named after {loop_label}'
+    heads = [s for s in chain if any(e.src not in chain for e in sdfg.in_edges(s))]
+    assert len(heads) == 1, f'expected exactly one entry into the scan chain, got {[s.label for s in heads]}'
+    head_in_edges = list(sdfg.in_edges(heads[0]))
     found = any(e.data.assignments.get('_marker_pre_loop') == '42' for e in head_in_edges)
     assert found, 'iedge assignment ``_marker_pre_loop=42`` lost during rewrite'
 
@@ -1863,6 +1871,45 @@ def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
         exp[i] = exp[i - 1] + (delta[i] if mask[i] > 0 else 0.0)
     sdfg(out=out, delta=delta, mask=mask, N=n)
     assert np.allclose(out, exp), f'masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
+
+
+def test_masked_scan_with_a_non_hold_sibling_is_refused():
+    """The sibling branch here writes a value of its OWN (``out[i] = delta[i]``), not a
+    hold of the carrier. The masked rewrite zero-fills the delta buffer for skipped
+    iterations and drops the sibling's write, which reproduces a hold and nothing else --
+    so lifting this shape would silently discard the sibling's value and run the scan's
+    running sum through iterations that never had one. Refusing is the only sound answer.
+
+    The shape is the ``[0,K)`` half of an index-set-split hybrid-sparse loop, where the
+    segment's clamped ``i < min(K, N)`` bound leaves the ``i < K`` guard standing.
+    """
+
+    @dace.program
+    def masked_non_hold(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
+        for i in range(1, N):
+            if mask[i] > 0:
+                out[i] = out[i - 1] + delta[i]
+            else:
+                out[i] = delta[i]
+
+    sdfg = masked_non_hold.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not res, f'a non-hold sibling must refuse the lift; got {res} rewrites'
+    assert _num_scan_nodes(sdfg) == 0
+    assert _num_loops(sdfg) == 1, 'the loop must survive as the sequential recurrence'
+
+    n = 32
+    rng = np.random.default_rng(11)
+    delta = rng.standard_normal(n)
+    mask = (rng.standard_normal(n) > 0.0).astype(np.int64)
+    out = rng.standard_normal(n)
+    exp = out.copy()
+    for i in range(1, n):
+        exp[i] = exp[i - 1] + delta[i] if mask[i] > 0 else delta[i]
+    sdfg(out=out, delta=delta, mask=mask, N=n)
+    assert np.allclose(out, exp), f'refused masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
 
 
 def test_multi_slot_same_array_five_carries():

@@ -177,35 +177,47 @@ def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
     assert _maps(cleaned) == _maps(reference), 'reclaiming must not change the map structure'
 
 
-#: The orphaned replica the fission leaves behind: the staging array, and the tasklets that read it
-#: uninitialized and write it back for nobody.
+#: The orphaned replica the fission leaves behind: the staging array it reads uninitialized, the two
+#: per-expression descriptors that chain stages through, and the tasklets that write it for nobody.
+#: All three descriptors carry the replica's ``nested_sdfg_`` prefix; the live half of the split
+#: works on ``a_slice_plus_x_slice`` and the ``_scan_*`` pair, so the sets never overlap.
 _DEAD_REPLICA_ARRAY = 'nested_sdfg_a'
+_DEAD_REPLICA_TRANSIENTS = {
+    'nested_sdfg_a',
+    'nested_sdfg_a_index',
+    'nested_sdfg_a_slice_plus_x_slice',
+}
 _DEAD_REPLICA_TASKLETS = {
     '_Add_',
     '_assign_in_nested_sdfg_a_to_nested_sdfg_a_index',
     '_assign_out_nested_sdfg_a_slice_plus_x_slice_to_nested_sdfg_a',
 }
+#: What the split's live half computes -- named so the removal below cannot quietly take it too.
+_LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice_plus_x_slice'}
 
 
 def test_fission_replica_dead_chain_is_removed():
-    """The orphaned ``SplitStatements`` replica -- array, its access nodes, and its tasklets.
+    """The orphaned ``SplitStatements`` replica -- arrays, access nodes, and tasklets.
 
-    Named exactly, not by prefix: the LIVE half of the split keeps ``nested_sdfg_a_index`` and
-    ``nested_sdfg_a_slice_plus_x_slice``, so a prefix test would demand the reclaimers delete
-    working dataflow.
+    Named exactly, not by prefix, and paired with ``_LIVE_TRANSIENTS``: the assertion is that the
+    reclaimers take the whole dead chain and nothing beside it. The two staging descriptors go with
+    the array now -- ``DeadDataflowElimination`` deletes the chain's nodes but leaves the
+    descriptors standing, ``ArrayElimination`` skips a ``Scalar`` outright, so it is the terminal
+    ``PruneUnreferencedTransients`` that collects them.
     """
     reference = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=False)
-    assert _DEAD_REPLICA_ARRAY in _transients(reference), \
+    assert _DEAD_REPLICA_TRANSIENTS <= set(_transients(reference)), \
         f'expected the orphaned replica in the reference, got {_transients(reference)}'
     assert _DEAD_REPLICA_ARRAY in _access_nodes(reference)
     assert _DEAD_REPLICA_TASKLETS <= set(_tasklets(reference)), _tasklets(reference)
 
     cleaned = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=True)
-    assert _DEAD_REPLICA_ARRAY not in _transients(cleaned), _transients(cleaned)
+    assert not (_DEAD_REPLICA_TRANSIENTS & set(_transients(cleaned))), _transients(cleaned)
     assert _DEAD_REPLICA_ARRAY not in _access_nodes(cleaned)
     assert not (_DEAD_REPLICA_TASKLETS & set(_tasklets(cleaned))), _tasklets(cleaned)
     # Only the dead chain goes: the live half of the split is untouched.
-    assert set(_transients(reference)) - set(_transients(cleaned)) == {_DEAD_REPLICA_ARRAY}
+    assert set(_transients(reference)) - set(_transients(cleaned)) == _DEAD_REPLICA_TRANSIENTS
+    assert set(_transients(cleaned)) == _LIVE_TRANSIENTS, _transients(cleaned)
     assert set(_tasklets(reference)) - set(_tasklets(cleaned)) == _DEAD_REPLICA_TASKLETS
     assert _maps(cleaned) == _maps(reference), 'reclaiming must not change the map structure'
 

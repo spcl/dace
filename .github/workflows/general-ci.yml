@@ -139,6 +139,7 @@ jobs:
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.
@@ -154,11 +155,8 @@ jobs:
         # far longer than the 600s per-test cap here (the staged CloudSC walk builds and verifies the
         # kernel once per phase; the determinism probe spawns a 1800s subprocess). They are marked
         # ``integration`` and run in the dedicated integration workflow, which budgets 7200s per test.
-        # ``not idempotence``: the fixed-point suites assert a second canonicalize moves nothing,
-        # which the pipeline does not hold yet. Deselected until it does, so this gate tracks
-        # correctness rather than a known-open property.
         pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration and not idempotence"
+          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration"
 
   # --- Vectorization (was vectorization-ci.yml) ---
   vectorization:
@@ -203,6 +201,7 @@ jobs:
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         # New codegens only; no autoopt, no serialization round-trip.
@@ -387,47 +386,6 @@ jobs:
           tests/codegen/readable \
           tests/codegen/split_nsdfg_translation_units_test.py
 
-  # --- Optional Extensions (was extensions-ci.yml) ---
-  extensions:
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: 'recursive'
-    - uses: ./.github/actions/setup-dace
-      with:
-        python-version: '3.14'
-        apt-packages: libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
-        pip-packages: pytest-xdist
-        extras: testing,fastgraph,polyhedral
-
-    - name: Extension dependencies present
-      # Both extras must actually install: a missing one turns the whole job into silent skips,
-      # which is the failure this workflow exists to prevent.
-      run: |
-        python -c "import rustworkx; print('rustworkx', rustworkx.__version__)"
-        python -c "import islpy; print('islpy', islpy.version.VERSION_TEXT)"
-
-    - name: Test with pytest
-      run: |
-        export NOSTATUSBAR=1
-        ulimit -s 65536 || true
-        export OMP_STACKSIZE=64M
-        export DACE_compiler_max_stack_array_size=65536
-        export DACE_cache=unique
-        export DACE_optimizer_automatic_simplification=1
-        export DACE_compiler_cpu_implementation=experimental_readable
-        export DACE_compiler_cuda_implementation=experimental
-        export DACE_compiler_command_cache=1
-        export DACE_compiler_precompiled_header=1
-        pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          tests/graphlib \
-          tests/sdfg/analysis/polyhedral_isl_test.py \
-          tests/canonicalize/wavefront_polyhedron_test.py \
-          -m "not gpu and not long and not sequential"
 
   # --- Graphlib suite under the rustworkx backend ---
   # General Tests stays on the default networkx backend; this job runs only the graph

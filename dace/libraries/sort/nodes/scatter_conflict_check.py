@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``ScatterConflictCheck`` libnode: count duplicate values in a 1-D integer array.
+"""``ScatterConflictCheck`` libnode: flag duplicate values in a 1-D integer array.
 
 Runtime proof that a scatter index ``ip`` is a permutation -- no duplicates means no
 write-write races, so ``a[ip[i]] = ...`` may run as a parallel Map. Opaque: the tile
@@ -8,7 +8,8 @@ tiling (the compute Map it guards vectorizes normally).
 
 ``_count_out`` is a length-1 ``int64`` **host** scalar in every backend, including CUDA,
 so the downstream ``trap_sym`` interstate binding and the trap read stay on the host
-regardless of where ``ip`` lives. ``count == 0`` iff the index is a permutation.
+regardless of where ``ip`` lives. It is 0 iff the index is a permutation and 1 otherwise:
+the verify pass OR-reduces, so the value is a flag, not a duplicate count.
 
 The tag array the check indexes by index-*value* is an optional ``_owner_out`` connector: an
 ``int64`` host Array the caller sizes by the scattered array's domain (see
@@ -212,12 +213,14 @@ class ExpandCUDA(ExpandTransformation):
 
 @library.node
 class ScatterConflictCheck(nodes.LibraryNode):
-    """Count duplicate values in a 1-D integer index array (scatter no-conflict proof).
+    """Flag duplicate values in a 1-D integer index array (scatter no-conflict proof).
 
     - ``_idx_in``: input 1-D integer index array of length ``N``.
-    - ``_count_out``: output length-1 ``int64`` **host** scalar = number of duplicate
-      values (``0`` iff ``_idx_in`` is a permutation). Host in every backend so the
-      guard's ``trap_sym`` binding + trap execute on the host.
+    - ``_count_out``: output length-1 ``int64`` **host** scalar, ``0`` iff ``_idx_in`` is a
+      permutation and ``1`` otherwise. The verify pass OR-reduces, so this is a FLAG, not a
+      duplicate count -- an OR carries per lane where a sum needs a widening accumulator, and
+      the only consumer is the trap's ``> 0``. Host in every backend so the guard's
+      ``trap_sym`` binding + trap execute on the host.
     - ``_owner_out`` (optional): scratch tag array, an ``int64`` **host** Array spanning
       every value ``_idx_in`` can hold. Wiring it lets DaCe own the allocation (so it can
       be persistent, outside the program body) and drops the ``max(idx)`` sizing pass.

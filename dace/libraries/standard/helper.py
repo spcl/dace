@@ -7,11 +7,10 @@ from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_in_scope
 
-# Both the legacy and experimental codegens consume this exact name for stream wiring.
+# Both legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
-# Register is intentionally in neither set: it resolves by scope (GPU register
-# in a device scope, host stack slot otherwise).
+# Register is intentionally in neither set: resolves by scope (GPU register vs. host stack slot).
 GPU_RESIDENT_STORAGES = frozenset({
     dtypes.StorageType.GPU_Global,
     dtypes.StorageType.GPU_Shared,
@@ -42,15 +41,7 @@ def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageT
 def collapse_shape_and_strides(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
-    """Drop length-1 dimensions from a (subset, strides) pair.
-
-    Surviving strides are scaled by the subset step (``stride * s``) to describe the access as a
-    view into the parent array. A tiled range (``begin:end:tile_stride:tile_size``) is split into
-    two dimensions so that the inner tile elements keep their contiguous stride.
-
-    Lengths come from ``subset.size()``, which CEILS the step division. Flooring it instead
-    under-counts every strided range whose extent is not a multiple of the step -- ``1:2*H:2``
-    holds ``H`` elements but floors to ``H - 1``.
+    """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
     single (length, stride) pair expresses -- it expands into two dims: the step count at
@@ -76,25 +67,51 @@ def collapse_shape_and_strides(
 
 
 def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
-    """Whether a CPU transfer of ``num_elements`` takes the parallel element map.
+    """False only when ``num_elements`` is a compile-time constant below
+    ``compiler.cpu.parallel_transfer_min_elements``; a symbolic (unknown-at-compile-time) size
+    is assumed large and takes the parallel path too.
 
-    Parallel is the DEFAULT, and the only carve-out an expansion may make: a count PROVABLY below
-    ``compiler.cpu.parallel_transfer_min_elements`` keeps the single libc call.
-    Every symbol is assumed big enough and no symbol outranks another, so an undecidable
-    comparison answers ``True`` -- reading "unknown" as "small" is what single-threaded every
-    dynamically sized bulk copy.
-
-    :param num_elements: total element count (constant or symbolic).
-    :returns: ``True`` unless the count is provably below the threshold.
+    :param num_elements: total contiguous element count (constant or symbolic).
+    :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
     """
     threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
-    return dace.symbolic.ask('negative', dace.symbolic.simplify(num_elements - threshold)) is not True
+    try:
+        return int(dace.symbolic.simplify(num_elements)) >= threshold
+    except (TypeError, ValueError):
+        return True
 
 
-# --------------------------------------------------------------------------------------------
-# Fork/join cost model. NOT consumed by the expansions: the canonical form of a bulk transfer is
-# the parallel element map on every device, and sequentializing a re-entered one is a CPU
-# SPECIALIZATION. This is the single implementation of that rule for the cpu_specialization band.
+def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
+    """True when a multi-threaded map encloses this transfer, so the mapped form would open one
+    OpenMP region per entry instead of one for the whole transfer.
+
+    ``Default`` counts: an unresolved enclosing map becomes ``CPU_Multicore`` at the top level.
+
+    :param node: the transfer library node.
+    :param parent_state: state containing ``node``.
+    :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
+    """
+    return is_in_scope(parent_state.sdfg, parent_state, node,
+                       [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default])
+
+
+def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
+                  select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
+    """Dispatch a library node's ``'Auto'`` implementation to the one ``select_fn`` picks, setting
+    ``node.implementation`` so introspection reflects what was chosen.
+
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
+    :param select_fn: callable returning a concrete implementation name (not ``'Auto'``).
+    :param library_cls: the library node class with the ``implementations`` dict.
+    :returns: whatever the resolved expansion returns.
+    """
+    impl_name = select_fn(node, parent_state)
+    assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
+    node.implementation = impl_name
+    return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
 # --------------------------------------------------------------------------------------------
 
 #: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node
@@ -160,35 +177,3 @@ def cpu_transfer_parallelizes(node: nodes.LibraryNode, state: dace.SDFGState,
     :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
     """
     return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(node, state)
-
-
-def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
-    """True when a multi-threaded map encloses this transfer, so the mapped form would open one
-    OpenMP region per entry instead of one for the whole transfer.
-
-    ``Default`` counts: an unresolved enclosing map becomes ``CPU_Multicore`` at the top level.
-
-    :param node: the transfer library node.
-    :param parent_state: state containing ``node``.
-    :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
-    """
-    return is_in_scope(parent_state.sdfg, parent_state, node,
-                       [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default])
-
-
-def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
-                  select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
-    """Dispatch a library node's ``'Auto'`` implementation to the one picked by ``select_fn``.
-
-    Sets ``node.implementation`` to the resolved name so introspection reflects what was picked.
-
-    :param node: the library node being expanded.
-    :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :param select_fn: callable returning a concrete implementation name (not ``'Auto'``).
-    :param library_cls: the library node class with the ``implementations`` dict.
-    :returns: whatever the resolved expansion returns.
-    """
-    impl_name = select_fn(node, parent_state)
-    assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
-    node.implementation = impl_name
-    return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)

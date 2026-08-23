@@ -433,20 +433,36 @@ required:
                             Minimum element count (symbolic size counts as large) for a
                             copy/fill to lower to an OpenMP element map instead of memcpy/memset.
 
+                    explicit_copy:
+                        type: bool
+                        default: false
+                        title: Lower implicit copies to explicit copy nodes
+                        description: >
+                            If set to true, codegen lifts every implicit copy edge to a
+                            CopyLibraryNode before expansion. An implicit copy is a write no node
+                            performs, so an empty memlet ordering that write has nothing to point
+                            at; giving the copy a node is what makes it orderable.
+
+                            Applies to the CLASSIC CPU generator only, and defaults OFF there: it
+                            emits implicit copy edges correctly without the lift, and holding its
+                            output byte-identical to upstream is what makes it the A/B reference
+                            for the new generators. The experimental readable CPU generator and
+                            the experimental CUDA generator REQUIRE the lowering -- every copy has
+                            to be a node an ordering edge can point at -- and run it regardless of
+                            this key.
+
                     parallel_min_work_per_region:
                         type: int
-                        default: 1024
-                        title: Parallel region break-even work
+                        default: 256
+                        title: Parallel region break-even iterations
                         description: >
-                            Elements a single OpenMP region must process to pay for its
-                            fork/join. The cpu_specialize band sequentializes a parallel
-                            map whose work per entry is PROVABLY below this, and a map
-                            re-entered by an enclosing loop whose work per entry does not
-                            outgrow the number of entries (both read with every symbol set
-                            to this value, since all symbols are assumed equally big). A
-                            symbolic count on its own is assumed big enough and stays
-                            parallel. 0 disables the cost model, leaving only the
-                            nested-parallelism rule.
+                            Iterations a top-level map must have to pay for the fork/join of
+                            its own OpenMP region. The cpu_specialize band sequentializes a
+                            parallel map whose iteration count is PROVABLY below this. A
+                            symbolic count is assumed big enough and stays parallel. An
+                            enclosing loop is NOT a reason to sequentialize: it multiplies
+                            the parallel and the sequential cost alike. 0 disables the size
+                            rule, leaving only the nested-parallelism rule.
 
                     implementation:
                         type: str
@@ -940,73 +956,6 @@ required:
                                     block and invisible to later readers, so a candidate whose writing
                                     tasklet is braced falls back to a plain ``T x;`` line immediately ahead
                                     of that tasklet, with the write kept inside.
-
-                            explicit_copy:
-                                type: str
-                                default: 'off'
-                                title: Lower implicit copies through explicit CopyLibraryNodes
-                                description: >
-                                    Applies to: the CLASSIC CPU generator only. The experimental readable
-                                    CPU generator and the experimental CUDA generator ALWAYS run the
-                                    lowering -- they require every copy to be a node an ordering edge can
-                                    point at -- so this key has no effect on them.
-
-                                    ``on`` lifts every implicit copy edge to a
-                                    :class:`~dace.libraries.standard.nodes.copy_node.CopyLibraryNode`
-                                    (:class:`~dace.transformation.passes.insert_explicit_copies.InsertExplicitCopies`)
-                                    and expands the nodes it inserted; ``off`` (the default) keeps the
-                                    classic generator's implicit copy-edge emission byte-identical to
-                                    upstream.
-
-                                    Going through the library node lets ``ExpandAuto`` pick per copy: a
-                                    single-element copy becomes a plain ``=`` tasklet and a contiguous
-                                    same-layout multi-element copy becomes ``std::memcpy`` -- both faster
-                                    than instantiating ``dace::CopyND``. Only a GPU_Shared copy still
-                                    needs ``dace::CopyND``.
-
-                                    The pass itself is shared, and its other callers
-                                    (``transformation/layout/prepare.py``, the GPU-specialization pipeline)
-                                    need the ``CopyLibraryNode`` LEFT UNEXPANDED -- ``RewriteCopyForLayout``
-                                    rewrites it to a ``TensorTranspose``. So the expansion belongs to
-                                    ``codegen.py``, not to the pass.
-
-                            scalar_emission_type:
-                                type: str
-                                default: scalar
-                                title: Normalize single-value transients to Scalar or length-1 Array
-                                description: >
-                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
-                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
-                                    enters that block, so its output stays byte-identical for every value).
-
-                                    Which C++ form a single-value TRANSIENT is emitted in: a by-value
-                                    ``Scalar`` (``T x;``) or a length-1 ``Array`` (``T x[1];``, indexed
-                                    ``x[0]``). A frontend leaves a mix of both; this normalizes it.
-
-                                    ``scalar`` (the default) is the readable form: a single value reads as
-                                    ``x``, not ``x[0]``. ``keep`` runs neither conversion, so the
-                                    descriptors and the emitted code are byte-identical to the legacy
-                                    generator's -- use it to bisect a suspected scalarization
-                                    regression. ``scalar`` runs
-                                    :class:`~dace.transformation.passes.length_one_array_scalar_conversion.
-                                    ConvertLengthOneArraysToScalars` to turn every length-1 array into a
-                                    Scalar; ``len1_array`` runs the inverse
-                                    :class:`~dace.transformation.passes.length_one_array_scalar_conversion.
-                                    ConvertScalarsToLengthOneArrays`.
-
-                                    BOTH conversions are ``transient_only`` -- a non-transient descriptor is
-                                    part of the SDFG signature (the caller binds a Python scalar to a
-                                    ``Scalar`` and a 1-element buffer to an ``Array``), so rewriting it would
-                                    change the call contract. The signature is therefore never touched.
-
-                                    ``scalar`` additionally CHAINS
-                                    :class:`~dace.transformation.passes.promote_gpu_scalars_to_arrays.
-                                    PromoteGPUScalarsToArrays` after the scalarization: a GPU kernel output
-                                    (a length-1 array in GPU_Global storage, or one written by a device
-                                    map's exit) is scalarized by the first pass but immediately widened back
-                                    to a length-1 array by the second, because a by-value Scalar cannot live
-                                    in device global memory. So GPU kernel outputs stay length-1 arrays under
-                                    every value of this key; only host-side transients become Scalars.
 
             #############################################
             # GPU (CUDA/HIP) compiler

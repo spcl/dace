@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``CShift`` library node -- Fortran ``CSHIFT`` (circular shift).
+"""``CShift`` library node -- circular shift, in either the Fortran or the numpy direction.
 
 Fortran ``CSHIFT(arr, shift [, dim])`` produces an array of the same
 shape as ``arr`` whose element along ``dim`` (default 1) at position
@@ -7,16 +7,22 @@ shape as ``arr`` whose element along ``dim`` (default 1) at position
 whole array: a rank-R input rotates each (R-1)-cross-section
 perpendicular to ``dim`` independently.
 
-CSHIFT does not currently appear in any kernel in our target
-workloads (ICON, ECRAD, cloudsc, QE, Graupel) -- the lib node is
-kept as a typed bridge target so the HLFIR frontend can route
-``hlfir.cshift`` here without falling through to an
-``unrecognised intrinsic`` error, but the pure expansion is a TODO
-stub.  Implement the expansion (and any backend variants -- OpenMP
-5.0 user-defined reduction, CUB / stdpar) when a workload requires
-it; the recommended shape is a single Map whose memlet subset is
-``Mod(Mod(i + shift, n) + n, n)`` so the tasklet body collapses to
-``__out = __in`` (no helper required).
+``numpy.roll`` is the SAME rotation run the other way -- ``roll(x, s)[i]``
+reads ``x[(i - s) % n]`` where ``CSHIFT(x, s)(i)`` reads ``x(mod(i + s, n))``
+-- so :class:`ShiftDirection` selects which one a node means and the
+expansion carries the sign.  Both directions are wrong-looking-but-valid
+in the same way: a node built with the wrong one produces an array of the
+right shape, dtype and even the right multiset of values, so nothing
+downstream can catch it.  Naming the direction on the node keeps the flip
+in one place instead of in every caller.
+
+The modulus is FLOORED in both directions and is not selectable.  A
+truncating modulus (the C ``%``) returns a NEGATIVE index for a negative
+operand, which is an out-of-bounds read rather than a different
+convention, so there is no second mode to offer.
+
+Callers: the HLFIR frontend routes ``hlfir.cshift`` here, and the Python
+frontend lowers ``numpy.roll`` here (``replacements/array_manipulation.py``).
 """
 import dace
 import dace.library
@@ -25,6 +31,15 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
+import enum
+
+
+class ShiftDirection(enum.Enum):
+    """Which way a :class:`CShift` rotates."""
+    #: ``out(i) = x(mod(i + shift, n))`` -- Fortran ``CSHIFT``.
+    FORTRAN = 'fortran'
+    #: ``out[i] = x[mod(i - shift, n)]`` -- ``numpy.roll``.
+    NUMPY = 'numpy'
 
 
 @dace.library.expansion
@@ -37,11 +52,16 @@ class ExpandCShiftPure(ExpandTransformation):
     iterators that is ``_out[i] = _x[mod(i + shift, n)]`` along ``dim``,
     with every other axis passed through unchanged.
 
+    ``numpy.roll`` runs the same rotation the other way, so a
+    :attr:`ShiftDirection.NUMPY` node negates ``shift`` before building
+    the subset; everything below is otherwise identical.
+
     ``fortran_mod`` is the FLOORED modulus (``dace.symbolic.mod`` ->
     ``dace::math::mod``), NOT sympy's built-in ``Mod``: ``Mod`` lowers
     to the C ``%`` operator, which TRUNCATES on signed integers
     (``(-1) % 5 == -1``), so a negative ``shift`` would index out of
-    bounds.  The floored ``mod`` returns ``[0, n)`` for any sign
+    bounds. That is why the modulus is not a second selectable mode:
+    truncation here is an out-of-bounds read, not a convention.  The floored ``mod`` returns ``[0, n)`` for any sign
     (``mod(-1, 5) == 4``), matching Fortran ``MODULO`` / ``CSHIFT``
     wrap semantics.  (A doubled ``Mod(Mod(x,n)+n,n)`` does NOT work --
     sympy simplifies it straight back to ``Mod(x,n)``.)
@@ -73,7 +93,8 @@ class ExpandCShiftPure(ExpandTransformation):
                              "be set on the node (a constant or an SDFG-bound symbol) before "
                              "expansion -- the bridge supplies it from the Fortran "
                              "CSHIFT(arr, shift) argument.")
-        shift = node.shift
+        # The direction lives on the NODE, so the one place the sign can be got wrong is here.
+        shift = node.shift if node.direction is ShiftDirection.FORTRAN else -node.shift
 
         sdfg = dace.SDFG(node.label + "_sdfg")
         sdfg.add_array("_x", shape, dtype)
@@ -129,11 +150,18 @@ class CShift(dace.sdfg.nodes.LibraryNode):
     shift = dace.properties.SymbolicProperty(allow_none=True,
                                              default=None,
                                              desc="Shift amount; ``None`` means use the symbol ``__shift``.")
+    direction = dace.properties.EnumProperty(dtype=ShiftDirection,
+                                             default=ShiftDirection.FORTRAN,
+                                             desc="Which way to rotate: FORTRAN is CSHIFT's "
+                                             "``out(i) = x(mod(i + shift, n))``, NUMPY is roll's "
+                                             "``out[i] = x[mod(i - shift, n)]``. The expansion carries the "
+                                             "sign so a caller never has to negate its own shift.")
 
-    def __init__(self, name, *, dim=1, shift=None, **kwargs):
+    def __init__(self, name, *, dim=1, shift=None, direction=ShiftDirection.FORTRAN, **kwargs):
         super().__init__(name, inputs={"_x"}, outputs={"_out"}, **kwargs)
         self.dim = dim
         self.shift = shift
+        self.direction = direction
 
     def validate(self, sdfg, state):
         """:returns: ``(desc_x, desc_out, dim_zero)``.

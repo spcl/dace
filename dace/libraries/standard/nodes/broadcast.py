@@ -1,20 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Broadcast`` library node -- Fortran ``SPREAD``.
+"""``Broadcast`` library node -- Fortran ``SPREAD`` and NumPy ``broadcast_to``.
 
-Fortran ``SPREAD(SOURCE, DIM, NCOPIES)`` inserts a new rank-1 axis at
-position ``DIM`` (Fortran 1-based) of size ``NCOPIES``, replicating
-``SOURCE`` along it.  The result rank is ``rank(SOURCE) + 1``.
+Two spellings of one replication, picked by ``dim``:
 
-Pure expansion: a single Map writes the broadcasted output in parallel.
-Each tasklet reads ``SOURCE`` at the matching position from the
-input axes (excluding the inserted axis) and writes to the output.
-DaCe's scheduler picks the right OpenMP / GPU lowering for the Map.
+* ``dim`` an integer -- Fortran ``SPREAD(SOURCE, DIM, NCOPIES)``: insert a new axis at
+  position ``DIM`` (1-based) of size ``NCOPIES`` and replicate ``SOURCE`` along it.  The
+  result is rank ``rank(SOURCE) + 1``, and the source uses the other output axes
+  positionally.
+* ``dim`` ``None`` -- NumPy ``broadcast_to``: right-align the source's axes against the
+  result's, stretch every source axis of extent 1 across the result axis it lines up
+  with, and leave the leading result axes to be filled by the source entire.  This is
+  the general case; SPREAD is only the shape it cannot say, because inserting an axis in
+  the MIDDLE is not a right-aligned stretch.
+
+Pure expansion: a single Map writes the broadcasted output in parallel, one tasklet per
+output element reading the source position the rule above gives it.  DaCe's scheduler
+picks the OpenMP / GPU lowering for the Map.
 """
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
+from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 
@@ -39,13 +46,15 @@ class ExpandBroadcastPure(ExpandTransformation):
 
         state = sdfg.add_state()
         map_rng = {f"__o{d}": f"0:{dst_shape[d]}" for d in range(out_rank)}
-        # Source indices: skip the inserted ``dim_zero`` axis -- the source
-        # is ``rank(dst) - 1`` and uses the OTHER output iterators positionally.
-        src_subs = []
-        for d in range(out_rank):
-            if d == dim_zero:
-                continue
-            src_subs.append(f"__o{d}")
+        if dim_zero is None:
+            # NumPy: right-align, and read a source axis of extent 1 at 0 for every
+            # iteration of the result axis it lines up with.
+            offset = out_rank - len(src_shape)
+            src_subs = ["0" if extent == 1 else f"__o{offset + k}" for k, extent in enumerate(src_shape)]
+        else:
+            # SPREAD: skip the inserted axis -- the source is rank ``out_rank - 1`` and uses
+            # the OTHER output iterators positionally.
+            src_subs = [f"__o{d}" for d in range(out_rank) if d != dim_zero]
         if not src_subs:  # rank-0 source -> length-1 broadcast over the new axis
             src_subs = ["0"]
         src_sub = ", ".join(src_subs)
@@ -63,17 +72,16 @@ class ExpandBroadcastPure(ExpandTransformation):
 
 @dace.library.node
 class Broadcast(dace.sdfg.nodes.LibraryNode):
-    """Fortran ``SPREAD(SOURCE, DIM, NCOPIES)`` -- broadcast along a new axis.
+    """Replicate a source array across the destination's shape.
 
-    Configurable:
+    * ``dim`` an integer  --  Fortran ``SPREAD``: the 1-based axis into which the new
+      replicated dimension is inserted.  ``rank(dst)`` must be ``rank(src) + 1``, and
+      ``NCOPIES`` is read off the destination descriptor, so there is no separate
+      property for it.
+    * ``dim`` ``None``  --  NumPy ``broadcast_to``: right-align and stretch, for any
+      ``rank(dst) >= rank(src)``.
 
-    * ``dim`` (default ``1``)  --  Fortran 1-based axis into which the
-      new replicated dimension is inserted.
-
-    Input shape is rank-R; output shape is rank-(R+1), with the
-    inserted ``dim``-th axis carrying ``NCOPIES`` copies of the source.
-    ``NCOPIES`` is inferred from the destination descriptor at expansion
-    time, so the lib node has no separate ``ncopies`` property.
+    ``dim`` defaults to ``1`` so an unqualified node keeps meaning SPREAD.
     """
 
     implementations = {"pure": ExpandBroadcastPure}
@@ -81,17 +89,19 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
 
     dim = dace.properties.Property(dtype=int,
                                    default=1,
-                                   desc="Fortran 1-based axis position of the new replicated dimension.")
+                                   allow_none=True,
+                                   desc="Fortran 1-based axis position of the new replicated dimension, or "
+                                   "None for a right-aligned NumPy broadcast.")
 
     def __init__(self, name, *, dim=1, **kwargs):
         super().__init__(name, inputs={"_src"}, outputs={"_dst"}, **kwargs)
         self.dim = dim
 
     def validate(self, sdfg, state):
-        """:returns: ``(desc_src, desc_dst, dim_zero)``.
+        """:returns: ``(desc_src, desc_dst, dim_zero)``, ``dim_zero`` being the 0-based
+            insert position, or ``None`` for the right-aligned NumPy broadcast.
 
-        :raises ValueError: if the destination's rank isn't ``rank(src)+1``
-            or ``dim`` is out of range.
+        :raises ValueError: if the shapes cannot broadcast under the selected rule.
         """
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
@@ -103,6 +113,20 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
         desc_dst = sdfg.arrays[out_edges[0].data.data]
         src_rank = len(desc_src.shape)
         dst_rank = len(desc_dst.shape)
+        if self.dim is None:
+            if dst_rank < src_rank:
+                raise ValueError(f"Broadcast: dst rank must be at least the src rank; "
+                                 f"got src={src_rank}, dst={dst_rank}")
+            offset = dst_rank - src_rank
+            for k, extent in enumerate(desc_src.shape):
+                if extent == 1:
+                    continue
+                # Tri-state: only an answer of False is a proven mismatch. Symbolic extents that
+                # cannot be decided here are left to the caller, as everywhere else in DaCe.
+                if symbolic.equal(extent, desc_dst.shape[offset + k]) is False:
+                    raise ValueError(f"Broadcast: src axis {k} has extent {extent}, which neither is 1 "
+                                     f"nor matches dst axis {offset + k} ({desc_dst.shape[offset + k]})")
+            return desc_src, desc_dst, None
         if dst_rank != src_rank + 1:
             raise ValueError(f"Broadcast: dst rank must be src rank + 1; got src={src_rank}, dst={dst_rank}")
         if not (1 <= self.dim <= dst_rank):

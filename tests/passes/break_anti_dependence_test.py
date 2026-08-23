@@ -700,3 +700,82 @@ if __name__ == '__main__':
     test_break_anti_dependence_post_normalize_negative_stride_reverse_scan()
     test_break_anti_dependence_alpha_minus_one_with_larger_offset()
     test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected()
+
+
+def test_smt_fallback_breaks_a_guarded_indirected_read_ahead():
+    """``A[i] = A[IDX[i] * IDX[i-1]] + 1`` under the guard ``IDX[i] * IDX[i-1] > i``.
+
+    The product is non-linear and the guard lives in a branch, so the affine matcher gets no
+    carried offset at all and returns ``complex``. The guard is nevertheless decisive: it forces
+    every read strictly above the reading iteration, so no iteration up to and including this one
+    has written the element -- a pure anti-dependence, and a pre-loop snapshot of ``A`` breaks it.
+
+    The frontend is what makes this hard: it materializes ``IDX[i]`` once for the condition and
+    again for the subscript, under different names, so the guard and the read only line up after
+    their interstate bindings are expanded."""
+
+    @dace.program
+    def guarded_indirect(A: dace.float64[N], IDX: dace.int64[N]):
+        for i in range(1, N):
+            if IDX[i] * IDX[i - 1] > i:
+                A[i] = A[IDX[i] * IDX[i - 1]] + 1.0
+            else:
+                A[i] = 0.0
+
+    base = guarded_indirect.to_sdfg(simplify=True)
+    _l2m(base)
+    assert _nmaps(base) == 0, 'LoopToMap alone must refuse the guarded indirection'
+
+    sdfg = guarded_indirect.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1, 'the SMT fallback should break exactly one array'
+    assert any(name.endswith('_antidep_snap') or '_antidep_snap' in name
+               for name in sdfg.arrays), f'no snapshot transient was added: {sorted(sdfg.arrays)}'
+
+    n = 16
+    rng = np.random.default_rng(1)
+    a = rng.random(n)
+    idx = np.full(n, 3, dtype=np.int64)
+    expected = a.copy()
+    for i in range(1, n):
+        p = int(idx[i]) * int(idx[i - 1])
+        expected[i] = expected[p] + 1.0 if p > i else 0.0
+
+    got = a.copy()
+    sdfg(A=got, IDX=idx.copy(), N=n)
+    assert np.allclose(got, expected), 'breaking the guarded anti-dependence must preserve values'
+
+
+def test_smt_fallback_refuses_the_same_shape_without_the_guard():
+    """Fail-closed twin of the test above: drop the branch and the read can land anywhere,
+    including on an element an EARLIER iteration wrote. That is a true recurrence, and the
+    snapshot would feed it stale values -- so the pass must decline, guard or no solver."""
+
+    @dace.program
+    def unguarded_indirect(A: dace.float64[N], IDX: dace.int64[N]):
+        for i in range(1, N):
+            A[i] = A[IDX[i] * IDX[i - 1]] + 1.0
+
+    sdfg = unguarded_indirect.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, 'an unguarded indirect read is not read-ahead'
+    assert sdfg.to_json() == before, 'a refusing pass must leave the SDFG bit-identical'
+
+
+def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop():
+    """The oracle models ``IDX`` as one immutable array, so the same guard means nothing once the
+    loop writes ``IDX`` -- ``IDX[i]`` at the reading iteration is not ``IDX[i]`` at the writing
+    one. The gate is in the pass, not in the solver, because only the pass knows the loop."""
+
+    @dace.program
+    def mutating_indirect(A: dace.float64[N], IDX: dace.int64[N]):
+        for i in range(1, N):
+            if IDX[i] * IDX[i - 1] > i:
+                A[i] = A[IDX[i] * IDX[i - 1]] + 1.0
+            else:
+                A[i] = 0.0
+            IDX[i - 1] = IDX[i] + 1
+
+    sdfg = mutating_indirect.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, 'a loop-written indirection array must refuse'
+    assert sdfg.to_json() == before, 'a refusing pass must leave the SDFG bit-identical'

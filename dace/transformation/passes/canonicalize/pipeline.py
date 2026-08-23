@@ -32,13 +32,15 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
-from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce,
-                                                       PinNestedSequentialLoops, RetargetWCRAccumulator)
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, PinCarriedTopLevelLoops,
+                                                       RetargetWCRAccumulator)
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.canonicalize.prune_unreferenced_transients import (PruneUnreferencedTransients)
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -74,7 +76,9 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.cpu_specialization import (ChunkAntiDependence, SequentializeParallelScopes,
+from dace.transformation.passes.cpu_specialization import (CalibrateCpuThresholds, ChunkAntiDependence,
+                                                           RecomputeOversizedIntermediates,
+                                                           SequentializeUnprofitableParallelScopes,
                                                            SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
@@ -971,9 +975,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # It must precede ``parallelize``: it emits three loops -- mask, scan, scatter -- and force-lifts
     # the two parallel ones itself (it owns the disjointness proof for the cursor-indexed writes;
     # LoopToMap cannot reconstruct it), leaving the residue for the later stages to fuse and
-    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``PinNestedSequentialLoops``
-    # pins every loop nested in a sequential loop -- the s343 inner compaction loop is exactly that,
-    # and a pinned loop is refused here (correctly: the pin is a directive, not an obstacle).
+    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``PinCarriedTopLevelLoops``
+    # can pin a loop this pass would claim, and a pinned loop is refused here (correctly: the pin
+    # is a directive, not an obstacle).
     # ``LoopToReduce`` / ``LoopToScan`` are pure matchers -- they touch nothing when they lift
     # nothing -- so the body normalization each one needs is spelled out here: WCR-to-augassign
     # for the reduction matcher, the full ``LiftPreprocess`` (which adds copy-tasklet folding,
@@ -1081,7 +1085,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
     # them and ``LoopToReduce`` must not run again after it.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
-    s += [('reduction_to_wcr_map', PinNestedSequentialLoops())]
+    # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
+    # a carried dependency; leave DOALL-eligible top-level loops untouched. Nesting alone pins
+    # nothing: whether a reduction map inside a sequential loop earns its OpenMP region is a CPU
+    # question, decided in the ``cpu_specialize`` band by
+    # ``SequentializeUnprofitableParallelScopes``.
+    s += [('reduction_to_wcr_map', PinCarriedTopLevelLoops())]
     s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -1124,19 +1133,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _inline_single_state('post_l2m')
     s += _structural_cleanup('post_l2m')
-
-    # cpu_specialize: trade the device-neutral anti-dependence snapshot for per-chunk
-    # seam buffers (sequential-within-chunk = CPU scheduling; matcher refuses GPU maps).
-    #
-    # Placed HERE, not directly after ``parallelize``. ``LoopToMap`` leaves the map body as an
-    # un-inlined NestedSDFG and the snapshot copy in its own predecessor state, so the read that
-    # decides the rewrite (``snap[i + 1]``) is not visible at the map's own state and the copy is
-    # not adjacent to it. The ``post_l2m`` band above is where the pipeline ALREADY inlines the
-    # body and fuses the copy state in -- which is exactly the flat, single-state canonical form
-    # the pass documents. Matching it before that band would mean reimplementing InlineSDFG's
-    # traversal inside the matcher.
-    if break_anti_dependence and target == 'cpu':
-        s += [('cpu_specialize', ChunkAntiDependence())]
 
     # coalesce: prepare the graph for maximal map fusion now that the DOALL
     # loops have become maps -- see ``_coalesce`` for the per-step rationale.
@@ -1521,6 +1517,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # real ``w[i] += ...`` k-reduction whose write does NOT vary with the map lane).
     s += [('end', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
 
+    # cleanup (terminal): drop transients nothing names any more. The stages above delete a
+    # temporary's last reader without deleting its descriptor, and ``ArrayElimination`` -- the only
+    # reclaimer that erases a descriptor -- runs well before them and skips ``Scalar`` outright, so
+    # the frontend's per-expression scalars (``b_index``, ``a_slice_times_b_slice``) survive a full
+    # canonicalize with no node left referring to them. Codegen ignores them; a re-run does not, and
+    # neither does anything that reads the serialized SDFG.
+    s += [('end', PruneUnreferencedTransients())]
+
+    # cleanup (terminal): inline the plain control-flow regions the middle stages leave standing.
+    # ``rotate`` splits a block and no ``clean`` stage runs after it, so the recipe can finish
+    # holding regions that carry a single body each (tsvc s255 ends with two). They are not a state
+    # fusion -- ``StateFusionExtended`` matches ``SDFGState`` and has nothing to say about a region
+    # -- so only an inline reclaims them. Defaults skip LoopRegion / ConditionalBlock / named /
+    # function-call regions, i.e. every region whose structure carries meaning; a bare
+    # ``ControlFlowRegion`` carries none, which is why it is the one safe to flatten here.
+    s += [('end', InlineControlFlowRegions())]
+
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
     # accumulator, so a reduction into genuinely-uninitialized scratch reads garbage. That pass
@@ -1533,7 +1546,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # cpu_specialize (terminal band): the canonical form is the maximally parallel one, so the
     # decision to make a scope sequential again belongs to the target, not to canonicalization.
-    # ``SequentializeParallelScopes`` is the single home of that CPU fork/join cost model: it pins
+    # ``SequentializeUnprofitableParallelScopes`` is the single home of that CPU fork/join cost model: it pins
     # a map whose work per region cannot pay for a ``#pragma omp parallel`` (and every scope nested
     # in a parallel map, which would fork a team per outer iteration).
     # ``SpecializeCpuTransfers`` then gives the transfers it just sequentialized their single
@@ -1544,8 +1557,37 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # read off the FINAL map shapes (fusion and collapse change the work per region by orders of
     # magnitude), and a schedule set earlier would also block the map fusion stages, which only
     # fuse maps with equal schedules.
+    #
+    # ``ChunkAntiDependence`` belongs to the same band and for the same reason: it trades the
+    # device-neutral anti-dependence snapshot for per-chunk seam buffers, and
+    # sequential-within-chunk is a CPU scheduling decision (the matcher refuses GPU maps). It
+    # ran directly after ``post_l2m`` before, on the argument that that band is the first one to
+    # inline the map body and fuse the snapshot copy in. It is -- but not into the shape the
+    # matcher needs: measured over the corpus it matched ZERO maps there and matches on the
+    # final SDFG, because the fuse / collapse / terminal-``LoopToMap`` stages in between are
+    # what put the copy and its consumer map in one state with the read spelled as a point.
+    # Placed before the two cost-model passes so they read the chunked shape: the prologue and
+    # the seam-iteration map it emits are a 1-iteration and an ``nchunks``-iteration region, and
+    # sequentializing those is exactly the verdict the fork/join model exists to give.
+    #
+    # ``RecomputeOversizedIntermediates`` is the third device decision in the band: it collapses a
+    # producer map into its single consumer and drops the intermediate, but only when that
+    # intermediate provably does not fit in the host's last-level cache. ``recompute_fuse_for_gpu``
+    # does the same unconditionally on the device; the CPU keeps a cache-resident intermediate
+    # materialized (reading it back is cheaper than recomputing it) and only pays ALU for the ones
+    # that would cost a full DRAM round-trip -- the grid-sized half-step buffers of heat3d and the
+    # split-statement temporaries every slice-vectorized stencil leaves behind.
     if target == 'cpu':
-        s += [('cpu_specialize', SequentializeParallelScopes()), ('cpu_specialize', SpecializeCpuTransfers())]
+        # First in the band: both cost-model passes below read fork/join thresholds out of the
+        # config, and those shipped as constants measured on one development box. Calibrate them to
+        # the host's own core count before anyone reads them, so a 72-core machine stops inheriting
+        # an 8-core machine's break-even points. A user-set value is left alone.
+        s += [('cpu_specialize', CalibrateCpuThresholds())]
+        if break_anti_dependence:
+            s += [('cpu_specialize', ChunkAntiDependence())]
+        s += [('cpu_specialize', RecomputeOversizedIntermediates()),
+              ('cpu_specialize', SequentializeUnprofitableParallelScopes()),
+              ('cpu_specialize', SpecializeCpuTransfers())]
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
     # explicit and runtime-checked, by prepending a side-effecting

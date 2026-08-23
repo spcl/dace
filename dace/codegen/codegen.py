@@ -278,6 +278,19 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
+    # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
+    # at and the copy is free to move ahead of a write it must follow.
+    #
+    # The readable generator runs the same lowering itself, further down and deliberately later: its
+    # scalar normalization has to precede the lift so the copy sees the final descriptor. So this
+    # site covers the CLASSIC generator, where the lift is OPT-IN (``explicit_copy`` defaults off):
+    # the classic path emits implicit copy edges correctly on its own, and keeping its output
+    # byte-identical to upstream is what makes it usable as the A/B reference for the new one.
+    if (config.Config.get_bool('compiler', 'cpu', 'explicit_copy')
+            and config.Config.get('compiler', 'cpu', 'implementation') != 'experimental_readable'):
+        lower_implicit_copies(sdfg)
+
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 
@@ -310,26 +323,17 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         inline_host_nested_sdfgs(sdfg, validate=validate)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # Normalize single-value transients to Scalar (default: the signature is untouched). This runs
-        # unconditionally for the readable generator: map-fusion scratch buffers are rank-0 single-element
-        # arrays and must become plain scalars to avoid heap-allocating them inside inner loops.
-        # GPU map outputs are left as arrays so scalarization does not force a host ABI round-trip.
-        # Must run before explicit_copy so copy lowering sees the final form.
+        # Normalize single-value transients to Scalar (default is transient-only, so the signature
+        # is untouched); must run before explicit_copy so copy lowering sees the final form. GPU
+        # kernel outputs are widened back to length-1 arrays because a by-value Scalar cannot live
+        # in device memory.
         from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
                                                                               PromoteGPUScalarsToArrays)
-        ConvertLengthOneArraysToScalars(single_element=True, preserve_abi=True,
-                                        skip_gpu_outputs=True).apply_pass(sdfg, {})
-        # Widen GPU-storage scalars back: a by-value Scalar cannot live in device memory.
+        ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
         Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        scalar_emission = config.Config.get('compiler', 'cpu', 'codegen_params', 'scalar_emission_type')
-        if scalar_emission == 'len1_array':
-            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertScalarsToLengthOneArrays
-            ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND. Runs
         # inside this branch so the readable pipeline's order is unchanged: the scalar normalization
         # above must precede it, the readability rewrites below must follow it. Unconditional here:
@@ -359,12 +363,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
 
-    elif (config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on'
-          or (config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and sdfg_uses_gpu(sdfg))):
-        # The classic CPU generator gets the lowering only on opt-in ('off' by default keeps its
-        # implicit copy-edge emission). The experimental CUDA generator requires it like the
-        # readable CPU one does, whichever CPU generator it is paired with -- but only when there is
-        # GPU code for it to emit; a pure-CPU SDFG under the classic generator keeps the knob's word.
+    elif (not config.Config.get_bool('compiler', 'cpu', 'explicit_copy')
+          and config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and sdfg_uses_gpu(sdfg)):
+        # The experimental CUDA generator requires the lowering the way the readable CPU one does,
+        # whichever CPU generator it is paired with, so it runs even where the knob turned the
+        # classic path's lift off above.
         lower_implicit_copies(sdfg)
 
     # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in

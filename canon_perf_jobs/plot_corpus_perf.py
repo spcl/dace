@@ -8,7 +8,7 @@ builds, compiles or re-times a kernel: a plot that could trigger a measurement w
 fresh number into an old sweep, and the two would no longer be the same machine state.
 
     python plot_corpus_perf.py                       # the job's default results directory
-    python canon_corpus_perf_job/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc
+    python canon_perf_jobs/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc
 
 TWO figures, never one. The corpora split into two groups with DIFFERENT denominators:
 

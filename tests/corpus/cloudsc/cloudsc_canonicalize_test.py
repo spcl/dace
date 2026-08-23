@@ -72,7 +72,7 @@ _ARMS = {
 #: The 27 loops that stay sequential are NOT arbitrary: one is the vertical ``jk`` sweep
 #: carrying ``zcovptot[0:klon]`` down the column, one is the ``pfsq*`` / ``pfcq*`` flux
 #: prefix sum (a genuine scan), and the other 25 are column ``jl`` loops that
-#: ``PinNestedSequentialLoops`` marks sequential and that ``LoopToMap`` refuses anyway on
+#: ``LoopToMap`` refuses on
 #: an unprivatized per-iteration scalar (``zevap`` / ``zmelt`` / ``zzratio`` /
 #: ``zexplicit_1_2`` written at ``dst_subset=0``).
 _EXPECTED_MAPS = 234

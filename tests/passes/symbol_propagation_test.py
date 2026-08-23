@@ -747,3 +747,45 @@ def test_resolve_bindings_leaves_a_data_dependent_index_opaque():
 
     opaque = dace.symbolic.pystr_to_symbolic('bsym')
     assert resolve_bindings(opaque, sdfg) == opaque
+
+
+def test_resolve_bindings_expands_data_reads_only_when_asked():
+    """The frontend mints a FRESH symbol per use of the same read: a branch condition on
+    ``idx[i] * idx[i - 1]`` and the subscript it guards get four names for two values. A solver
+    handed those four sees four unrelated variables and can prove nothing about the guard, so
+    ``expand_data_reads`` puts both back in terms of the container -- and, in doing so, back in
+    terms of the loop variable, which is what makes the two iterations distinguishable.
+
+    Default-off is the other half of the contract: a structural matcher that expanded a bare data
+    read would only swap a symbol for a container name and then read it as loop-invariant."""
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('resolve_bindings_expand')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('idx', [N], dace.int64)
+    for name in ('p_cond', 'q_cond', 'p_read', 'q_read'):
+        sdfg.add_symbol(name, dace.int64)
+
+    loop = LoopRegion('L', 'i < N', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('first', is_start_block=True)
+    mid = loop.add_state('mid')
+    body = loop.add_state('body')
+    loop.add_edge(first, mid, dace.InterstateEdge(assignments={'p_cond': 'idx[i]', 'q_cond': 'idx[i - 1]'}))
+    loop.add_edge(mid, body, dace.InterstateEdge(assignments={'p_read': 'idx[i]', 'q_read': 'idx[i - 1]'}))
+    tasklet = body.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[p_read * q_read]'))
+    sdfg.validate()
+
+    before = sdfg.to_json()
+    guard = dace.symbolic.pystr_to_symbolic('p_cond * q_cond > i')
+    read = dace.symbolic.pystr_to_symbolic('p_read * q_read')
+    assert not (read.free_symbols & guard.free_symbols), 'the premise: nothing links the two spellings'
+
+    assert resolve_bindings(read, sdfg) == read, 'a bare data read must stay opaque by default'
+
+    expanded_read = resolve_bindings(read, sdfg, expand_data_reads=True)
+    expanded_guard = resolve_bindings(guard, sdfg, expand_data_reads=True)
+    assert expanded_read != read, 'expansion must actually replace the promoted symbols'
+    assert {str(s) for s in expanded_read.free_symbols} == {'i'}, expanded_read
+    assert expanded_guard.args[0] == expanded_read, (expanded_guard, expanded_read)
+    assert sdfg.to_json() == before, 'resolve_bindings must not mutate the SDFG'

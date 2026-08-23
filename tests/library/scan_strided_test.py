@@ -190,17 +190,23 @@ def _scan_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
 
 
 def test_scan_in_parallel_map_lowers_to_sequential_form():
-    """A Scan inside a parallel Map must take the SEQUENTIAL naked-loop shape.
+    """A Scan inside a parallel Map must take the SEQUENTIAL shape.
 
     The parallel expansion opens its own OpenMP region and the runtime header has
-    no nesting check, so the shape is chosen statically from the schedule. Assert
-    on the generated code: no call into the ``dace::scan`` parallel entry points,
-    and no ``inscan`` reduction, inside the map body.
+    no nesting check, so the shape is chosen statically from the schedule. What may not
+    appear inside the map body is a nested REGION or a call into a ``dace::scan`` entry
+    point that opens one. The sequential shape's own ``omp simd reduction(inscan, ...)``
+    is not a region -- it vectorizes one thread's loop, forks nothing -- so it is asserted
+    PRESENT here rather than absent: it is the sequential lowering.
     """
     sdfg = _scan_in_map_sdfg(n=64, rows=4)
     code = ''.join(o.clean_code for o in sdfg.generate_code())
-    assert 'reduction(inscan' not in code, 'inscan region emitted inside a parallel Map'
+    body = code[code.index('#pragma omp parallel for'):] if '#pragma omp parallel for' in code else code
+    assert '#pragma omp parallel' not in body[len('#pragma omp parallel for'):], \
+        'a nested OpenMP region was emitted inside the parallel Map'
     assert '::dace::scan::inclusive_' not in code, 'parallel scan entry point called inside a parallel Map'
+    assert '::dace::scan::detail::scan_incl_' in code, \
+        'the sequential shape should call the header single-block simd inscan'
 
 
 def test_scan_in_parallel_map_is_numerically_correct():
@@ -291,14 +297,19 @@ def _scan_in_nested_sdfg_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
 def test_scan_in_nested_sdfg_inside_parallel_map_lowers_to_sequential_form():
     """The documented gap: a Scan inside a NestedSDFG must take the SEQUENTIAL shape when the
     NestedSDFG itself sits inside a parallel Map, even though the Scan's own state has no
-    entry node to walk. Neither the ``inscan`` region nor the parallel entry point may leak
-    into the generated code.
+    entry node to walk. No nested OpenMP region and no parallel entry point may leak into
+    the generated code; the sequential shape's ``simd`` ``inscan`` opens no region and is
+    expected to be there.
     """
     sdfg = _scan_in_nested_sdfg_in_map_sdfg(n=64, rows=4)
     code = ''.join(o.clean_code for o in sdfg.generate_code())
-    assert 'reduction(inscan' not in code, 'inscan region emitted inside a NestedSDFG in a parallel Map'
+    body = code[code.index('#pragma omp parallel for'):] if '#pragma omp parallel for' in code else code
+    assert '#pragma omp parallel' not in body[len('#pragma omp parallel for'):], \
+        'a nested OpenMP region was emitted inside the parallel Map'
     assert '::dace::scan::inclusive_' not in code, (
         'parallel scan entry point called inside a NestedSDFG in a parallel Map')
+    assert '::dace::scan::detail::scan_incl_' in code, \
+        'the sequential shape should call the header single-block simd inscan'
 
 
 def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():

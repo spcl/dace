@@ -6,18 +6,18 @@ into the SDFG instead of inlining a per-element conditional tasklet, so
 later passes (vectorisation, GPU offload, alternative backends) can pick
 their own expansion without touching the surrounding graph.
 
-Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]``.
+Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]`` -- the
+same operation as a per-element if-then-else (ITE) and as NumPy's
+``np.where(mask, t, f)``, only with the operands named after the Fortran
+intrinsic.  A frontend that has one of those spellings wants this node.
 
-Supported variants (Fortran standard):
-
-- **All-array** — ``_t``, ``_f``, ``_mask`` all have the result's shape.
-- **Scalar broadcast** — any of ``_t`` / ``_f`` (or both) is a single-
-  element input; the expansion broadcasts that value across every
-  iteration.  Mask is typically array-shaped (the broadcast variants
-  in Fortran).  Detected by inspecting each input edge's memlet
-  subset volume; the bridge wires the input memlet appropriately
-  (full-shape for arrays, single-element for scalars).
-- ``_mask`` itself can also be scalar (degenerate; Flang usually folds).
+Every operand -- ``_t``, ``_f``, ``_mask`` alike -- is broadcast against the result
+by the NumPy rule: right-align the axes, and read an operand axis of extent 1 at
+index ``0`` for every iteration of the result axis it lines up with.  That covers
+Fortran's all-array and scalar-broadcast ``MERGE`` variants and NumPy's partial
+broadcasts (a ``(N, 1)`` operand against an ``(N, M)`` result) in one rule.  Each
+operand's shape comes from ITS OWN memlet subset, so the caller says which variant it
+means by the memlet it wires, not by a flag.
 
 Today only the ``pure`` expansion is provided (a mapped tasklet); GPU /
 CPU-vectorised expansions slot in the same way ``CopyLibraryNode``'s
@@ -37,30 +37,16 @@ _MASK_CONNECTOR_NAME = "_mrg_mask"
 _OUTPUT_CONNECTOR_NAME = "_mrg_out"
 
 
-def _subset_volume(subset):
-    """Number of elements covered by ``subset``.  ``1`` means the input
-    is a single value (the broadcast case); anything else is the full
-    iteration shape."""
-    vol = 1
-    for (b, e, s) in subset:
-        try:
-            vol *= int(dace.symbolic.int_floor(e + 1 - b, s))
-        except (TypeError, ValueError):
-            return None  # symbolic — assume non-scalar
-    return vol
-
-
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """Pure SDFG expansion — one mapped tasklet doing the per-element
-    select.  Each input is independently broadcast or per-iteration:
+    """Pure SDFG expansion — one mapped tasklet doing the per-element select.
 
-    - **Array input** (subset volume > 1 or symbolic): the inner SDFG
-      mirrors the full shape; the tasklet reads ``_t[i, j, …]`` etc.
-    - **Scalar input** (subset volume == 1): the inner SDFG declares a
-      length-1 array; the tasklet reads element ``0`` uniformly across
-      iterations.  Same shape for the operand whether it came in as a
-      Fortran scalar dummy or a sliced single element.
+    Each input keeps its OWN shape on the inner SDFG and is indexed by NumPy
+    broadcasting against the iteration space: axes right-align, an operand axis of
+    extent 1 is read at index ``0`` for every iteration of the matching output axis,
+    and any other axis is read at that axis' iterator.  A Fortran scalar dummy is the
+    degenerate rank-1 case of the same rule, so ``MERGE`` broadcast operands and
+    ``np.where`` partial broadcasts go through one code path.
     """
     environments = []
 
@@ -76,24 +62,23 @@ class ExpandPure(ExpandTransformation):
         full_idx = ", ".join(params)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
-        # Per-input descriptor + access expression.  Single-element
-        # inputs become a length-1 array on the inner SDFG and are
-        # indexed by ``0``; multi-element inputs match the iteration
-        # shape and are indexed per-iteration.  An array input keeps the
-        # operand's own strides, exactly as the output below does: the
-        # connector is a view onto the caller's buffer, so assuming a
-        # packed C layout silently reads a Fortran-layout or otherwise
-        # non-packed operand at the wrong addresses.
+        # Per-input descriptor + access expression.  The connector mirrors the operand's
+        # own subset shape and strides -- it is a view onto the caller's buffer, so
+        # assuming the iteration shape or a packed C layout would read a Fortran-layout,
+        # sliced or broadcast operand at the wrong addresses.  The index expression is
+        # what applies the broadcast, one axis at a time.
         def add_input(conn: str, edge):
             arr = parent_sdfg.arrays[edge.data.data]
-            vol = _subset_volume(edge.data.subset)
-            if vol == 1:
-                sdfg.add_array(conn, [1], arr.dtype, arr.storage)
-                return "0"
-            sdfg.add_array(conn, iter_shape, arr.dtype, arr.storage, strides=arr.strides)
-            return full_idx
+            shape = list(edge.data.subset.size())
+            if len(shape) > len(iter_shape):
+                raise ValueError(f"{node.label}: operand on {conn} has rank {len(shape)}, above the "
+                                 f"rank-{len(iter_shape)} result; it cannot broadcast")
+            sdfg.add_array(conn, shape, arr.dtype, arr.storage, strides=arr.strides)
+            # Right-align the operand's axes against the result's, NumPy style.
+            offset = len(iter_shape) - len(shape)
+            idx = ["0" if extent == 1 else params[offset + k] for k, extent in enumerate(shape)]
+            return ", ".join(idx)
 
         t_idx = add_input(_TRUE_CONNECTOR_NAME, t_oe)
         f_idx = add_input(_FALSE_CONNECTOR_NAME, f_oe)
@@ -118,13 +103,12 @@ class ExpandPure(ExpandTransformation):
 
 @library.node
 class MergeLibraryNode(nodes.LibraryNode):
-    """Library node for the Fortran ``MERGE(tsource, fsource, mask)``
-    intrinsic.
+    """Library node for the per-element select: Fortran
+    ``MERGE(tsource, fsource, mask)``, NumPy ``where(mask, t, f)``, and the
+    element-wise if-then-else generally.
 
-    Inputs ``_t``, ``_f``, ``_mask``; output ``_out``.  Each input may
-    cover the result shape (per-element) or a single element (broadcast
-    scalar).  The expansion reads the per-input subset volume to pick
-    its broadcast strategy.
+    Inputs ``_t``, ``_f``, ``_mask``; output ``_out``.  Each input is broadcast
+    against the result shape by the NumPy rule; see :class:`ExpandPure`.
     """
 
     implementations = {"pure": ExpandPure}

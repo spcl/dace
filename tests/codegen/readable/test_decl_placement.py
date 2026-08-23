@@ -210,12 +210,14 @@ def test_multistate_scalar_stays_eager(require_experimental):
 
 
 def test_late_declares_loop_counter_in_for_init(require_experimental):
-    """A loop-local LoopRegion counter is hoisted to the top of the function under ``eager`` and
-    declared in its own for-init clause under ``late``."""
+    """A loop-local LoopRegion counter is declared in its own for-init clause in the readable
+    generator (both ``eager`` and ``late``); only legacy keeps the hoisted declaration under
+    ``eager``."""
     sdfg = accumulate.to_sdfg(simplify=True)
     eager, late = readable_code(sdfg, 'eager'), readable_code(sdfg, 'late')
 
-    assert 'int64_t k;' in eager and 'for (k = 0;' in eager
+    assert 'int64_t k;' not in eager, eager
+    assert 'for (int64_t k = 0;' in eager, eager
     assert 'int64_t k;' not in late, late
     assert 'for (int64_t k = 0;' in late, late
 

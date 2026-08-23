@@ -17,6 +17,10 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, _SKEW_T_PREFIX, _SKEW_P_PREFIX)
 
+# The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
+# exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
+from tests.corpus.polybench.medley.nussinov import nussinov as corpus_nussinov
+
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
 
@@ -369,21 +373,6 @@ def test_wavefront_skew_five_point_gauss_seidel_value_preserving():
     assert np.allclose(got, ref)
 
 
-def _load_corpus_nussinov():
-    """Load the polybench ``nussinov`` program object from the corpus, or ``None`` if the
-    corpus tree is not present. Its ``@dace.tasklet`` bodies lower to the exact 2-D
-    wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew."""
-    import importlib.util
-    import os
-    path = os.path.join(os.path.dirname(__file__), '..', 'corpus', 'polybench', 'medley', 'nussinov.py')
-    if not os.path.exists(path):
-        return None
-    spec = importlib.util.spec_from_file_location('corpus_nussinov', path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return vars(mod)['nussinov']
-
-
 def _nussinov_oracle(seq, table):
     n = table.shape[0]
     for i in range(n - 1, -1, -1):
@@ -410,10 +399,6 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize import wavefront_skew as ws
 
-    nussinov = _load_corpus_nussinov()
-    if nussinov is None:
-        pytest.skip('corpus nussinov not available')
-
     fired = [0]
     original = ws.WavefrontSkew.apply_pass
 
@@ -424,7 +409,7 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
 
     ws.WavefrontSkew.apply_pass = counting
     try:
-        sdfg = nussinov.to_sdfg(simplify=True)
+        sdfg = corpus_nussinov.to_sdfg(simplify=True)
         canonicalize(sdfg, validate=True, target='cpu')
     finally:
         ws.WavefrontSkew.apply_pass = original
@@ -435,15 +420,11 @@ def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
     """The skewed, canonicalized ``nussinov`` reproduces the sequential reference exactly."""
     from dace.transformation.passes.canonicalize import canonicalize
 
-    nussinov = _load_corpus_nussinov()
-    if nussinov is None:
-        pytest.skip('corpus nussinov not available')
-
     n = 40
     seq = np.array([(i + 1) % 4 for i in range(n)], dtype=np.int32)
     ref = _nussinov_oracle(seq, np.zeros((n, n), dtype=np.int32))
 
-    sdfg = nussinov.to_sdfg(simplify=True)
+    sdfg = corpus_nussinov.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, target='cpu')
     got = np.zeros((n, n), dtype=np.int32)
     sdfg(seq=seq.copy(), table=got, N=n)
@@ -1259,16 +1240,19 @@ def test_row_sweep_ti_is_a_genuine_wavefront():
     assert got == reference, 'shuffling the rows within a 2t + i diagonal must not change the answer'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: collect_carrier (wavefront_skew.py:529) refuses a non-point read of a 2-D '
-                   'carrier, so the row body\'s slice read A[i-1 : i+2, 1:N-1] stops the (t, i) wavefront from '
-                   'ever being analysed. tau=(2, 1) is legal and proved parallel by '
-                   'test_row_sweep_ti_is_a_genuine_wavefront. Neither reconstruct_wavefront_nest nor '
-                   'normalize_loop_and_map_origin rescues it -- both were measured ON and the refusal is still :529.')
 def test_row_sweep_ti_wavefront_is_detected():
-    """Tripwire for the ``:529`` non-point-read refusal. Fails today; ``strict`` makes it fail
-    LOUDLY the day the guard learns to derive a distance from a range read, so this file is
-    revisited instead of quietly keeping a stale xfail."""
+    """The row-granularity wavefront, found through a RANGE read rather than a point one.
+
+    Two things had to give. The column axis is the same ``1:N-1`` span in the write and in every
+    read and never mentions ``t`` or ``i``, so it carries no dependence and is dropped
+    (:func:`~dace.transformation.passes.canonicalize.wavefront_skew.uniform_axes`). What is left
+    is a ONE-axis carrier written at ``A[i]`` independently of ``t``, so the array cell no longer
+    names the iteration that wrote it -- the distances come from program order instead, and the
+    repeated per-step write becomes an output dependence that is what keeps ``t`` sequential.
+    Memlet consolidation had also folded the three neighbour reads into the single
+    ``A[i-1 : i+2, ...]``; expanding that constant-width range back into its three points is what
+    recovers ``(0, -1)``, ``(-1, 0)`` and ``(-1, 1)``, hence ``tau = (2, 1)`` -- the schedule
+    :func:`test_row_sweep_ti_is_a_genuine_wavefront` proves correct by execution."""
     sdfg = row_sweep_3pt.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
@@ -1389,27 +1373,24 @@ def test_lu_family_ij_is_a_genuine_wavefront(with_scalar_accumulator, label):
     assert got == reference, f'{label}: shuffling within an i + j diagonal must not change the answer'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) refuses because '
-                   'extract_two_level_nest requires exactly ONE inner LoopRegion, and lu\'s outer i loop holds TWO '
-                   'sibling j loops (j < i and j >= i). tau=(1, 1) is legal over the merged (i, j) space and proved '
-                   'parallel by test_lu_family_ij_is_a_genuine_wavefront. Note the cheaper win here is the j >= i '
-                   'loop, which is plain DOALL and is currently left pinned sequential.')
 def test_lu_ij_wavefront_is_detected():
-    """Tripwire for the ``:699`` sibling-loop refusal on lu."""
+    """lu's outer ``i`` loop holds TWO sibling ``j`` loops (``j < i`` and ``j >= i``), which
+    ``extract_two_level_nest`` refuses outright. ``plan_guarded_fusion`` recognises them as one
+    iteration space split in the source: adjacent, complementary ranges under a common iterator.
+    Analysed jointly -- each sibling's range becoming a guard on its own reads, so the ``A[j, j]``
+    read carries only where ``j < i`` -- ``tau = (1, 1)`` is legal, which
+    ``test_lu_family_ij_is_a_genuine_wavefront`` proves by shuffling within each diagonal."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
         f'lu (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) -- ludcmp\'s factorization has the same two '
-                   'sibling inner j loops as lu, so extract_two_level_nest refuses it the same way. tau=(1, 1) is '
-                   'legal and proved parallel for ludcmp INDEPENDENTLY (not inherited from lu) by the ludcmp '
-                   'parametrisation of test_lu_family_ij_is_a_genuine_wavefront.')
 def test_ludcmp_ij_wavefront_is_detected():
-    """Tripwire for the ``:699`` sibling-loop refusal on ludcmp."""
+    """ludcmp's factorization carries the same two sibling ``j`` loops as lu, and is found the
+    same way. Asserted in its OWN right rather than inherited: its scalar ``w`` accumulator makes
+    it a different program, and the ludcmp parametrisation of
+    ``test_lu_family_ij_is_a_genuine_wavefront`` proves ``tau = (1, 1)`` for it independently."""
     sdfg = ludcmp_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \

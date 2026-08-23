@@ -48,7 +48,11 @@ def test_symmap():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    # One atomic for the whole map -- that is what tiling the conflict buys. The tile-local
+    # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
+    # loop now accumulates in a register and stores once, so assert the register instead of
+    # the memory round-trip it replaced.
+    assert '__acc_' in code and code.count('atomic') == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -71,7 +75,11 @@ def test_libnode():
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    # One atomic for the whole map -- that is what tiling the conflict buys. The tile-local
+    # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
+    # loop now accumulates in a register and stores once, so assert the register instead of
+    # the memory round-trip it replaced.
+    assert '__acc_' in code and code.count('atomic') == 1
     _runtest(sdfg, 257)
     del sdfg
 

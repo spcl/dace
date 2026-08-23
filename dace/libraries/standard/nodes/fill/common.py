@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 
 OUTPUT_CONNECTOR_NAME = "_fill_out"
+VALUE_CONNECTOR_NAME = "_fill_val"
 
 
 def numpy_scalar(value, dtype: dace.dtypes.typeclass) -> np.generic:

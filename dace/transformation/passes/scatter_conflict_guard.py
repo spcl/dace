@@ -317,9 +317,9 @@ def _build_guard_states(sdfg: SDFG,
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
     ``int64`` host collision count, with a domain-sized tag array wired in when derivable.
-    ``trap`` (emitted iff ``emit_trap``) reads the count via the ``trap_sym`` interstate
-    binding and ``std::abort()``s if positive; a count (not a boolean) gives a free
-    duplicate-pair diagnostic on abort.
+    ``trap`` (emitted iff ``emit_trap``) reads the flag via the ``trap_sym`` interstate
+    binding and ``std::abort()``s if it is positive. The check OR-reduces rather than
+    counting, so the flag says THAT a duplicate exists, not how many.
 
     Without ``index_slice`` the scan covers ``idx_name[0 : shape[0]]`` (the whole 1-D array).
     With it, the scan is the 1-D window ``index_slice`` describes into a rank>=2 ``idx_name``:
@@ -437,6 +437,11 @@ def _wire_owner_scratch(sdfg: SDFG, idx_name: str, check_state: SDFGState, check
         return
     lifetime = (dtypes.AllocationLifetime.Persistent
                 if set(symbolic.symlist(domain)) <= set(sdfg.free_symbols) else dtypes.AllocationLifetime.SDFG)
+    # int64 DELIBERATELY, and not to be narrowed. The tag holds an index, and an index is kept at
+    # 64 bits for safety here even though the array is domain-sized and both passes walk it by
+    # ``idx[i]``: a narrower tag wraps, and two writers whose indices agree modulo the tag width
+    # then read each other's tag back as their own -- a MISSED duplicate, which is the one failure
+    # this check may not have. Trading that for random-access traffic is not a trade worth making.
     owner_name, _ = sdfg.add_array(f"{_OWNER_PREFIX}{idx_name}", [domain],
                                    dtypes.int64,
                                    transient=True,

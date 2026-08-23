@@ -4,6 +4,7 @@
 from typing import TYPE_CHECKING
 
 from dace import library
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_make_mapped_tasklet_expansion)
 
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'MappedTasklet')
 class ExpandMappedTasklet(ExpandTransformation):
     """Mapped element-wise tasklet ``_cpy_out = _cpy_in`` over the collapsed copy shape. Schedule
     from endpoint storages: ``Sequential`` for Register/Register<->GPU_Shared (thread-level),

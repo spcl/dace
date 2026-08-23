@@ -26,9 +26,9 @@ OUTPUT_ARGS = ('Z_out', 'N_out')
 XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'M', 'N'])
 
 
-def initialize(XN, YN, datatype=np.float64):
-    cdtype = np.complex128 if np.dtype(datatype) == np.float64 else np.complex128
-    Z_out = np.zeros((YN, XN), dtype=cdtype)
+def initialize(XN, YN):
+    # fp64 only: the kernel signature pins complex128, so there is no precision to select.
+    Z_out = np.zeros((YN, XN), dtype=np.complex128)
     N_out = np.zeros((YN, XN), dtype=np.int64)
     return (Z_out, N_out)
 

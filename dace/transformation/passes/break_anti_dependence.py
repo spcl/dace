@@ -58,6 +58,7 @@ import sympy
 
 from dace import data, dtypes, properties, subsets, symbolic, Memlet
 from dace.sdfg import SDFG, nodes
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 
@@ -172,6 +173,44 @@ def _provably_nonpositive_under_nonneg_symbols(expr) -> bool:
     either. Returns ``False`` on any sympy uncertainty.
     """
     return _provably_nonnegative_under_nonneg_symbols(-expr)
+
+
+def referenced_arrays(expr) -> Set[str]:
+    """Data containers an index expression reads once its interstate bindings are expanded.
+
+    The solver models each container as an immutable array, so a container the loop WRITES
+    cannot be modelled this way and the caller must refuse.
+    """
+    names: Set[str] = set()
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, symbolic.Subscript):
+            names.add(str(node.args[0]))
+        elif isinstance(node, sympy.Indexed):
+            names.add(str(node.base))
+    return names
+
+
+def written_data(loop: LoopRegion) -> Set[str]:
+    """Every data container written anywhere in ``loop``'s body."""
+    written: Set[str] = set()
+    for st in loop.all_states():
+        for n in st.data_nodes():
+            for e in st.in_edges(n):
+                if e.data is not None and not e.data.is_empty():
+                    written.add(n.data)
+                    break
+    return written
+
+
+def point_index(subset):
+    """The single index of a one-dimensional point subset, or ``None``."""
+    nd = list(subset.ndrange())
+    if len(nd) != 1:
+        return None
+    rb, re_, _ = nd[0]
+    if rb != re_:
+        return None
+    return _reparsed_index(rb)
 
 
 @properties.make_properties
@@ -386,6 +425,55 @@ class BreakAntiDependence(ppl.Pass):
             if arr is not None:
                 return ('WAR_indirected', arr)
         return ('complex', None)
+
+    def _smt_dep_class(self, read, write, loop: LoopRegion, sdfg: SDFG, read_state, internal_syms: Set[str],
+                       written: Set[str]):
+        """The verdict :meth:`_dep_class` could not reach, asked of the SMT oracle.
+
+        Only ever consulted where the affine matcher already gave up (``'complex'``), and only
+        ever ANSWERS ``'WAR'`` -- a proof that no iteration up to and including the reader's own
+        writes the element it reads, which is exactly what makes the snapshot-and-redirect
+        rewrite value-preserving. Everything else stays ``'complex'``, i.e. sequential.
+
+        Two things must be true before the query means anything, and both are enforced here
+        rather than in the oracle:
+
+        * every symbol left in the index after expanding its interstate bindings is
+          loop-INVARIANT (or the iterator itself). An unexpanded loop-varying symbol would be
+          one z3 variable standing for two different iterations' values, which turns the
+          absence of a solution into a false proof.
+        * no container the index reads is written by the loop. The oracle models a container as
+          an immutable array, so a loop that writes it is outside what the encoding says.
+        """
+        from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+        from dace.transformation.passes.symbol_propagation import resolve_bindings
+        if not smt_dependence.has_z3() or read_state is None:
+            return ('complex', None)
+        rb, wb = point_index(read), point_index(write)
+        if rb is None or wb is None:
+            return ('complex', None)
+        ivar = loop.loop_variable
+        guard = cfg_analysis.collect_enclosing_conditions(read_state, stop=loop)
+        exprs = [resolve_bindings(e, sdfg, expand_data_reads=True) for e in (rb, wb, guard)]
+        for e in exprs:
+            if ({str(sym) for sym in e.free_symbols} - {ivar}) & internal_syms:
+                return ('complex', None)
+            if referenced_arrays(e) & written:
+                return ('complex', None)
+        rb, wb, guard = exprs
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return ('complex', None)
+        ahead = smt_dependence.prove_read_ahead(rb,
+                                                wb,
+                                                ivar,
+                                                start,
+                                                end,
+                                                stride,
+                                                read_guard=None if guard is sympy.true else guard)
+        return ('WAR', None) if ahead is True else ('complex', None)
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
@@ -664,6 +752,7 @@ class BreakAntiDependence(ppl.Pass):
         # answer (an array touched from dozens of states otherwise blows the read x
         # write cross product up quadratically).
         reads: Dict[str, Dict[Any, Any]] = {}
+        read_states: Dict[str, Dict[Any, Any]] = {}
         writes: Dict[str, Dict[Any, Any]] = {}
         for st in loop.all_states():
             for n in st.data_nodes():
@@ -673,6 +762,9 @@ class BreakAntiDependence(ppl.Pass):
                     if e.data is not None and not e.data.is_empty():
                         sub = e.data.get_src_subset(e, st) or e.data.subset
                         reads.setdefault(n.data, {}).setdefault(_subset_key(sub), sub)
+                        # The state a read sits in is what carries its branch guards, which the
+                        # SMT fallback below needs and the affine matcher never looks at.
+                        read_states.setdefault(n.data, {}).setdefault(_subset_key(sub), st)
                 for e in st.in_edges(n):
                     if e.data is not None and not e.data.is_empty():
                         sub = e.data.get_dst_subset(e, st) or e.data.subset
@@ -684,6 +776,7 @@ class BreakAntiDependence(ppl.Pass):
         # (read, write) pair -- it walks every interstate edge of the loop body,
         # which dominated the pass on deeply nested SDFGs.
         iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(loop.loop_variable), sdfg)
+        written = written_data(loop)
 
         renamable = []
         for name, read_subsets in reads.items():
@@ -694,9 +787,11 @@ class BreakAntiDependence(ppl.Pass):
             # first one rather than classifying the whole cross product.
             classes = []
             disqualified = False
-            for r in read_subsets.values():
+            for rkey, r in read_subsets.items():
                 for w in write_subsets.values():
                     c = self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
+                    if c[0] == 'complex':
+                        c = self._smt_dep_class(r, w, loop, sdfg, read_states[name].get(rkey), internal_syms, written)
                     if c[0] == 'RAW' or c[0] == 'complex':
                         disqualified = True
                         break
@@ -881,6 +976,8 @@ class BreakAntiDependence(ppl.Pass):
                             unique_writes.setdefault(_subset_key(ws), ws)
         writes = list(unique_writes.values())
         iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(ivar), sdfg)
+        internal_syms = self._loop_internal_symbols(loop)
+        written = written_data(loop)
 
         # Read edges to redirect: those whose subset is a strict read-ahead
         # against EVERY write (WAR / WAR_symbolic / WAR_indirected). A read that
@@ -903,10 +1000,12 @@ class BreakAntiDependence(ppl.Pass):
                     key = _subset_key(rs)
                     verdict = is_ahead.get(key)
                     if verdict is None:
-                        kinds = {
-                            self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
-                            for w in writes
-                        }
+                        kinds = set()
+                        for w in writes:
+                            kind = self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
+                            if kind == 'complex':
+                                kind = self._smt_dep_class(rs, w, loop, sdfg, st, internal_syms, written)[0]
+                            kinds.add(kind)
                         verdict = bool(kinds) and kinds <= ahead
                         is_ahead[key] = verdict
                     if verdict:

@@ -73,7 +73,7 @@ def test_split_at_keeps_the_region_entry_and_does_not_ask_an_ambiguous_question(
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
     assert found is not None, 'expected an index-set split point for the guarded inner loop'
-    x, middle_singleton = found
+    x, middle_singleton, _guarded = found
     assert peel._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton)
     assert parent.start_block is entry_before, 'the split must not move the region entry'
     sdfg.validate()

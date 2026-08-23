@@ -535,6 +535,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # strictly wasted work (and would be incorrect in the rare case
         # the OMP runtime privatizes-by-value rather than by-pointer).
         self._omp_reduction_scope_stack = []
+        #: Per sequential-map scope: ``{data name: {'var', 'op', 'subset', 'target'}}`` for WCR
+        #: accumulators hoisted into a local scalar for the duration of the loop nest. Pushed by
+        #: ``_generate_MapEntry``, read by ``write_and_resolve_expr``, drained by ``_generate_MapExit``.
+        self._seq_accumulator_stack = []
 
         # id(Map) -> whether its MapEntry opened an encapsulating C scope, so the matching MapExit
         # closes exactly the braces that were opened. Keyed on the Map, which the entry and exit
@@ -1659,6 +1663,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
         # the variable per thread and tree-reduces at the end, so adding an
         # atomic on top is strictly wasted work.
+        # A sequential map hoisted this accumulator into a local scalar: accumulate there. The
+        # subset has to match the one the hoist was taken for -- a different element of the same
+        # array is a different location and still goes to memory.
+        for frame in reversed(self._seq_accumulator_stack):
+            acc = frame.get(memlet.data)
+            if acc is not None and str(memlet.subset) == str(acc['subset']):
+                return f"{acc['var']} = {acc['var']} {acc['op']} ({inname})"
         _omp_covered = any(memlet.data in frame for frame in self._omp_reduction_scope_stack)
         atomic = "" if (nc or _omp_covered) else "_atomic"
         wcr_desc = sdfg.arrays[memlet.data]
@@ -2926,6 +2937,87 @@ class CPUCodeGen(TargetCodeGenerator):
                                   '__dace_%s_%s_%s' % (kind, target, child_name), code)
             obj.code = code
 
+    def _collect_sequential_accumulators(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
+        """WCR accumulators of a SEQUENTIAL map that can live in a local scalar for the loop's
+        duration, as ``(data_name, subset, op_str, ctype, target_expr)`` tuples.
+
+        A sequential map has no concurrency, so its WCR write needs no atomic -- but the plain
+        ``wcr_fixed`` form still reads and writes memory every iteration for a location that never
+        changes. Accumulating in a register and storing once at the exit is the same arithmetic in
+        the same order (bit-identical), with one load and one store instead of ``trip`` of each.
+
+        Eligibility mirrors :meth:`_collect_omp_reductions`, minus what only privatization needs and
+        plus the two a live target imposes:
+
+        * the target is a single element (``num_elements() == 1``) whose subset does not mention
+          THIS map's parameters -- a param-dependent subset is a scatter, not one accumulator;
+        * the operator has a plain C++ infix form (``min`` / ``max`` do not, and keep the
+          ``wcr_fixed`` path, which is already the non-atomic one here);
+        * the array is not also READ through the map entry. The accumulator holds the running value
+          in a register until the exit, so such a read would see the stale memory copy;
+        * the value reaches the exit from a TASKLET. That is the only write resolved through
+          :meth:`write_and_resolve_expr`, which is where the accumulation is redirected into the
+          register. Every other source writes the destination directly and never sees the
+          register, so hoisting one declares an accumulator the loop never adds to and then
+          stores the pre-loop value back over the real result at the exit. Two such sources
+          exist: an AccessNode is a memlet COPY, emitted as a ``CopyND::Accumulate``; and a
+          NestedSDFG resolves the conflict INSIDE its own body -- codegen outlines that body
+          into its own function, which calls ``wcr_fixed::reduce`` through the connector
+          pointer it was handed.
+        """
+        out = []
+        seen = set()
+        try:
+            map_exit = state.exit_node(map_entry)
+        except (KeyError, StopIteration):
+            return out
+        read_names = {e.src.data for e in state.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode)}
+        map_param_set = set(map_entry.map.params)
+        for iedge in state.in_edges(map_exit):
+            if iedge.data is None or iedge.data.wcr is None or iedge.data.subset is None:
+                continue
+            in_conn = iedge.dst_conn
+            if not in_conn or not in_conn.startswith("IN_"):
+                continue
+            out_edges = [e for e in state.out_edges(map_exit) if e.src_conn == "OUT_" + in_conn[3:]]
+            if len(out_edges) != 1 or not isinstance(out_edges[0].dst, nodes.AccessNode):
+                continue
+            desc = sdfg.arrays.get(out_edges[0].dst.data)
+            if desc is None or out_edges[0].dst.data in read_names:
+                continue
+            if iedge.data.subset.num_elements() != 1:
+                continue
+            if any(sname in map_param_set for sname in (str(x) for x in iedge.data.subset.free_symbols)):
+                continue
+            op_str = _REDUCTION_TO_OMP_OP.get(operations.detect_reduction_type(iedge.data.wcr))
+            if op_str not in ("+", "*", "&", "|", "^", "&&", "||"):
+                continue
+            # THIS map being sequential is not enough: an enclosing parallel scope makes the
+            # target shared, and a register accumulator would drop every other thread's
+            # contribution where the atomic the conflict check asks for would not.
+            if cpp.is_write_conflicted(state, iedge, sdfg_schedule=self._toplevel_schedule):
+                continue
+            path = state.memlet_path(iedge)
+            if not path or not isinstance(path[0].src, nodes.Tasklet):
+                continue
+            key = (iedge.data.data, str(iedge.data.subset))
+            if key in seen:
+                continue
+            seen.add(key)
+            # Render the destination the way the WCR write itself does: a true ``Scalar`` is a
+            # plain C variable, so ``cpp_array_expr``'s ``tmp[0]`` does not compile. The pointer
+            # form covers both that and an array element, and it is the same lookup
+            # ``write_and_resolve_expr`` performs, so hoisted and un-hoisted name one location.
+            ptrname = self.ptr(iedge.data.data, desc, sdfg)
+            try:
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+            except KeyError:
+                continue  # not in scope where the accumulator would be declared -> leave it alone
+            target = '*(%s)' % cpp.cpp_ptr_expr(sdfg, iedge.data, defined_type, codegen=self)
+            var = f'__acc_{len(self._seq_accumulator_stack)}_{len(out)}_{iedge.data.data}'
+            out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
+        return out
+
     def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """Walk the map's WCR-write edges that target an accumulator outside the scope and
         return ``(op_str, clause_target, data_name, declare_line)`` tuples for OpenMP
@@ -3170,6 +3262,24 @@ class CPUCodeGen(TargetCodeGenerator):
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
             self._omp_reduction_scope_stack.append({dname: op for op, _ct, dname, _dec in omp_reductions})
 
+        # A sequential map's WCR accumulator lives in a local scalar for the loop's duration --
+        # same arithmetic, same order, one load and one store instead of one pair per iteration.
+        # The frame is pushed unconditionally so ``_generate_MapExit`` always has one to drain.
+        seq_accumulators = []
+        if node.map.schedule == dtypes.ScheduleType.Sequential:
+            seq_accumulators = self._collect_sequential_accumulators(sdfg, state_dfg, node)
+            for _dname, _subset, _op, ctype, target, var in seq_accumulators:
+                result.write(f'{ctype} {var} = {target};', cfg, state_id, node)
+        self._seq_accumulator_stack.append({
+            dname: {
+                'var': var,
+                'op': op,
+                'subset': subset,
+                'target': target
+            }
+            for dname, subset, op, _ctype, target, var in seq_accumulators
+        })
+
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
@@ -3286,6 +3396,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write("}", cfg, state_id, node)
 
         result.write(outer_stream.getvalue())
+
+        # Drain the sequential accumulators the matching MapEntry hoisted: the loop nest is closed,
+        # so the register holds the final value and the single store lands here.
+        if self._seq_accumulator_stack:
+            for acc in self._seq_accumulator_stack.pop().values():
+                result.write(f"{acc['target']} = {acc['var']};", cfg, state_id, node)
 
         # Close the encapsulating C scope only if the matching MapEntry opened one.
         if self._map_scope_braced.pop(self.map_scope_key(cfg, state_id, state_dfg, map_node), True):

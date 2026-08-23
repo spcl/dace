@@ -41,7 +41,7 @@ RANKS_PER_NODE=4
 # (/var/spool/slurmd/job<id>/slurm_script) and runs the copy, so anything relative to the script's
 # own path resolves inside the spool and the job dies before it starts. Repointing this at another
 # checkout is a one-line edit here.
-cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/canon_corpus_perf_job
+cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/canon_perf_jobs
 HERE=$(pwd)
 
 # Both toolchains come from spack, and a batch script inherits none of the interactive module

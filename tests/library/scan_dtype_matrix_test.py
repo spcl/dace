@@ -17,10 +17,11 @@ working matrix; the cells here were the ones missing from it because they used t
       a hand-written loop with no call into the header (see the header's own top-of-file note),
       so it is not part of this rejection's contract and is not exercised here.
 
-Both S1 and S2 are run at N below and above
-``dace::scan::detail::PARALLEL_MIN_ELEMENTS_CONTIGUOUS`` (16384): the same compiled entry point
-runs the single-thread ``simd inscan`` path or the team blocked-scan path depending on the
-runtime size, and both need the same UDR / identity to compile at all.
+Both S1 and S2 are run at a small and a large N. The entry point no longer branches on the size
+-- whether a scan earns a team is settled at compile time by the specialization band -- so both
+sizes reach the SAME blocked code, which is exactly why the pair is still worth running: the small
+one covers a team whose blocks are shorter than the tile, the large one covers several tiles, and
+both need the same UDR / identity to compile at all.
 """
 import numpy as np
 import pytest
@@ -33,7 +34,7 @@ from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAM
 _LOWP = (dace.float16, dace.bfloat16)
 _COMPLEX = (dace.complex64, dace.complex128)
 
-#: Below / above ``dace::scan::detail::PARALLEL_MIN_ELEMENTS_CONTIGUOUS`` (1 << 14).
+#: One N shorter than a single tile, one spanning several.
 _N_BELOW = 64
 _N_ABOVE = 40000
 

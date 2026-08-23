@@ -174,7 +174,7 @@ def consistent_bindings(sd: SDFG) -> Dict[str, Optional[str]]:
     return bindings
 
 
-def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8) -> SymbolicType:
+def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8, expand_data_reads: bool = False) -> SymbolicType:
     """``expr`` with every consistently-bound interstate symbol expanded into its RHS, to a fixed
     point (bounded by ``rounds``).
 
@@ -185,15 +185,23 @@ def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8) -> SymbolicT
     asking ``coeff(i)`` about it reads 0, i.e. "loop-invariant". This recovers the relation for the
     matcher without touching the descriptors.
 
-    A binding that is a BARE data read (``bsym = b_scal``, ``bsym = b[i]``) is left alone: its
-    value is a runtime datum, so expanding it only renames the symbol to a container and answers
-    nothing. A container reached inside a larger expression (``i * inc``, ``inc`` a scalar
-    argument) is kept -- that is the spelling the index carried before promotion, and the relation
-    to the loop variable is the whole point of asking.
+    A binding that is a BARE data read (``bsym = b_scal``, ``bsym = b[i]``) is left alone by
+    default: its value is a runtime datum, so for a structural matcher expanding it only renames
+    the symbol to a container and answers nothing. A container reached inside a larger expression
+    (``i * inc``, ``inc`` a scalar argument) is kept -- that is the spelling the index carried
+    before promotion, and the relation to the loop variable is the whole point of asking.
+
+    ``expand_data_reads`` expands those too, for the one caller that gains from it: a solver that
+    models the container itself. The frontend materializes the SAME read under a fresh name at
+    every use (a branch condition and the subscript it guards each get their own ``idx[i]``
+    symbol), so leaving them opaque hands the solver two unrelated variables where the program has
+    one value. Expanding restores the identity, and re-indexes it by the loop variable so distinct
+    iterations no longer share one opaque symbol.
 
     :param expr: A symbolic expression (a memlet-subset bound, typically).
     :param sd: The SDFG whose interstate edges carry the bindings.
     :param rounds: Substitution rounds before giving up on a chain.
+    :param expand_data_reads: Also expand bindings whose RHS reads a data container.
     :returns: The expanded expression; unresolved symbols simply stay put.
     """
     bindings = consistent_bindings(sd)
@@ -204,7 +212,9 @@ def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8) -> SymbolicT
         repl = {}
         for sym in resolved.free_symbols:
             rhs = bindings.get(str(sym))
-            if rhs is None or is_array_access(rhs) or rhs.strip() in sd.arrays:
+            if rhs is None:
+                continue
+            if not expand_data_reads and (is_array_access(rhs) or rhs.strip() in sd.arrays):
                 continue
             try:
                 repl[sym] = pystr_to_symbolic(rhs)

@@ -101,8 +101,13 @@ def test_guarded_poly_indirection_is_value_preserving():
     assert np.allclose(got, expected), 'canonicalize must preserve the guarded indirection'
 
 
-@pytest.mark.xfail(strict=True, reason='needs an SMT oracle: guard makes the RAW chain UNSAT')
 def test_guarded_poly_indirection_parallelizes():
+    """The oracle closes this one in ``BreakAntiDependence``, not in ``LoopToMap``: the guard
+    ``P > i`` refutes a read-BEHIND, which leaves a pure anti-dependence (iteration ``i`` reads
+    ``A[P]`` with ``P > i``, written later), and a pre-loop snapshot of ``A`` breaks it. The
+    affine matcher cannot even phrase the question -- the frontend hands the branch condition
+    and the subscript two DIFFERENT copies of ``IDX[i]``, so the guard has to be resolved back
+    through its interstate bindings before it says anything about the read."""
     sdfg = cpu_canon(guarded_poly_indirection.to_sdfg(simplify=True))
     assert residual_loops(sdfg) == 0
 
@@ -209,9 +214,13 @@ def test_hybrid_sparse_is_value_preserving():
     assert np.allclose(got, expected), 'the conditional recurrence must be preserved'
 
 
-@pytest.mark.xfail(strict=True, reason='needs an SMT oracle to refute FULL sequentiality and split at K')
 def test_hybrid_sparse_partitions_at_k():
-    """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop."""
+    """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop.
+
+    Reached without a solver: the index-set split at ``K`` partitions the range, and the
+    ``[0,K)`` segment carries nothing once its branch is specialized. Flipped from
+    ``xfail`` to a plain assertion per this file's contract when it started passing.
+    """
     sdfg = cpu_canon(hybrid_sparse.to_sdfg(simplify=True))
     assert residual_loops(sdfg) == 1
 
