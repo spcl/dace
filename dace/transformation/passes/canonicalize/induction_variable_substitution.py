@@ -668,17 +668,26 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
 
 
 def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -> bool:
-    """Whether ``sym_name`` is assigned on a direct interstate edge of any
-    ``LoopRegion`` other than ``loop`` -- i.e. it is a counter shared with a
-    nested or enclosing loop (TSVC s126). Such a symbol has no per-loop closed
-    form, so the caller refuses to substitute it."""
-    for region in sdfg.all_control_flow_regions():
-        if not isinstance(region, LoopRegion) or region is loop:
-            continue
-        for e in region.edges():
-            if sym_name in (e.data.assignments or {}):
-                return True
-    return False
+    """Whether ``sym_name`` is also stepped by a loop NESTED INSIDE ``loop``.
+
+    Such a counter has no per-loop closed form here: ``loop``'s own step is not the only thing that
+    happens to it per iteration, so ``sym + trip * step`` under-counts by whatever the inner loop
+    added.
+
+    A step in an ENCLOSING or a SIBLING loop is a different matter and is allowed. The substitution
+    reads ``sym`` as the value live at THIS loop's entry and materialises ``sym + trips * step`` on
+    the way out, so the outer picture is preserved whatever else steps the symbol elsewhere. That is
+    what unwinds a two-level counter (TSVC ``s126``: ``k += 1`` in the inner loop and once more per
+    outer iteration): closing the inner loop turns its whole contribution into one exit assignment,
+    which leaves the outer loop with a single step per iteration for the next round of the pass'
+    fixed point to close in turn.
+
+    :param sdfg: The SDFG owning ``loop``.
+    :param loop: The loop whose counter is being closed.
+    :param sym_name: The counter symbol.
+    """
+    inner = [r for r in loop.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r is not loop]
+    return any(sym_name in (e.data.assignments or {}) for region in inner for e in region.edges())
 
 
 def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,

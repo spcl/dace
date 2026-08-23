@@ -571,7 +571,7 @@ def carries_across_iterations(body, name: str, in_names: dict[str, None]) -> boo
     return False
 
 
-def sees_written_value(body, name: str, state, node) -> bool:
+def sees_written_value(states: list, name: str, state, node) -> bool:
     """Whether the read at ``node`` sees ``name``'s store from the SAME iteration.
 
     Within one state the answer is dataflow: an access node with producers is the post-write value,
@@ -579,14 +579,13 @@ def sees_written_value(body, name: str, state, node) -> bool:
     EARLIER state has already run, so a reader that has no producer of its own still sees the
     updated value (TSVC ``s2251`` writes ``a[i]`` in one state and reads it in the next).
 
-    :param body: The body being split.
+    :param states: The body's states in execution order (:func:`body_compute_states`).
     :param name: The array in question.
     :param state: The state holding ``node``.
     :param node: The reading access node.
     """
     if producer_edges(state, node):
         return True
-    states = body_compute_states(body) or []
     if state not in states:
         return False
     before = states[:states.index(state)]
@@ -627,6 +626,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
     """
     if len(groups) < 2 or not rmw_analyzable(body):
         return None
+    states = body_compute_states(body) or []
     # ``before[i]`` are the groups that must run after group ``i``; dicts, not sets, because the
     # sort below walks them and its result is the emitted state order.
     after: list[dict[int, None]] = [{} for _ in groups]
@@ -657,7 +657,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
                 offset = offsets.pop()
                 if offset == 0:
                     # Same element, same iteration: whether the read already sees the write decides.
-                    first = writer if sees_written_value(body, name, state, node) else reader
+                    first = writer if sees_written_value(states, name, state, node) else reader
                 else:
                     first = reader if offset > 0 else writer
                 after[first][writer if first == reader else reader] = None
@@ -1094,13 +1094,15 @@ class SplitStatements(ppl.Pass):
                 # A WCR store is a reduction; it is not replicable per group.
                 if any(e.data.wcr is not None for e in stores):
                     return None
-        # A private temp the body READS but never WRITES holds the PREVIOUS iteration's value (a
-        # scalar rotation). Each clone gets its own copy and its own dead-code pruning, so the
-        # producer of that value can be pruned out of the clone that consumes it. The question is
-        # asked of the whole body, not of one state: a temp written in one state and read in the
-        # next is an ordinary staged value, not a carry.
-        if any(t in reads and t not in writes for t in local):
-            return None
+        # A private temp read BEFORE anything writes it holds the PREVIOUS iteration's value (a
+        # scalar rotation). Each clone gets its own private copy, so a clone that only reads such a
+        # temp would read one that was never written. "Before" spans the whole body: a temp written
+        # in one state and read in the NEXT is an ordinary staged value, not a carry.
+        for state in states:
+            for n in state.data_nodes():
+                if (n.data in local and value_edges(state.out_edges(n))
+                        and not sees_written_value(states, n.data, state, n)):
+                    return None
 
         out_names = [w for w in writes if w not in local]
         in_names = dict.fromkeys(r for r in reads if r not in local)

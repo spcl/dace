@@ -100,5 +100,18 @@ def test_s318_staged_counter_iv_lifts_to_an_arg_reduction():
         "the strided argmax must lift to a single ArgReduce, not to a value-only reduction"
 
 
+def test_s126_two_level_counter_closes_one_loop_at_a_time():
+    """s126: ``k`` is stepped once per INNER iteration and once more per OUTER iteration.
+
+    There is no single closed form for a step the loop does not own, so the inner loop is closed
+    first -- its whole contribution becomes one assignment on the way out -- which leaves the outer
+    loop with a single step per iteration for the next round of the fixed point. Refusing the
+    counter outright (the old rule for "stepped in another loop too") left BOTH loops sequential.
+    """
+    nloops, nmaps, _sdfg = _canonicalize_counts('s126_d_single')
+    assert nloops <= 1 and nmaps >= 2, \
+        f"s126 (two-level counter) should leave at most the j recurrence, got loops={nloops} maps={nmaps}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])
