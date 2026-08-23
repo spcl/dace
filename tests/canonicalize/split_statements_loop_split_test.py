@@ -17,6 +17,7 @@ with no ``LoopFission`` involved.
 The refusals are checked on the SDFG HASH, not just on the return value: the outlining is not free
 to undo, so every refusal has to be decided before the loop is touched.
 """
+import copy
 import os
 import subprocess
 import sys
@@ -97,6 +98,25 @@ def _run(sdfg, n=32):
     args = {'a': rng.random(n), 'b': np.zeros(n), 'x': rng.random(n), 'y': rng.random(n)}
     sdfg.compile()(**args, N=n)
     return args['a'], args['b']
+
+
+def run_arrays(sdfg, n=32, seed=7):
+    """Compile and run over deterministic inputs; returns every non-transient array after the run.
+
+    Names are sorted so a split SDFG and its unsplit deepcopy draw the SAME inputs even though the
+    split added transients of its own -- the point is to compare the two runs, not to seed prettily.
+    """
+    rng = np.random.default_rng(seed)
+    args = {nm: rng.random(n) for nm in sorted(nm for nm, desc in sdfg.arrays.items() if not desc.transient)}
+    sdfg.compile()(**args, N=n)
+    return args
+
+
+def assert_matches_fused(split, fused):
+    """The distributed loops must compute what the one fused loop computed, bit for bit."""
+    want, got = run_arrays(fused), run_arrays(split)
+    for name, expected in want.items():
+        assert np.array_equal(got[name], expected), f'{name} diverges from the fused loop'
 
 
 def _refuses(sdfg):
@@ -325,9 +345,14 @@ def test_loop_split_is_deterministic():
 # ===========================================================================
 # Refusals -- each one must leave the loop byte-identical.
 # ===========================================================================
-def test_rmw_read_by_another_group_is_refused():
-    """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b``'s loop would read ``a`` AFTER the carry
-    loop had rewritten the whole array."""
+def test_rmw_read_by_another_group_is_ordered_writer_first():
+    """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b`` reads ``a`` one BEHIND the write.
+
+    The sibling split refuses this: it puts every clone in one state, so it may only separate outputs
+    no other group reads. The ORDERED split does not have to -- ``a[i-1]`` is written at iteration
+    ``i-1`` and never touched again, so the value ``b`` wants is already final by the time the
+    carry loop ends. Writer first, and the numbers say so.
+    """
     sdfg, _loop, st = _loop_sdfg('flat_cross_rmw')
     ra = st.add_read('a')
     tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
@@ -337,11 +362,23 @@ def test_rmw_read_by_another_group_is_refused():
     tmul = st.add_tasklet('_Mult_', {'av'}, {'out'}, 'out = av * 2.0')
     st.add_edge(ra, None, tmul, 'av', dace.Memlet('a[i - 1]'))
     st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
-    assert _refuses(sdfg)
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert [_written(sdfg, l) for l in loops] == [['a'], ['b']], 'the writer of a must run first'
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
 
 
-def test_write_read_across_groups_is_refused():
-    """``c[i] = x[i]; b[i] = c[i-1]`` -- two loops would let ``b`` see the finished ``c``."""
+def test_write_read_across_groups_is_ordered_writer_first():
+    """``c[i] = x[i]; b[i] = c[i-1]`` -- ``b`` sees the finished ``c``, and that is the same ``c``.
+
+    ``c[i-1]`` is stored once, at iteration ``i-1``, so "the finished array" and "what the fused
+    loop had written by then" hold the same value at every index the reader touches. Only the
+    sibling split, which cannot order anything, has to refuse this.
+    """
     sdfg, _loop, st = _loop_sdfg('flat_war', arrays=('b', 'c', 'x'))
     t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx')
     st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
@@ -349,7 +386,14 @@ def test_write_read_across_groups_is_refused():
     t1 = st.add_tasklet('t1', {'cc'}, {'out'}, 'out = cc')
     st.add_edge(st.add_read('c'), None, t1, 'cc', dace.Memlet('c[i - 1]'))
     st.add_edge(t1, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
-    assert _refuses(sdfg)
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert [_written(sdfg, l) for l in loops] == [['c'], ['b']], 'the writer of c must run first'
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
 
 
 def test_scalar_rotation_is_refused():
