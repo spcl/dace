@@ -396,6 +396,65 @@ def test_write_read_across_groups_is_ordered_writer_first():
     assert_matches_fused(sdfg, fused)
 
 
+def test_three_groups_are_ordered_by_topological_sort():
+    """Three outputs, two ordering constraints, one legal sequence.
+
+    ``a[i-1] = b[i] + x[i]`` / ``d[i] = a[i] * y[i]`` / ``b[i] = z[i] * w[i]``. ``d`` reads ``a``
+    one AHEAD of the write, so the reader goes first; ``a`` reads ``b`` at the index ``b``'s own
+    group writes, off an access node with no producer, so the reader goes first there too. That
+    leaves ``d``, then ``a``, then ``b`` -- an order two groups cannot express, which is the whole
+    point of sorting the constraints instead of flipping a bit.
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_three_groups', arrays=('a', 'b', 'd', 'x', 'y', 'z', 'w'))
+    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
+    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i - 1]'))
+    t_d = st.add_tasklet('_Mult_', {'aa', 'yy'}, {'out'}, 'out = aa * yy')
+    st.add_edge(st.add_read('a'), None, t_d, 'aa', dace.Memlet('a[i]'))
+    st.add_edge(st.add_read('y'), None, t_d, 'yy', dace.Memlet('y[i]'))
+    st.add_edge(t_d, 'out', st.add_write('d'), None, dace.Memlet('d[i]'))
+    t_b = st.add_tasklet('_Mult_b', {'zz', 'ww'}, {'out'}, 'out = zz * ww')
+    st.add_edge(st.add_read('z'), None, t_b, 'zz', dace.Memlet('z[i]'))
+    st.add_edge(st.add_read('w'), None, t_b, 'ww', dace.Memlet('w[i]'))
+    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 3, 'one loop per group, not the two the pairwise rule could emit'
+    assert [_written(sdfg, l) for l in loops] == [['d'], ['a'], ['b']]
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
+def test_elementwise_rmw_is_not_a_recurrence():
+    """``a[i] = a[i] + x[i]`` beside ``e[i] = e[i-1] * y[i]`` -- only ``e`` carries.
+
+    Both arrays are read AND written by the loop, which is what a name-level test sees. Only ``e``
+    reads an element other than the one it writes, so only ``e`` forces its loop to stay
+    sequential; reading ``a`` as carried too leaves no free group and refuses the split, which is
+    exactly the parallel work worth peeling (TSVC ``s222``).
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_elementwise_rmw', arrays=('a', 'e', 'x', 'y'))
+    t_a = st.add_tasklet('_Add_', {'aa', 'xx'}, {'out'}, 'out = aa + xx')
+    st.add_edge(st.add_read('a'), None, t_a, 'aa', dace.Memlet('a[i]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    t_e = st.add_tasklet('_Mult_', {'ee', 'yy'}, {'out'}, 'out = ee * yy')
+    st.add_edge(st.add_read('e'), None, t_e, 'ee', dace.Memlet('e[i - 1]'))
+    st.add_edge(st.add_read('y'), None, t_e, 'yy', dace.Memlet('y[i]'))
+    st.add_edge(t_e, 'out', st.add_write('e'), None, dace.Memlet('e[i]'))
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the split must peel the elementwise statement off the recurrence'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert sorted(w for l in loops for w in _written(sdfg, l)) == ['a', 'e']
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
 def test_scalar_rotation_is_refused():
     """``b[i] = s; s = x[i]`` -- ``s`` holds the PREVIOUS iteration's value.
 

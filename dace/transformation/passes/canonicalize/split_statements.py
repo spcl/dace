@@ -480,6 +480,29 @@ def iteration_distinct(subsets, loop_var: str) -> bool:
     return bool(subsets) and all(sub is not None and loop_var in (str(s) for s in sub.free_symbols) for sub in subsets)
 
 
+def carries_across_iterations(body, name: str, in_names: dict[str, None]) -> bool:
+    """Whether ``name``'s read-modify-write actually crosses iterations.
+
+    A name the loop both reads and writes is not automatically a recurrence: ``a[i] = a[i] + x[i]``
+    reads exactly the element it writes, one per iteration, and is data-parallel. Only a read of a
+    DIFFERENT element -- ``e[i] = e[i - 1] * e[i - 1]`` -- is the carry that forces the loop to stay
+    sequential. An unreadable offset, or a write the loop variable does not reach, answers ``True``:
+    this only decides which statements are worth peeling into their own loop, so an over-cautious
+    answer costs parallelism, never correctness.
+
+    :param body: The body being split (the ``LoopRegion`` on the loop path).
+    :param name: A name ``body`` both reads and writes.
+    :param in_names: The names whose values enter ``body`` from outside.
+    """
+    stores = write_subsets(body, name)
+    if not iteration_distinct(stores, body.loop_variable):
+        return True
+    for _state, node, edge in output_read_edges(body, name, in_names):
+        if node.data == name and {access_offset(edge_subset(edge, name), w) for w in stores} != {0}:
+            return True
+    return False
+
+
 def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]):
     """``groups`` re-ordered so the split is legal, or ``None`` when no order is.
 
@@ -501,20 +524,23 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
     writes actually are per-iteration -- :func:`iteration_distinct` is the precondition, and a value
     the loop carries in a scalar fails it and refuses.
 
-    Every read of every shared array has to agree on one order; two arrays pulling opposite ways, or
-    a single read whose direction is not a constant offset, means there is no legal order and the
-    loop stands as it was.
+    Each read yields one PAIRWISE constraint -- this group before that one -- and the split is
+    legal exactly when the constraints admit a total order, which is a topological sort of the
+    groups. Two groups is the one-bit case (TSVC ``s212`` / ``s221``); three (``s3251``) is the
+    same question asked twice. Constraints that disagree form a cycle, and a read whose direction
+    is not a constant offset yields no constraint at all -- both leave the loop as it was.
 
     :param body: The body being split (the ``LoopRegion`` on the loop path).
     :param in_names: The names whose values enter ``body`` from outside.
     :param rmw: Names ``body`` both reads and writes.
     :param groups: The independent output groups.
     """
-    # Two groups is one bit of order; three or more is a scheduling problem, and the split's own
-    # rationale (``_minimal_loops``) never wants more than two loops anyway.
-    if len(groups) != 2 or not rmw_analyzable(body):
+    if len(groups) < 2 or not rmw_analyzable(body):
         return None
-    first: int | None = None
+    # ``before[i]`` are the groups that must run after group ``i``; dicts, not sets, because the
+    # sort below walks them and its result is the emitted state order.
+    after: list[dict[int, None]] = [{} for _ in groups]
+    constrained = False
     for name in rmw:
         writer = next((i for i, grp in enumerate(groups) if name in grp), None)
         if writer is None:
@@ -535,15 +561,39 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
                 offset = offsets.pop()
                 if offset == 0:
                     # Same element, same iteration: the access node tells which value it is.
-                    want = writer if producer_edges(state, node) else reader
+                    first = writer if producer_edges(state, node) else reader
                 else:
-                    want = reader if offset > 0 else writer
-                if first is not None and first != want:
-                    return None
-                first = want
-    if first is None:
+                    first = reader if offset > 0 else writer
+                after[first][writer if first == reader else reader] = None
+                constrained = True
+    if not constrained:
         return None
-    return [groups[first], groups[1 - first]]
+    order = topological_group_order(after)
+    return None if order is None else [groups[i] for i in order]
+
+
+def topological_group_order(after: list[dict[int, None]]) -> list[int] | None:
+    """``after[i]`` naming the groups that must follow group ``i``, the groups in a legal order,
+    or ``None`` when the constraints contradict each other.
+
+    Ties keep the groups' own order, so the emitted states do not depend on which read produced a
+    constraint first.
+    """
+    pending = [0] * len(after)
+    for succs in after:
+        for j in succs:
+            pending[j] += 1
+    order: list[int] = []
+    ready = [i for i, n in enumerate(pending) if n == 0]
+    while ready:
+        i = min(ready)
+        ready.remove(i)
+        order.append(i)
+        for j in after[i]:
+            pending[j] -= 1
+            if pending[j] == 0:
+                ready.append(j)
+    return order if len(order) == len(after) else None
 
 
 def independent_groups(body, out_names: list[str], in_names: dict[str, None]) -> list[dict[str, None]]:
@@ -926,7 +976,7 @@ class SplitStatements(ppl.Pass):
             return None
         rmw = [o for o in out_names if o in in_names]
         if not rmw or rmw_confined(loop, in_names, rmw, groups):
-            minimal = SplitStatements._minimal_loops(groups, rmw)
+            minimal = SplitStatements._minimal_loops(loop, groups, rmw, in_names)
             return None if minimal is None else (minimal, False)
         # The clones cannot stand as unordered siblings, but ONE order of the two loops may still
         # reproduce the fused loop exactly -- see :func:`split_order`. That is the whole of TSVC
@@ -935,7 +985,8 @@ class SplitStatements(ppl.Pass):
         return None if ordered is None else (ordered, True)
 
     @staticmethod
-    def _minimal_loops(groups: list[dict[str, None]], rmw: list[str]) -> list[dict[str, None]] | None:
+    def _minimal_loops(body, groups: list[dict[str, None]], rmw: list[str],
+                       in_names: dict[str, None]) -> list[dict[str, None]] | None:
         """Coalesce the output groups into the FEWEST loops that free the parallel work: TWO.
 
         What the split is FOR is peeling the data-parallel statements out of a loop that carries a
@@ -950,13 +1001,21 @@ class SplitStatements(ppl.Pass):
 
         Returns ``None`` when one side is empty: nothing to peel, and the loop stands as it was.
 
+        CARRIED is decided per NAME by :func:`carries_across_iterations`, not by membership in
+        ``rmw``: ``a[i] = a[i] + b[i] * c[i]`` reads and writes ``a`` yet carries nothing, and
+        reading it as carried puts the loop's only parallel statement on the sequential side and
+        refuses the split for want of a free group (TSVC ``s222``).
+
+        :param body: The body being split.
         :param groups: The independent output groups.
         :param rmw: Names the loop both reads and writes.
+        :param in_names: The names whose values enter ``body`` from outside.
         """
+        recurrences = [n for n in rmw if carries_across_iterations(body, n, in_names)]
         carried: dict[str, None] = {}
         free: dict[str, None] = {}
         for grp in groups:
-            (carried if any(o in rmw for o in grp) else free).update(grp)
+            (carried if any(o in recurrences for o in grp) else free).update(grp)
         if not carried or not free:
             return None
         return [carried, free]

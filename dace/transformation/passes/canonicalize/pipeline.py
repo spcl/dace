@@ -738,6 +738,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``k := k + inc`` iedge, which InductionVariableSubstitution then closes to
     # ``a[k + (i-1)*inc]`` (the strided-argmax lift).
     _promote_const_inputs = ScalarToSymbolPromotion()
+    _promote_const_inputs.transients_only = False
     s += [('reduce', _promote_const_inputs), ('reduce', SimplifyPass()), ('reduce', HoistInductionVariableUpdates()),
           ('reduce', InductionVariableSubstitution()), ('reduce', MaterializeLoopExitSymbols()),
           ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass())]

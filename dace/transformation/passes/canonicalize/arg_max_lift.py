@@ -176,6 +176,7 @@ from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion, Conditiona
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.induction_variable_substitution import staged_iedge_rhs
 from dace.libraries.standard.nodes.reduce import Reduce
 
 #: Map AST comparison op class -> DaCe reduction type.
@@ -1401,13 +1402,17 @@ class ArgMaxLift(ppl.Pass):
                 return False, None  # nested control flow not supported in v1
         return carrier_write_seen, idx_carrier
 
-    def _collect_preloop_assignments(self, loop: LoopRegion) -> dict:
+    def _collect_preloop_assignments(self, loop: LoopRegion, sdfg: SDFG) -> dict:
         """Walk back the linear pre-loop chain (each block reached by a single
         in-edge) and accumulate interstate-edge assignments. The binding closest
         to the loop wins for each name (it is the value live at loop entry).
 
         The seed of a TSVC argmax is spread over this chain -- e.g.
         ``block: a_index := a[0]; index := 0`` then ``-> loop: maxv := abs(a_index)``.
+        A binding staged through a transient scalar (``k := k_plus_inc`` with the
+        arithmetic in a tasklet) is resolved to the arithmetic it stands for, so the
+        seed-position check below sees a symbol value rather than an array name it
+        must discard.
         """
         preloop: dict = {}
         parent = loop.parent_graph
@@ -1420,7 +1425,8 @@ class ArgMaxLift(ppl.Pass):
             e = ins[0]
             for lhs, rhs in (e.data.assignments or {}).items():
                 if lhs not in preloop:  # closest-to-loop wins
-                    preloop[lhs] = str(rhs)
+                    staged = staged_iedge_rhs(str(rhs), e.src, sdfg)
+                    preloop[lhs] = str(rhs) if staged is None else symbolic.symstr(staged)
             if e.src in seen or not isinstance(e.src, (SDFGState, ControlFlowRegion)):
                 break
             seen[e.src] = None
@@ -1467,7 +1473,7 @@ class ArgMaxLift(ppl.Pass):
         abs(a_index)`` with ``a_index := a[0]`` on an earlier edge. Both the
         position comparison and the gather lookup substitute the chain's bindings.
         """
-        preloop = self._collect_preloop_assignments(loop)
+        preloop = self._collect_preloop_assignments(loop, sdfg)
         if value_carrier not in preloop:
             return False
         if idx_carrier is not None and idx_carrier not in preloop:
