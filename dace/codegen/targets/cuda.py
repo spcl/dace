@@ -2068,6 +2068,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         block_size = None
         is_persistent = (kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
         int_ceil = symbolic.int_ceil
+        number_of_chiplets = dace.Config.get('compiler', 'cuda', 'chiplet_number')
 
         # Obtain thread-block maps from nested SDFGs
         subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
@@ -2248,6 +2249,24 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              'thread-block size. To increase this limit, modify the '
                              '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
+        if number_of_chiplets > 1 and not is_persistent:
+            # If multiple chiplets are used, we need to add an extra grid dimension for the chiplet ID
+            original_grid_size = grid_size
+            new_grid_size = []
+            # Instert the chiplet dimension as the first dimension, and shift the rest to the right. If the non-1 dimensions in the grid size are more than 2, reduce them all in the last dimension to fit the 3D limit, and add a warning.
+            non_one_dims = sum(1 for s in grid_size if not symbolic.equal(s, 1))
+            if non_one_dims > 2:
+                warnings.warn(
+                    f'Grid size has more than 2 non-1 dimensions ({grid_size}) and multiple chiplets are used. '
+                    'Reducing dimensions beyond the second into the last dimension to fit the 3D grid limit.'
+                )
+                new_grid_size = [number_of_chiplets, int_ceil(grid_size[0], number_of_chiplets),
+                                 functools.reduce(sympy.Mul, grid_size[1:], 1)]
+            else:
+                new_grid_size = [number_of_chiplets, int_ceil(grid_size[0], number_of_chiplets)] + grid_size[1:-1]
+            grid_size = new_grid_size
+            warnings.warn(f'Multiple chiplets enabled, adjusting grid size from {original_grid_size} to {grid_size} by adding an extra dimension for the chiplet ID.') 
+
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
     def generate_kernel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
@@ -2304,12 +2323,25 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # do not generate an index if the kernel map is persistent
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
+            number_of_chiplets = dace.Config.get('compiler', 'cuda', 'chiplet_number')
             # First three dimensions are evaluated directly
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
 
-                # If we defaulted to a fixed number of threads per block, offset by thread ID
-                block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                # If multiple chiplets are used, blockIdx.x holds the chiplet ID.
+                # The first work dimension is encoded as blockIdx.x * blockIdx.y,
+                # and the second work dimension uses blockIdx.z.
+                if number_of_chiplets > 1:
+                    if i == 0:
+                        # Contiguous partitioning: chiplet = blockIdx.x, local slot = blockIdx.y
+                        # flat block index = blockIdx.x * gridDim.y + blockIdx.y
+                        # → chiplet k owns blocks [k*gridDim.y .. (k+1)*gridDim.y - 1]
+                        block_expr = '(blockIdx.x * gridDim.y + blockIdx.y)'
+                    else:
+                        block_expr = 'blockIdx.%s' % _named_idx(i + 1)
+                else:
+                    # If we defaulted to a fixed number of threads per block, offset by thread ID
+                    block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
                 if not has_tbmap or has_dtbmap:
                     block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -2319,7 +2351,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
+                kernel_stream.write(f'/*block*/ {tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
@@ -2750,11 +2782,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
                     block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                elif i == 1 and len(brange) == 2:
+                    block_expr = 'threadIdx.%s' % _named_idx(i+1)
                 else:
                     block_expr = 'threadIdx.%s' % _named_idx(i)
 
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                callsite_stream.write('/*threads*/ int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
             # Delinearize beyond the third dimension

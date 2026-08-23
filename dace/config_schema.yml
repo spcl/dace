@@ -413,6 +413,14 @@ required:
                             Can be set to 'max' to maximize occupancy.
                         default: '32,1,1'
 
+                    chiplet_number:
+                        type: int
+                        title: Number of chiplets of GPU (6 for MI300A and 1 for NVIDIA GPUs)
+                        description: >
+                            Number of chiplets to distribute the work on. Based on a Round-Robin distribution,
+                            which is the default for MI300A GPU.
+                        default: 6
+
                     dynamic_map_block_size:
                         type: str
                         title: Thread-Block size for GPU_ThreadBlock_Dynamic
