@@ -45,6 +45,25 @@ def _is_single_element(node, state, sdfg) -> bool:
     return symbolic.equal(m * n, 1) is True
 
 
+def _is_blas_packed(node, state, sdfg) -> bool:
+    """``True`` when both operands have the packed layout the omatcopy / geam calls below assume.
+
+    Those calls state the leading dimension as the operand's own extent -- ``lda = n`` for the
+    ``m x n`` input, ``ldb = m`` for the ``n x m`` output -- which is the stride of a matrix packed
+    row after row with nothing between. A VIEW is not that: ``pos[:, 0:1]`` is an ``(N, 1)`` operand
+    whose consecutive elements sit ``3`` apart, and the call then walks the wrong memory and answers
+    plausible wrong numbers (the npbench ``nbody`` regression). The innermost stride is checked for
+    the same reason and admits no leading dimension at all: no ``ld`` can express a gap INSIDE a row.
+
+    A stride that is only symbolically equal to the packed one answers ``None``, which reads as
+    False and keeps the operand on the element-wise expansion -- the safe side.
+    """
+    _, _, (m, n), (in_row, in_elem) = _get_transpose_input(node, state, sdfg)
+    _, _, _, (out_row, out_elem) = _get_transpose_output(node, state, sdfg)
+    return all(
+        symbolic.equal(have, want) is True for have, want in ((in_elem, 1), (out_elem, 1), (in_row, n), (out_row, m)))
+
+
 @dace.library.expansion
 class ExpandTransposePure(ExpandTransformation):
 
@@ -110,6 +129,10 @@ class ExpandTransposeMKL(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
+        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
+        if not _is_blas_packed(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         # Fall back to native implementation if input and output types are not the same
         if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
                 != sdfg.arrays[list(state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
@@ -136,7 +159,6 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        # TODO: Add stride support
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, "
                 "{n}, {cast}_out, {m});").format(f=func, m=m, n=n, a=alpha, cast=cast)
@@ -159,6 +181,10 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
 
         # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
         if _is_single_element(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
+        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
+        if not _is_blas_packed(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
         # Fall back to native implementation if input and output types are not the same
@@ -189,7 +215,6 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             # element type (e.g. an int64 index/count grid) falls back to the native
             # element-wise transpose, matching the differing-type fallback above.
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
-        # TODO: Add stride support
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = 'CblasRowMajor'
@@ -216,6 +241,10 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
         if _is_single_element(node, state, sdfg):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
+        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
+        if not _is_blas_packed(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
         # Fall back to native implementation if input and output types are not the same
