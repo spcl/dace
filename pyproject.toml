@@ -54,7 +54,7 @@ testing = [
     "nbconvert",
 ]
 mpi = ["mpi4py", "pytest-mpi"]
-gpu = ["cupy", "cutensor-cu12"]
+gpu = ["cupy-cuda13x", "cutensor-cu13"]
 ml-testing = [
     "coverage",
     "pytest-cov",

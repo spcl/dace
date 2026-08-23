@@ -38,7 +38,6 @@ jobs:
         rm -rf .dacecache* tests/.dacecache*
         export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
         echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
-        uv venv --clear "$HOME/.venv"
         uv sync --extra testing,ml,mpi,gpu
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         MPI4PY_RC_INITIALIZE=0 uv run python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
