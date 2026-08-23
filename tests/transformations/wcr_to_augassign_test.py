@@ -3,7 +3,9 @@
 
 import dace
 import numpy as np
-from dace.transformation.dataflow import WCRToAugAssign
+from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 
 def test_tasklet():
@@ -255,6 +257,108 @@ def test_mapexit_wcr_reduction_kept():
     assert any(e.data.wcr is not None for s in sdfg.all_states() for e in s.edges()), 'reduction WCR must be kept'
 
 
+def _nested_rmw_sdfg(n: int, extra_fold: bool) -> dace.SDFG:
+    """``A[j] = A[j] * C[j]`` swept by a LoopRegion inside a NestedSDFG -- the shape a fissioned or
+    chunked body has once ``MapToForLoop`` has lowered the sweep, which is where ``AugAssignToWCR``
+    sees a FREE tasklet and lifts the in-place RMW. ``extra_fold`` adds a second, genuine reduction
+    into ``A[0]`` under the SAME operator, so the array keeps a WCR writer of its own."""
+    body = dace.SDFG('body')
+    body.add_array('A', [n], dace.float64)
+    body.add_array('C', [n], dace.float64)
+    loop = LoopRegion('sweep', f'j < {n}', 'j', 'j = 0', 'j = j + 1')
+    body.add_node(loop, is_start_block=True)
+    sweep = loop.add_state('rmw', is_start_block=True)
+    rmw = sweep.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 * __in2)')
+    sweep.add_edge(sweep.add_read('A'), None, rmw, '__in1', dace.Memlet('A[j]'))
+    sweep.add_edge(sweep.add_read('C'), None, rmw, '__in2', dace.Memlet('C[j]'))
+    sweep.add_edge(rmw, '__out', sweep.add_write('A'), None, dace.Memlet('A[j]'))
+    if extra_fold:
+        fold_state = body.add_state('fold')
+        body.add_edge(loop, fold_state, dace.InterstateEdge())
+        fme, fmx = fold_state.add_map('fold', dict(k=f'0:{n}'))
+        fold = fold_state.add_tasklet('fold', {'__in2'}, {'__out'}, '__out = __in2')
+        fold_state.add_memlet_path(fold_state.add_read('C'), fme, fold, dst_conn='__in2', memlet=dace.Memlet('C[k]'))
+        fold_state.add_memlet_path(fold,
+                                   fmx,
+                                   fold_state.add_write('A'),
+                                   src_conn='__out',
+                                   memlet=dace.Memlet(data='A', subset='0', wcr='lambda a, b: a * b'))
+
+    sdfg = dace.SDFG(f'nested_rmw_{"fold" if extra_fold else "plain"}_{n}')
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('C', [n], dace.float64)
+    state = sdfg.add_state('outer')
+    nsdfg = state.add_nested_sdfg(body, {'A', 'C'}, {'A'})
+    state.add_edge(state.add_read('A'), None, nsdfg, 'A', dace.Memlet(f'A[0:{n}]'))
+    state.add_edge(state.add_read('C'), None, nsdfg, 'C', dace.Memlet(f'C[0:{n}]'))
+    state.add_edge(nsdfg, 'A', state.add_write('A'), None, dace.Memlet(f'A[0:{n}]'))
+    sdfg.validate()
+    return sdfg
+
+
+def _boundary_wcrs(sdfg: dace.SDFG, data: str) -> int:
+    """WCR edges writing ``data`` in the OUTERMOST SDFG only -- the boundary a nested body's
+    reduction is stamped onto, not the in-body edges that carry it."""
+    return sum(1 for s in sdfg.states() for e in s.edges()
+               if e.data is not None and e.data.wcr is not None and e.data.data == data)
+
+
+def test_nested_boundary_wcr_is_cleared_on_revert():
+    """``AugAssignToWCR`` stamps the reduction on EVERY enclosing nested-SDFG boundary, not only the
+    state it rewrites. Reverting the in-body WCR must undo that outward stamp too, or the boundary
+    keeps claiming an atomic no producer asks for -- residue memlet propagation erases, and that the
+    multi-dim tile vectorizer refuses a whole kernel over (``loose WCR in the region to be tiled``,
+    tsvc ``s212_d_single``, whose in-chunk sweep is nested)."""
+    n = 16
+    sdfg = _nested_rmw_sdfg(n, extra_fold=False)
+
+    assert PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {}), 'the in-place RMW must lift'
+    assert _boundary_wcrs(sdfg, 'A') == 1, 'AugAssignToWCR stamps the enclosing NestedSDFG boundary'
+
+    assert PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {}), 'the injective WCR must revert'
+    sdfg.validate()
+    assert _boundary_wcrs(sdfg, 'A') == 0, 'the boundary stamp must go with the WCR it mirrors'
+    assert not [
+        e for sd in sdfg.all_sdfgs_recursive() for s in sd.states()
+        for e in s.edges() if e.data is not None and e.data.wcr is not None
+    ], 'no WCR survives the revert'
+
+    rng = np.random.default_rng(7)
+    a0, c = rng.random(n), rng.random(n)
+    got = a0.copy()
+    sdfg(A=got, C=c)
+    assert np.allclose(got, a0 * c), f'A[j] *= C[j]; got {got}, ref {a0 * c}'
+
+
+def test_nested_boundary_wcr_survives_a_second_reducer():
+    """The outward clear stops at a level that still has a WCR writer for the array. Here the body
+    both RMWs ``A`` elementwise (revertible once the sweep is a loop) and folds ``C`` into ``A[0]``
+    across a parallel map (a real cross-lane reduction the injectivity gate keeps). Dropping the
+    boundary would turn that fold's atomics into racing stores, so the stamp stays."""
+    n = 16
+    sdfg = _nested_rmw_sdfg(n, extra_fold=True)
+
+    assert PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {})
+    assert _boundary_wcrs(sdfg, 'A') == 1
+
+    PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    inner = [
+        e for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg for s in sd.states() for e in s.edges()
+        if e.data is not None and e.data.wcr is not None and e.data.data == 'A'
+    ]
+    assert inner, 'the constant-target fold into A[0] is a real reduction and must keep its WCR'
+    assert _boundary_wcrs(sdfg, 'A') == 1, 'the boundary still carries that reduction'
+
+    rng = np.random.default_rng(11)
+    a0, c = rng.random(n), rng.random(n)
+    ref = a0 * c
+    ref[0] *= c.prod()
+    got = a0.copy()
+    sdfg(A=got, C=c)
+    assert np.allclose(got, ref), f'got {got}, ref {ref}'
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
@@ -264,3 +368,5 @@ if __name__ == '__main__':
     test_symbolic_overapproximated_wcr_refused_no_typeerror()
     test_mapexit_wcr_injective_reverts()
     test_mapexit_wcr_reduction_kept()
+    test_nested_boundary_wcr_is_cleared_on_revert()
+    test_nested_boundary_wcr_survives_a_second_reducer()

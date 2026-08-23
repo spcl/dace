@@ -1287,6 +1287,42 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
 
         return True
 
+    def clear_boundary_wcr(self, sdfg: SDFG, data: str) -> None:
+        """Drop the reduction ``AugAssignToWCR`` stamped on the enclosing nested-SDFG boundaries.
+
+        ``AugAssignToWCR.apply`` does not stop at the state it rewrites: while the written array is
+        visible outside, it walks OUT of every nesting level and marks the connector's whole memlet
+        path with the same WCR, because a reduction inside a NestedSDFG is still a reduction where
+        the parent sees the write. Reverting the inner WCR without the mirror walk leaves that mark
+        behind as residue -- a boundary claiming an atomic no producer asks for any more. It is not
+        merely untidy: the multi-dim tile vectorizer refuses a whole kernel over a loose WCR inside
+        a map body (tsvc ``s212_d_single``, whose in-chunk sweep is nested), and re-running memlet
+        propagation erases the same edges, which is the definition of stale derived data.
+
+        Stops at a level that still has another WCR writer for the array, whose reduction the
+        boundary is legitimately carrying.
+        """
+        sd = sdfg
+        while sd.parent_nsdfg_node is not None:
+            desc = sd.arrays.get(data)
+            # A transient is invisible to the parent, so no boundary was stamped for it.
+            if desc is None or desc.transient:
+                return
+            if any(e.data is not None and e.data.wcr is not None and e.data.data == data for st in sd.states()
+                   for e in st.edges()):
+                return
+            nsdfg = sd.parent_nsdfg_node
+            nstate = sd.parent
+            sd = sd.parent_sdfg
+            outer = list(nstate.out_edges_by_connector(nsdfg, data))
+            if not outer:
+                return
+            for oe in outer:
+                path = nstate.memlet_path(oe)
+                for pe in path:
+                    pe.data.wcr = None
+                data = path[-1].data.data
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         # WCR convention ``lambda acc, new``: ``__in1`` = existing dest value (read back),
         # ``__in2`` = incoming value the edge writes. ``_wcr_augassign_body`` binds by arg name
@@ -1298,6 +1334,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edge = self._matched_wcr_edge(state, self.expr_index)
             for pe in state.memlet_path(edge):
                 pe.data.wcr = None
+            self.clear_boundary_wcr(sdfg, self.output.data)
             return
         if self.expr_index == 0:
             edge = state.edges_between(self.tasklet, self.output)[0]
@@ -1427,3 +1464,5 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                            Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
+
+        self.clear_boundary_wcr(sdfg, self.output.data)
