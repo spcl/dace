@@ -10,17 +10,33 @@ the runtime ``alpha``/``beta`` scalars, and replaces the nest with a single ``Sy
 node -- verified here both structurally and numerically (bit-exact vs a dense
 reference). A gemm nest (a plain contraction, no triangular self-scatter) must not
 match.
+
+The pass also recognises the npbench SLICE spelling of the same kernel -- a two-level
+``LoopRegion`` nest whose statements use column slices and a ``B[:i, j] @ A[i, :i]``
+inner product -- which is the form the corpus carries. That one is matched by resolving
+each body state's dataflow, so it needs the full canonicalization pipeline to have fused
+the body states first; the tests below drive it through ``canonicalize`` for that reason,
+and check that the lift survives vectorization (an un-lifted slice nest hand-rolls its
+accumulation and the vectorizer used to drop the WCR that made it safe).
 """
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import copy
 
 import numpy as np
 import pytest
 
 import dace
 from dace.libraries.blas.nodes.symm import Symm
+from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -83,6 +99,72 @@ def _reference(A_tri, B, C, alpha, beta):
     return alpha * (Asym @ B) + beta * C
 
 
+@dace.program
+def _symm_slice_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]):
+    temp2 = np.zeros((N, ), dtype=C.dtype)
+    C *= beta[0]
+    for i in range(M):
+        for j in range(N):
+            C[:i, j] += alpha[0] * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[i, :i]
+        C[i, :] += alpha[0] * B[i, :] * A[i, i] + alpha[0] * temp2
+
+
+@dace.program
+def _symm_slice_missing_term(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
+                             beta: datatype[1]):
+    temp2 = np.zeros((N, ), dtype=C.dtype)
+    C *= beta[0]
+    for i in range(M):
+        for j in range(N):
+            C[:i, j] += alpha[0] * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[i, :i]
+        C[i, :] += alpha[0] * B[i, :] * A[i, i]
+
+
+@dace.program
+def _symm_slice_transposed_dot(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
+                               beta: datatype[1]):
+    temp2 = np.zeros((N, ), dtype=C.dtype)
+    C *= beta[0]
+    for i in range(M):
+        for j in range(N):
+            C[:i, j] += alpha[0] * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[:i, i]
+        C[i, :] += alpha[0] * B[i, :] * A[i, i] + alpha[0] * temp2
+
+
+@dace.program
+def _symm_slice_temp_escapes(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
+                             beta: datatype[1], out: datatype[N]):
+    temp2 = np.zeros((N, ), dtype=C.dtype)
+    C *= beta[0]
+    for i in range(M):
+        for j in range(N):
+            C[:i, j] += alpha[0] * B[i, j] * A[i, :i]
+            temp2[j] = B[:i, j] @ A[i, :i]
+        C[i, :] += alpha[0] * B[i, :] * A[i, i] + alpha[0] * temp2
+    out[:] = temp2
+
+
+def _operand(state, node, conn):
+    """The array name wired into ``node``'s ``conn`` input connector."""
+    return next(e.data.data for e in state.in_edges(node) if e.dst_conn == conn)
+
+
+def _canonicalized(program):
+    sdfg = program.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    return sdfg
+
+
+def _slice_inputs(m, n):
+    rng = np.random.default_rng(7)
+    A = np.tril(rng.random((m, m)))
+    A[np.triu_indices(m, 1)] = -999.0  # garbage in the unreferenced triangle
+    return A, rng.random((m, n)), rng.random((m, n)), np.array([1.5]), np.array([1.2])
+
+
 def test_symm_nest_lifted_to_symm_node():
     """The polybench symm nest becomes exactly one ``Symm`` node (side L, uplo L,
     runtime alpha/beta connectors) and stays bit-exact vs a dense reference."""
@@ -120,6 +202,84 @@ def test_gemm_nest_not_matched():
     count = LoopToSymm().apply_pass(sdfg, {})
     assert not count
     assert _symm_nodes(sdfg) == []
+
+
+def test_slice_nest_lifted_with_the_prescale_left_alone():
+    """The npbench slice spelling lifts to one ``Symm`` with the RIGHT operands, the
+    loop nest disappears, and the separate ``C *= beta`` prescale is left in place --
+    so the node carries a compile-time ``beta = 1`` and no ``_beta`` connector."""
+    sdfg = _canonicalized(_symm_slice_kernel)
+    symms = _symm_nodes(sdfg)
+    assert len(symms) == 1
+    node = symms[0]
+    state = next(st for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() if node in st.nodes())
+    assert node.side == "L" and node.uplo == "L"
+    assert node.alpha_input and not node.beta_input and node.beta == 1
+    assert "_beta" not in node.in_connectors
+    assert (_operand(state, node, "_a"), _operand(state, node, "_b"), _operand(state, node, "_c"),
+            _operand(state, node, "_alpha")) == ("A", "B", "C", "alpha")
+    # The whole nest is gone: no LoopRegion is left anywhere to recompute C.
+    assert [
+        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    ] == []
+
+    m, n = 20, 30
+    A, B, C, alpha, beta = _slice_inputs(m, n)
+    ref = _reference(A, B, C, alpha[0], beta[0])
+    got = C.copy()
+    sdfg(C=got, A=A.copy(), B=B.copy(), alpha=alpha.copy(), beta=beta.copy(), M=m, N=n)
+    assert np.allclose(got, ref), f"maxdiff {np.max(np.abs(got - ref))}"
+
+
+def test_lifted_slice_nest_survives_vectorization():
+    """The lift must hold through the multi-dim vectorizer: the hand-rolled version of
+    this nest accumulates onto ``C`` from a parallel map, and the vectorizer dropped the
+    WCR that made that safe -- which is only visible on more than one thread, so this
+    runs at whatever thread count the suite configures rather than pinning one."""
+    assert int(os.environ["OMP_NUM_THREADS"]) > 1, "a dropped-WCR race is invisible on a single thread"
+    sdfg = copy.deepcopy(_canonicalized(_symm_slice_kernel))
+    sdfg.name = f"{sdfg.name}_vectorized"
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ),
+                        target_isa=detect_host_isa(),
+                        remainder_strategy="masked_tail",
+                        branch_mode="merge")).apply_pass(sdfg, {})
+    assert len(_symm_nodes(sdfg)) == 1, "vectorization must not dismantle the lifted node"
+    # No parallel map may write C: the prescale is elementwise and the product is the
+    # library node's business, so a Multicore scope storing to C means the hand-rolled
+    # accumulation came back.
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.all_states():
+            scopes = state.scope_dict()
+            for dn in state.data_nodes():
+                if dn.data != "C" or state.in_degree(dn) == 0:
+                    continue
+                scope = scopes[dn]
+                while scope is not None:
+                    assert not (isinstance(scope, nodes.MapEntry)
+                                and "Multicore" in str(scope.map.schedule)), f"C written inside {scope.map.params}"
+                    scope = scopes[scope]
+
+    m, n = 20, 30
+    A, B, C, alpha, beta = _slice_inputs(m, n)
+    ref = _reference(A, B, C, alpha[0], beta[0])
+    got = C.copy()
+    sdfg(C=got, A=A.copy(), B=B.copy(), alpha=alpha.copy(), beta=beta.copy(), M=m, N=n)
+    assert np.allclose(got, ref), f"maxdiff {np.max(np.abs(got - ref))}"
+
+
+@pytest.mark.parametrize("program,why", [
+    (_symm_slice_missing_term, "finalize drops the alpha*temp2 term"),
+    (_symm_slice_transposed_dot, "the inner product reads A's unreferenced column"),
+    (_symm_slice_temp_escapes, "the scratch vector is read after the nest"),
+])
+def test_deviating_slice_nest_is_not_lifted(program, why):
+    """Each deviation is a DIFFERENT program from ``symm``, so the lift must decline it:
+    dropping a term changes the result, reading ``A[:i, i]`` reads the triangle the
+    symmetric operand does not define, and a scratch vector something else reads cannot
+    be spliced away with the nest."""
+    assert _symm_nodes(_canonicalized(program)) == [], why
 
 
 if __name__ == "__main__":

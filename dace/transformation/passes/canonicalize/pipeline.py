@@ -591,8 +591,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # A strict, no-op-on-any-deviation match (gated on the semantic-lifting knobs, like
     # LiftEinsum / LoopToSymm), so the vectorizer path (semantic_lifting=False) leaves
     # syrk / syr2k as plain reduction nests.
+    # LoopToSymm runs a SECOND time here, for the same reason: its npbench slice form
+    # (``C[:i, j] += alpha*B[i, j]*A[i, :i]`` plus a ``B[:i, j] @ A[i, :i]`` inner product --
+    # the spelling the corpus carries) is a two-level LoopRegion nest whose body statements
+    # the frontend spreads over several states, so it only becomes matchable once the clean
+    # block's StateFusionExtended has collapsed each body to one state. The earlier
+    # 'loop_to_symm' entry stays where it is: the polybench MAP form it matches must be seen
+    # before normalize_reduction rewrites that boundary WCR. Each form is a clean no-op for
+    # the other, so running the pass at both points lifts whichever spelling is present.
     if semantic_lifting and lift:
-        s += [('loop_to_syrk', LoopToSyrk()), ('loop_to_syr2k', LoopToSyr2k())]
+        s += [('loop_to_symm', LoopToSymm()), ('loop_to_syrk', LoopToSyrk()), ('loop_to_syr2k', LoopToSyr2k())]
 
     # prep (still maps): push guarding conditionals into maps, then split
     # statements -- replicate a conditional / gather-scatter NestedSDFG per
