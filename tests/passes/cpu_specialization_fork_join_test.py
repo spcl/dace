@@ -15,6 +15,8 @@ Kernel shapes referenced by name below (all measured on a 72-thread node, LEN_2D
 jacobi/heat ``for t: map[i, j] over N x N`` -- must KEEP its map: the work per entry outgrows the
 number of entries, which is exactly what separates it from the two above.
 """
+import contextlib
+
 import dace
 import pytest
 from dace import dtypes
@@ -29,22 +31,33 @@ from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_pa
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+#: The break-even the size tests pin, in iterations. Deliberately NOT the schema default:
+#: ``CalibrateCpuThresholds`` leaves a key alone only while it still differs from the default, so
+#: pinning a non-default value is also what stops a ``canonicalize`` call inside the block from
+#: recalibrating the threshold out from under the assertion.
+PINNED_MIN_WORK_PER_REGION = 128
 
-def below_break_even() -> int:
-    """An iteration count the cost model can PROVE does not pay for a region, on this host.
+#: Iteration counts either side of that pin, far enough out that no rounding decides the comparison.
+BELOW_BREAK_EVEN = PINNED_MIN_WORK_PER_REGION // 4
+ABOVE_BREAK_EVEN = PINNED_MIN_WORK_PER_REGION * 16
 
-    ``CalibrateCpuThresholds`` rescales ``parallel_min_work_per_region`` to the host's physical core
-    count and writes it to the process config, so the break-even is a property of the machine the
-    suite runs on -- 64 on a two-core runner, 2304 on a 72-core node. A test that hardcoded one
-    machine's number would assert the wrong side of the comparison on every other one, so the sizes
-    below are taken from the threshold in force.
+
+@contextlib.contextmanager
+def pinned_break_even():
+    """Pin the fork/join threshold for the duration of the block, and restore it on the way out.
+
+    The break-even is a property of the machine: ``CalibrateCpuThresholds`` rescales it to the
+    host's physical core count -- 64 on a two-core runner, 2304 on a 72-core node -- and writes it
+    to the PROCESS config, where it outlives both the pass and the test that triggered it. So a size
+    test that hardcoded one machine's number asserts the wrong side of the comparison on every other
+    machine, and one that reads the live value instead asserts whatever an earlier test in the same
+    worker happened to leave behind. Pinning both sides leaves the cost model as the only variable.
     """
-    return max(1, min_work_per_region() // 4)
-
-
-def above_break_even() -> int:
-    """An iteration count that clears this host's break-even by a wide margin."""
-    return max(2, min_work_per_region() * 16)
+    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=PINNED_MIN_WORK_PER_REGION):
+        assert min_work_per_region() == PINNED_MIN_WORK_PER_REGION, (
+            'DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so these sizes no '
+            'longer straddle the threshold; unset it to run the size tests')
+        yield
 
 
 def map_state(container, sdfg, label, ranges, schedule=dtypes.ScheduleType.Default):
@@ -90,17 +103,17 @@ def schedules(sdfg):
 
 def test_map_below_break_even_goes_sequential():
     """A constant trip count under the threshold cannot pay for a fork/join, at any nesting."""
-    small = below_break_even()
-    sdfg = one_map_sdfg('small_top_level', [small], [f'0:{small}'])
-    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    sdfg = one_map_sdfg('small_top_level', [BELOW_BREAK_EVEN], [f'0:{BELOW_BREAK_EVEN}'])
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
 
 
 def test_map_above_break_even_stays_parallel():
     """A constant trip count above the threshold keeps its region."""
-    large = above_break_even()
-    sdfg = one_map_sdfg('large_top_level', [large], [f'0:{large}'])
-    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    sdfg = one_map_sdfg('large_top_level', [ABOVE_BREAK_EVEN], [f'0:{ABOVE_BREAK_EVEN}'])
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
 
@@ -279,10 +292,10 @@ def test_top_level_transfer_keeps_the_parallel_element_map(kind):
 def test_passes_are_idempotent():
     """Both passes run in the canonicalize band AND in the ``finalize_for_target`` tail, so a
     second application must find nothing left to do."""
-    small = below_break_even()
-    sdfg = one_map_sdfg('idempotent_map', [small], [f'0:{small}'], loop_end='N')
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    sdfg = one_map_sdfg('idempotent_map', [BELOW_BREAK_EVEN], [f'0:{BELOW_BREAK_EVEN}'], loop_end='N')
+    with pinned_break_even():
+        assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
+        assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
 
     transfers, _node = transfer_sdfg('idempotent_copy', 'N', 'copy')
     assert SpecializeCpuTransfers().apply_pass(transfers, {}) == 2
@@ -301,32 +314,33 @@ def test_canonicalize_wires_the_cpu_band():
             for i in range(j + 1, N):
                 a[i] = a[i] - a[j]
 
-    sdfg = triangular_sweep.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True)
-
-    parallel = [
-        n.map.label for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
-    ]
-    assert parallel, 's115: a symbolic extent is big, so the inner map keeps its region'
-
-    # Constant extent this time, so rule 2 can prove it: sized from the host's own break-even
-    # rather than a literal, which would sit on the wrong side of it on a big enough machine.
-    tiny_n = below_break_even()
-
+    # Pinned across BOTH halves: canonicalize runs CalibrateCpuThresholds, which would otherwise
+    # rewrite the threshold to this host's core count -- and leave it rewritten for the rest of the
+    # process, which is how a size verdict starts depending on test order.
     @dace.program
-    def tiny_sweep(a: dace.float64[tiny_n], b: dace.float64[tiny_n]):
-        for j in range(tiny_n):
-            for i in range(tiny_n):
+    def tiny_sweep(a: dace.float64[BELOW_BREAK_EVEN], b: dace.float64[BELOW_BREAK_EVEN]):
+        for j in range(BELOW_BREAK_EVEN):
+            for i in range(BELOW_BREAK_EVEN):
                 a[i] = a[i] - b[j]
 
-    tiny = tiny_sweep.to_sdfg(simplify=True)
-    canonicalize(tiny, validate=True)
+    with pinned_break_even():
+        sdfg = triangular_sweep.to_sdfg(simplify=True)
+        canonicalize(sdfg, validate=True)
+
+        parallel = [
+            n.map.label for n, _ in sdfg.all_nodes_recursive()
+            if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
+        ]
+        assert parallel, 's115: a symbolic extent is big, so the inner map keeps its region'
+
+        tiny = tiny_sweep.to_sdfg(simplify=True)
+        canonicalize(tiny, validate=True)
+
     still_parallel = [
         n.map.label for n, _ in tiny.all_nodes_recursive()
         if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
     ]
-    assert not still_parallel, f'a provably {tiny_n}-wide map cannot pay for a region, got {still_parallel}'
+    assert not still_parallel, f'a provably {BELOW_BREAK_EVEN}-wide map cannot pay for a region, got {still_parallel}'
 
 
 def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
