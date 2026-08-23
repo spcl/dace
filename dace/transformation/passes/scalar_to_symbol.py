@@ -125,6 +125,11 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             continue
         if transients_only and not desc.transient:
             continue
+        if not desc.transient and not isinstance(desc, dt.Scalar):
+            # A non-transient length-1 ARRAY is a buffer the caller passes by reference and reads
+            # back (``c=np.array([1], np.int32)``); only a by-value SCALAR argument is a symbol in
+            # disguise. Promoting the array would change the call interface, not just the graph.
+            continue
         if desc.total_size != 1:
             continue
         if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):

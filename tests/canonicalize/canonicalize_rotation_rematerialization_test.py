@@ -57,12 +57,18 @@ def reduction_lookalike(a: dace.float64[N], b: dace.float64[N], c: dace.float64[
 
 @dace.program
 def producer_input_overwritten(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-    """``b`` is written in the body, so ``b[i-1]`` no longer holds what iteration ``i-1`` read."""
+    """``b`` is written in the body, so ``b[i-1]`` no longer holds what iteration ``i-1`` read.
+
+    The store is fed by the CARRY, which is what keeps it in the carry's group when the body
+    distributes. Store ``a[i]`` instead and the split peels it into a loop of its own; the
+    producer's input then really is unwritten where the rotation looks, and rematerializing is
+    legal -- the split changed the program, not the rule this pins.
+    """
     t = 0.0
     for i in range(N):
         s = b[i] * c[i]
         a[i] = s + t
-        b[i] = a[i]
+        b[i] = t
         t = s
 
 
@@ -83,7 +89,7 @@ def reference(kernel: str, a, b, c):
         s = math.sqrt(b[i]) * c[i] if kernel == 'call' else b[i] * c[i]
         a[i] = s + t
         if kernel == 'overwrite':
-            b[i] = a[i]
+            b[i] = t
         t = t + s if kernel == 'reduce' else s
 
 

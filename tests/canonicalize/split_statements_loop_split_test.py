@@ -455,6 +455,25 @@ def test_elementwise_rmw_is_not_a_recurrence():
     assert_matches_fused(sdfg, fused)
 
 
+def test_opposite_pulling_constraints_are_refused():
+    """``a[i] = b[i+1] + x[i]`` beside ``b[i] = a[i+1] * 2`` -- each group must run first.
+
+    Both reads are one AHEAD of the other group's store, so each wants the ORIGINAL values and each
+    rule names the reader. The two constraints form a cycle, and a cycle is not an order: the loop
+    stands as it was. Sorting the constraints must not degenerate into picking one of them.
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_cycle')
+    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
+    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i + 1]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    t_b = st.add_tasklet('_Mult_', {'aa'}, {'out'}, 'out = aa * 2.0')
+    st.add_edge(st.add_read('a'), None, t_b, 'aa', dace.Memlet('a[i + 1]'))
+    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+
+    assert _refuses(sdfg)
+
+
 def test_scalar_rotation_is_refused():
     """``b[i] = s; s = x[i]`` -- ``s`` holds the PREVIOUS iteration's value.
 

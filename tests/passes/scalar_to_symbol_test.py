@@ -997,6 +997,32 @@ def test_abs_complex_guard_compiles_and_runs():
     assert np.allclose(got, ref), f"mismatch: {np.abs(got - ref).max():.2e}"
 
 
+def test_non_transient_promotion_is_read_only():
+    """A scalar ARGUMENT may become a symbol only while nothing writes it.
+
+    ``transients_only=False`` is what lets a strided gather's stride (TSVC ``s318``'s ``inc``)
+    close its induction variable: a read-only argument's value comes from the caller, so the
+    symbol is exact. A WRITTEN non-transient is an OUTPUT of the SDFG, and a symbol is not an
+    output -- promoting one silently drops the value the caller reads back.
+    """
+
+    @dace.program
+    def readonly_stride(a: dace.float64[40], out: dace.float64[20], inc: dace.int64):
+        for i in range(20):
+            out[i] = a[i * inc]
+
+    @dace.program
+    def written_result(a: dace.int64[20], total: dace.int64[1]):
+        total[0] = a[0] + 1
+
+    ro: dace.SDFG = readonly_stride.to_sdfg(simplify=False)
+    assert 'inc' not in scalar_to_symbol.find_promotable_scalars(ro)
+    assert 'inc' in scalar_to_symbol.find_promotable_scalars(ro, transients_only=False)
+
+    wr: dace.SDFG = written_result.to_sdfg(simplify=False)
+    assert 'total' not in scalar_to_symbol.find_promotable_scalars(wr, transients_only=False)
+
+
 if __name__ == '__main__':
     test_abs_complex_guard_compiles_and_runs()
     test_complex_scalar_from_array_not_promotable()
@@ -1031,3 +1057,4 @@ if __name__ == '__main__':
     test_reversed_order()
     test_scalar_index_regression(False)
     test_scalar_index_regression(True)
+    test_non_transient_promotion_is_read_only()

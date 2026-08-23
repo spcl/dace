@@ -539,7 +539,11 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
     """A symbol that looks derived at the outer level (``k := 2*i``) but is
     RE-ASSIGNED inside a NESTED loop (``k := k + 1``) must NOT be inlined -- the
     nested write makes it a live counter, not a pure derived value. Regression for
-    TSVC s141, where inlining the outer init corrupted the inner-loop counter."""
+    TSVC s141, where inlining the outer init corrupted the inner-loop counter.
+
+    The inner counter itself IS closed: it is stepped only by the loop that owns it, so the body
+    reads ``k + jj`` and the loop materialises ``k + N`` on the way out. That leaves the outer init
+    exactly as it was, which is the property this pins."""
     sdfg = dace.SDFG('nested_rewrite')
     sdfg.add_array('a', [8 * N], dace.float64)
     sdfg.add_symbol('k', dace.int64)
@@ -565,11 +569,21 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
 
     InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
-    outer_k = [e for e in outer.edges() if 'k' in (e.data.assignments or {})]
-    assert len(outer_k) == 1, "the outer k-init must survive -- k is re-written in the nested loop"
+    init_k = [e for e in outer.edges() if e.dst is inner and 'k' in (e.data.assignments or {})]
+    assert len(init_k) == 1, "the outer k-init must survive -- k is re-written in the nested loop"
     assert symbolic.simplify(
-        symbolic.pystr_to_symbolic(outer_k[0].data.assignments['k']) - symbolic.pystr_to_symbolic('2*i')) == 0, \
+        symbolic.pystr_to_symbolic(init_k[0].data.assignments['k']) - symbolic.pystr_to_symbolic('2*i')) == 0, \
         "outer k-init must not be inlined/altered"
+    assert not [e for e in inner.edges() if 'k' in (e.data.assignments or {})], \
+        "the inner counter is stepped only by the loop that owns it, so it closes"
+    reads = [e.data.assignments['g'] for e in inner.edges() if 'g' in (e.data.assignments or {})]
+    assert len(reads) == 1 and symbolic.simplify(
+        symbolic.pystr_to_symbolic(reads[0].strip('a[]')) - symbolic.pystr_to_symbolic('k + jj')) == 0, \
+        f"the body must read the closed form a[k + jj], got {reads}"
+    exit_k = [e for e in outer.edges() if e.src is inner and 'k' in (e.data.assignments or {})]
+    assert len(exit_k) == 1 and symbolic.simplify(
+        symbolic.pystr_to_symbolic(exit_k[0].data.assignments['k']) - symbolic.pystr_to_symbolic('k + N')) == 0, \
+        "the inner loop must hand the outer one the counter value it would have had"
 
 
 # ---------------------------------------------------------------------------
