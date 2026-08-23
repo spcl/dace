@@ -232,6 +232,33 @@ def test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps():
     assert np.allclose(out[0], [1.0] * 5 + [0.0] * 3)
 
 
+@dace.program
+def two_slices_from_one_bound_expression(A_row: dace.int64[N], A_col: dace.float64[N], A_val: dace.float64[N],
+                                         out: dace.float64[1]):
+    cols = A_col[A_row[0]:A_row[1]]
+    vals = A_val[A_row[0]:A_row[1]]
+    out[0] = np.dot(cols, vals)
+
+
+def test_two_slices_from_one_bound_expression_share_their_symbols():
+    """Two slices spelled with the SAME bound expression must get the same symbols.
+
+    Each ``A_row[0]`` read mints its own scalar transient, so promoting per transient gave the two
+    slices four symbols and lengths no consumer could equate -- ``vals @ x[cols]`` in spmv was then
+    refused with a size mismatch. The promotion is cached under the bound's TEXT for that reason.
+    """
+    sdfg = two_slices_from_one_bound_expression.to_sdfg(simplify=False)
+    extents = {str(desc.shape[0]) for name, desc in sdfg.arrays.items() if name.startswith(('cols', 'vals'))}
+    assert len(extents) == 1, f'the two slices must share one extent, got {extents}'
+
+    rows = np.array([1, 4] + [0] * 6, dtype=np.int64)
+    col = np.arange(8, dtype=np.float64)
+    val = np.arange(8, dtype=np.float64) * 2.0
+    out = np.zeros(1)
+    two_slices_from_one_bound_expression(rows, col, val, out, N=8)
+    assert np.isclose(out[0], np.dot(col[1:4], val[1:4]))
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -246,3 +273,4 @@ if __name__ == '__main__':
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
     test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol()
     test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps()
+    test_two_slices_from_one_bound_expression_share_their_symbols()

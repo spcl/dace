@@ -5720,36 +5720,46 @@ class ProgramVisitor(ExtNodeVisitor):
 
         The symbol carries the value the scalar had when it was read, so it belongs to that
         ASSIGNMENT and not to the name. Keeping it across a rebind is what let a second array sized
-        from the same name collapse onto the first one's extent.
+        from the same name collapse onto the first one's extent. Promotions cached under an
+        EXPRESSION need no invalidation: nothing rebinds a name they hold, and each read re-assigns
+        the symbol on its own interstate edge.
         """
         self.indirections.pop(scalar, None)
 
-    def promote_scalar_to_symbol(self, scalar: str, for_shape: bool = False) -> symbolic.symbol:
+    def promote_scalar_to_symbol(self,
+                                 scalar: str,
+                                 key: Optional[str] = None,
+                                 for_shape: bool = False) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
-        ONE symbol per scalar VERSION. The promotion is cached under the scalar's name and dropped
-        when the scalar is written again (:meth:`forget_promoted_scalar`), so two shapes sized from
-        the same REASSIGNED name keep their own values -- while a shape and a slice bound built from
-        the same assignment share one symbol. Without that sharing ``a = np.empty(n); a[:n] = x``
-        sizes the allocation from one symbol and the store from another, and a copy whose extents
-        are equal by construction is refused as a shape mismatch.
+        ONE symbol per scalar VERSION: the promotion is cached under ``key`` and dropped when the
+        scalar is written again (:meth:`forget_promoted_scalar`), so two shapes sized from the same
+        REASSIGNED name keep their own values -- while a shape and a slice bound built from the same
+        assignment share one symbol. Without that sharing ``a = np.empty(n); a[:n] = x`` sizes the
+        allocation from one symbol and the store from another, and a copy whose extents are equal by
+        construction is refused as a shape mismatch.
 
         :param scalar: Name of the scalar data descriptor to read.
+        :param key: Cache key, the scalar's name by default. Repeated promotions of the same
+                    EXPRESSION pass its text, so ``A_col[A_row[i]:A_row[i + 1]]`` and
+                    ``A_val[A_row[i]:A_row[i + 1]]`` get one symbol per bound and their extents stay
+                    comparable; each read mints its own scalar transient, so the name cannot say so.
         :param for_shape: The symbol is an array extent, so it must resolve inside nested scopes,
                           which look up free symbols in ``globals``. Subscript promotions stay out
                           of ``globals``: they shadow names there.
         :return: The symbol carrying the scalar's value.
         """
+        key = scalar if key is None else key
         desc = self.sdfg.arrays[scalar]
-        sym = self.indirections.get(scalar)
+        sym = self.indirections.get(key)
         if sym is None:
             # A NEW name per version: re-minting the bare ``__sym_<scalar>`` after a rebind would
             # re-bind the extent an earlier array already took.
             reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
             name = self.sdfg.add_symbol(find_new_name(f'__sym_{scalar}', reserved), desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
-            self.indirections[scalar] = sym
+            self.indirections[key] = sym
         if for_shape:
             self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
@@ -5853,7 +5863,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 if isinstance(self.sdfg.arrays[scalar], data.Scalar):
-                    return self.promote_scalar_to_symbol(scalar)
+                    return self.promote_scalar_to_symbol(scalar, key=node_str)
             return scalar
 
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
