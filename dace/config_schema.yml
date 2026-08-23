@@ -415,11 +415,13 @@ required:
 
                     chiplet_number:
                         type: int
-                        title: Number of chiplets of GPU (6 for MI300A and 1 for NVIDIA GPUs)
+                        title: Number of GPU chiplets to distribute thread-blocks over
                         description: >
-                            Number of chiplets to distribute the work on. Based on a Round-Robin distribution,
-                            which is the default for MI300A GPU.
-                        default: 6
+                            Number of chiplets (XCDs) the thread-blocks of a kernel are distributed over. The
+                            first dimension of the grid is split into as many contiguous chunks as there are
+                            chiplets, relying on the round-robin thread-block scheduling of multi-chiplet AMD
+                            GPUs. Set to 6 on MI300A. A value of 1 disables the distribution.
+                        default: 1
 
                     dynamic_map_block_size:
                         type: str

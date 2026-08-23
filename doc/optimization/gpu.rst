@@ -173,6 +173,35 @@ Note that if you are using CuPy, install its appropriate HIP/ROCm version.
     If you find a feature that is not supported in DaCe, please open an issue on GitHub.
 
 
+Distributing thread-blocks over chiplets
+----------------------------------------
+
+Multi-chiplet AMD GPUs, such as the MI300 series, are partitioned into chiplets (XCDs), each with its own L2 cache.
+Thread-blocks are dispatched to them in a round-robin fashion, so consecutive blocks of a kernel land on different
+chiplets and the data they share has to be replicated in every L2 cache.
+
+Setting ``compiler.cuda.chiplet_number`` to the number of chiplets of the GPU (6 on MI300A) makes the code generator
+distribute the first dimension of the grid over the chiplets instead: the grid becomes
+``(chiplets, ceil(grid_x / chiplets), grid_y)``, so that ``blockIdx.x`` is the chiplet ID and every chiplet works on a
+contiguous chunk of the first dimension, together with the whole second dimension. The default value of 1 leaves the
+grid untouched.
+
+.. code-block:: yaml
+
+    compiler:
+      cuda:
+        chiplet_number: 6
+
+The setting can also be given through the environment, without changing ``.dace.conf``:
+
+.. code-block:: bash
+
+    $ DACE_compiler_cuda_chiplet_number=6 python my_program.py
+
+The distribution moves the second dimension of the grid to ``blockIdx.z``, which makes it inapplicable to kernels
+whose third grid dimension is not 1, as well as to kernels using a persistent grid, a dynamic thread-block map, or
+nested device maps. Such kernels keep their original grid, and a warning naming the kernel is issued.
+
 Optimizing GPU SDFGs
 --------------------
 
