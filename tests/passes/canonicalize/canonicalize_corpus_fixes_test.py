@@ -234,68 +234,100 @@ def test_finalize_nested_reduction_stays_sequential():
     assert np.allclose(y, A.sum(axis=1)), "nested row-sum not bit-exact"
 
 
+#: Fork/join break-even pinned for the reduction below, in iterations. Deliberately NOT the schema
+#: default: ``CalibrateCpuThresholds`` rescales the threshold to the host's physical core count (64
+#: on a two-core runner, 2304 on a 72-core node) and writes it to the PROCESS config, but only while
+#: the key still equals the default -- so a non-default pin is also what stops the ``canonicalize``
+#: call inside the block from moving the threshold out from under the assertion.
+REDUCTION_BREAK_EVEN = 512
+
+#: Extent of the nussinov-shaped nest below. Its k-reduction runs REDUCTION_EXTENT iterations,
+#: provably under the pin above on every machine.
+REDUCTION_EXTENT = 128
+
+
 def test_reduction_in_sequential_loop_is_not_parallelized():
-    """The k-reduction nested in a doubly-carried nest must not itself become a parallel WCR-map.
+    """The k-reduction re-entered once per ``(i, j)`` must not open an OpenMP region of its own.
 
-    Lifting the reduction re-enters a map once per outer iteration, so the OpenMP fork/join
-    dominates the tiny inner reduction: this is the nussinov ``table[i,j] = max(..., table[i,k] +
-    table[k+1,j])`` k-reduction, which measured ~340x slower than the sequential baseline
-    ``auto_optimize`` keeps. Both original loops are therefore ``pinned_sequential``.
+    This is polybench ``nussinov``'s ``table[i,j] = max(..., table[i,k] + table[k+1,j])`` shape, and
+    lifting its k-reduction to a parallel map forks once per outer iteration. Measured on this nest
+    at 8 threads: 180.4 ms parallel against 37.1 ms sequential at N=400, a 4.9x loss.
 
-    That pin is on the LOOPS, not on the program: ``WavefrontSkew`` may still skew the (i, j) nest
-    and parallelize the resulting wavefront axis, which forks once per wavefront step rather than
-    once per (i, j) pair. So this asserts the pin holds and the result is bit-exact, rather than
-    counting parallel regions -- a region belonging to a skewed wavefront is a different (and
-    legitimate) shape from the fork-per-outer-iteration one this test exists to forbid."""
-    import numpy as np
+    The extent here is a CONSTANT below the break-even because that is the only input the decision
+    reads. It belongs to rule 2 of
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`,
+    which compares the map's OWN iteration count against the threshold and assumes a SYMBOLIC count
+    is big enough -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
+    sequential at N=1400. A symbolic version of this test would therefore assert nothing about the
+    cost model, only whether the optional ``islpy`` is installed: with it ``WavefrontSkew`` turns the
+    ``(i, j)`` nest into a parallel wavefront and rule 1 sequentializes the reduction underneath it,
+    without it rule 2 has a symbolic extent and keeps the region. Both enclosing loops carry the
+    dependence and stay loops either way; neither is ``pinned_sequential``, that pin having been
+    retired with ``PinNestedSequentialLoops`` -- the schedule below is the assertion, not the flag.
+    """
+    from dace.sdfg import nodes as nd
     from dace.sdfg.state import LoopRegion
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-
-    Nsym = dace.symbol("N", dtype=dace.int64)
+    from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+        min_work_per_region)
 
     @dace.program
-    def nested_seq_reduction(A: dace.float64[Nsym, Nsym], out: dace.float64[Nsym, Nsym]):
-        for i in range(1, Nsym):
-            for j in range(1, Nsym):
+    def nussinov_shaped(A: dace.float64[REDUCTION_EXTENT, REDUCTION_EXTENT], out: dace.float64[REDUCTION_EXTENT,
+                                                                                               REDUCTION_EXTENT]):
+        for i in range(1, REDUCTION_EXTENT):
+            for j in range(1, REDUCTION_EXTENT):
                 out[i, j] = out[i, j - 1] + out[i - 1, j]  # carried on BOTH i and j -> both sequential
-                for k in range(Nsym):
+                for k in range(REDUCTION_EXTENT):
                     # in-place compute-then-accumulate max-reduction over k (nussinov's shape)
                     out[i, j] = max(out[i, j], A[i, k] + A[k, j])
 
-    sdfg = nested_seq_reduction.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg,
-                        validate=True,
-                        target="cpu",
-                        peel_limit=4,
-                        break_anti_dependence=True,
-                        interchange_carry_with_map=True,
-                        scatter_to_guarded_maps=True)
-    finalize_for_target(sdfg, "cpu")
+    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=REDUCTION_BREAK_EVEN):
+        assert min_work_per_region() == REDUCTION_BREAK_EVEN, (
+            'DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so the reduction no '
+            'longer sits below the break-even; unset it to run this test')
+        sdfg = nussinov_shaped.to_sdfg(simplify=False)
+        sdfg = canonicalize(sdfg,
+                            validate=True,
+                            target="cpu",
+                            peel_limit=4,
+                            break_anti_dependence=True,
+                            interchange_carry_with_map=True,
+                            scatter_to_guarded_maps=True)
+        finalize_for_target(sdfg, "cpu")
 
-    surviving = [c for c in sdfg.all_control_flow_regions(recursive=True) if isinstance(c, LoopRegion)]
-    assert surviving, "the nest collapsed entirely; this test no longer exercises the pin"
-    assert all(c.pinned_sequential for c in surviving), \
-        (f"every surviving loop of a doubly-carried nest must stay pinned sequential, got "
-         f"{[(c.label, c.pinned_sequential) for c in surviving]}")
+        assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True)), \
+            "the carried nest collapsed entirely; this test no longer exercises the cost model"
 
-    code = sdfg.generate_code()[0].clean_code
-    # No WCR-map over the reduction axis: the k-reduction must not be the thing that parallelizes.
-    assert "omp parallel for" not in code or "_skew" in code, \
-        "the k-reduction was lifted to a parallel WCR-map (fork-per-outer-iteration)"
+        # The k axis is the only map spanning the whole extent -- a wavefront map, where WavefrontSkew
+        # made one, spans a diagonal whose length is symbolic in the skew step.
+        reduction = [
+            n.map for n, _ in sdfg.all_nodes_recursive()
+            if isinstance(n, nd.MapEntry) and n.map.range.num_elements() == REDUCTION_EXTENT
+        ]
+        assert len(reduction) == 1, \
+            f"expected exactly one map over the k axis, got {[(m.params, str(m.range)) for m in reduction]}"
+        assert reduction[0].schedule == dace.dtypes.ScheduleType.Sequential, \
+            f"the k-reduction opened its own region per (i, j): {reduction[0].schedule}"
+
+        code = sdfg.generate_code()[0].clean_code
+        assert "reduction(max:" not in code, \
+            "codegen emitted a per-(i, j) OpenMP max reduction despite the Sequential schedule"
+
+        csdfg = sdfg.compile()
 
     rng = np.random.default_rng(0)
-    N = 24
-    A = rng.random((N, N))
-    out = rng.random((N, N))
+    A = rng.random((REDUCTION_EXTENT, REDUCTION_EXTENT))
+    out = rng.random((REDUCTION_EXTENT, REDUCTION_EXTENT))
+    # max is associative and exact, so the oracle may take the k axis as one numpy reduction; only
+    # the carried (i, j) recurrence has to run element by element.
+    best = np.max(A[:, :, None] + A[None, :, :], axis=1)
     ref = out.copy()
-    for i in range(1, N):
-        for j in range(1, N):
-            ref[i, j] = ref[i, j - 1] + ref[i - 1, j]
-            for k in range(N):
-                ref[i, j] = max(ref[i, j], A[i, k] + A[k, j])
+    for i in range(1, REDUCTION_EXTENT):
+        for j in range(1, REDUCTION_EXTENT):
+            ref[i, j] = max(ref[i, j - 1] + ref[i - 1, j], best[i, j])
     got = out.copy()
-    sdfg.compile()(A=A, out=got, N=N)
+    csdfg(A=A, out=got)
     assert np.array_equal(got, ref), "nested sequential reduction not bit-exact"
 
 
