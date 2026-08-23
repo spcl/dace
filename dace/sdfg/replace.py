@@ -22,6 +22,15 @@ tokenize_cpp = re.compile(r'\b\w+\b')
 
 
 def _internal_replace(sym, symrepl):
+    # A ``SymExpr`` is a PAIR (exact expression, over-approximation) and is NOT a ``sympy.Basic``,
+    # so the guard below would hand it straight back untouched. A strip-mined bound -- anything
+    # ``MapTiling`` / ``StripMining`` produced, e.g. ``Min(hi, t + C - 1)`` -- is exactly that, and
+    # it sits in the same range tuple as plain bounds: renaming ``t`` then rewrites the range START
+    # and leaves the END naming a symbol nothing binds any more ("Missing symbols on nested SDFG").
+    # Rewrite the two halves and keep the pair; ``SymExpr.__new__`` collapses back to a plain
+    # expression when they agree.
+    if isinstance(sym, symbolic.SymExpr):
+        return symbolic.SymExpr(_internal_replace(sym.expr, symrepl), _internal_replace(sym.approx, symrepl))
     if not isinstance(sym, sp.Basic):
         return sym
 
