@@ -30,6 +30,8 @@ keeps its materialized intermediates.
 from typing import Any, Dict, Optional
 
 from dace import SDFG, data, properties, symbolic
+from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.passes.cpu_specialization.machine import topology
@@ -63,6 +65,21 @@ class OversizedIntermediateOTFFusion(OTFMapFusion):
         if len({e.dst for e in graph.out_edges(self.array)}) != 1:
             return False
         return intermediate_outgrows_cache(sdfg, self.array.data)
+
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        """Fuse, then drop the intermediate's descriptor once nothing reads it.
+
+        ``OTFMapFusion`` removes the intermediate's access node but leaves its descriptor in
+        ``sdfg.arrays``, which is the right split for a dataflow transformation and the wrong end
+        state for this one: an array no node touches is still allocated at codegen, so the
+        materialization traffic this pass exists to avoid would be paid in full anyway.
+        """
+        name = self.array.data
+        super().apply(graph, sdfg)
+        if any(node.data == name for state in sdfg.states() for node in state.nodes()
+               if isinstance(node, nodes.AccessNode)):
+            return
+        sdfg.remove_data(name, validate=False)
 
 
 @properties.make_properties

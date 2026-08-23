@@ -24,9 +24,27 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes, SpecializeCpuTransfers
+from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import min_work_per_region
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+
+
+def below_break_even() -> int:
+    """An iteration count the cost model can PROVE does not pay for a region, on this host.
+
+    ``CalibrateCpuThresholds`` rescales ``parallel_min_work_per_region`` to the host's physical core
+    count and writes it to the process config, so the break-even is a property of the machine the
+    suite runs on -- 64 on a two-core runner, 2304 on a 72-core node. A test that hardcoded one
+    machine's number would assert the wrong side of the comparison on every other one, so the sizes
+    below are taken from the threshold in force.
+    """
+    return max(1, min_work_per_region() // 4)
+
+
+def above_break_even() -> int:
+    """An iteration count that clears this host's break-even by a wide margin."""
+    return max(2, min_work_per_region() * 16)
 
 
 def map_state(container, sdfg, label, ranges, schedule=dtypes.ScheduleType.Default):
@@ -72,14 +90,16 @@ def schedules(sdfg):
 
 def test_map_below_break_even_goes_sequential():
     """A constant trip count under the threshold cannot pay for a fork/join, at any nesting."""
-    sdfg = one_map_sdfg('small_top_level', [64], ['0:64'])
+    small = below_break_even()
+    sdfg = one_map_sdfg('small_top_level', [small], [f'0:{small}'])
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
 
 
 def test_map_above_break_even_stays_parallel():
     """A constant trip count above the threshold keeps its region."""
-    sdfg = one_map_sdfg('large_top_level', [4096], ['0:4096'])
+    large = above_break_even()
+    sdfg = one_map_sdfg('large_top_level', [large], [f'0:{large}'])
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
 
@@ -259,7 +279,8 @@ def test_top_level_transfer_keeps_the_parallel_element_map(kind):
 def test_passes_are_idempotent():
     """Both passes run in the canonicalize band AND in the ``finalize_for_target`` tail, so a
     second application must find nothing left to do."""
-    sdfg = one_map_sdfg('idempotent_map', [64], ['0:64'], loop_end='N')
+    small = below_break_even()
+    sdfg = one_map_sdfg('idempotent_map', [small], [f'0:{small}'], loop_end='N')
     assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
     assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
 
@@ -289,12 +310,14 @@ def test_canonicalize_wires_the_cpu_band():
     ]
     assert parallel, 's115: a symbolic extent is big, so the inner map keeps its region'
 
-    # Constant extent, not a triangular one: ``j+1:16`` still carries the sweep variable, so its
-    # element count is symbolic and rule 2 cannot prove anything about it either.
+    # Constant extent this time, so rule 2 can prove it: sized from the host's own break-even
+    # rather than a literal, which would sit on the wrong side of it on a big enough machine.
+    tiny_n = below_break_even()
+
     @dace.program
-    def tiny_sweep(a: dace.float64[16], b: dace.float64[16]):
-        for j in range(16):
-            for i in range(16):
+    def tiny_sweep(a: dace.float64[tiny_n], b: dace.float64[tiny_n]):
+        for j in range(tiny_n):
+            for i in range(tiny_n):
                 a[i] = a[i] - b[j]
 
     tiny = tiny_sweep.to_sdfg(simplify=True)
@@ -303,7 +326,7 @@ def test_canonicalize_wires_the_cpu_band():
         n.map.label for n, _ in tiny.all_nodes_recursive()
         if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
     ]
-    assert not still_parallel, f'a provably 16-wide map cannot pay for a region, got {still_parallel}'
+    assert not still_parallel, f'a provably {tiny_n}-wide map cannot pay for a region, got {still_parallel}'
 
 
 def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
