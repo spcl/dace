@@ -60,6 +60,7 @@ from dace.transformation.passes.vectorization.vectorize_multi_dim import Vectori
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.standard.nodes.scan import Scan
+from dace import dtypes
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate import LoopToMap
@@ -97,7 +98,33 @@ def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) ->
 # --------------------------------------------------------------------------- #
 #: Column names of :func:`count`, in order -- the single source of truth for the
 #: report width, so a new counter needs no second literal kept in sync.
-COUNTERS = ('loops', 'maps', 'reduce', 'scan', 'libnode', 'states', 'guards')
+COUNTERS = ('loops', 'inmap', 'maps', 'reduce', 'scan', 'libnode', 'states', 'guards')
+
+
+def in_parallel_scope(loop: LoopRegion) -> bool:
+    """Whether ``loop`` is the BODY of parallel work rather than residual sequential work.
+
+    A tiled or skewed nest keeps sequential loops on purpose: the wavefront form of
+    ``aa[j, i] = aa[j, i - 1] + aa[j - 1, i]`` (TSVC s2111) is one sequential loop over the
+    diagonals, a parallel Map over the tiles on a diagonal, and two loops WITHIN each tile that
+    only ever run inside that Map. Charging those inner loops as residual sequential says the
+    kernel got less parallel when it went from a fully serial nest to a tiled wavefront -- the same
+    mistake :func:`guarded_fallback_loops` already corrects for guarded fallbacks.
+
+    A map scope can only hold a LoopRegion through a NestedSDFG, so walk out of the nesting and ask
+    whether any enclosing scope is a Map that is not ``Sequential`` (a Sequential schedule is the
+    CPU specialization deciding to serialize, so it buys no parallelism here).
+    """
+    sd = loop.sdfg
+    while sd is not None and sd.parent_nsdfg_node is not None:
+        state = sd.parent
+        entry = state.entry_node(sd.parent_nsdfg_node)
+        while entry is not None:
+            if isinstance(entry, nd.MapEntry) and entry.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+            entry = state.entry_node(entry)
+        sd = sd.parent_sdfg
+    return False
 
 
 def count(sdfg) -> List[int]:
@@ -117,8 +144,12 @@ def count(sdfg) -> List[int]:
     # ``all_nodes_recursive`` does cross them. Left asymmetric, a sequential loop that ended up
     # inside a nested SDFG vanished from the metric while its Maps still counted -- polybench
     # ``deriche`` reported 0 residual sequential loops when it actually has 4.
-    loops = sum(1 for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
-                if isinstance(cfr, LoopRegion))
+    all_loops = [
+        cfr for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion)
+    ]
+    loops = len(all_loops)
+    inmap = sum(1 for lp in all_loops if in_parallel_scope(lp))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     reduces = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
     scans = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
@@ -131,7 +162,7 @@ def count(sdfg) -> List[int]:
                    if isinstance(n, nd.LibraryNode) and not isinstance(n, (Reduce, Scan)))
     all_states = [st for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states()]
     guards = sum(1 for st in all_states if is_assumption_guard_block(st))
-    return [loops, maps, reduces, scans, libnodes, len(all_states), guards]
+    return [loops, inmap, maps, reduces, scans, libnodes, len(all_states), guards]
 
 
 def guarded_fallback_loops(sdfg) -> int:
@@ -507,7 +538,7 @@ def summarize(res: Dict) -> None:
     err = [n for n, r in rows.items() if r['error']]
     b, l, c = _agg(rows, 'base'), _agg(rows, 'l2m'), _agg(rows, 'canon')
     guarded = sum(r.get('guarded') or 0 for r in rows.values())
-    eff = c[0] - guarded
+    eff = c[0] - c[1] - guarded
     print(f"\n===== {res['corpus']} [{res.get('config', 'canon')}] peel_limit={res['peel_limit']} "
           f"({len(rows)} kernels, {res['seconds']}s) =====")
     if ok or bad or err:
@@ -522,15 +553,20 @@ def summarize(res: Dict) -> None:
     print(f"  {'strategy':14s}{header}")
     for label, totals in (('baseline', b), ('LoopToMap', l), (res.get('config', 'canon'), c)):
         print(f"  {label:14s}" + ''.join(f'{v:8d}' for v in totals))
-    print(f"  residual sequential loops: baseline={b[0]}  L2M={l[0]}  canon={c[0]}")
+    # Same accounting on every row, or the comparison is rigged: a loop inside a parallel map is
+    # parallel work whichever strategy produced it.
+    print(f"  residual sequential loops (loops - inmap): baseline={b[0] - b[1]}  "
+          f"L2M={l[0] - l[1]}  canon={c[0] - c[1]}")
     print(f"  guarded (if cond: map else: seq) fallbacks counted as parallel: {guarded}")
-    print(f"  EFFECTIVE residual sequential (canon - guarded): {eff}  "
-          f"(parallelized {b[0] - eff}/{b[0]} = {100 * (b[0] - eff) / max(1, b[0]):.1f}%)")
+    print(f"  loops INSIDE a parallel map (tile / wavefront bodies) counted as parallel: {c[1]}")
+    print(f"  EFFECTIVE residual sequential (canon - inmap - guarded): {eff}  "
+          f"(parallelized {b[0] - b[1] - eff}/{b[0] - b[1]} = "
+          f"{100 * (b[0] - b[1] - eff) / max(1, b[0] - b[1]):.1f}%)")
 
     def _eff(r):
-        return (r['canon'][0] - (r.get('guarded') or 0)) if r['canon'] else None
+        return (r['canon'][0] - r['canon'][1] - (r.get('guarded') or 0)) if r['canon'] else None
 
-    worse = [n for n, r in rows.items() if r['l2m'] and r['canon'] and _eff(r) > r['l2m'][0]]
+    worse = [n for n, r in rows.items() if r['l2m'] and r['canon'] and _eff(r) > r['l2m'][0] - r['l2m'][1]]
     if worse:
         print(f"  * canon MORE sequential than L2M: {', '.join(sorted(worse))}")
     seqleft = sorted(n for n, r in rows.items() if r['canon'] and _eff(r) > 0)
