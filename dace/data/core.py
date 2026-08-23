@@ -129,6 +129,11 @@ class Data:
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
         raise NotImplementedError
 
+    #: What every ``free_symbols`` answer is derived from, across the whole hierarchy: a write to
+    #: one of these drops the memo. Structures are not covered -- they union over a MUTABLE member
+    #: dict, so they override ``free_symbols`` and compute it fresh.
+    SYMBOL_SOURCE_ATTRIBUTES = frozenset({'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype'})
+
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         """
         Returns a set of symbols that are used by this data descriptor.
@@ -148,7 +153,22 @@ class Data:
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        return self.used_symbols(all_symbols=True)
+        memo = self.__dict__.get('_free_symbols_memo')
+        if memo is None:
+            # FROZEN, so the shared answer cannot be edited by a caller into something the next
+            # reader would believe. Nothing in dace writes to what this returns, and a caller that
+            # started would rather hear about it here than through a symbol that reappears
+            # elsewhere.
+            memo = frozenset(self.used_symbols(all_symbols=True))
+            self.__dict__['_free_symbols_memo'] = memo
+        return memo
+
+    def __setattr__(self, name, value):
+        # Each source of the symbols is a tuple or a sympy expression, both immutable, so the memo
+        # can only go stale by one of them being REASSIGNED -- which lands here.
+        if name in Data.SYMBOL_SOURCE_ATTRIBUTES:
+            self.__dict__.pop('_free_symbols_memo', None)
+        object.__setattr__(self, name, value)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -697,10 +717,6 @@ class Array(Data):
                 result |= set(self.total_size.free_symbols)
         return result
 
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
-
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
         Used to set properties which depend on the shape of the array
@@ -1007,10 +1023,6 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
-
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
 
 
 @make_properties

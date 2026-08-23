@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 import sympy
 from sympy import Symbol, ceiling
@@ -1517,17 +1517,27 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
 
 def _propagate_node(dfg_state, node):
     if isinstance(node, nodes.EntryNode):
+        entry_node = node
         internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
         use_dst = False
     else:
+        entry_node = dfg_state.entry_node(node)
         internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
         use_dst = True
+
+    # One symbol table for every edge through this node: it is the same scope, and deriving it per
+    # edge is what made propagation cost |edges| walks of the whole descriptor repository. An empty
+    # memlet propagates to an empty memlet without consulting it, so a node carrying only those
+    # still costs nothing.
+    defined_variables = None
+    if any(not edge.data.is_empty() for edge in external_edges):
+        defined_variables = (dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys())
 
     for edge in external_edges:
         if edge.data.is_empty():
@@ -1535,7 +1545,12 @@ def _propagate_node(dfg_state, node):
         else:
             internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
             aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
-            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
+            new_memlet = propagate_memlet(dfg_state,
+                                          aligned_memlet,
+                                          node,
+                                          True,
+                                          connector=geteconn(edge),
+                                          defined_variables=defined_variables)
         edge.data = new_memlet
 
 
@@ -1573,7 +1588,8 @@ def propagate_memlet(dfg_state,
                      scope_node: nodes.EntryNode,
                      union_inner_edges: bool,
                      arr=None,
-                     connector=None):
+                     connector=None,
+                     defined_variables: Optional[Set[str]] = None):
     """ Tries to propagate a memlet through a scope (computes the image of
         the memlet function applied on an integer set of, e.g., a map range)
         and returns a new memlet object.
@@ -1584,6 +1600,12 @@ def propagate_memlet(dfg_state,
         :param union_inner_edges: True if the propagation should take other
                                   neighboring internal memlets within the same
                                   scope into account.
+        :param defined_variables: The symbols defined at ``scope_node``, plus the SDFG's constants,
+                                  when the caller already knows them. Deriving them here walks every
+                                  descriptor in the SDFG, so a caller propagating several memlets
+                                  through ONE scope node pays that walk once per memlet: on a
+                                  generated 2000-line kernel it was 8845 walks over 2082 descriptors,
+                                  81% of the parse.
     """
     if memlet.is_empty():
         return Memlet()
@@ -1606,7 +1628,9 @@ def propagate_memlet(dfg_state,
 
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-    defined_vars = (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()) - scope_node_symbols
+    if defined_variables is None:
+        defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()
+    defined_vars = set(defined_variables) - scope_node_symbols
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets

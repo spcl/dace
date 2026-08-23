@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.propagation import propagate_memlet, propagate_memlets_sdfg
 from dace.symbolic import same_value
 
 
@@ -167,9 +167,39 @@ def test_strided_write_keeps_the_multiplier():
     assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]))
 
 
+def test_a_supplied_symbol_table_propagates_what_the_derived_one_does():
+    """``propagate_memlet`` derives the scope's symbols itself, which walks every descriptor in the
+    SDFG. Callers propagating several memlets through ONE scope node hand it the table instead, so
+    the two paths have to agree -- a table that differed would silently widen or narrow the outer
+    subset of every edge such a caller builds.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def scaled(a: dace.float64[N], out: dace.float64[N]):
+        for i in dace.map[0:N]:
+            out[i] = a[i] * 2.0
+
+    sdfg = scaled.to_sdfg(simplify=False)
+    state = next(s for s in sdfg.states() if any(isinstance(n, dace.nodes.MapEntry) for n in s.nodes()))
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    edge = next(e for e in state.out_edges(entry) if not e.data.is_empty())
+
+    derived = propagate_memlet(state, edge.data, entry, True)
+    supplied = propagate_memlet(state,
+                                edge.data,
+                                entry,
+                                True,
+                                defined_variables=state.symbols_defined_at(entry).keys()
+                                | sdfg.constants.keys())
+    assert derived.subset == supplied.subset, (derived, supplied)
+    assert derived.volume == supplied.volume, (derived, supplied)
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_strided_write_keeps_the_multiplier()
+    test_a_supplied_symbol_table_propagates_what_the_derived_one_does()
