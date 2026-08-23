@@ -276,6 +276,30 @@ class ChunkAntiDependence(ppl.Pass):
         me.map.schedule = dtypes.ScheduleType.Sequential
         return outer
 
+    def _sequentialize(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry) -> None:
+        """Turn the in-chunk sweep into a ``LoopRegion``, leaving only the chunks a map.
+
+        A Map asserts that its iterations carry NO dependence, and the in-chunk sweep carries one:
+        iteration ``i`` reads ``arr[i + 1]``, which iteration ``i + 1`` overwrites, so it is the
+        ORDER inside a chunk that makes reading the live array legal here. A ``Sequential`` schedule
+        does not say that -- it is a lowering hint, and every consumer is still entitled to act on
+        the map's parallelism claim. The tile vectorizer does: it widens the sweep and sinks the
+        ``arr[i + 1]`` load past the ``arr[i]`` store, so seven lanes out of eight read values the
+        same tile has just overwritten (``s212``, silently wrong ``b``).
+
+        The chunk map above it stays a map, which is where the parallelism actually is: on a
+        many-core node the chunks fill the machine, and the sweep inside one is a plain C loop that
+        the host compiler is free to vectorize on its own dependence analysis.
+        """
+        # Avoid import loop: dataflow transformations import the pass pipeline this module defines.
+        from dace.transformation.dataflow.map_for_loop import MapToForLoop
+        to_loop = MapToForLoop()
+        # The loop belongs inside the chunk map's scope, so keep the wrapping NestedSDFG rather
+        # than inlining it up to the parent region, where a map scope cannot hold it.
+        to_loop.inline_after = False
+        to_loop.map_entry = me
+        to_loop.apply(state, sdfg)
+
     def _rewrite(self, state: SDFGState, sdfg: SDFG, match: Tuple) -> None:
         snap_node, arr, me, lo, hi = match
         snap = snap_node.data
@@ -334,6 +358,7 @@ class ChunkAntiDependence(ppl.Pass):
         for e in state.edges():
             if e.data is not None and e.data.data == snap:
                 e.data.data = arr
+        self._sequentialize(state, sdfg, me)
 
         # Seam iterations: the last index of every chunk, whose read-ahead crosses into the
         # next chunk and must come from the buffer -- chunk ``k`` reads slot ``k + 1``.

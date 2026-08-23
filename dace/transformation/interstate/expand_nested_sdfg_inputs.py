@@ -407,6 +407,11 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             return symbolic.Subscript(*args)
 
         def _rw_index_expr(expr):
+            # A strip-mined bound is a SymExpr, whose ``str`` prints "main (approx)" -- text that
+            # sympy then reads as a call and rejects with "'One' object is not callable". Rewrite
+            # the two halves and keep the pair.
+            if isinstance(expr, symbolic.SymExpr):
+                return symbolic.SymExpr(_rw_index_expr(expr.expr), _rw_index_expr(expr.approx))
             symexpr = symbolic.pystr_to_symbolic(str(expr))
             if inner_name not in symbolic.arrays(symexpr) and \
                     inner_name not in {str(s) for s in symexpr.free_symbols}:
@@ -651,7 +656,9 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 return set()
             names: Set[str] = set()
             for ex in exprs:
-                names |= symbolic.arrays(symbolic.pystr_to_symbolic(str(ex)))
+                # Same SymExpr trap as ``_rw_index_expr``: read the two halves, not the printed pair.
+                for part in ((ex.expr, ex.approx) if isinstance(ex, symbolic.SymExpr) else (ex, )):
+                    names |= symbolic.arrays(symbolic.pystr_to_symbolic(str(part)))
             return names
 
         referenced: Set[str] = set()
