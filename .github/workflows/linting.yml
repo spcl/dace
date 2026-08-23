@@ -20,19 +20,21 @@ jobs:
     - name: Check repository
       uses: actions/checkout@v7
 
-    - name: Setup Python 3.10
-      uses: actions/setup-python@v6
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: '3.10'
-        cache: 'pip'
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
 
     - name: Install linting tools
-      run: pip install .[linting]
+      run: uv sync --extra linting
 
     - name: Run linting tools
       id: lint
-      run: pre-commit run --show-diff-on-failure --color=always --all-files
+      run: uv run pre-commit run --show-diff-on-failure --color=always --all-files
 
     - name: Check for undefined names in code generation
       id: undefined-names
-      run: ruff check --select F821 dace/codegen/
+      run: uv run ruff check --select F821 dace/codegen/

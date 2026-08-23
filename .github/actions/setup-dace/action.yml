@@ -7,13 +7,13 @@ description: Python toolchain plus the apt and pip dependencies shared by the ho
 
 inputs:
   python-version:
-    description: Version passed to actions/setup-python.
+    description: Version passed to astral-sh/setup-uv.
     required: true
   apt-packages:
     description: System packages to install.
     default: libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
   pip-packages:
-    description: Extra pip packages installed before DaCe itself.
+    description: Extra packages installed into the environment before DaCe itself.
     default: pytest-xdist
   extras:
     description: DaCe extras for the editable install.
@@ -25,10 +25,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Python ${{ inputs.python-version }}
-      uses: actions/setup-python@v6
+    - name: Set up uv with Python ${{ inputs.python-version }}
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: ${{ inputs.python-version }}
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
 
     - name: Install dependencies
       shell: bash
@@ -38,9 +41,17 @@ runs:
         sudo dpkg-reconfigure man-db
         sudo apt-get update
         sudo apt-get install -y ${{ inputs.apt-packages }}
-        python -m pip install --upgrade pip
-        pip install ${{ inputs.pip-packages }}
-        pip install -e ".[${{ inputs.extras }}]"
+        uv sync --extra ${{ inputs.extras }}
+        uv pip install ${{ inputs.pip-packages }}
+
+    - name: Put the uv environment on PATH
+      shell: bash
+      run: |
+        # Every later step gets its own shell, and the jobs here call ``pytest`` / ``python``
+        # directly rather than through ``uv run``. Export the synced environment once so those
+        # commands resolve to it without each workflow having to learn about uv.
+        echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+        echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
     - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
       shell: bash

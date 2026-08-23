@@ -3,10 +3,12 @@ description: Clean ~/.venv and dependency install shared by the self-hosted runn
 
 # Callers must run ``actions/checkout@v7`` themselves, first (see .github/actions/setup-dace).
 # Every later step has to re-run ``source ~/.venv/bin/activate``: each step gets its own shell.
+# uv is pointed at that same ~/.venv path (UV_PROJECT_ENVIRONMENT) precisely so those activate
+# lines keep working unchanged.
 
 inputs:
   pip-packages:
-    description: Extra pip packages installed into the venv before DaCe itself.
+    description: Extra packages installed into the venv before DaCe itself.
     default: pytest-xdist
   extras:
     description: DaCe extras for the editable install.
@@ -18,17 +20,22 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
+
     - name: Install dependencies
       shell: bash
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
-        python -m venv ~/.venv      # create venv so we can use pip
-        source ~/.venv/bin/activate # activate venv
-        python -m pip install --upgrade pip
-        pip install ${{ inputs.pip-packages }}
-        pip uninstall -y dace
-        pip install -e ".[${{ inputs.extras }}]"
+        export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
+        echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
+        uv sync --extra ${{ inputs.extras }}
+        uv pip install ${{ inputs.pip-packages }}
 
     - name: Install codecov uploader
       if: inputs.codecov == 'true'

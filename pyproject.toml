@@ -44,7 +44,11 @@ dependencies = [
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 testing = [
     "coverage",
+    "pytest",
     "pytest-cov",
+    "pytest-timeout",
+    "pytest-xdist",
+    "flake8",
     "scipy",
     "absl-py",
     "opt_einsum",
@@ -56,6 +60,8 @@ testing = [
     # Plotting the corpus perf results; analysis only, never imported by dace itself.
     "matplotlib",
 ]
+mpi = ["mpi4py", "pytest-mpi"]
+gpu = ["cupy-cuda13x", "cutensor-cu13"]
 # Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
 fastgraph = ["rustworkx"]
 # Optional: exact-integer polyhedral engine for WavefrontSkew canonicalization.

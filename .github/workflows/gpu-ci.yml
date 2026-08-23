@@ -34,21 +34,11 @@ jobs:
     - name: Check mpi4py
       run: |
         source ~/.venv/bin/activate # activate venv
-        python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage
-        pip install mpi4py
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        pip install cupy
-        pip install cutensor-cu12
-        pip uninstall -y dace
-        pip install -e ".[testing,ml]"
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
 
     - name: Test dependencies
       run: |
-        source ~/.venv/bin/activate # activate venv
         nvidia-smi
 
     - name: Run pytest GPU
@@ -66,7 +56,7 @@ jobs:
         export DACE_cache=single
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
+        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
 
     - name: Run pytest GPU with distributed compilation
       run: |
@@ -75,8 +65,7 @@ jobs:
         export OMP_STACKSIZE=64M
         export DACE_compiler_max_stack_array_size=65536
         export PATH=$PATH:/usr/local/cuda/bin
-        pip install pytest-mpi
-        mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
+        mpirun -n 2 --oversubscribe uv run pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
 
     - name: Run extra GPU tests
       run: |
@@ -91,7 +80,7 @@ jobs:
         export OMP_STACKSIZE=64M
         export DACE_compiler_max_stack_array_size=65536
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="uv run coverage run --source=dace --parallel-mode"
         ./tests/cuda_test.sh
 
     - name: Report overall coverage
