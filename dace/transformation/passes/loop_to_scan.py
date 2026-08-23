@@ -1024,6 +1024,15 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
         out_edges_t = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
         if len(out_edges_t) != 1:
             continue
+        # The value STORED to the carrier must be the scan update's OWN result, reaching the write
+        # through copies only. A body may extend the per-iteration delta computation downstream of
+        # the scan update, but nothing may sit BETWEEN it and the carrier write: ``out[i] =
+        # out[i-1]*x[i] + x[i]`` offers ``_Mult_`` as a perfectly-shaped PRODUCT update whose result
+        # is then post-processed, and lifting that as a product scan silently computes something
+        # else. It is a first-order LINEAR recurrence -- a different monoid, not a plain scan -- so
+        # it has to be refused rather than mis-lifted.
+        if not _stores_scan_result(state, write_edge, tasklet, op):
+            continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
         if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
                                         write_coef):
@@ -1115,6 +1124,15 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
         tasklet, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta = cand
         out_edges_t = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
         if len(out_edges_t) != 1:
+            continue
+        # The value STORED to the carrier must be the scan update's OWN result, reaching the write
+        # through copies only. A body may extend the per-iteration delta computation downstream of
+        # the scan update, but nothing may sit BETWEEN it and the carrier write: ``out[i] =
+        # out[i-1]*x[i] + x[i]`` offers ``_Mult_`` as a perfectly-shaped PRODUCT update whose result
+        # is then post-processed, and lifting that as a product scan silently computes something
+        # else. It is a first-order LINEAR recurrence -- a different monoid, not a plain scan -- so
+        # it has to be refused rather than mis-lifted.
+        if not _stores_scan_result(state, write_edge, tasklet, op):
             continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
         if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
@@ -2748,6 +2766,93 @@ def _trace_back_to_tasklet(state: SDFGState, node) -> Optional[nodes.Tasklet]:
     if isinstance(cur, nodes.Tasklet):
         return cur
     return None
+
+
+def _tasklet_scan_op(node):
+    """The associative ``ScanOp`` ``node`` applies, or ``None`` if it is not one of them."""
+    if not isinstance(node, nodes.Tasklet) or node.code.language != dtypes.Language.Python:
+        return None
+    try:
+        tree = ast.parse((node.code.as_string or '').strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return None
+    rhs = tree.body[0].value
+    if isinstance(rhs, ast.BinOp):
+        return _BINOP_TO_SCAN_OP.get(type(rhs.op))
+    if isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
+        return _CALL_TO_SCAN_OP.get(rhs.func.id)
+    return None
+
+
+def _is_pure_copy_tasklet(node) -> bool:
+    """Whether ``node`` just forwards its single input (``__out = __in``)."""
+    if not isinstance(node, nodes.Tasklet) or node.code.language != dtypes.Language.Python:
+        return False
+    try:
+        tree = ast.parse((node.code.as_string or '').strip())
+    except SyntaxError:
+        return False
+    return (len(tree.body) == 1 and isinstance(tree.body[0], ast.Assign) and len(tree.body[0].targets) == 1
+            and isinstance(tree.body[0].value, ast.Name))
+
+
+def _chain_to_store(state: SDFGState, tasklet, write_edge):
+    """The nodes strictly between ``tasklet`` and the carrier store, or ``None`` if it never gets there."""
+    forward: dict = {}
+    stack = [tasklet]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in forward:
+            continue
+        forward[id(cur)] = cur
+        stack.extend(e.dst for e in state.out_edges(cur) if e.data is not None and not e.data.is_empty())
+    if id(write_edge.src) not in forward:
+        return None
+    chain: dict = {}
+    stack = [write_edge.src]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in chain or cur is tasklet:
+            continue
+        chain[id(cur)] = cur
+        for e in state.in_edges(cur):
+            if e.data is not None and not e.data.is_empty() and id(e.src) in forward:
+                stack.append(e.src)
+    return list(chain.values())
+
+
+def _stores_scan_result(state: SDFGState, write_edge, tasklet, op) -> bool:
+    """Whether what ``write_edge`` stores is the scan update's value under the SAME associative op.
+
+    A body may extend the per-iteration delta computation downstream of the scan update, and it may
+    keep combining with the same operator -- ``out[i] = out[i-1] + x[i]*y[i] + x[i]*z[i]`` gives the
+    carry to the inner ``+`` and folds the second product in afterwards, which is the same scan
+    because ``+`` associates. Change the operator and it is not: ``out[i] = out[i-1]*x[i] + x[i]``
+    offers ``_Mult_`` as a perfectly-shaped PRODUCT update whose result is then ADDED to, and
+    lifting that as a product scan silently computes something else. It is a first-order LINEAR
+    recurrence -- a different monoid, not a plain scan -- and has to be refused.
+
+    So everything between the update and the store must be transparent to the scan: a transient, a
+    pure copy, or another tasklet applying ``op``.
+
+    :param state: The body state.
+    :param write_edge: The in-edge storing to the carrier access node.
+    :param tasklet: The matched scan-update tasklet.
+    :param op: The ``ScanOp`` that tasklet applies.
+    """
+    chain = _chain_to_store(state, tasklet, write_edge)
+    if chain is None:
+        return False
+    for node in chain:
+        if isinstance(node, nodes.AccessNode):
+            desc = state.sdfg.arrays.get(node.data)
+            if desc is None or not getattr(desc, 'transient', False):
+                return False
+        elif not _is_pure_copy_tasklet(node) and _tasklet_scan_op(node) is not op:
+            return False
+    return True
 
 
 def _resolve_input(state: SDFGState, edge):

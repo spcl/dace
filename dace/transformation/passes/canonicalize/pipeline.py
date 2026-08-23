@@ -1039,6 +1039,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
+    # ``LoopToMap`` is where body NestedSDFGs are MINTED, and it derives their connector set from
+    # the loop's read/write sets rather than from what the body still uses -- so a statement split
+    # or a fission upstream can leave a connector nothing inside reads. That is not cosmetic: the
+    # inliner materialises an access node for it in the parent, held by an ordering edge alone, and
+    # the next pass to derive read sets from memlets builds a body SDFG without that descriptor and
+    # dies looking the node up. ``PruneConnectors`` removes the connector, its outer memlets and the
+    # orphaned descriptor; the earlier 'lower' instance runs long before these nodes exist.
+    s += [('parallelize', PatternMatchAndApplyRepeated([PruneConnectors()]))]
+
     # GPU: perfect MAP nests for the grid collapse, via the map-side PerfLoopNesting
     # (delegates to MapFission -- the safe, data-parallel distribution; map iterations carry no
     # dependences, so unlike the removed loop-side PerfectLoopNesting no grouping analysis can
