@@ -17,9 +17,9 @@ The reclaimers, as one fixpoint pipeline:
   is impossible while the source still has another reader), and the mirrored ``RedundantSecondArray``
   is unsafe to run bare.
 
-Then the state-machine tidy-up -- ``_inline_single_state`` + ``_structural_cleanup``, the recipe's
-own between-phase helpers -- which splices out the scaffolding earlier stages leave behind, such as
-``BreakAntiDependence``'s spent ``*_antidep_prologue`` state.
+Then the state-machine tidy-up -- ``_inline_single_state`` + ``_structural_cleanup`` plus
+``PruneEmptyConditionalBranches``, which splice out the scaffolding earlier stages leave behind,
+such as the empty ``else`` arm ``LoopToScan`` leaves when it splits a masked scan.
 
 Every behavioural test here is A/B in one test -- with the half under test and without it -- so none
 can go vacuous if a later change makes the residue disappear for some other reason.
@@ -39,6 +39,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
@@ -78,11 +79,16 @@ def _fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x:
 
 
 @dace.program
-def _war_unit(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
-    """TSVC ``s121``: ``a[i] = a[i+1] + b[i]``. ``BreakAntiDependence`` snapshot-renames ``a`` to
-    lift it, and leaves a spent ``*_antidep_prologue`` state behind."""
-    for i in range(LEN_1D - 1):
-        a[i] = a[i + 1] + b[i]
+def _guarded_scan(out: dace.float64[LEN_1D], delta: dace.float64[LEN_1D], mask: dace.int64[LEN_1D]):
+    """TSVC-2.5 ``scan_conditional``: a masked prefix sum, where the running total advances only
+    where the mask is set. ``LoopToScan`` splits the guard into a delta build plus a scan, which
+    leaves the ``else`` arm -- ``out[i] = out[i - 1]``, the additive identity -- with nothing left
+    to do. Caller seeds ``out[0]``."""
+    for i in range(1, LEN_1D):
+        if mask[i] > 0:
+            out[i] = out[i - 1] + delta[i]
+        else:
+            out[i] = out[i - 1]
 
 
 def _is_reclaim_stage(unit: ppl.Pass) -> bool:
@@ -226,22 +232,46 @@ def _states(sdfg: dace.SDFG) -> List[str]:
     return sorted(state.label for nested in sdfg.all_sdfgs_recursive() for state in nested.states())
 
 
-def test_spent_antidependence_prologue_state_is_spliced_out():
+def _workless_branches(sdfg: dace.SDFG) -> List[str]:
+    """Conditional arms that carry no dataflow at all.
+
+    Named by the arm rather than by a state, because that is the whole point of the case: an arm is
+    a ControlFlowRegion, so ``DeadStateElimination`` walks past it however empty its states are.
+    """
+    return sorted(branch.label for nested in sdfg.all_sdfgs_recursive() for block in nested.all_control_flow_blocks()
+                  if isinstance(block, ConditionalBlock) for _condition, branch in block.branches
+                  if not any(state.nodes() for state in branch.all_states()))
+
+
+def test_spent_conditional_arm_is_spliced_out():
     """The cleanup half of the band: state-machine scaffolding, not dataflow.
 
-    ``BreakAntiDependence`` stages the snapshot in its own ``*_antidep_prologue`` state; once the
-    lift is done that state is spent, and the terminal ``SimplifyPass`` was the last thing that ran
-    ``FuseStates`` over it. ``_structural_cleanup`` at ``end`` is what takes its place.
+    The terminal ``SimplifyPass`` was the last thing that ran ``FuseStates`` / ``DeadStateElimination``
+    over the recipe's output. ``_structural_cleanup`` plus ``PruneEmptyConditionalBranches`` at ``end``
+    is what takes its place, and the empty arm is the half only the latter reaches -- the state-level
+    passes see a ControlFlowRegion and step over it.
     """
-    reference = _canonicalize(_war_unit.to_sdfg(simplify=False), with_cleanup=False)
-    prologues = [s for s in _states(reference) if 'antidep_prologue' in s]
-    assert prologues, f'expected the spent prologue in the reference, got {_states(reference)}'
+    reference = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=False)
+    spent = _workless_branches(reference)
+    assert spent, f'expected the split scan to leave an empty arm, got {_states(reference)}'
 
-    cleaned = _canonicalize(_war_unit.to_sdfg(simplify=False), with_cleanup=True)
-    assert [s for s in _states(cleaned) if 'antidep_prologue' in s] == [], _states(cleaned)
+    cleaned = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=True)
+    assert _workless_branches(cleaned) == [], _states(cleaned)
     assert len(_states(cleaned)) < len(_states(reference))
-    # The lift itself must survive the tidy-up: the WAR loop is still a Map.
+    # The split itself must survive the tidy-up: the scan is still a Map, and the arm that was
+    # pruned really was the identity.
     assert _maps(cleaned) == _maps(reference) and _maps(cleaned) > 0
+
+    length = 64
+    rng = np.random.default_rng(11)
+    delta, mask = rng.random(length), (rng.random(length) > 0.5).astype(np.int64)
+    expected = np.zeros(length)
+    for i in range(1, length):
+        expected[i] = expected[i - 1] + delta[i] if mask[i] > 0 else expected[i - 1]
+
+    out = np.zeros(length)
+    cleaned(out=out, delta=delta, mask=mask, LEN_1D=length)
+    assert np.allclose(out, expected)
 
 
 def test_the_stage_is_idempotent():

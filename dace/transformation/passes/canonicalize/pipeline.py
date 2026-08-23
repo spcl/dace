@@ -1401,11 +1401,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ...then tidy the state machine, with the recipe's own between-phase helper rather than a
     # SimplifyPass. The terminal simplify used to be the last thing that ran ``FuseStates`` /
     # ``DeadStateElimination``, so the scaffolding earlier stages leave behind reached codegen the
-    # moment it went -- ``BreakAntiDependence``'s spent ``*_antidep_prologue`` state (ext_war_unit)
-    # is pure state-machine residue with no dataflow of its own, which is exactly what this helper
-    # is for. Running it AFTER the reclaimers means it also splices out whatever they just emptied.
-    # Led by the inline, like every other cleanup site: an un-inlined map body reports whole-array
-    # memlets, so ``StateFusionExtended`` would judge the merge on the bounding box.
+    # moment it went. Running it AFTER the reclaimers means it also splices out whatever they just
+    # emptied. Led by the inline, like every other cleanup site: an un-inlined map body reports
+    # whole-array memlets, so ``StateFusionExtended`` would judge the merge on the bounding box.
+    #
+    # It does NOT reach ``ChunkAntiDependence``'s ``*_antidep_prologue`` / ``*_antidep_seam*``
+    # states: that pass moved into the ``cpu_specialize`` band below, which runs after this one, and
+    # those states are its output rather than residue -- each carries a map of the chunked lift.
     #
     # ``PruneEmptyConditionalBranches`` closes the case the state-level cleanup cannot see: an empty
     # conditional ARM is a ControlFlowRegion, not a state, so ``DeadStateElimination`` walks past it.
