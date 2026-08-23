@@ -129,13 +129,9 @@ class Data:
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
         raise NotImplementedError
 
-    #: What every ``free_symbols`` answer is derived from, across the whole hierarchy: a write to
-    #: one of these drops the memo. Structures are not covered -- they union over a MUTABLE member
-    #: dict, so they override ``free_symbols`` and compute it fresh.
+    #: Sources of ``free_symbols``, all tuples or sympy expressions: reassigning one is the only way
+    #: any can change, so that is what drops the memo. Structure overrides and computes fresh.
     SYMBOL_SOURCE_ATTRIBUTES = frozenset({'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype'})
-
-    #: The memo itself, declared here so every descriptor has it from the start and no read has to
-    #: ask whether it exists; an instance shadows it the first time ``free_symbols`` is asked for.
     _free_symbols_memo = None
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
@@ -158,16 +154,11 @@ class Data:
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
         if self._free_symbols_memo is None:
-            # FROZEN, so the shared answer cannot be edited by a caller into something the next
-            # reader would believe. Nothing in dace writes to what this returns, and a caller that
-            # started would rather hear about it here than through a symbol that reappears
-            # elsewhere.
+            # Frozen: the answer is shared, so one caller's edit would be every later caller's.
             self._free_symbols_memo = frozenset(self.used_symbols(all_symbols=True))
         return self._free_symbols_memo
 
     def __setattr__(self, name, value):
-        # Each source of the symbols is a tuple or a sympy expression, both immutable, so the memo
-        # can only go stale by one of them being REASSIGNED -- which lands here.
         if name in Data.SYMBOL_SOURCE_ATTRIBUTES:
             object.__setattr__(self, '_free_symbols_memo', None)
         object.__setattr__(self, name, value)

@@ -1531,18 +1531,15 @@ def _propagate_node(dfg_state, node):
         geteconn = lambda e: e.src_conn[4:]
         use_dst = True
 
-    # One symbol table for every edge through this node: it is the same scope, and deriving it per
-    # edge is what made propagation cost |edges| walks of the whole descriptor repository. An empty
-    # memlet propagates to an empty memlet without consulting it, so a node carrying only those
-    # still costs nothing.
+    # One table for every edge through this node -- it is one scope, and empty memlets need none.
     defined_variables = None
-    if any(not edge.data.is_empty() for edge in external_edges):
-        defined_variables = (dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys())
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
+            if defined_variables is None:
+                defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys()
             internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
             aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
             new_memlet = propagate_memlet(dfg_state,
@@ -1600,12 +1597,9 @@ def propagate_memlet(dfg_state,
         :param union_inner_edges: True if the propagation should take other
                                   neighboring internal memlets within the same
                                   scope into account.
-        :param defined_variables: The symbols defined at ``scope_node``, plus the SDFG's constants,
-                                  when the caller already knows them. Deriving them here walks every
-                                  descriptor in the SDFG, so a caller propagating several memlets
-                                  through ONE scope node pays that walk once per memlet: on a
-                                  generated 2000-line kernel it was 8845 walks over 2082 descriptors,
-                                  81% of the parse.
+        :param defined_variables: The symbols defined at ``scope_node`` plus the SDFG's constants,
+                                  when the caller already has them. Deriving them here walks every
+                                  descriptor in the SDFG, once per memlet.
     """
     if memlet.is_empty():
         return Memlet()
