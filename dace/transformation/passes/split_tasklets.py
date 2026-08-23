@@ -264,7 +264,9 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
         "MATH",
     }).union({"True", "False"}))
 
-    return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
+    # sorted, not list: ``symbols_in_code`` returns a set, whose iteration order varies
+    # with PYTHONHASHSEED and would otherwise leak into split-tasklet connector order.
+    return [lhs], sorted(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
 def _ssa_lhs_is_bool(ssa_line: str) -> bool:
@@ -677,10 +679,11 @@ class SplitTasklets(ppl.Pass):
         for k, plan in enumerate(ordered):
             out_conn = plan['out_conn']
             out_edge = out_edge_by_conn[out_conn]
-            input_conns = set(plan['input_reads']) | set(plan['cross_reads'])
+            # sorted: both plan entries are sets, so the connector order would otherwise differ between processes.
+            input_conns = sorted(set(plan['input_reads']) | set(plan['cross_reads']))
             t = state.add_tasklet(name=f"{tasklet.name}_out_{k}",
-                                  inputs=set(input_conns),
-                                  outputs={out_conn},
+                                  inputs={c: None for c in input_conns},
+                                  outputs={out_conn: None},
                                   code=plan['code'])
             emitted.append(t)
             # Inputs read from the original input edges (entry values). A fresh memlet per
@@ -901,12 +904,13 @@ class SplitTasklets(ppl.Pass):
 
                 # Symbols read in the body become inlined values, not input connectors.
                 symbol_rhs_vars = {rhs_var for rhs_var in rhs_vars if rhs_var in available_symbols}
-                rhs_vars = set(rhs_vars) - symbol_rhs_vars
+                # ``dict.fromkeys`` de-duplicates while keeping order
+                rhs_vars = [v for v in dict.fromkeys(rhs_vars) if v not in symbol_rhs_vars]
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
-                    inputs=set(rhs_vars),
-                    outputs=set(lhs_vars),
+                    inputs={v: None for v in rhs_vars},
+                    outputs={v: None for v in lhs_vars},
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:
