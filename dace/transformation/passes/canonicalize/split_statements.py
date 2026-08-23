@@ -466,6 +466,20 @@ def rmw_analyzable(body) -> bool:
                                                                                         for _ in body.all_states()) == 1
 
 
+def iteration_distinct(subsets, loop_var: str) -> bool:
+    """Whether ``subsets`` name a DIFFERENT element on every iteration of ``loop_var``.
+
+    A store the loop variable does not reach is the same element every iteration -- a value the
+    loop CARRIES. Its reader cannot be put on either side of the writer: run the writer's loop
+    first and the reader sees the final value in every iteration, run it second and it sees the
+    initial one, while the fused loop saw the running one. So no order is legal, and the
+    same-index rule in :func:`split_order` must not be allowed to pick one -- a carried scalar
+    compares EQUAL to its own store, which is precisely the input that rule reads as "same
+    element, same iteration" (``s = s + a[i]; b[i] = s`` is the shape).
+    """
+    return bool(subsets) and all(sub is not None and loop_var in (str(s) for s in sub.free_symbols) for sub in subsets)
+
+
 def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]):
     """``groups`` re-ordered so the split is legal, or ``None`` when no order is.
 
@@ -482,6 +496,10 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
       finished values, so the writer's loop goes first.
     * read at the SAME index -- decided by which access node it comes from: a node with producers is
       the post-write value (writer first, TSVC ``s221``), one without is the pre-write value.
+
+    All three rules read the shared array as one element PER ITERATION, so they only apply while the
+    writes actually are per-iteration -- :func:`iteration_distinct` is the precondition, and a value
+    the loop carries in a scalar fails it and refuses.
 
     Every read of every shared array has to agree on one order; two arrays pulling opposite ways, or
     a single read whose direction is not a constant offset, means there is no legal order and the
@@ -502,7 +520,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
         if writer is None:
             return None
         stores = write_subsets(body, name)
-        if not stores:
+        if not iteration_distinct(stores, body.loop_variable):
             return None
         for reader, grp in enumerate(groups):
             if reader == writer:

@@ -12,6 +12,10 @@ of them distribute perfectly well once the two loops are given an order:
 
 Fused, either kernel is one wholly sequential loop with no Map at all. Split, both halves are
 parallel work: two Maps for s212, a Map and a prefix ``Scan`` for s221.
+
+The rules read the shared array as one element PER ITERATION, so they hold only while the writes
+really are per-iteration. A value the loop carries in a scalar compares EQUAL to its own store
+and would otherwise be mistaken for s221's shape; it has no legal order at all.
 """
 import numpy as np
 import pytest
@@ -53,6 +57,21 @@ def pulls_both_ways(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     for i in range(1, N - 1):
         a[i] = a[i] * c[i] + b[i + 1]
         b[i] = b[i] * c[i] + a[i + 1]
+
+
+@dace.program
+def carried_scalar(a: dace.float64[N], b: dace.float64[N]):
+    """The shared value is a SCALAR the loop CARRIES, not one element per iteration.
+
+    Every direction rule reads the shared datum as one element per iteration, and ``s`` is the same
+    element in all of them: it compares EQUAL to its own store, which the same-index rule would
+    otherwise read as s221's shape. Writer first gives the total in every ``b[i]``, reader first
+    gives the initial value, and the fused loop gave the running sum -- so no order is legal.
+    """
+    s = 0.0
+    for i in range(N):
+        s = s + a[i]
+        b[i] = s
 
 
 def _loops(sdfg: dace.SDFG) -> list:
@@ -154,9 +173,31 @@ def test_canonicalize_parallelizes_the_split_pair(program, maps, scans):
     _run(program, sdfg)
 
 
+def test_carried_scalar_is_refused():
+    """The running sum is carried in a scalar, so neither order reproduces the fused loop."""
+    sdfg = carried_scalar.to_sdfg(simplify=True)
+    before = sdfg.hash_sdfg()
+    assert SplitStatements().apply_pass(sdfg, {}) is None, 'a carried scalar must not split'
+    assert sdfg.hash_sdfg() == before, 'a pass that does not apply must not mutate'
+
+
+def test_carried_scalar_keeps_the_running_sum():
+    """End to end: canonicalize must still compute the prefix sum, not the total."""
+    n = 64
+    a = np.random.default_rng(7).random(n)
+    sdfg = carried_scalar.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    sdfg.validate()
+    got = np.zeros(n)
+    sdfg(a=a.copy(), b=got, N=n)
+    assert np.allclose(got, np.cumsum(a)), 'a split loop would read the final total in every b[i]'
+
+
 if __name__ == '__main__':
     test_read_ahead_puts_the_reader_first()
     test_same_index_read_puts_the_writer_first()
     test_contradictory_directions_are_refused()
+    test_carried_scalar_is_refused()
+    test_carried_scalar_keeps_the_running_sum()
     test_canonicalize_parallelizes_the_split_pair(read_ahead, 2, 0)
     test_canonicalize_parallelizes_the_split_pair(same_index, 1, 1)
