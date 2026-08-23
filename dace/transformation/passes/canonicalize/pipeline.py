@@ -76,10 +76,6 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.cpu_specialization import (CalibrateCpuThresholds, ChunkAntiDependence,
-                                                           RecomputeOversizedIntermediates,
-                                                           SequentializeUnprofitableParallelScopes,
-                                                           SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
@@ -1415,8 +1411,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # whole-array memlets, so ``StateFusionExtended`` would judge the merge on the bounding box.
     #
     # It does NOT reach ``ChunkAntiDependence``'s ``*_antidep_prologue`` / ``*_antidep_seam*``
-    # states: that pass moved into the ``cpu_specialize`` band below, which runs after this one, and
-    # those states are its output rather than residue -- each carries a map of the chunked lift.
+    # states: that pass belongs to the ``cpu_specialize`` stage, which runs after this whole
+    # pipeline, and those states are its output rather than residue -- each carries a map of the
+    # chunked lift.
     #
     # ``PruneEmptyConditionalBranches`` closes the case the state-level cleanup cannot see: an empty
     # conditional ARM is a ControlFlowRegion, not a state, so ``DeadStateElimination`` walks past it.
@@ -1555,50 +1552,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``_priv_table`` -- is left alone). It does not attempt full cross-nested-SDFG liveness, so a
     # fresh accumulator whose WCR is already AccessNode-sourced before that pass is not covered.
 
-    # cpu_specialize (terminal band): the canonical form is the maximally parallel one, so the
-    # decision to make a scope sequential again belongs to the target, not to canonicalization.
-    # ``SequentializeUnprofitableParallelScopes`` is the single home of that CPU fork/join cost model: it pins
-    # a map whose work per region cannot pay for a ``#pragma omp parallel`` (and every scope nested
-    # in a parallel map, which would fork a team per outer iteration).
-    # ``SpecializeCpuTransfers`` then gives the transfers it just sequentialized their single
-    # ``memcpy`` / ``memset`` back, so the parallel-by-default copy expansion costs nothing when
-    # the cost model refuses it.
-    #
-    # Placed at the very END, after fuse / collapse / the terminal LoopToMap: the verdict must be
-    # read off the FINAL map shapes (fusion and collapse change the work per region by orders of
-    # magnitude), and a schedule set earlier would also block the map fusion stages, which only
-    # fuse maps with equal schedules.
-    #
-    # ``ChunkAntiDependence`` belongs to the same band and for the same reason: it trades the
-    # device-neutral anti-dependence snapshot for per-chunk seam buffers, and
-    # sequential-within-chunk is a CPU scheduling decision (the matcher refuses GPU maps). It
-    # ran directly after ``post_l2m`` before, on the argument that that band is the first one to
-    # inline the map body and fuse the snapshot copy in. It is -- but not into the shape the
-    # matcher needs: measured over the corpus it matched ZERO maps there and matches on the
-    # final SDFG, because the fuse / collapse / terminal-``LoopToMap`` stages in between are
-    # what put the copy and its consumer map in one state with the read spelled as a point.
-    # Placed before the two cost-model passes so they read the chunked shape: the prologue and
-    # the seam-iteration map it emits are a 1-iteration and an ``nchunks``-iteration region, and
-    # sequentializing those is exactly the verdict the fork/join model exists to give.
-    #
-    # ``RecomputeOversizedIntermediates`` is the third device decision in the band: it collapses a
-    # producer map into its single consumer and drops the intermediate, but only when that
-    # intermediate provably does not fit in the host's last-level cache. ``recompute_fuse_for_gpu``
-    # does the same unconditionally on the device; the CPU keeps a cache-resident intermediate
-    # materialized (reading it back is cheaper than recomputing it) and only pays ALU for the ones
-    # that would cost a full DRAM round-trip -- the grid-sized half-step buffers of heat3d and the
-    # split-statement temporaries every slice-vectorized stencil leaves behind.
-    if target == 'cpu':
-        # First in the band: both cost-model passes below read fork/join thresholds out of the
-        # config, and those shipped as constants measured on one development box. Calibrate them to
-        # the host's own core count before anyone reads them, so a 72-core machine stops inheriting
-        # an 8-core machine's break-even points. A user-set value is left alone.
-        s += [('cpu_specialize', CalibrateCpuThresholds())]
-        if break_anti_dependence:
-            s += [('cpu_specialize', ChunkAntiDependence())]
-        s += [('cpu_specialize', RecomputeOversizedIntermediates()),
-              ('cpu_specialize', SequentializeUnprofitableParallelScopes()),
-              ('cpu_specialize', SpecializeCpuTransfers())]
+    # The CPU specialization band used to run here, as the pipeline's terminal stage. It is now a
+    # SEPARATE STAGE: :func:`~dace.transformation.passes.cpu_specialization.pipeline.cpu_specialize`,
+    # run after this whole pipeline returns (``finalize_for_target`` calls it for you). Wherever the
+    # choice between parallel and sequential is open, canonicalization takes PARALLEL and stops
+    # there; giving parallelism back is a target decision, and a target decision inside the
+    # device-neutral pipeline is one a GPU or a vectorizer then has to undo. The order is unchanged
+    # -- specialization still runs after cleanup and parallelization, at the very end -- only the
+    # stage boundary is.
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
     # explicit and runtime-checked, by prepending a side-effecting
@@ -1967,6 +1928,14 @@ def canonicalize(sdfg: SDFG,
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
+
+    Canonicalization is the FIRST of two stages, and it stops where the target begins: wherever the
+    choice between a parallel and a sequential form is open it takes parallel, because that is the
+    form a GPU, a vectorizer and a CPU can each still specialize from. Nothing here decides whether
+    a scope earns an OpenMP region. That is
+    :func:`~dace.transformation.passes.cpu_specialization.pipeline.cpu_specialize`, run afterwards
+    (:func:`~dace.transformation.passes.canonicalize.finalize.finalize_for_target` calls it), and it
+    is where a map is made sequential again for its size or its nesting.
 
     :param sdfg: The SDFG to canonicalize.
     :param validate: Validate the SDFG after canonicalization.

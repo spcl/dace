@@ -53,6 +53,7 @@ import dace
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.cpu_specialization import cpu_specialize
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
@@ -369,10 +370,17 @@ def apply_config(sdfg, config: str, params: Dict):
     :param params: Canonicalize knob set from :func:`cpu_params`.
     :returns: The transformed SDFG.
     """
+    # ``cpu_specialize`` after every canonicalize leg: it is a separate stage now, and the metric
+    # counts scopes whose enclosing map is not Sequential. Without it the canonical form -- which
+    # takes parallel wherever the choice is open -- would be scored against ``autoopt``, which has
+    # already made the CPU's fork/join decisions, and the canon legs would read higher than what
+    # they actually emit.
     if config == 'canon':
         canonicalize(sdfg, validate=True, validate_all=False, **params)
+        cpu_specialize(sdfg, break_anti_dependence=params.get('break_anti_dependence', True))
     elif config == 'canon+vec':
         canonicalize(sdfg, validate=True, validate_all=False, **params)
+        cpu_specialize(sdfg, break_anti_dependence=params.get('break_anti_dependence', True))
         _vectorize(sdfg)
     elif config == 'parallelize+vec':
         parallelize(sdfg, validate=True, validate_all=False, peel_limit=params.get('peel_limit', 4))

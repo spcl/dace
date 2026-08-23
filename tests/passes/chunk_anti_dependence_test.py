@@ -293,12 +293,15 @@ def test_the_full_pipeline_reaches_the_seam_rewrite():
     inline the map body and fuse the snapshot copy in. It is -- but not into the shape the matcher
     needs, and it matched nothing there. The fuse / collapse / terminal-``LoopToMap`` stages that
     follow are what put the copy and its consumer map in one state with the read spelled as a
-    point, so the pass belongs in the terminal CPU band. Asserting on the seam buffer here makes a
-    future move that re-breaks the match fail loudly instead of quietly costing the traffic back.
+    point, so the pass belongs in the CPU specialization stage, which runs after that whole
+    pipeline. Asserting on the seam buffer here makes a future move that re-breaks the match fail
+    loudly instead of quietly costing the traffic back.
     """
     from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.cpu_specialization import cpu_specialize
 
     sdfg = canonicalize(_shift.to_sdfg(simplify=True), validate=True, validate_all=False, target='cpu')
+    cpu_specialize(sdfg)
     assert [n for n in sdfg.arrays if n.endswith('_antidep_seam')], 'ChunkAntiDependence did not fire'
     assert not _snapshot_copies(sdfg), 'the whole-window snapshot copy survived the rewrite'
 

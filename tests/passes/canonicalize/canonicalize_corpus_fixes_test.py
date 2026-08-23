@@ -253,22 +253,25 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     lifting its k-reduction to a parallel map forks once per outer iteration. Measured on this nest
     at 8 threads: 180.4 ms parallel against 37.1 ms sequential at N=400, a 4.9x loss.
 
-    The extent here is a CONSTANT below the break-even because that is the only input the decision
-    reads. It belongs to rule 2 of
+    Asserted as the two stages it is: ``canonicalize`` takes PARALLEL wherever the choice is open,
+    so the k-reduction comes out of it holding a region, and ``cpu_specialize`` is what takes the
+    region away. Checking only the end state would pass just as well if canonicalization had made
+    the CPU's decision for it, which is the thing the split exists to prevent.
+
+    The extent is a CONSTANT below the break-even because that is the only input the decision reads.
+    It is rule 2 of
     :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`,
     which compares the map's OWN iteration count against the threshold and assumes a SYMBOLIC count
     is big enough -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
-    sequential at N=1400. A symbolic version of this test would therefore assert nothing about the
-    cost model, only whether the optional ``islpy`` is installed: with it ``WavefrontSkew`` turns the
-    ``(i, j)`` nest into a parallel wavefront and rule 1 sequentializes the reduction underneath it,
-    without it rule 2 has a symbolic extent and keeps the region. Both enclosing loops carry the
-    dependence and stay loops either way; neither is ``pinned_sequential``, that pin having been
-    retired with ``PinNestedSequentialLoops`` -- the schedule below is the assertion, not the flag.
+    sequential at N=1400. Both enclosing loops carry the dependence and stay loops; neither is
+    ``pinned_sequential``, that pin having been retired with ``PinNestedSequentialLoops`` -- the
+    schedule below is the assertion, not the flag.
     """
     from dace.sdfg import nodes as nd
     from dace.sdfg.state import LoopRegion
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.cpu_specialization import cpu_specialize
     from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
         min_work_per_region)
 
@@ -294,22 +297,29 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                             break_anti_dependence=True,
                             interchange_carry_with_map=True,
                             scatter_to_guarded_maps=True)
-        finalize_for_target(sdfg, "cpu")
 
         assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True)), \
             "the carried nest collapsed entirely; this test no longer exercises the cost model"
 
         # The k axis is the only map spanning the whole extent -- a wavefront map, where WavefrontSkew
         # made one, spans a diagonal whose length is symbolic in the skew step.
-        reduction = [
-            n.map for n, _ in sdfg.all_nodes_recursive()
-            if isinstance(n, nd.MapEntry) and n.map.range.num_elements() == REDUCTION_EXTENT
-        ]
-        assert len(reduction) == 1, \
-            f"expected exactly one map over the k axis, got {[(m.params, str(m.range)) for m in reduction]}"
-        assert reduction[0].schedule == dace.dtypes.ScheduleType.Sequential, \
-            f"the k-reduction opened its own region per (i, j): {reduction[0].schedule}"
+        def reduction_map():
+            over_k = [
+                n.map for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, nd.MapEntry) and n.map.range.num_elements() == REDUCTION_EXTENT
+            ]
+            assert len(over_k) == 1, \
+                f"expected exactly one map over the k axis, got {[(m.params, str(m.range)) for m in over_k]}"
+            return over_k[0]
 
+        assert reduction_map().schedule != dace.dtypes.ScheduleType.Sequential, \
+            "canonicalization decided the CPU's fork/join question; it must leave the choice parallel"
+
+        cpu_specialize(sdfg)
+        assert reduction_map().schedule == dace.dtypes.ScheduleType.Sequential, \
+            f"the k-reduction kept its own region per (i, j): {reduction_map().schedule}"
+
+        finalize_for_target(sdfg, "cpu")
         code = sdfg.generate_code()[0].clean_code
         assert "reduction(max:" not in code, \
             "codegen emitted a per-(i, j) OpenMP max reduction despite the Sequential schedule"
