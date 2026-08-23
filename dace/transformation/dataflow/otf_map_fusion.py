@@ -5,7 +5,7 @@ This module contains classes that implement the OTF map fusion transformation.
 import copy
 import sympy
 
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
@@ -52,6 +52,34 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for dnode in subgraph.data_nodes():
             if not sdfg.arrays[dnode.data].transient:
                 return False
+
+        # Condition: the two maps share no data hazard other than the intermediate itself.
+        # NOT covered by the scope walk above -- what a map reads through its ENTRY has its access
+        # node OUTSIDE the scope subgraph, so the walk never sees it. Fusion moves the first map's
+        # computation inside the second and deletes the intermediate that ordered them, so any
+        # hazard the intermediate used to separate becomes an intra-map, cross-LANE one:
+        #   * WAR -- first reads what second writes. polybench seidel_2d is exactly this: the
+        #     producer reads ``A[i, j+2]``, the consumer writes ``A[i, j+1]``, and the fused map
+        #     races above two threads while each map on its own is correct.
+        #   * RAW -- first writes what second reads: a consumer lane can reach the value before
+        #     the replicated producer that makes it.
+        #   * WAW -- both write the same element from different lanes.
+        # The intermediate is excluded on the write side only: producing it is the flow dependence
+        # this transformation exists to consume. RAW and WAW are unreachable while the single
+        # ``out_degree(first_map_exit) > 1`` condition above holds -- the first map then writes
+        # nothing but the intermediate -- and are kept so the hazard test stays complete if that
+        # condition is ever relaxed.
+        def touched(edges) -> Dict[str, None]:
+            return dict.fromkeys(e.data.data for e in edges if e.data is not None and e.data.data is not None)
+
+        first_reads = touched(graph.in_edges(first_map_entry))
+        first_writes = touched(graph.out_edges(self.first_map_exit))
+        first_writes.pop(self.array.data, None)
+        second_reads = touched(graph.in_edges(self.second_map_entry))
+        second_writes = touched(graph.out_edges(graph.exit_node(self.second_map_entry)))
+        if (not first_reads.keys().isdisjoint(second_writes) or not first_writes.keys().isdisjoint(second_reads)
+                or not first_writes.keys().isdisjoint(second_writes)):
+            return False
 
         # Condition: Equations solvable (dims(first map) <= dims(second map))
         if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):

@@ -718,6 +718,74 @@ def test_hdiff():
     assert np.allclose(out_field, out_field_)
 
 
+@dace.program
+def read_ahead_war(A: dace.float64[20], B: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            a >> A[i]
+
+            a = t + b
+
+
+@dace.program
+def read_ahead_no_conflict(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            c >> C[i]
+
+            c = t + b
+
+
+def test_read_ahead_write_is_not_fused():
+    """The producer reads ``A[i + 1]``, the consumer writes ``A[i]``: an anti-dependence that the
+    intermediate transient orders. Fused, both land in one map where lane ``i`` reads what lane
+    ``i + 1`` writes, so the transformation must refuse. The conflict-free twin -- identical apart
+    from the consumer writing ``C`` -- must still fuse, which is what makes this a test of the
+    hazard guard rather than of the shape."""
+    sdfg = read_ahead_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'the read-ahead anti-dependence must refuse fusion'
+    assert count_maps(sdfg) == 2
+
+    free = read_ahead_no_conflict.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 2
+    assert free.apply_transformations(OTFMapFusion) == 1, 'non-vacuity: the same shape fuses when nothing clashes'
+    assert count_maps(free) == 1
+
+    rng = np.random.default_rng(20260823)
+    A = rng.random(20)
+    B = rng.random(20)
+    ref = A.copy()
+    ref[0:19] = A[1:20] * 2.0 + B[0:19]  # whole-RHS-then-assign, the semantics the two maps keep
+
+    got = A.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref)
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
@@ -751,3 +819,6 @@ if __name__ == '__main__':
     # Applications
     test_matmuls()
     test_hdiff()
+
+    # Data hazards
+    test_read_ahead_write_is_not_fused()
