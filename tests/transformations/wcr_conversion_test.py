@@ -457,3 +457,63 @@ def test_aug_assign_combine_copyback_map():
     res = np.zeros(1)
     sdfg(A=a, res=res)
     assert np.isclose(res[0], a.max()), f"{res[0]} != {a.max()}"
+
+
+def test_aug_assign_state_fission_is_order_stable():
+    """``AugAssignToWCR`` fissions the state when the accumulator it reads is produced in that same
+    state. The fission moves a node set into the new state, and a plain ``set`` of node objects
+    iterates in ``id()`` order -- not even stable under a pinned ``PYTHONHASHSEED``, so the same
+    input SDFG produced a different node order run to run (measured: 4 distinct orders in 6 runs).
+    Downstream pattern matching walks that order, so it decided which reduction got lifted."""
+    import copy
+
+    import numpy as np
+
+    def build() -> dace.SDFG:
+        sdfg = dace.SDFG('aug_assign_state_fission')
+        for name in ('A', 'B', 'C', 'D'):
+            sdfg.add_array(name, [32], dace.float64)
+        state = sdfg.add_state('main', is_start_block=True)
+        b, c, d = (state.add_access(n) for n in ('B', 'C', 'D'))
+        a_in, a_out = state.add_access('A'), state.add_access('A')
+        state.add_mapped_tasklet('seed', {'i': '0:32'}, {
+            '_b': dace.Memlet('B[i]'),
+            '_c': dace.Memlet('C[i]')
+        },
+                                 '_out = _b + _c', {'_out': dace.Memlet('A[i]')},
+                                 input_nodes={
+                                     'B': b,
+                                     'C': c
+                                 },
+                                 output_nodes={'A': a_in},
+                                 external_edges=True)
+        aug = state.add_tasklet('aug', {'_a': None, '_d': None}, {'_o': None}, '_o = _a + _d')
+        state.add_edge(a_in, None, aug, '_a', dace.Memlet('A[0]'))
+        state.add_edge(d, None, aug, '_d', dace.Memlet('D[0]'))
+        state.add_edge(aug, '_o', a_out, None, dace.Memlet('A[0]'))
+        return sdfg
+
+    def node_order(sdfg: dace.SDFG):
+        return [(type(n).__name__, n.label) for n, _ in sdfg.all_nodes_recursive()]
+
+    base = build()
+    base.validate()
+
+    orders = []
+    for _ in range(8):
+        sdfg = copy.deepcopy(base)
+        assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 1
+        orders.append(node_order(sdfg))
+    assert all(o == orders[0] for o in orders), f"node order varies run to run: {set(map(tuple, orders))}"
+
+    applied = copy.deepcopy(base)
+    applied.apply_transformations_repeated(AugAssignToWCR, permissive=False)
+    wcrs = [e.data.wcr for st in applied.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcrs) == 1 and '+' in wcrs[0], f"expected one summing WCR, got {wcrs}"
+
+    b, c, d = np.random.rand(32), np.random.rand(32), np.random.rand(32)
+    a = np.zeros(32)
+    expected = b + c
+    expected[0] += d[0]
+    applied(A=a, B=b, C=c, D=d)
+    assert np.allclose(a, expected), f"{a[:2]} != {expected[:2]}"

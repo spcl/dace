@@ -12,6 +12,7 @@ from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.sdfg import utils as sdutil
 from dace import Memlet, SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
+from ordered_set import OrderedSet
 
 
 def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
@@ -964,9 +965,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         newstate = state.parent_graph.add_state_after(state)
 
         # Bookkeeping
-        nodes_to_move = set([tlet])
-        boundary_nodes = set()
-        orig_edges = set()
+        # Ordered: these drive ``add_nodes_from`` / ``add_edge`` below, and a plain set of node
+        # objects iterates in id() order -- not even PYTHONHASHSEED-stable.
+        nodes_to_move = OrderedSet([tlet])
+        boundary_nodes = OrderedSet()
+        orig_edges = OrderedSet()
 
         for edge in state.in_edges(tlet):
             for e in state.memlet_path(edge):
