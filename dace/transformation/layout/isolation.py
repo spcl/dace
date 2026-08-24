@@ -18,8 +18,15 @@ OMP_PAUSE_HARD = 2
 OMP_PAUSE_MODES = {"soft": OMP_PAUSE_SOFT, "hard": OMP_PAUSE_HARD}
 
 
-def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> None:
-    """Tear down the thread pool of every OpenMP runtime already loaded, so the coming fork is safe. Best effort; warns rather than silently skipping when it can't."""
+def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> bool:
+    """Tear down the thread pool of every OpenMP runtime already loaded, so the coming fork is safe.
+
+    Returns True iff every loaded runtime reported its pool torn down -- the condition under which a
+    following fork provably cannot strand a team. False (with a warning naming the runtime) means the
+    teardown did not happen and the fork is only as safe as that runtime's own ``pthread_atfork``
+    handler, if it installs one; libgomp installs none. Never raises.
+    """
+    torn_down = True
     for soname in OMP_RUNTIME_SONAMES:
         try:
             lib = ctypes.CDLL(soname, mode=os.RTLD_NOLOAD)  # only touch runtimes already mapped
@@ -31,12 +38,15 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> None:
             warnings.warn(f"{soname}: no omp_pause_resource_all (pre-OpenMP-5.0 runtime); its thread "
                           f"pool was NOT torn down before the fork -- fork safety now rests on its own "
                           f"pthread_atfork handler, if it installs one (libgomp installs none).")
+            torn_down = False
             continue
         pause.argtypes = [ctypes.c_int]
         pause.restype = ctypes.c_int
         if pause(mode) != 0:  # e.g. inside a parallel region: pool not torn down
             warnings.warn(f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its "
                           f"thread pool was NOT torn down before the fork.")
+            torn_down = False
+    return torn_down
 
 
 def quiet_fatal_signals() -> None:

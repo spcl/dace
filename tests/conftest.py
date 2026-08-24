@@ -62,54 +62,62 @@ def thread_count() -> int:
         return 0  # not Linux: no thread census, so the guard abstains
 
 
-def openmp_team_was_live() -> bool:
-    """True iff an OpenMP thread team was up -- and tear it down while finding out.
+#: Substrings identifying an OpenMP runtime in ``/proc/self/maps``; keep in step with
+#: ``dace.transformation.layout.isolation.OMP_RUNTIME_SONAMES``.
+OMP_RUNTIME_MARKERS = ("libgomp", "libomp", "libiomp", "libnvomp")
 
-    No OpenMP runtime reports team liveness, so this asks the only way that works: pause every
-    loaded runtime and see whether the process lost threads. Pausing is semantically transparent --
-    the next parallel region rebuilds the team -- which is what makes the probe safe to run on every
-    fork, and what keeps it quiet for a caller that (correctly) paused the pools itself first.
 
-    Cheap checks first: without ``libgomp`` mapped there is no team and no reason to import dace.
-    A runtime predating ``omp_pause_resource_all`` (OpenMP 5.0) cannot be torn down, so the probe
-    abstains there rather than guessing.
+def openmp_pool_may_outlive_fork() -> bool:
+    """True iff an OpenMP thread pool could still be standing after asking every loaded runtime to
+    tear its pool down -- i.e. iff the coming fork can still strand a team.
+
+    Team liveness is NOT observable: no OpenMP runtime reports it. Counting the process's threads
+    across the teardown looks like it answers the question and does not -- it cannot tell an
+    OpenMP worker exiting from any other thread that happened to exit in the same window, and that
+    window is wide because tearing a team down joins every worker in it. pytest-timeout's per-test
+    timer thread lands in exactly that window, which is how this fired on forks that ``run_isolated``
+    had already made safe. What IS observable is whether the teardown ran, and that is the property
+    fork safety actually rests on: a runtime that reports success has no pool left to strand.
+
+    Cheap checks first: a single-threaded process has nothing to strand, and without an OpenMP
+    runtime mapped there is no pool and no reason to import dace.
     """
-    before = thread_count()
-    if before <= 1:
+    if thread_count() <= 1:
         return False  # single-threaded: fork carries everything it has
     try:
         with open("/proc/self/maps") as maps:
-            if "libgomp" not in maps.read():
-                return False  # no OpenMP runtime loaded -> no team to strand
+            mapped = maps.read()
     except OSError:
-        return False
+        return False  # not Linux: no census, so the guard abstains
+    if not any(marker in mapped for marker in OMP_RUNTIME_MARKERS):
+        return False  # no OpenMP runtime loaded -> no pool to strand
     from dace.transformation.layout.isolation import pause_openmp_pools
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # a pause that could not run shows up as "no drop" below
-        pause_openmp_pools()
-    return thread_count() < before
+        warnings.simplefilter("ignore")  # the return value carries the same verdict as the warning
+        return not pause_openmp_pools()
 
 
 def guarded_fork() -> int:
-    """``os.fork`` that refuses to strand a live OpenMP team, turning a silent hang into an error.
+    """``os.fork`` that tears OpenMP pools down first and refuses the fork when it cannot, turning a
+    silent hang into an error.
 
     ``fork`` keeps only the calling thread, but the child inherits libgomp's heap-resident team
     barrier still recording the whole team -- so the child's first parallel region waits on a futex
     for threads that do not exist in it. 0 CPU, forever, and the parent blocks in ``waitpid`` behind
     it. A whole test directory then has no verdict, which is a worse failure than any assertion.
 
-    This does not ban ``fork``. It fires only when a team is actually up, so pytest-xdist (which
-    spawns its workers through ``subprocess``, never through ``os.fork``), a spawn-based child, a
-    suite pinned to ``OMP_NUM_THREADS=1``, and a caller that paused the pools itself all pass
-    straight through.
+    This does not ban ``fork``. Pausing the pools is semantically transparent -- the next parallel
+    region rebuilds the team -- so the common case is made safe rather than rejected, and the error
+    is reserved for a runtime that could not be paused at all (pre-OpenMP-5.0, or a fork from inside
+    a parallel region), where the deadlock is real and no teardown can prevent it.
     """
-    if openmp_team_was_live():
-        raise RuntimeError("os.fork() from a process holding a live OpenMP thread team deadlocks the child: the "
-                           "child inherits libgomp's team barrier recording threads that fork did not carry over, "
-                           "so its first parallel region waits on them forever. The team is up because a compiled "
-                           "DaCe CPU kernel has already run in this process. Run the kernel in a spawned child via "
-                           "tests.helpers.isolation instead, or pin OMP_NUM_THREADS=1 before dace is imported so no "
-                           "team is ever built.")
+    if openmp_pool_may_outlive_fork():
+        raise RuntimeError("os.fork() from a process whose OpenMP thread pool could not be torn down deadlocks the "
+                           "child: the child inherits libgomp's team barrier recording threads that fork did not "
+                           "carry over, so its first parallel region waits on them forever. omp_pause_resource_all "
+                           "refused or is missing -- a pre-OpenMP-5.0 runtime, or a fork from inside a parallel "
+                           "region. Run the kernel in a spawned child via tests.helpers.isolation instead, or pin "
+                           "OMP_NUM_THREADS=1 before dace is imported so no team is ever built.")
     return UNGUARDED_FORK()
 
 
