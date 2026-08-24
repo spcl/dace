@@ -679,8 +679,8 @@ class SplitTasklets(ppl.Pass):
             out_edge = out_edge_by_conn[out_conn]
             input_conns = set(plan['input_reads']) | set(plan['cross_reads'])
             t = state.add_tasklet(name=f"{tasklet.name}_out_{k}",
-                                  inputs=set(input_conns),
-                                  outputs={out_conn},
+                                  inputs={c: None for c in input_conns},
+                                  outputs={out_conn: None},
                                   code=plan['code'])
             emitted.append(t)
             # Inputs read from the original input edges (entry values). A fresh memlet per
@@ -905,8 +905,8 @@ class SplitTasklets(ppl.Pass):
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
-                    inputs=set(rhs_vars),
-                    outputs=set(lhs_vars),
+                    inputs={v: None for v in rhs_vars},
+                    outputs={v: None for v in lhs_vars},
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:

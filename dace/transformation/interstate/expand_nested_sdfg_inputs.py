@@ -719,6 +719,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 sym_name = str(sym)
                 if sym_name in nsdfg_node.in_connectors or sym_name in nsdfg_node.out_connectors:
                     continue
+                if sym_name in inner_sdfg.constants_prop:
+                    continue
                 if sym_name not in nsdfg_node.symbol_mapping:
                     introduced_symbols.add(sym_name)
 
