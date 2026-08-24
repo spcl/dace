@@ -100,5 +100,12 @@ struct ScanTag {};
 /// (``cub::DeviceReduce`` / ``cub::DeviceSegmentedReduce``).
 struct ReduceTag {};
 
+/// Tag for the device detection primitives' result word
+/// (``dace/cuda/detect.cuh``: the find-first answer, the collision and sign flags).
+struct DetectFlagTag {};
+
+/// Tag for the device collision check's tag array, sized by the scattered array's domain.
+struct DetectOwnerTag {};
+
 }  // namespace cub
 }  // namespace dace

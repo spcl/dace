@@ -12,5 +12,6 @@ from .merge_node import MergeLibraryNode
 from .gearbox import Gearbox
 from .reduce import Reduce
 from .arg_reduce import ArgReduce
+from .find_first import FindFirst
 from .scan import Scan, ScanOp
 from .symmetrize import Symmetrize

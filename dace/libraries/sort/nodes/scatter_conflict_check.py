@@ -18,20 +18,20 @@ regular SDFG transient, so DaCe allocates it -- persistently, outside the timed 
 Left unconnected, the node falls back to sizing a heap buffer from a runtime ``max(idx)``
 sweep, which costs one extra full pass over ``idx`` plus an allocation per call.
 
-Implementations (all host code; the tag array must live in host memory on every backend):
+Implementations (the ``_owner_out`` tag array is host memory in every backend; the CUDA
+expansion therefore uses a device scratch buffer of its own and reads ``_owner_out`` only for
+its size):
 
 - ``pure`` -- tagged-write + verify, serial.
 - ``CPU``  -- tagged-write + verify, OpenMP-parallel.
-- ``CUDA`` -- copy ``ip`` device->host, then the same host tagged-write + verify (a one-shot
-  guard, so a host round-trip is cheaper than staging a device reduction; still returns a
-  host scalar). A device-side check is a future optimization.
+- ``CUDA`` -- the same tagged-write + verify run ON the device (``cub::BlockReduce`` fold, one
+  atomic per block), with only the resulting flag copied back.
 """
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import dace
 from dace import dtypes, library, nodes
 from dace.codegen.common import sym2cpp
-from dace.libraries.standard.environments.cuda import CUDA
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
 
@@ -85,9 +85,12 @@ def _length(node: "ScatterConflictCheck", state: dace.SDFGState) -> str:
     return sym2cpp(in_edges[0].data.subset.num_elements())
 
 
-def _outputs(owner_desc: Optional[dace.data.Array]) -> set:
-    """Output connectors of the expanded tasklet (the tag array only when it is wired)."""
-    return {OUTPUT_CONNECTOR_NAME} if owner_desc is None else {OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME}
+def _outputs(owner_desc: Optional[dace.data.Array]) -> Dict[str, None]:
+    """Output connectors of the expanded tasklet (the tag array only when it is wired). A dict, not
+    a set: connector iteration order is observable in the emitted code."""
+    if owner_desc is None:
+        return {OUTPUT_CONNECTOR_NAME: None}
+    return {OUTPUT_CONNECTOR_NAME: None, SCRATCH_CONNECTOR_NAME: None}
 
 
 def _owner(node: "ScatterConflictCheck", state: dace.SDFGState,
@@ -100,48 +103,24 @@ def _owner(node: "ScatterConflictCheck", state: dace.SDFGState,
     return SCRATCH_CONNECTOR_NAME, sym2cpp(edge.data.subset.num_elements())
 
 
-def _tagcount_body(ct: str, n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]) -> Tuple[str, str]:
-    """Tagged-write + verify duplicate detection: O(n), NO sort. Returns ``(body, global_code)``.
+def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]) -> str:
+    """C++ calling :cpp:func:`dace::detect_collision` (``dace/runtime/include/dace/detect.h``).
 
-    Pass 1 ``owner[idx[i]] = i``; Pass 2 OR-reduce ``owner[idx[i]] != i``. Sorting is unnecessary --
-    if two i's collide on a position, only one wins Pass 1, so the loser reads back a different i in
-    Pass 2 and the OR trips. Pass 2 reads only positions Pass 1 wrote, so ``owner`` needs no init (nor
-    any clearing between calls, which is what lets a caller hand in one persistent buffer). The Pass-1
-    last-writer-wins race is benign (any winner is fine; the OR is monotonic).
-
-    Both passes skip values outside ``[0, capacity)``. Such a value can never be a slot the guarded
-    scatter writes -- the scatter's own array is what bounds ``capacity`` -- so it can neither collide
-    with nor mask a real conflict, and skipping it keeps the tag write in bounds when ``idx`` carries
-    entries the scatter does not use (a strided scatter reads only part of ``idx``).
+    The tagged-write + verify algorithm, why two passes are the floor and why out-of-range values
+    are skipped are all documented at the runtime function; keeping the loops there rather than in
+    generated text means one implementation to tune and one place where the pragmas are reviewed.
 
     ``owner`` is ``(connector, capacity)`` for the caller-provided tag array, which must span the
-    scattered array's domain. Without one, a third pass computes ``max(idx)`` and sizes a heap buffer
-    from it. ``omp`` toggles the OpenMP pragmas (ignored -> serial O(n)).
-
-    Two passes is the floor: verify can only read a slot once every writer has had its turn, so
-    folding the check into Pass 1 would compare against a half-written tag array. A single-pass form
-    needs an atomic read-modify-write per element plus a pre-cleared (or epoch-stamped) tag array --
-    an extra full sweep over the domain, which is at least as wide as ``idx``."""
-    par = (lambda clause: f"#pragma omp parallel for{clause}\n") if omp else (lambda clause: "")
-    #: Bitwise-or is simd-safe (see dace/runtime/include/dace/reduction.h), so the OR-reduce
-    #: pass below carries simd -- unlike ``par``, no bare ``if()`` clause is ever appended here.
-    par_simd_reduction = (lambda clause: f"#pragma omp parallel for simd{clause}\n") if omp else (lambda clause: "")
+    scattered array's domain. Without one the runtime sizes its own buffer from ``max(idx)``, which
+    costs an extra reduction pass plus an allocation. ``omp`` toggles the parallel form.
+    """
+    par = 'true' if omp else 'false'
     if owner is None:
-        tag, cap, global_code = "_own", "_mx + 1", "#include <memory>"
-        alloc = (f"{ct} _mx = 0;\n"
-                 f"{par(' reduction(max:_mx)')}"
-                 f"for (long long _i = 0; _i < _N; ++_i) if ({src}[_i] > _mx) _mx = {src}[_i];\n"
-                 f"std::unique_ptr<long long[]> {tag}(new long long[(size_t)_mx + 1]);\n")
+        call = f"dace::detect_collision({src}, ({n}), {par})"
     else:
-        (tag, cap), global_code, alloc = owner, "", ""
-    body = (f"const long long _N = ({n});\n" + alloc + f"const long long _M = ({cap});\n"
-            f"{par('')}for (long long _i = 0; _i < _N; ++_i) "
-            f"{{ const long long _v = {src}[_i]; if (_v >= 0 && _v < _M) {tag}[_v] = _i; }}\n"
-            f"long long _c = 0;\n"
-            f"{par_simd_reduction(' reduction(|:_c)')}for (long long _i = 0; _i < _N; ++_i) "
-            f"{{ const long long _v = {src}[_i]; if (_v >= 0 && _v < _M) _c |= ({tag}[_v] != _i); }}\n"
-            f"{OUTPUT_CONNECTOR_NAME} = _c;\n")
-    return body, global_code
+        tag, cap = owner
+        call = f"dace::detect_collision({src}, ({n}), {tag}, ({cap}), {par})"
+    return f"{OUTPUT_CONNECTOR_NAME} = {call};\n"
 
 
 @library.expansion
@@ -153,14 +132,13 @@ class ExpandPure(ExpandTransformation):
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
-        n, ct = _length(node, state), in_desc.dtype.ctype
+        n = _length(node, state)
         owner = _owner(node, state, owner_desc)
-        body, global_code = _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=False, owner=owner)
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME},
+        body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=False, owner=owner)
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
                              _outputs(owner_desc),
                              "{\n" + body + "}",
-                             language=dace.Language.CPP,
-                             code_global=global_code)
+                             language=dace.Language.CPP)
 
 
 @library.expansion
@@ -172,43 +150,71 @@ class ExpandCPU(ExpandTransformation):
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
-        n, ct = _length(node, state), in_desc.dtype.ctype
+        n = _length(node, state)
         owner = _owner(node, state, owner_desc)
-        body, global_code = _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=True, owner=owner)
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME},
+        body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=True, owner=owner)
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
                              _outputs(owner_desc),
                              "{\n" + body + "}",
-                             language=dace.Language.CPP,
-                             code_global=global_code)
+                             language=dace.Language.CPP)
 
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """Copy the device index to host, then tagged-write + verify (host OpenMP).
+    """Tagged-write + verify ON THE DEVICE: :cpp:func:`dace::detect_collision_device`.
 
-    A one-shot guard, so a device->host round-trip of the index (O(n)) beats staging a device pass;
-    ``_count_out`` lands on the host with no extra copy. ``cudaMemcpy`` is host-callable, so this
-    compiles in the host (g++) translation unit like the CPU expansions. The tag array, when wired,
-    must therefore be host memory too -- :func:`_validate` refuses anything else.
+    The index never leaves the GPU. Both passes are grid-stride kernels and the verify pass folds
+    its per-lane flag through ``cub::BlockReduce`` into one atomic per block, the shape DaCe's own
+    GPU WCR lowering emits; only the resulting flag crosses back, so the cost is two device passes
+    plus one 8-byte copy instead of the whole index array.
+
+    The tag buffer is DEVICE memory from the per-stream CUB scratch pool, not the ``_owner_out``
+    array -- that one is host memory by :func:`_validate` and a device kernel cannot touch it. When
+    it is wired its SUBSET is still what sizes the device buffer, so the caller keeps control of the
+    domain; without it the runtime pays an extra device max-reduction and a round trip to size the
+    buffer itself.
+
+    The kernel launch lives in a ``DACE_EXPORTED`` wrapper appended to the device global code, the
+    way the CUB libnodes do it, so the tasklet itself stays host code in the ``.cpp``.
     """
 
-    environments = [CUDA]
+    # Filled in on first expansion to dodge the sort<->standard import cycle.
+    environments = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        if not ExpandCUDA.environments:
+            from dace.libraries.sort.environments.cub import DetectScratch
+            ExpandCUDA.environments = [DetectScratch]
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
         owner = _owner(node, state, owner_desc)
-        body, global_code = _tagcount_body(ct, n, "_t.data()", omp=True, owner=owner)
-        code = ("{\n"
-                f"std::vector<{ct}> _t(({n}));\n"
-                f"cudaMemcpy(_t.data(), {INPUT_CONNECTOR_NAME}, ({n}) * sizeof({ct}), cudaMemcpyDeviceToHost);\n" +
-                body + "}")
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME},
+
+        state_id = state.parent_graph.node_id(state)
+        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        cap_param = '' if owner is None else ', long long __sc_capacity'
+        cap_arg = '' if owner is None else ', __sc_capacity'
+        prototype = (f'DACE_EXPORTED cudaError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, '
+                     f'long long __sc_n{cap_param}, long long *__sc_out, cudaStream_t __sc_stream);')
+        sdfg.append_global_code(prototype + '\n')
+        sdfg.append_global_code(
+            f'{prototype}\n'
+            f'cudaError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, '
+            f'long long *__sc_out, cudaStream_t __sc_stream) {{\n'
+            f'    return ::dace::detect_collision_device(__sc_idx, __sc_n{cap_arg}, __sc_out, __sc_stream);\n'
+            f'}}\n', 'cuda')
+
+        cap_call = '' if owner is None else f', ({owner[1]})'
+        code = ('{\n'
+                'long long __sc_result;\n'
+                f'DACE_GPU_CHECK(__dace_scatter_conflict_{idstr}({INPUT_CONNECTOR_NAME}, ({n}){cap_call}, '
+                f'&__sc_result, __dace_current_stream));\n'
+                f'{OUTPUT_CONNECTOR_NAME} = __sc_result;\n'
+                '}')
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
                              _outputs(owner_desc),
                              code,
-                             language=dace.Language.CPP,
-                             code_global=(global_code + "\n#include <vector>").strip())
+                             language=dace.Language.CPP)
 
 
 @library.node

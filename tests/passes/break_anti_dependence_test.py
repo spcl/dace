@@ -281,6 +281,11 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     assert g.code.language == dace.dtypes.Language.CPP
     assert len(g.in_connectors) == 1 and not g.out_connectors
     assert 'idx' in g.code.as_string and 'std::abort' in g.code.as_string
+    # PARALLEL, not a serial scan: the guard sits right in front of the loop the snapshot exists
+    # to parallelize, so it delegates to the omp/simd min-reduction in dace/runtime/include/dace/
+    # detect.h instead of aborting on the first violation inside a loop of its own.
+    assert 'dace::detect_all_positive' in g.code.as_string
+    assert 'for (' not in g.code.as_string, f'guard grew a serial loop back: {g.code.as_string!r}'
 
     # Numerical correctness with a permutation that satisfies idx[i] > 0
     # for the in-range positions.

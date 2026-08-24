@@ -7,6 +7,7 @@ program traps. Permutation-index runs are expected to terminate cleanly with the
 correct numerical result (the scatter Map executes after the guard).
 """
 import os
+import pathlib
 import subprocess
 import sys
 import textwrap
@@ -228,9 +229,10 @@ def test_tag_array_is_a_persistent_transient_sized_by_the_scatter_domain():
 
 
 def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():
-    """The timed program body holds no allocation and no preprocessor include: the tag array is
-    allocated once in ``__dace_init``, and only two full sweeps over ``ip`` remain (the
-    ``max(ip)`` sizing sweep is gone)."""
+    """The timed program body holds no allocation, no preprocessor include and no sweep of its own:
+    the tag array is allocated once in ``__dace_init``, and the two passes over ``ip`` live in
+    :cpp:func:`dace::detect_collision`, which the body only CALLS -- one implementation to tune,
+    and the caller-sized tag array means no ``max(ip)`` sizing sweep either."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     insert_scatter_guard(sdfg, 'ip')
     code = sdfg.generate_code()[0].clean_code
@@ -238,26 +240,34 @@ def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():
     body = _function_body(code, f'void __program_{sdfg.name}_internal')
     assert 'new ' not in body, body
     assert '#include' not in body, body
-    assert body.count('_i < _N') == 2, body  # tag pass + verify pass, no max pass
+    calls = [ln for ln in body.splitlines() if 'dace::detect_collision(' in ln]
+    assert len(calls) == 1, body
+    # A caller-sized tag array: the 5-argument form, so the runtime skips its own max(ip) sweep.
+    assert '__0__scatter_guard_owner_ip' in calls[0], calls[0]
+    # Neither pass is emitted as text any more: no tag write and no OR-reduce pragma in the body.
+    # (A blanket ``for (`` check would trip on the scatter loop the guard exists to protect.)
+    assert '__0__scatter_guard_owner_ip[' not in body, f'the tag write must live in the runtime, not here: {body}'
+    assert 'reduction(|' not in body, f'the verify pass must live in the runtime, not here: {body}'
 
     assert not _lines_inside_a_function(code, '#include'), _lines_inside_a_function(code, '#include')
     init = _function_body(code, f'__dace_init_{sdfg.name}(')
     assert '__0__scatter_guard_owner_ip = new' in init, init
 
 
-def test_generated_guard_or_reduce_pass_carries_simd():
+def test_runtime_or_reduce_pass_carries_simd():
     """The OR-reduce verify pass is bitwise-or, which is simd-safe (see
-    dace/runtime/include/dace/reduction.h); its pragma must carry simd, and never a bare
-    ``if()`` clause (GCC binds a combined construct's ``if()`` to simd, silently devectorizing)."""
-    sdfg = tsvc_vas.to_sdfg(simplify=True)
-    insert_scatter_guard(sdfg, 'ip')
-    code = sdfg.generate_code()[0].clean_code
+    dace/runtime/include/dace/reduction.h); its pragma must carry simd, and any ``if`` clause must
+    NAME the directive it belongs to -- a bare ``if()`` on a combined construct binds to simd in
+    GCC and silently devectorizes the loop.
 
-    reduce_lines = _lines_inside_a_function(code, 'reduction(|:_c)')
-    assert reduce_lines, code
+    Asserted against the runtime header, because that is where the pass lives now: the expansions
+    call :cpp:func:`dace::detect_collision` instead of each emitting a copy of the loop."""
+    header = (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'detect.h').read_text()
+    reduce_lines = [ln.strip() for ln in header.splitlines() if 'reduction(| : c)' in ln]
+    assert reduce_lines, header
     for line in reduce_lines:
         assert line.startswith('#pragma omp parallel for simd'), line
-        assert 'if(' not in line and 'if (' not in line, line
+        assert 'if (parallel : parallel)' in line, f'an unqualified if() would bind to simd: {line}'
 
 
 def test_tag_array_omitted_when_no_scatter_target_is_visible():

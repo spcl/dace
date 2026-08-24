@@ -7,13 +7,14 @@ overlap; multiple breaks; etc.). Also cross-pass non-interference: the
 break-loop pass must not fire on argmax / reduce / scan shapes.
 """
 import ast
+import pathlib
 
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.libraries.standard.nodes import Reduce
+from dace.libraries.standard.nodes import FindFirst, Reduce
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.simplify import SimplifyPass
@@ -30,24 +31,22 @@ def _num_reduces(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
 
 
-def _search_map_entries(sdfg):
-    """MapEntry nodes of the chunked find-first search Maps: a Map whose exit carries
-    the ``min`` WCR that collects the per-chunk first-hit index. That WCR is what keeps
-    the search a parallel Map -- ``MapToForLoop(keep_reductions_parallel)`` refuses to
-    lower it -- so matching on it pins the canonical form as parallel, not merely
-    present."""
+def _find_first_nodes(sdfg):
+    """The lifted searches: a ``FindFirst`` library node, or -- once expanded, which codegen does
+    on its way out -- the tasklet whose body calls ``dace::find_first_index``. Matching the call
+    and not merely a node type pins that the search still goes through the runtime primitive
+    rather than a loop the pass grew back."""
     out = []
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if not isinstance(node, nd.MapExit):
-                continue
-            if any(e.data.wcr is not None and 'min' in e.data.wcr for e in state.out_edges(node)):
-                out.append(state.entry_node(node))
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, FindFirst):
+            out.append(node)
+        elif isinstance(node, nd.Tasklet) and 'dace::find_first_index' in node.code.as_string:
+            out.append(node)
     return out
 
 
 def _num_search_maps(sdfg):
-    return len(_search_map_entries(sdfg))
+    return len(_find_first_nodes(sdfg))
 
 
 def _num_maps(sdfg):
@@ -84,7 +83,7 @@ def test_tsvc_s481_break_then_body_post():
     sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 0
-    assert _num_maps(sdfg) == 2
+    assert _num_maps(sdfg) == 1  # the body Map; the search is a library node, not a Map
     assert _num_search_maps(sdfg) == 1
 
     n = 16
@@ -126,7 +125,7 @@ def test_tsvc_s482_body_pre_then_break():
     sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 0
-    assert _num_maps(sdfg) == 2
+    assert _num_maps(sdfg) == 1  # the body Map; the search is a library node, not a Map
     assert _num_search_maps(sdfg) == 1
 
     n = 16
@@ -170,9 +169,10 @@ def test_body_pre_and_body_post_combo_lifts():
     sdfg.validate()
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 0
-    assert _num_search_maps(sdfg) == 1  # one WCR(Min) search map for the argmin
+    assert _num_search_maps(sdfg) == 1  # one FindFirst search node
     # phi/indicator + body_pre + body_post = 3 maps total
-    assert _num_maps(sdfg) == 3, f'expected 3 maps (search + pre + post); got {_num_maps(sdfg)}'
+    assert _num_maps(sdfg) == 2, (f'expected 2 maps (body pre + post; the search is a library '
+                                  f'node); got {_num_maps(sdfg)}')
 
     n = 16
     rng = np.random.default_rng(0xCAFE)
@@ -801,27 +801,28 @@ def test_early_exit_lifts_both_simplify_modes(kernel, simplify):
     sdfg.validate()
     assert _num_loops(sdfg) == 0, f'{kernel} (simplify={simplify}): break-loop + body must fully parallelize'
     assert _num_reduces(sdfg) == 0, f'{kernel} (simplify={simplify}): no separate find-first Reduce'
-    assert _num_search_maps(sdfg) == 1, (f'{kernel} (simplify={simplify}): exactly one parallel chunked '
-                                         'search Map (WCR(Min) exit)')
+    assert _num_search_maps(sdfg) == 1, (f'{kernel} (simplify={simplify}): exactly one FindFirst '
+                                         'search node')
     assert_explicit_dataflow(sdfg)  # invariant still holds after the full lift
 
     driver(sdfg)
 
 
 def test_search_stays_parallel_and_cancels_through_canonicalize():
-    """DESIGN RULING: the canonical early-exit form stays PARALLEL -- no sequential
-    fallback, no profitability gate -- and keeps its chunk-grained cancellation.
+    """DESIGN RULING: the canonical early-exit form stays PARALLEL -- no sequential fallback, no
+    profitability gate -- and the search itself is a library node over a runtime primitive, not a
+    loop the pass writes by hand.
 
-    Runs the FULL canonicalize pipeline (where ``MapToForLoop`` lowers every other
-    Map to a LoopRegion) and pins the resulting shape and the emitted C++:
+    Runs the FULL canonicalize pipeline (where ``MapToForLoop`` lowers every other Map to a
+    LoopRegion) and pins the resulting shape and the emitted C++:
 
-    * exactly one search Map survives, with 0 residual sequential loops;
-    * it carries ``schedule(dynamic, 1)`` -- chunks are claimed roughly in index
-      order, which is what makes skipping the tail past the exit pay off;
-    * the chunk body reads the shared hint and skips the chunk when it starts past
-      it (the cancellation), publishing only a strictly better index;
-    * the min-reduce is an OpenMP ``reduction(min:...)`` clause, so no ``omp
-      critical`` (canonicalize never emits one) and no per-chunk atomic.
+    * exactly one search survives, with 0 residual sequential loops;
+    * it is a ``FindFirst`` library node, defaulting to the ``OpenMP`` implementation, so the
+      chunked cancelling search runs threaded (``parallel=true`` at the call site);
+    * the expanded body is ONE ``dace::find_first_index`` call and contains no loop of its own --
+      the chunking, the shared cancellation hint and the blocked ``simd`` scan live in
+      ``dace/runtime/include/dace/detect.h``, where there is one implementation to tune;
+    * canonicalize never emits ``omp critical``.
     """
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -830,19 +831,77 @@ def test_search_stays_parallel_and_cancels_through_canonicalize():
     sdfg.validate()
 
     assert _num_loops(sdfg) == 0, 'the lifted form must not fall back to a sequential loop'
-    entries = _search_map_entries(sdfg)
-    assert len(entries) == 1, f'expected exactly one search Map, got {len(entries)}'
-    scan_map = entries[0].map
-    assert scan_map.omp_schedule == dace.dtypes.OMPScheduleType.Dynamic
-    assert scan_map.omp_chunk_size == 1
+    searches = _find_first_nodes(sdfg)
+    assert len(searches) == 1, f'expected exactly one search, got {len(searches)}'
+    search = searches[0]
+    assert isinstance(search, FindFirst), f'the search must stay a library node, got {type(search).__name__}'
+    assert search.implementation in (None, 'OpenMP'), (
+        f'the search must keep the parallel implementation, got {search.implementation!r}')
+    assert FindFirst.default_implementation == 'OpenMP'
 
     code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert 'schedule(dynamic, 1)' in code
-    assert 'reduction(min:' in code
+    call_lines = [ln for ln in code.splitlines() if 'dace::find_first_index' in ln]
+    assert len(call_lines) == 1, f'expected exactly one find_first_index call, got {call_lines}'
+    assert call_lines[0].rstrip().endswith('true);'), (
+        f'the search must be lowered threaded (parallel=true), got {call_lines[0].strip()!r}')
     assert 'omp critical' not in code
-    assert '#pragma omp atomic read' in code and '#pragma omp atomic write' in code
-    assert 'if (__ee_lo < __ee_hint)' in code, 'chunk-grained cancellation guard missing'
-    assert 'if (__ee_res < __ee_hint)' in code, 'hint is published unconditionally'
+
+    # The pass emits no scan of its own: the only loop in the search is the runtime function's.
+    expanded = ee_s481.to_sdfg(simplify=True)
+    canonicalize(expanded)
+    expanded.expand_library_nodes()
+    bodies = [n.code.as_string for n in _find_first_nodes(expanded)]
+    assert len(bodies) == 1, f'expected one expanded search body, got {len(bodies)}'
+    assert 'for (' not in bodies[0], f'the expansion must not carry a hand-written loop: {bodies[0]!r}'
+
+
+def _detect_header_text():
+    """The runtime header the search lowers to, located from the installed package."""
+    return (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'detect.h').read_text()
+
+
+def test_find_first_answer_is_a_reduction_not_the_shared_hint():
+    """The answer and the cancellation hint must be two different variables.
+
+    Folding them into one shared word makes the update a read-compare-write, which is not atomic
+    as a whole: a thread that found a SMALLER index can have its write overwritten by a thread
+    that found a larger one, and the search then answers a firing index that is not the first.
+    The hint may lose updates (it only prunes); the answer may not, so it is a reduction. This is
+    a source assertion because the numeric symptom needs a loaded machine to appear."""
+    text = _detect_header_text()
+    body = text.split('inline long long find_first_index(')[1]
+    chunk_pragma = next(ln for ln in body.splitlines() if 'omp parallel for schedule' in ln)
+    assert 'reduction(min : best)' in chunk_pragma, (f'the chunk loop must reduce the answer, got {chunk_pragma!r}')
+    # Measured: guided and block static hand a contiguous prefix to one thread, so a hit inside
+    # that prefix is found by a serial scan -- 5x slower on a hit 10% into a 1e7 range.
+    assert 'schedule(dynamic, 1)' in chunk_pragma, f'the chunk schedule is a measured choice, got {chunk_pragma!r}'
+    assert 'return best;' in body, 'find_first_index must return the reduction, never the shared hint'
+    assert 'return hint;' not in body, 'returning the raced hint loses updates under load'
+
+
+def test_find_first_is_exact_when_most_indices_fire():
+    """Numeric guard for the same bug: with a dense firing tail every chunk finds something and
+    they all race to publish, so a lost update answers too large an index and the body loop then
+    runs too far. Repeated, because a race needs room to show."""
+    sdfg = ee_s481.to_sdfg(simplify=True)
+    assert EarlyExitToFindIndex().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    n = 4096
+    rng = np.random.default_rng(4811)
+    b = rng.standard_normal(n)
+    c = rng.standard_normal(n)
+    for trial in range(16):
+        first = 1 + 7 * trial
+        d = np.ones(n)
+        d[first:] = -1.0  # every index from ``first`` on fires
+        a = rng.standard_normal(n)
+        ref = a.copy()
+        ref[:first] = ref[:first] + b[:first] * c[:first]
+        got = a.copy()
+        sdfg(a=got, b=b.copy(), c=c.copy(), d=d.copy(), N=n)
+        assert np.allclose(got, ref), (f'dense-firing trial {trial} (first={first}): the search answered a firing '
+                                       f'index that is not the first; max diff {np.abs(got - ref).max()}')
 
 
 if __name__ == '__main__':

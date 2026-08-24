@@ -34,16 +34,16 @@ def _num_loops(sdfg):
 
 
 def _num_search_maps(sdfg):
-    """Chunked find-first search Maps: a Map whose exit carries the ``min`` WCR that
-    collects the per-chunk first-hit index. That WCR is what keeps the search a
-    parallel Map, so counting it pins the canonical form as parallel."""
+    """Lifted find-first searches: a ``FindFirst`` library node, or -- once expanded -- the tasklet
+    calling ``dace::find_first_index``. Counting the search pins that the lift happened and that it
+    still goes through the runtime primitive."""
+    from dace.libraries.standard.nodes import FindFirst
     n = 0
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if not isinstance(node, nd.MapExit):
-                continue
-            if any(e.data.wcr is not None and 'min' in e.data.wcr for e in state.out_edges(node)):
-                n += 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, FindFirst):
+            n += 1
+        elif isinstance(node, nd.Tasklet) and 'dace::find_first_index' in node.code.as_string:
+            n += 1
     return n
 
 

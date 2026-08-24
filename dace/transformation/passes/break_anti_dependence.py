@@ -51,9 +51,11 @@ Breaking is never declined because the copy looks expensive: the canonical form
 prefers the parallel version, and cost is the tuner's call, not this pass's.
 """
 import copy
+import zlib
 from functools import lru_cache
 from typing import Any, Dict, Optional, Set
 
+from ordered_set import OrderedSet
 import sympy
 
 from dace import data, dtypes, properties, subsets, symbolic, Memlet
@@ -807,8 +809,8 @@ class BreakAntiDependence(ppl.Pass):
             # a way that may overlap the write (e.g. offset ``-j-1`` for a
             # nested map over ``j`` is NOT a safe forward-only read).
             ok = True
-            sym_guards: Set = set()
-            array_guards: Set[str] = set()
+            sym_guards: OrderedSet = OrderedSet()
+            array_guards: OrderedSet[str] = OrderedSet()
             for kind, payload in classes:
                 if kind == 'WAR_symbolic':
                     free = {str(s) for s in payload.free_symbols}
@@ -830,20 +832,22 @@ class BreakAntiDependence(ppl.Pass):
         is ``<= 0``. Mirrors :meth:`_emit_positive_guard` but for a per-element
         check over an array.
 
-        Implementation: a single CPP tasklet with one input connector reading
-        the whole array. The body is a tight ``for`` loop with ``std::abort``
-        on the first violation.
+        Implementation: a guard tasklet calling :cpp:func:`dace::detect_all_positive`
+        (``dace/runtime/include/dace/detect.h``), which folds a per-element 0/1 flag with a
+        ``min`` reduction under ``omp parallel for simd``. A hand-written loop that aborted on
+        the first violation would be SERIAL, and this sits right in front of the loop the
+        snapshot exists to parallelize; the check that trips is a program bug, never the hot
+        path, so there is nothing to gain by exiting early and a whole parallel sweep to lose.
+        The index also lives inside the runtime function rather than in the tasklet body.
         """
         desc = sdfg.arrays[arr_name]
         n_str = symbolic.symstr(desc.shape[0])
         conn = f'__arr_{arr_name}'
-        code = (f'for (long long _j = 0; _j < ({n_str}); _j++) {{\n'
-                f'    if (!({conn}[_j] > 0)) {{ std::abort(); }}\n'
-                f'}}')
+        code = f'if (!dace::detect_all_positive({conn}, ({n_str}))) {{ std::abort(); }}'
         tlet = pre.add_tasklet(
             name=f'_break_antidep_array_guard_{arr_name}',
-            inputs={conn},
-            outputs=set(),
+            inputs={conn: None},
+            outputs={},
             code=code,
             language=dtypes.Language.CPP,
         )
@@ -875,7 +879,10 @@ class BreakAntiDependence(ppl.Pass):
         # its body; the symbols referenced in the code are resolved against
         # the enclosing scope.
         guard = pre.add_tasklet(
-            name=f'_break_antidep_guard_{abs(hash(expr_str)) & 0xfffffff:x}',
+            # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED,
+            # so the same guard would get a different tasklet label, different emitted C symbols
+            # and a different build hash on every run. crc32 is a stable digest of the same text.
+            name=f'_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xfffffff:x}',
             inputs={},
             outputs={},
             code=code,
@@ -1092,7 +1099,7 @@ class BreakAntiDependence(ppl.Pass):
                 continue
 
             fwd_edges = []
-            sym_guards = set()
+            sym_guards = OrderedSet()
             for n in list(state.data_nodes()):
                 if n.data != arr:
                     continue

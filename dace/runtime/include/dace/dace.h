@@ -18,6 +18,7 @@
 #include "comm.h"
 #include "complex.h"
 #include "copy.h"
+#include "detect.h"
 #include "intset.h"
 #include "math.h"
 #include "os.h"

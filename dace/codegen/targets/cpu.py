@@ -3036,7 +3036,9 @@ class CPUCodeGen(TargetCodeGenerator):
         true ``Scalar`` (clause ``reduction(op:var)``, always eligible) or -- only when
         ``sdfg.openmp_array_reductions`` is on -- a plain 0-offset C-contiguous ``Array``
         buffer (clause ``reduction(op:A[0:n])`` over the whole buffer), (c) non-persistent
-        with a subset independent of THIS map's iter variables, and (d) a WCR operator
+        with a subset independent of THIS map's iter variables, (c2) NOT also read by the
+        map (a privatized copy starts at the operator identity, so a read inside the region
+        would see that instead of the shared value), and (d) a WCR operator
         OpenMP supports (see ``_REDUCTION_TO_OMP_OP``); complex element types additionally
         need a ``#pragma omp declare reduction`` (returned as ``declare_line``, ``+``/``*``
         only). Anything else falls through to the atomic path -- correct but contended.
@@ -3090,6 +3092,18 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             var_name = self.ptr(oedge.dst.data, desc, sdfg)
 
+            # A reduction clause privatizes the target per thread, identity-initialized, for
+            # the whole region. If the map body also READS the accumulator, those reads see
+            # the private identity instead of the shared value -- silently wrong, and for a
+            # Scalar exactly as for an array section. polybench ``trisolv``: the
+            # forward-substitution map reduces into ``x[i]`` but also reads ``x[j]`` (j < i);
+            # a whole-``x`` reduction makes every ``x[j]`` read ``0``, dropping the sum
+            # (``x[i]=b[i]/L[i,i]``). A sound reduction is a WRITE-ONLY accumulate; if the
+            # container is also read, fall through to the (correct, contended) atomic path.
+            if any(
+                    isinstance(e.src, nodes.AccessNode) and e.src.data == oedge.dst.data
+                    for e in state.in_edges(map_entry)):
+                continue
             # A true Scalar is always eligible for a plain ``reduction(op:var)`` clause
             # (the pre-existing, flag-independent behavior). A whole contiguous Array
             # buffer is eligible for an array-section clause ``reduction(op:A[0:n])`` ONLY
@@ -3104,18 +3118,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 clause_target = var_name
             elif sdfg.openmp_array_reductions:
                 # An array-section reduction ``reduction(op:A[0:n])`` privatizes the WHOLE
-                # buffer per thread (identity-initialized) for the region. If the map body
-                # also READS ``A`` (a non-WCR input flowing through the map entry), those
-                # reads see the private identity copy instead of the shared values -- silently
-                # wrong. polybench ``trisolv``: the forward-substitution map reduces into
-                # ``x[i]`` but also reads ``x[j]`` (j < i); a whole-``x`` reduction makes every
-                # ``x[j]`` read ``0``, dropping the sum (``x[i]=b[i]/L[i,i]``). A sound array
-                # reduction must be a WRITE-ONLY accumulate; if the array is also read, fall
-                # through to the (correct, contended) atomic path.
-                if any(
-                        isinstance(e.src, nodes.AccessNode) and e.src.data == oedge.dst.data
-                        for e in state.in_edges(map_entry)):
-                    continue
+                # buffer per thread for the region; only a provably contiguous buffer is
+                # eligible, anything else falls through to the atomic path.
                 count = _contiguous_element_count(desc)
                 if count is None:
                     continue

@@ -134,3 +134,33 @@ class ReduceScratch:
     init_code = f"::dace::cub::get_scratch<::dace::cub::ReduceTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ReduceTag>();"
     dependencies = [CUB]
+
+
+@dace.library.environment
+class DetectScratch:
+    """Device detection primitives (``dace/cuda/detect.cuh``) plus their scratch pools.
+
+    Used by the CUDA expansions of :class:`~dace.libraries.standard.nodes.find_first.FindFirst`
+    and :class:`~dace.libraries.sort.nodes.scatter_conflict_check.ScatterConflictCheck`. Nothing is
+    pre-allocated: the flag pool is one word, and the tag pool is sized by the scattered array's
+    domain, which is not known at init. Both are freed at SDFG finalize.
+
+    The header goes to the ``cuda`` file only -- it instantiates ``cub::BlockReduce`` and launches
+    kernels, neither of which a host compiler can parse.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    headers = {'frame': [], 'cuda': ['dace/cuda/detect.cuh']}
+    state_fields = []
+    init_code = ""
+    finalize_code = ("::dace::cub::release_scratch<::dace::cub::DetectFlagTag>();\n"
+                     "::dace::cub::release_scratch<::dace::cub::DetectOwnerTag>();")
+    dependencies = [CUB]
