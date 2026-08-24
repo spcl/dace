@@ -91,7 +91,17 @@ class Getri(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin", "_ipiv"}, outputs={"_xout", "_res"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_xin": None,
+                             "_ipiv": None
+                         },
+                         outputs={
+                             "_xout": None,
+                             "_res": None
+                         },
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """

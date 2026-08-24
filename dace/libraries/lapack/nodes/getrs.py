@@ -134,7 +134,18 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a", "_rhs_in", "_ipiv"}, outputs={"_rhs_out", "_res"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_a": None,
+                             "_rhs_in": None,
+                             "_ipiv": None
+                         },
+                         outputs={
+                             "_rhs_out": None,
+                             "_res": None
+                         },
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """

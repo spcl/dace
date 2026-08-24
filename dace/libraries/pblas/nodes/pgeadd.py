@@ -66,8 +66,15 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_inbuffer", "_block_sizes"},
-                         outputs={"_outbuffer", "_gdescriptor", "_ldescriptor"},
+                         inputs={
+                             "_inbuffer": None,
+                             "_block_sizes": None
+                         },
+                         outputs={
+                             "_outbuffer": None,
+                             "_gdescriptor": None,
+                             "_ldescriptor": None
+                         },
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -158,7 +165,14 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MKL"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_block_sizes"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_inbuffer": None,
+                             "_block_sizes": None
+                         },
+                         outputs={"_outbuffer"},
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """

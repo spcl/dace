@@ -65,7 +65,12 @@ class Gatherv(MPINode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_inbuffer", "_recvcounts", "_displs", "_root"},
+                         inputs={
+                             "_inbuffer": None,
+                             "_recvcounts": None,
+                             "_displs": None,
+                             "_root": None
+                         },
                          outputs={"_outbuffer"},
                          **kwargs)
 

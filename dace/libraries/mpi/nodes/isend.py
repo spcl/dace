@@ -75,7 +75,15 @@ class Isend(MPINode):
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_buffer": None,
+                             "_dest": None,
+                             "_tag": None
+                         },
+                         outputs={"_request"},
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """

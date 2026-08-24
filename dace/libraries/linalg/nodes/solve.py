@@ -147,7 +147,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_ain", "_bin"}, outputs={"_bout"}, **kwargs)
+        super().__init__(name, *args, inputs={"_ain": None, "_bin": None}, outputs={"_bout"}, **kwargs)
         # NOTE: We currently do not support overwrite == True
         self.overwrite = False
 

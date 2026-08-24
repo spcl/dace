@@ -74,7 +74,7 @@ class Bcast(MPINode):
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
     def __init__(self, name, fcomm=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs={"_inbuffer": None, "_root": None}, outputs={"_outbuffer"}, **kwargs)
         self.fcomm = fcomm
 
     def validate(self, sdfg, state):

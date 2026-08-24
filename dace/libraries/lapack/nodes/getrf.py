@@ -135,7 +135,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout": None, "_ipiv": None, "_res": None}, **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -189,7 +189,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                                          "DOT_PRODUCT); no-op for real operands")
 
     def __init__(self, name, n=None, accumulator_type=None, conjugate=False, **kwargs):
-        super().__init__(name, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
+        super().__init__(name, inputs={"_x": None, "_y": None}, outputs={"_result"}, **kwargs)
         self.n = n
         self.accumulator_type = accumulator_type
         self.conjugate = conjugate

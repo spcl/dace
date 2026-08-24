@@ -221,7 +221,10 @@ def mm(
     # Create tasklet
     tasklet = state.add_tasklet(
         name=label + "_" + "mm_tasklet",
-        inputs={"a", "b"},
+        inputs={
+            "a": None,
+            "b": None
+        },
         outputs={"c"},
         code="""
         cublasSetStream(handle, __dace_current_stream);

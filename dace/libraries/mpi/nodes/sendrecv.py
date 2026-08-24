@@ -53,7 +53,13 @@ class Sendrecv(MPINode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_inbuffer", "_dest", "_src", "_sendtag", "_recvtag"},
+                         inputs={
+                             "_inbuffer": None,
+                             "_dest": None,
+                             "_src": None,
+                             "_sendtag": None,
+                             "_recvtag": None
+                         },
                          outputs={"_outbuffer"},
                          **kwargs)
 

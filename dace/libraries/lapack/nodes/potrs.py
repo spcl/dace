@@ -95,7 +95,7 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True, desc="True if the factor in _a is lower triangular")
 
     def __init__(self, name, lower=True, **kwargs):
-        super().__init__(name, inputs={"_a", "_bin"}, outputs={"_bout", "_res"}, **kwargs)
+        super().__init__(name, inputs={"_a": None, "_bin": None}, outputs={"_bout": None, "_res": None}, **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

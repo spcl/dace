@@ -47,7 +47,7 @@ class Wait(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_request"}, outputs={"_stat_tag", "_stat_source"}, **kwargs)
+        super().__init__(name, *args, inputs={"_request"}, outputs={"_stat_tag": None, "_stat_source": None}, **kwargs)
 
     def validate(self, sdfg, state):
         """

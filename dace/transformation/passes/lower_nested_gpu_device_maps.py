@@ -85,9 +85,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         for n in map_inner_nodes:
             if isinstance(n, dace.nodes.AccessNode) and state.sdfg.arrays[n.data].transient is False:
                 if n.data not in inputs and state.out_degree(n) > 0:
-                    inputs.add(n.data)
+                    inputs[n.data] = None
                 if n.data not in outputs and state.in_degree(n) > 0:
-                    outputs.add(n.data)
+                    outputs[n.data] = None
 
         nsdfg = state.add_nested_sdfg(
             sdfg=inner_sdfg,
@@ -108,7 +108,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             else:
                 state.add_edge(nsdfg, None, oe.dst, None, dace.memlet.Memlet(None))
 
-        for data_name in inputs.union(outputs):
+        for data_name in dict.fromkeys((*inputs, *outputs)):
             if data_name not in inner_sdfg.arrays:
                 copydesc = copy.deepcopy(state.sdfg.arrays[data_name])
                 copydesc.transient = False

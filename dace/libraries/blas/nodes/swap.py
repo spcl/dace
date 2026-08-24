@@ -128,7 +128,7 @@ class Swap(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, **kwargs):
-        super().__init__(name, inputs={"_xin", "_yin"}, outputs={"_xout", "_yout"}, **kwargs)
+        super().__init__(name, inputs={"_xin": None, "_yin": None}, outputs={"_xout": None, "_yout": None}, **kwargs)
         self.n = n
 
     def validate(self, sdfg, state):

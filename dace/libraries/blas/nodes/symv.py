@@ -89,7 +89,7 @@ class Symv(dace.sdfg.nodes.LibraryNode):
     beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs={"_A", "_x", "_yin"}, outputs={"_yout"}, **kwargs)
+        super().__init__(name, inputs={"_A": None, "_x": None, "_yin": None}, outputs={"_yout"}, **kwargs)
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):

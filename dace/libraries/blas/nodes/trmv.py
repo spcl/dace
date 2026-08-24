@@ -96,7 +96,7 @@ class Trmv(dace.sdfg.nodes.LibraryNode):
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True if implicit unit diagonal")
 
     def __init__(self, name, uplo=False, transA=False, unit_diag=False, **kwargs):
-        super().__init__(name, inputs={"_A", "_xin"}, outputs={"_xout"}, **kwargs)
+        super().__init__(name, inputs={"_A": None, "_xin": None}, outputs={"_xout"}, **kwargs)
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):

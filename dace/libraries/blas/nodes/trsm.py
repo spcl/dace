@@ -112,7 +112,7 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     def __init__(self, name, side=False, uplo=False, transA=False, unit_diag=False, alpha=1, **kwargs):
-        super().__init__(name, inputs={"_A", "_Bin"}, outputs={"_Bout"}, **kwargs)
+        super().__init__(name, inputs={"_A": None, "_Bin": None}, outputs={"_Bout"}, **kwargs)
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):

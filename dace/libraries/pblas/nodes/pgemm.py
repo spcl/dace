@@ -147,7 +147,16 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     k = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_a": None,
+                             "_b": None,
+                             "_a_block_sizes": None,
+                             "_b_block_sizes": None
+                         },
+                         outputs={"_c"},
+                         **kwargs)
         self.m = m
         self.n = n
         self.k = k

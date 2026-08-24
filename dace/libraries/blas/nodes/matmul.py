@@ -328,4 +328,4 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         self.beta = beta
         self.transA = bool(transA)
         self.transB = bool(transB)
-        super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
+        super().__init__(name, location=location, inputs={"_a": None, "_b": None}, outputs={"_c"})

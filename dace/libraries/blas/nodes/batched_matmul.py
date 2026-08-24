@@ -502,7 +502,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, location=None):
-        super().__init__(name, location=location, inputs={'_a', '_b'}, outputs={'_c'})
+        super().__init__(name, location=location, inputs={'_a': None, '_b': None}, outputs={'_c'})
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)

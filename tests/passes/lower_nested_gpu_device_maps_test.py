@@ -61,7 +61,7 @@ def _build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:
                                 src_conn='_b',
                                 memlet=dace.Memlet('b_out[__j, __i]'))
 
-    nsdfg = state.add_nested_sdfg(inner, set(), {'a_in', 'b_out'}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a_in': None, 'b_out': None}, symbol_mapping={'__k': '__k'})
     a_write = state.add_write('A')
     b_write = state.add_write('B')
     state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())

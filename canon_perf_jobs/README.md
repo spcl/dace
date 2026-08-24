@@ -58,8 +58,8 @@ denominator below.
 | `poly` | 30 | corpus reference | timed numpy reference (`polybench_numpy`). `seidel_2d`'s numpy form is a scalar Python loop: labelled `python-scalar`, never timed, never divided by |
 | `np` | 24 | corpus reference | timed numpy reference |
 | `tsvc` | 151 | `seq-cpp` | sequential C++ from the same post-simplify SDFG |
-| `tsvc25` | 72 | `seq-cpp` | sequential C++ from the same post-simplify SDFG |
-| | 277 | | |
+| `tsvc25` | 76 | `seq-cpp` | sequential C++ from the same post-simplify SDFG |
+| | 281 | | |
 
 The tsvc and tsvc_2_5 oracles are scalar Python loops. They are correctness oracles and MUST NEVER
 be a timing denominator -- dividing by them yields speedups in the hundreds and silently invalidates
@@ -84,9 +84,9 @@ Round-robin over the POOLED kernel list: `corpus_suite.kernels()` in its fixed o
 
 | ranks (nodes x 4) | kernels per rank |
 |:--|:--|
-| 1 (bare, no launcher) | 277 |
-| 4 (1 node) | 70, 69, 69, 69 |
-| 16 (4 nodes) | 18 x 5, 17 x 11 |
+| 1 (bare, no launcher) | 281 |
+| 4 (1 node) | 71, 70, 70, 70 |
+| 16 (4 nodes) | 18 x 9, 17 x 7 |
 
 Two reasons, both load-bearing:
 
@@ -183,7 +183,7 @@ cmake/compiler child inherits. Do not vary them between compared arms.
 ## Time budget
 
 Measured on the dev box: `poly/lu`, the slowest kernel, costs 15.2 s fixed (build, reference,
-correctness) plus 0.766 s per repetition. Summed over all 277 kernels, the timed region at 50 reps
+correctness) plus 0.766 s per repetition. Summed over all 281 kernels, the timed region at 50 reps
 is about 8.6 minutes.
 
 So COMPILING dominates and repetitions are nearly free: quadrupling `REPS` to 200 adds roughly half

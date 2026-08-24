@@ -498,7 +498,14 @@ class TensorDot(nodes.LibraryNode):
                                           desc="Permutation of the output tensor")
 
     def __init__(self, name, left_axes=[], right_axes=[], permutation=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_left_tensor", "_right_tensor"}, outputs={"_out_tensor"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_left_tensor": None,
+                             "_right_tensor": None
+                         },
+                         outputs={"_out_tensor"},
+                         **kwargs)
         self.left_axes = left_axes
         self.right_axes = right_axes
         self.permutation = permutation

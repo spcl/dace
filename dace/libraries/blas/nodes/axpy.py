@@ -206,7 +206,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_x": None, "_y": None}, outputs={"_res"}, **kwargs)
         self.a = a or dace.symbolic.symbol("a")
         self.n = n or dace.symbolic.symbol("n")
 

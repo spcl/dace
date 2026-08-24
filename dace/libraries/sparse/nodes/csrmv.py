@@ -523,8 +523,18 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
-                                 if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
+                         inputs=({
+                             "_a_rows": None,
+                             "_a_cols": None,
+                             "_a_vals": None,
+                             "_b": None,
+                             "_cin": None
+                         } if beta != 0 else {
+                             "_a_rows": None,
+                             "_a_cols": None,
+                             "_a_vals": None,
+                             "_b": None
+                         }),
                          outputs={"_c"})
         self.alpha = alpha
         self.beta = beta

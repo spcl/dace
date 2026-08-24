@@ -392,7 +392,14 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
+                         inputs={
+                             "_A": None,
+                             "_x": None,
+                             "_y": None
+                         } if beta != 0 else {
+                             "_A": None,
+                             "_x": None
+                         },
                          outputs={"_y"})
         self.transA = transA
         self.alpha = alpha

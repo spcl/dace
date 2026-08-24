@@ -55,7 +55,7 @@ class CommSplit(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_color", "_key"}, outputs={"_newcomm"}, **kwargs)
+        super().__init__(name, *args, inputs={"_color": None, "_key": None}, outputs={"_newcomm"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

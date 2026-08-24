@@ -231,7 +231,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     did_ret_tasklet = pre_state.add_tasklet('__did_ret_set', {}, {'out'}, 'out = 1')
                     did_ret_access = pre_state.add_access(did_return_inner)
                     pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
-                    write_set.add(did_return_inner)
+                    write_set[did_return_inner] = None
 
         if ret_cond is not None:
             pre_state = graph.add_state('before_nested_sdfg_parent')
@@ -321,7 +321,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
                 acc = out_state.add_access(nname)
                 out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
-                write_set.add(name)
+                write_set[name] = None
 
         # Add NestedSDFG node. ``strictly_defined_symbols`` already carries the counters the subgraph
         # binds itself, and subtracting it is what keeps a region-bound iterator out of the mapping --

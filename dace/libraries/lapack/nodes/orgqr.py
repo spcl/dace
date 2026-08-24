@@ -91,7 +91,7 @@ class Orgqr(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, **kwargs):
-        super().__init__(name, inputs={"_ain", "_tau"}, outputs={"_aout", "_res"}, **kwargs)
+        super().__init__(name, inputs={"_ain": None, "_tau": None}, outputs={"_aout": None, "_res": None}, **kwargs)
 
     def validate(self, sdfg, state):
         """:return: ``((desc_A, lda_in, lda_out, m, n), (desc_tau, k))``."""

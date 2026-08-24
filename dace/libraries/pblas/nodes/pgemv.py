@@ -153,7 +153,16 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs={
+                             "_a": None,
+                             "_b": None,
+                             "_a_block_sizes": None,
+                             "_b_block_sizes": None
+                         },
+                         outputs={"_c"},
+                         **kwargs)
         self.transa = transa
         self.m = m
         self.n = n

@@ -743,8 +743,8 @@ class TaskletTransformer(ExtNodeTransformer):
             self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
-                                   set(self.inputs.keys()),
-                                   set(self.outputs.keys()),
+                                   self.inputs.keys(),
+                                   self.outputs.keys(),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
@@ -1909,10 +1909,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                       params, map_inputs),
                                                                   extra_map_symbols=map_symbols)
 
-            internal_node = state.add_nested_sdfg(sdfg,
-                                                  set(inputs.keys()),
-                                                  set(outputs.keys()),
-                                                  debuginfo=self.current_lineinfo)
+            internal_node = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(internal_node)
 
             # If consume scope, inject stream inputs to the internal SDFG
@@ -3406,12 +3403,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
                 if op_name:
                     op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                    inp_conns = {'__in1', '__in2'}
+                    inp_conns = {'__in1': None, '__in2': None}
                     tasklet_code += f'__out = __in1 {op} __in2'
                 else:
-                    inp_conns = {'__in1'}
+                    inp_conns = {'__in1': None}
                     tasklet_code += f'__out = __in1 {op} {operand}'
-                inp_conns |= set(input_memlets.keys())
+                inp_conns.update(dict.fromkeys(input_memlets))
                 op3 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
                 tasklet = state.add_tasklet(name=state.label,
                                             inputs=inp_conns,
