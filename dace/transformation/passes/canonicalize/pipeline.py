@@ -1196,7 +1196,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # is why the original bare wiring made ``canonicalize(target='gpu')`` raise outright.
         s += [('loop_fuse', ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [('loop_fuse', LoopFusion())]
-    s += [('loop_fuse', WavefrontSkew())]
+    s += [('loop_fuse', WavefrontSkew(target=target))]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
     s += _inline_single_state('loop_fuse')
     s += _structural_cleanup('loop_fuse')

@@ -69,10 +69,10 @@ def gauss_seidel_backward(a: dace.float64[N, N]):
 ALL_SHAPES = [wf_north_west, wf_triangular, wavefront2d]
 
 
-def skewed(prog, bi=32, bj=32):
+def skewed(prog, bi=32, bj=32, target='cpu'):
     """``prog``'s SDFG after an isolated :class:`WavefrontSkew` with the given tile extents."""
     sdfg = prog.to_sdfg(simplify=True)
-    xf = WavefrontSkew()
+    xf = WavefrontSkew(target=target)
     xf.tile_i, xf.tile_j = bi, bj
     fired = xf.apply_pass(sdfg, {})
     sdfg.validate()
@@ -152,6 +152,36 @@ def test_dependence_outrunning_the_tile_falls_back_to_the_untiled_lowering():
     big, fired = skewed(far_carry, bi=4, bj=64)
     assert fired == 1 and len(loops(big)) == 3, \
         f'non-vacuity: the same nest must tile once the tile is tall enough; got {[l.loop_variable for l in loops(big)]}'
+
+
+@pytest.mark.parametrize('prog', ALL_SHAPES, ids=lambda p: p.name)
+def test_only_the_cpu_target_blocks_the_wavefront(prog):
+    """Blocking is locality tuning, so it is the target's call: ``target='cpu'`` emits the tiled
+    four-level shape, ``target='gpu'`` keeps the element-granularity diagonal, which exposes the
+    whole anti-diagonal instead of one tile column. The pair is what makes this a test of the
+    target gate rather than of the nest -- both targets must still skew, and to the same answer."""
+    cpu, cpu_fired = skewed(prog, target='cpu')
+    gpu, gpu_fired = skewed(prog, target='gpu')
+    assert cpu_fired == 1 and gpu_fired == 1, f'{prog.name}: the wavefront must be skewed on both targets'
+
+    assert len(loops(cpu)) == 3, f'{prog.name}: cpu tiles; got {[l.loop_variable for l in loops(cpu)]}'
+    assert len(loops(gpu)) == 1 and loops(gpu)[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+        f'{prog.name}: gpu keeps the untiled diagonal; got {[l.loop_variable for l in loops(gpu)]}'
+
+    gpu_maps = [n.map for n, _ in gpu.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(gpu_maps) == 1 and gpu_maps[0].params[0].startswith(_SKEW_P_PREFIX), \
+        f'{prog.name}: the diagonal still carries one parallel Map; got {[m.params for m in gpu_maps]}'
+
+    n = 96
+    rng = np.random.default_rng(20260824)
+    a0 = rng.standard_normal((n, n))
+    reference = prog.to_sdfg(simplify=True)
+    ref = a0.copy()
+    reference(a=ref, N=n)
+    for label, sdfg in (('cpu', cpu), ('gpu', gpu)):
+        got = a0.copy()
+        sdfg(a=got, N=n)
+        assert np.array_equal(got, ref), f'{prog.name}/{label}: max abs diff {np.max(np.abs(got - ref)):.3e}'
 
 
 def test_steep_gauss_seidel_diagonal_is_refused_by_the_tiling_guard():

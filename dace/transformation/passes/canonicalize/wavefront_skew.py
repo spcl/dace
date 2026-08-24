@@ -1174,19 +1174,31 @@ class WavefrontSkew(ppl.Pass):
     carriers, non-unit strides).
 
     The lowering is a skewed TILING (:meth:`_rewrite_tiled`) wherever
-    :func:`tiling_legal` holds, and the element-granularity diagonal
-    (:meth:`_rewrite`) otherwise."""
+    :func:`tiling_legal` holds AND the target asks for blocking, and the
+    element-granularity diagonal (:meth:`_rewrite`) otherwise. Only ``target='cpu'``
+    asks: blocking is locality tuning for a cache, and a GPU is better served by the
+    diagonal's wider parallelism."""
 
     CATEGORY: str = 'Canonicalization'
+
+    target = properties.Property(dtype=str,
+                                 default='cpu',
+                                 choices=['cpu', 'gpu'],
+                                 desc="Target policy: 'cpu' blocks the wavefront into skewed tiles wherever that "
+                                 "is legal; 'gpu' always takes the element-granularity diagonal.")
 
     tile_i = properties.Property(dtype=int,
                                  default=DEFAULT_TILE_SIZE,
                                  desc='Skewed-tile extent on the outer (u) axis. A dependence reaching further than '
-                                 'this on that axis falls back to the untiled lowering.')
+                                 'this on that axis falls back to the untiled lowering. CPU only.')
     tile_j = properties.Property(dtype=int,
                                  default=DEFAULT_TILE_SIZE,
                                  desc='Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one '
-                                 'tile row of it at unit stride.')
+                                 'tile row of it at unit stride. CPU only.')
+
+    def __init__(self, target: str = 'cpu'):
+        super().__init__()
+        self.target = target
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Symbols
@@ -1346,6 +1358,13 @@ class WavefrontSkew(ppl.Pass):
         ``v -> bj*J``, so ``poly.skew_bounds`` projects it with no changes: it is
         handed a rectangle over ``(I, J)`` and returns the diagonal ``T`` range plus
         the parametric tile-column ``P`` range at fixed ``T``."""
+        # Blocking is a LOCALITY choice, so it belongs to the target, not to canonicalization: the
+        # tiled lowering pins two sequential loops per tile and parallelises one tile column, which
+        # is cache blocking. A GPU wants the opposite -- the whole anti-diagonal live at once -- so
+        # it keeps the element-granularity lowering, the same path a CPU falls back to whenever a
+        # dependence outruns a tile.
+        if self.target != 'cpu':
+            return None
         bi, bj = int(self.tile_i), int(self.tile_j)
         if bi < 1 or bj < 1 or not tiling_legal(deps, tau, bi, bj):
             return None
