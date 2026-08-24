@@ -1803,25 +1803,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return all_params.intersection(free_syms) != set()
 
-    def _first_access_node(self, cfg: ControlFlowRegion, accessnode: dace.nodes.AccessNode, current_state: SDFGState):
-        assert accessnode in cfg.nodes()
-        dataname = accessnode.data
-        if current_state in in_cfg.nodes():
-            for node in in_cfg.bfs_nodes():
-                if node != current_state:
-                    if dataname in node.read_and_write_sets()[1]:
-                        return False
-                else:
-                    src_nodes = {n for n in current_state.nodes() if current_state.in_degree(n) == 0}
-                    if accessnode in src_nodes:
-                        return True
-                    else:
-                        return False
-        elif dataname in cfg.read_and_write_sets()[1]:
-            return False
-
-        return True
-
     _index = 0
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Set[str]:
