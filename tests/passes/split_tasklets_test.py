@@ -1,4 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 import typing
 import dace
 import re
@@ -1315,3 +1320,47 @@ def test_add_missing_symbols_honors_integer_cast():
     idx = numpy.minimum((bins * (a - lo) / (hi - lo)).astype(numpy.int64), bins - 1)
     ref = numpy.bincount(idx, minlength=bins).astype(numpy.int64)
     assert numpy.array_equal(hist, ref), f"hist={hist} ref={ref}"
+
+
+def test_split_is_deterministic_under_a_randomised_hash_seed():
+    """The connectors the pass emits, and the in-edges it wires to them, come from the names it
+    collects while walking a statement's right-hand side. Collected into a plain set, that order is
+    the hash order of the strings, so the same tasklet split into a different SDFG per interpreter
+    run -- seed 1 disagreed with seeds 0 and 2 on this very kernel. Run in children because
+    ``PYTHONHASHSEED`` is only read at interpreter start."""
+    src = textwrap.dedent('''
+        import dace
+        from dace.sdfg import nodes
+        from dace.transformation.passes.split_tasklets import SplitTasklets
+        N = dace.symbol('N')
+
+        @dace.program
+        def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+            for i in dace.map[0:N]:
+                with dace.tasklet:
+                    av << a[i]
+                    bv << b[i]
+                    cv >> c[i]
+                    dv >> d[i]
+
+                    cv = av * 2.0 + bv * 3.0 + av * bv
+                    dv = cv + av - bv * 4.0
+
+        sdfg = prog.to_sdfg(simplify=True)
+        SplitTasklets().apply_pass(sdfg, {})
+        sig = sorted((n.label, tuple(n.in_connectors), tuple(n.out_connectors))
+                     for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
+        print('SIG', sig, flush=True)
+    ''')
+    with tempfile.TemporaryDirectory() as tmp:
+        script = os.path.join(tmp, 'split_tasklets_seed_child.py')
+        with open(script, 'w') as fh:
+            fh.write(src)
+        sigs = []
+        for seed in ('0', '1', '2'):
+            env = dict(os.environ, PYTHONHASHSEED=seed)
+            res = subprocess.run([sys.executable, script], capture_output=True, timeout=600, env=env)
+            lines = [l for l in res.stdout.decode().splitlines() if l.startswith('SIG')]
+            assert lines, f'child with PYTHONHASHSEED={seed} produced no signature: {res.stderr[-500:]!r}'
+            sigs.append(lines[0])
+    assert len(dict.fromkeys(sigs)) == 1, 'hash-seed dependent split:\n' + '\n'.join(sigs)
