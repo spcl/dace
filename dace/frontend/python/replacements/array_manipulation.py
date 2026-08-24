@@ -313,6 +313,45 @@ def _ndarray_transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
     return _transpose(pv, sdfg, state, arr, axes)
 
 
+@oprepo.replaces('dace.moveaxis')
+@oprepo.replaces('numpy.moveaxis')
+def _moveaxis(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, source, destination) -> str:
+    """``numpy.moveaxis``, lowered as the permutation it is.
+
+    NumPy hands back a strided view. DaCe materializes instead, for the same reason
+    :func:`broadcast_to` does: a permuted-stride operand reaching a library node is read with that
+    node's own leading dimension, so a BLAS or tensor call built around it computes the wrong
+    numbers without raising. ``TensorTranspose`` already moves the data, so the whole replacement
+    is the axis arithmetic plus a delegation.
+    """
+    ndim = len(sdfg.arrays[arr].shape)
+    src_axes = normalize_axes(source, ndim, 'source')
+    dst_axes = normalize_axes(destination, ndim, 'destination')
+    if len(src_axes) != len(dst_axes):
+        raise ValueError("`source` and `destination` arguments must have the same number of elements")
+
+    axes = [a for a in range(ndim) if a not in src_axes]
+    for dst, src in sorted(zip(dst_axes, src_axes)):
+        axes.insert(dst, src)
+
+    return _transpose(pv, sdfg, state, arr, axes)
+
+
+def normalize_axes(axes, ndim: int, name: str) -> List[int]:
+    """``axes`` as a list of non-negative indices, rejecting duplicates and out-of-range entries."""
+    if isinstance(axes, Integral):
+        axes = [axes]
+    out = []
+    for axis in axes:
+        axis = int(axis)
+        if axis < -ndim or axis >= ndim:
+            raise ValueError(f"axis {axis} in `{name}` is out of bounds for an array of dimension {ndim}")
+        out.append(axis + ndim if axis < 0 else axis)
+    if len(set(out)) != len(out):
+        raise ValueError(f"repeated axis in `{name}`")
+    return out
+
+
 @oprepo.replaces('numpy.broadcast_to')
 def broadcast_to(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str,
                  shape: Union[str, symbolic.SymbolicType, Sequence[Union[str, symbolic.SymbolicType]]]) -> str:
