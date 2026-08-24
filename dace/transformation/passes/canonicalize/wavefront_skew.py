@@ -1358,11 +1358,7 @@ class WavefrontSkew(ppl.Pass):
         ``v -> bj*J``, so ``poly.skew_bounds`` projects it with no changes: it is
         handed a rectangle over ``(I, J)`` and returns the diagonal ``T`` range plus
         the parametric tile-column ``P`` range at fixed ``T``."""
-        # Blocking is a LOCALITY choice, so it belongs to the target, not to canonicalization: the
-        # tiled lowering pins two sequential loops per tile and parallelises one tile column, which
-        # is cache blocking. A GPU wants the opposite -- the whole anti-diagonal live at once -- so
-        # it keeps the element-granularity lowering, the same path a CPU falls back to whenever a
-        # dependence outruns a tile.
+        # Cache blocking, so the target owns the choice (see the class docstring).
         if self.target != 'cpu':
             return None
         bi, bj = int(self.tile_i), int(self.tile_j)
