@@ -89,6 +89,20 @@ int main(int, char **) {
   assert(dace::math::ipow(3.0, 0u) == 1.0);
   assert(dace::math::ipow(2.0, 4u) == 16.0);
 
+  /////////////////////////////////////////////////////////
+  // Integer power (dace::math::pow). An integer base raised to an integer
+  // exponent stays an INTEGER. This held for `int` and `unsigned int` only;
+  // every other width -- `int64_t` above all, which is what a dace size symbol
+  // is -- fell through to `std::pow` and came back `double`, which is illegal
+  // in an OpenMP loop bound and in a pointer offset (stockham_fft).
+  static_assert(std::is_integral<decltype(dace::math::pow(int64_t(2), int64_t(3)))>::value,
+                "an int64 base and exponent must not answer a double");
+  assert(dace::math::pow(int64_t(2), int64_t(10)) == 1024);
+  assert(dace::math::pow(int64_t(2), int64_t(0)) == 1);
+  assert(dace::math::pow(int64_t(2), int64_t(-1)) == 0);  // negative -> 0, the int overload's rule
+  assert(dace::math::pow(3, 4) == 81);
+  assert(dace::math::pow(2.0, 3.0) == 8.0);              // a real base still routes to std::pow
+
   printf("Success!\n");
   return 0;
 }

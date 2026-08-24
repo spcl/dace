@@ -651,22 +651,27 @@ DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a,
   return (thrust::complex<T>)thrust::pow(a, b);
 }
 #endif
-template <typename T, typename U>
+template <typename T, typename U,
+          typename std::enable_if<!(std::is_integral<T>::value &&
+                                    std::is_integral<U>::value)>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
   return std::pow(a, b);
 }
 
-static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b) {
-  if (b < 0) return 0;
-  int result = 1;
-  for (int i = 0; i < b; ++i) result *= a;
-  return result;
-}
-
-static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                                 const unsigned int& b) {
-  unsigned int result = 1;
-  for (unsigned int i = 0; i < b; ++i) result *= a;
+// An integer base raised to an integer exponent STAYS an integer. This used to hold for ``int``
+// and ``unsigned int`` only, through two hand-written overloads; every other width -- ``int64_t``
+// above all, which is what a dace size symbol is -- fell through to ``std::pow`` and came back
+// ``double``. A symbolic ``R ** (K - 1)`` then reached C++ as a floating value in two places that
+// cannot take one: an OpenMP loop bound (gcc: "invalid controlling predicate") and a pointer
+// offset (``complex128* + double``), which is what stopped stockham_fft from building at all.
+// Negative exponents answer 0, the convention the ``int`` overload already set.
+template <typename T, typename U,
+          typename std::enable_if<std::is_integral<T>::value &&
+                                  std::is_integral<U>::value>::type* = nullptr>
+DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
+  if (b < U(0)) return T(0);
+  T result = T(1);
+  for (U i = U(0); i < b; ++i) result *= a;
   return result;
 }
 
