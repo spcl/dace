@@ -125,6 +125,11 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             continue
         if transients_only and not desc.transient:
             continue
+        if not desc.transient and not isinstance(desc, dt.Scalar):
+            # A non-transient length-1 ARRAY is a buffer the caller passes by reference and reads
+            # back (``c=np.array([1], np.int32)``); only a by-value SCALAR argument is a symbol in
+            # disguise. Promoting the array would change the call interface, not just the graph.
+            continue
         if desc.total_size != 1:
             continue
         if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -168,6 +173,20 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # If candidate is read-only, continue normally
             if state.in_degree(node) == 0:
+                # A read-only occurrence still FINDS the candidate, which the closing
+                # ``candidates_seen`` intersection needs. Record it only for a NON-transient
+                # scalar: its value comes from the caller, so the promoted symbol is exact.
+                # A read-only transient has no writer anywhere, so promoting it would mint a
+                # free symbol for a value the SDFG never defines -- that one stays unseen.
+                if not sdfg.arrays[candidate].transient:
+                    candidates_in_state.add(candidate)
+                continue
+
+            # A WRITTEN non-transient is an OUTPUT of this SDFG. A symbol is not an output, so
+            # promoting one silently drops the value the caller was going to read back (an argmax's
+            # index result comes out zero). Only a read-only argument may become a symbol.
+            if not sdfg.arrays[candidate].transient:
+                candidates.remove(candidate)
                 continue
 
             # Candidate may only be accessed in a top-level scope

@@ -1383,7 +1383,8 @@ def sdfg_scope_symbols(sdfg) -> Dict[str, dtypes.typeclass]:
     """Symbols visible at ``sdfg`` scope: its own symbols, array extents, and interstate edges."""
     symbols = collections.OrderedDict(sdfg.symbols)
     for desc in sdfg.arrays.values():
-        symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+        # ``s.name``, not ``str(s)``: printing a symbol runs sympy's printer for a string it holds.
+        symbols.update([(s.name, s.dtype) for s in desc.free_symbols])
     try:
         for e in sdfg.predecessor_state_transitions(sdfg.start_state):
             symbols.update(e.data.new_symbols(sdfg, symbols))
@@ -2061,11 +2062,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if len(inputs) == 0:
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
+        # Every edge below propagates through one scope, so its symbols are derived once.
+        defined_variables = (self.symbols_defined_at(map_entry).keys()
+                             | self.sdfg.constants.keys()) if external_edges and propagate else None
+
         if external_edges:
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self,
+                                                           tomemlet[inp],
+                                                           map_entry,
+                                                           True,
+                                                           defined_variables=defined_variables)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2096,7 +2105,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self,
+                                                           tomemlet[out],
+                                                           map_exit,
+                                                           True,
+                                                           defined_variables=defined_variables)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))

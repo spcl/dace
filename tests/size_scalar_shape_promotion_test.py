@@ -188,6 +188,77 @@ def test_the_fill_constructors_accept_a_computed_size(program, expected):
     assert np.isclose(out[0], expected)
 
 
+@dace.program
+def size_shapes_an_array_a_slice_bound_then_reads(sizes: dace.int64[N], out: dace.float64[3, N]):
+    n = sizes[0]
+    buf = np.empty(n, dace.float64)
+    buf[:] = 1.0
+    out[0, :n] = buf
+
+
+@dace.program
+def compound_size_shapes_an_array_a_slice_bound_then_reads(sizes: dace.int64[N], out: dace.float64[3, N]):
+    lp = sizes[0]
+    buf = np.empty(lp + 1, dace.float64)
+    buf[:] = 1.0
+    out[0, :lp + 1] = buf
+
+
+def extents_of(program):
+    """The extent of every ``buf`` descriptor the program builds, as strings."""
+    sdfg = program.to_sdfg(simplify=False)
+    return {str(desc.shape[0]) for name, desc in sdfg.arrays.items() if name.startswith('buf')}
+
+
+def test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol():
+    """``buf = np.empty(n)`` then ``out[0, :n] = buf`` is one value used twice. Promoting the shape
+    to its own symbol made the copy ``[__sym_n_0]`` into ``[__sym_n]`` -- extents equal by
+    construction that no consumer can prove equal, so the frontend refused the store."""
+    assert extents_of(size_shapes_an_array_a_slice_bound_then_reads) == {'__sym_n'}
+
+    out = np.zeros((3, 8))
+    size_shapes_an_array_a_slice_bound_then_reads(np.array([5] + [0] * 7, dtype=np.int64), out, N=8)
+    assert np.allclose(out[0], [1.0] * 5 + [0.0] * 3)
+
+
+def test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps():
+    """The same two uses spelled ``lp + 1``. Evaluating the shape as dataflow materialised the sum
+    into a scalar transient and promoted THAT, so the extent was one opaque ``__sym_lp_plus_1``
+    against the bound's ``__sym_lp + 1`` (cp2k_grid_integrate, cloudsc)."""
+    assert extents_of(compound_size_shapes_an_array_a_slice_bound_then_reads) == {'__sym_lp + 1'}
+
+    out = np.zeros((3, 8))
+    compound_size_shapes_an_array_a_slice_bound_then_reads(np.array([4] + [0] * 7, dtype=np.int64), out, N=8)
+    assert np.allclose(out[0], [1.0] * 5 + [0.0] * 3)
+
+
+@dace.program
+def two_slices_from_one_bound_expression(A_row: dace.int64[N], A_col: dace.float64[N], A_val: dace.float64[N],
+                                         out: dace.float64[1]):
+    cols = A_col[A_row[0]:A_row[1]]
+    vals = A_val[A_row[0]:A_row[1]]
+    out[0] = np.dot(cols, vals)
+
+
+def test_two_slices_from_one_bound_expression_share_their_symbols():
+    """Two slices spelled with the SAME bound expression must get the same symbols.
+
+    Each ``A_row[0]`` read mints its own scalar transient, so promoting per transient gave the two
+    slices four symbols and lengths no consumer could equate -- ``vals @ x[cols]`` in spmv was then
+    refused with a size mismatch. The promotion is cached under the bound's TEXT for that reason.
+    """
+    sdfg = two_slices_from_one_bound_expression.to_sdfg(simplify=False)
+    extents = {str(desc.shape[0]) for name, desc in sdfg.arrays.items() if name.startswith(('cols', 'vals'))}
+    assert len(extents) == 1, f'the two slices must share one extent, got {extents}'
+
+    rows = np.array([1, 4] + [0] * 6, dtype=np.int64)
+    col = np.arange(8, dtype=np.float64)
+    val = np.arange(8, dtype=np.float64) * 2.0
+    out = np.zeros(1)
+    two_slices_from_one_bound_expression(rows, col, val, out, N=8)
+    assert np.isclose(out[0], np.dot(col[1:4], val[1:4]))
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -200,3 +271,6 @@ if __name__ == '__main__':
     test_a_size_one_array_is_read_through_a_subscript()
     test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
+    test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol()
+    test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps()
+    test_two_slices_from_one_bound_expression_share_their_symbols()

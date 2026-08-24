@@ -23,8 +23,9 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
     A size computed in the program (``nt = Nt + 1; np.empty(nt)``) is a size-1 descriptor, but an
-    extent must be a symbol. One fresh symbol per shape keeps two arrays sized from the same
-    reassigned scalar from collapsing onto one value.
+    extent must be a symbol. The promotion is per scalar VERSION, so two arrays sized from the same
+    REASSIGNED name keep their own values while this shape and a slice bound built from the same
+    assignment share one symbol -- see :meth:`ProgramVisitor.promote_scalar_to_symbol`.
 
     :param pv: The program visitor.
     :param sdfg: The SDFG being built.
@@ -40,7 +41,10 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
         return shape, False
 
     # One symbol per distinct name; sorted() keeps the promotion states deterministic.
-    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
+    replacements = {
+        symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, for_shape=True)
+        for n in sorted(names)
+    }
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved], True
 
 

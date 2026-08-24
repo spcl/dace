@@ -38,6 +38,14 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 
+# Run parallel kernels on MORE THAN TWO threads unless the caller pinned a count. A race in a
+# generated kernel -- a dropped WCR, a parallelised reducing axis -- is invisible at one thread and
+# often still invisible at two, so a suite that leaves the thread count to the machine reports a
+# miscompile as a pass on any host that happens to run it serially. Four is the floor that made
+# polybench ``symm``'s dropped reduction reproducible; a smaller machine gets what it has, and a
+# test that needs a deterministic reduction order pins the variable itself.
+os.environ.setdefault("OMP_NUM_THREADS", str(max(1, min(4, os.cpu_count() or 1))))
+
 import warnings
 
 import pytest

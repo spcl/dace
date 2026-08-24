@@ -17,6 +17,7 @@ with no ``LoopFission`` involved.
 The refusals are checked on the SDFG HASH, not just on the return value: the outlining is not free
 to undo, so every refusal has to be decided before the loop is touched.
 """
+import copy
 import os
 import subprocess
 import sys
@@ -97,6 +98,25 @@ def _run(sdfg, n=32):
     args = {'a': rng.random(n), 'b': np.zeros(n), 'x': rng.random(n), 'y': rng.random(n)}
     sdfg.compile()(**args, N=n)
     return args['a'], args['b']
+
+
+def run_arrays(sdfg, n=32, seed=7):
+    """Compile and run over deterministic inputs; returns every non-transient array after the run.
+
+    Names are sorted so a split SDFG and its unsplit deepcopy draw the SAME inputs even though the
+    split added transients of its own -- the point is to compare the two runs, not to seed prettily.
+    """
+    rng = np.random.default_rng(seed)
+    args = {nm: rng.random(n) for nm in sorted(nm for nm, desc in sdfg.arrays.items() if not desc.transient)}
+    sdfg.compile()(**args, N=n)
+    return args
+
+
+def assert_matches_fused(split, fused):
+    """The distributed loops must compute what the one fused loop computed, bit for bit."""
+    want, got = run_arrays(fused), run_arrays(split)
+    for name, expected in want.items():
+        assert np.array_equal(got[name], expected), f'{name} diverges from the fused loop'
 
 
 def _refuses(sdfg):
@@ -325,9 +345,14 @@ def test_loop_split_is_deterministic():
 # ===========================================================================
 # Refusals -- each one must leave the loop byte-identical.
 # ===========================================================================
-def test_rmw_read_by_another_group_is_refused():
-    """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b``'s loop would read ``a`` AFTER the carry
-    loop had rewritten the whole array."""
+def test_rmw_read_by_another_group_is_ordered_writer_first():
+    """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b`` reads ``a`` one BEHIND the write.
+
+    The sibling split refuses this: it puts every clone in one state, so it may only separate outputs
+    no other group reads. The ORDERED split does not have to -- ``a[i-1]`` is written at iteration
+    ``i-1`` and never touched again, so the value ``b`` wants is already final by the time the
+    carry loop ends. Writer first, and the numbers say so.
+    """
     sdfg, _loop, st = _loop_sdfg('flat_cross_rmw')
     ra = st.add_read('a')
     tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
@@ -337,11 +362,23 @@ def test_rmw_read_by_another_group_is_refused():
     tmul = st.add_tasklet('_Mult_', {'av'}, {'out'}, 'out = av * 2.0')
     st.add_edge(ra, None, tmul, 'av', dace.Memlet('a[i - 1]'))
     st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
-    assert _refuses(sdfg)
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert [_written(sdfg, l) for l in loops] == [['a'], ['b']], 'the writer of a must run first'
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
 
 
-def test_write_read_across_groups_is_refused():
-    """``c[i] = x[i]; b[i] = c[i-1]`` -- two loops would let ``b`` see the finished ``c``."""
+def test_write_read_across_groups_is_ordered_writer_first():
+    """``c[i] = x[i]; b[i] = c[i-1]`` -- ``b`` sees the finished ``c``, and that is the same ``c``.
+
+    ``c[i-1]`` is stored once, at iteration ``i-1``, so "the finished array" and "what the fused
+    loop had written by then" hold the same value at every index the reader touches. Only the
+    sibling split, which cannot order anything, has to refuse this.
+    """
     sdfg, _loop, st = _loop_sdfg('flat_war', arrays=('b', 'c', 'x'))
     t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx')
     st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
@@ -349,6 +386,91 @@ def test_write_read_across_groups_is_refused():
     t1 = st.add_tasklet('t1', {'cc'}, {'out'}, 'out = cc')
     st.add_edge(st.add_read('c'), None, t1, 'cc', dace.Memlet('c[i - 1]'))
     st.add_edge(t1, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert [_written(sdfg, l) for l in loops] == [['c'], ['b']], 'the writer of c must run first'
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
+def test_three_groups_are_ordered_by_topological_sort():
+    """Three outputs, two ordering constraints, one legal sequence.
+
+    ``a[i-1] = b[i] + x[i]`` / ``d[i] = a[i] * y[i]`` / ``b[i] = z[i] * w[i]``. ``d`` reads ``a``
+    one AHEAD of the write, so the reader goes first; ``a`` reads ``b`` at the index ``b``'s own
+    group writes, off an access node with no producer, so the reader goes first there too. That
+    leaves ``d``, then ``a``, then ``b`` -- an order two groups cannot express, which is the whole
+    point of sorting the constraints instead of flipping a bit.
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_three_groups', arrays=('a', 'b', 'd', 'x', 'y', 'z', 'w'))
+    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
+    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i - 1]'))
+    t_d = st.add_tasklet('_Mult_', {'aa', 'yy'}, {'out'}, 'out = aa * yy')
+    st.add_edge(st.add_read('a'), None, t_d, 'aa', dace.Memlet('a[i]'))
+    st.add_edge(st.add_read('y'), None, t_d, 'yy', dace.Memlet('y[i]'))
+    st.add_edge(t_d, 'out', st.add_write('d'), None, dace.Memlet('d[i]'))
+    t_b = st.add_tasklet('_Mult_b', {'zz', 'ww'}, {'out'}, 'out = zz * ww')
+    st.add_edge(st.add_read('z'), None, t_b, 'zz', dace.Memlet('z[i]'))
+    st.add_edge(st.add_read('w'), None, t_b, 'ww', dace.Memlet('w[i]'))
+    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the ordered split must fire'
+    loops = _loops(sdfg)
+    assert len(loops) == 3, 'one loop per group, not the two the pairwise rule could emit'
+    assert [_written(sdfg, l) for l in loops] == [['d'], ['a'], ['b']]
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
+def test_elementwise_rmw_is_not_a_recurrence():
+    """``a[i] = a[i] + x[i]`` beside ``e[i] = e[i-1] * y[i]`` -- only ``e`` carries.
+
+    Both arrays are read AND written by the loop, which is what a name-level test sees. Only ``e``
+    reads an element other than the one it writes, so only ``e`` forces its loop to stay
+    sequential; reading ``a`` as carried too leaves no free group and refuses the split, which is
+    exactly the parallel work worth peeling (TSVC ``s222``).
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_elementwise_rmw', arrays=('a', 'e', 'x', 'y'))
+    t_a = st.add_tasklet('_Add_', {'aa', 'xx'}, {'out'}, 'out = aa + xx')
+    st.add_edge(st.add_read('a'), None, t_a, 'aa', dace.Memlet('a[i]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    t_e = st.add_tasklet('_Mult_', {'ee', 'yy'}, {'out'}, 'out = ee * yy')
+    st.add_edge(st.add_read('e'), None, t_e, 'ee', dace.Memlet('e[i - 1]'))
+    st.add_edge(st.add_read('y'), None, t_e, 'yy', dace.Memlet('y[i]'))
+    st.add_edge(t_e, 'out', st.add_write('e'), None, dace.Memlet('e[i]'))
+
+    fused = copy.deepcopy(sdfg)
+    assert _split(sdfg) == 1, 'the split must peel the elementwise statement off the recurrence'
+    loops = _loops(sdfg)
+    assert len(loops) == 2
+    assert sorted(w for l in loops for w in _written(sdfg, l)) == ['a', 'e']
+    sdfg.validate()
+    assert_matches_fused(sdfg, fused)
+
+
+def test_opposite_pulling_constraints_are_refused():
+    """``a[i] = b[i+1] + x[i]`` beside ``b[i] = a[i+1] * 2`` -- each group must run first.
+
+    Both reads are one AHEAD of the other group's store, so each wants the ORIGINAL values and each
+    rule names the reader. The two constraints form a cycle, and a cycle is not an order: the loop
+    stands as it was. Sorting the constraints must not degenerate into picking one of them.
+    """
+    sdfg, _loop, st = _loop_sdfg('flat_cycle')
+    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
+    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i + 1]'))
+    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    t_b = st.add_tasklet('_Mult_', {'aa'}, {'out'}, 'out = aa * 2.0')
+    st.add_edge(st.add_read('a'), None, t_b, 'aa', dace.Memlet('a[i + 1]'))
+    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+
     assert _refuses(sdfg)
 
 

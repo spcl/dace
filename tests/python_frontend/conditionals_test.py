@@ -38,6 +38,33 @@ def simple_if(A: dace.int32[10]):
             A[i] += 3 * i
 
 
+@dace.program
+def chained_bounds(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
+    for i in range(LEN_1D):
+        if 0.0 <= a[i] <= 1.0:
+            b[i] = a[i]
+        else:
+            b[i] = -1.0
+
+
+@dace.program
+def chained_symbolic_bounds(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
+    for i in range(LEN_1D):
+        if 0 <= i < LEN_1D - 1:
+            b[i] = a[i + 1]
+        else:
+            b[i] = 0.0
+
+
+@dace.program
+def chained_computed_middle(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
+    for i in range(LEN_1D):
+        if 0.0 <= a[i] * 2.0 < 1.0:
+            b[i] = 1.0
+        else:
+            b[i] = 0.0
+
+
 def test_simple_if():
     A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     ref = np.copy(A)
@@ -234,6 +261,50 @@ def test_simple_guard_reads_the_current_version():
     assert np.isclose(b[0], np.abs(a).max()), "guarded max reduction must yield max(|a|)"
 
 
+def test_a_chained_compare_is_the_conjunction_of_its_links():
+    """``0.0 <= a[i] <= 1.0`` is the commonest bounds test in ported code and used to raise a
+    BODYLESS NotImplementedError. Python defines it as ``(0.0 <= a[i]) and (a[i] <= 1.0)``."""
+    a = np.linspace(-1.0, 2.0, 16)
+    b = np.zeros(16)
+    chained_bounds(a=a, b=b, LEN_1D=16)
+    assert np.allclose(b, np.where((a >= 0.0) & (a <= 1.0), a, -1.0))
+
+
+def test_a_chained_compare_over_symbols_guards_the_branch():
+    """The links may be symbolic relations rather than data: ``0 <= i < LEN_1D - 1`` must fold into
+    ONE guard that is the conjunction of the two links -- the form sympy manipulates and codegen
+    lowers to ``&&``, rather than a relation the conjunction cannot take."""
+    sdfg = chained_symbolic_bounds.to_sdfg(simplify=False)
+    guards = [
+        cond.as_string for blk, _ in sdfg.all_nodes_recursive() if isinstance(blk, ConditionalBlock)
+        for cond, _branch in blk.branches if cond is not None
+    ]
+    assert guards == ['((0 <= i) and (i < (LEN_1D - 1)))'], guards
+    assert 'if (((0 <= i) && (i < (LEN_1D - 1))))' in sdfg.generate_code()[0].clean_code
+
+    a = np.arange(16, dtype=np.float64)
+    b = np.zeros(16)
+    chained_symbolic_bounds(a=a, b=b, LEN_1D=16)
+    expected = np.concatenate([a[1:], [0.0]])
+    assert np.allclose(b, expected)
+
+
+def test_a_chained_compare_reads_each_operand_once():
+    """Python evaluates the middle operand of ``x < y < z`` ONCE. Rebuilding the chain from AST
+    nodes would visit it per link, so ``a[i] * 2.0`` would be computed -- and ``a[i]`` read --
+    twice. One multiplying tasklet is the whole point of evaluating the operands up front."""
+    sdfg = chained_computed_middle.to_sdfg(simplify=False)
+    products = [
+        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and '*' in n.code.as_string
+    ]
+    assert len(products) == 1, f"the middle operand is computed {len(products)} times: {products}"
+
+    a = np.linspace(-1.0, 1.0, 16)
+    b = np.zeros(16)
+    chained_computed_middle(a=a, b=b, LEN_1D=16)
+    assert np.allclose(b, np.where((a * 2.0 >= 0.0) & (a * 2.0 < 1.0), 1.0, 0.0))
+
+
 if __name__ == "__main__":
     test_simple_if()
     test_call_if()
@@ -245,3 +316,6 @@ if __name__ == "__main__":
     test_if_test_call()
     test_guard_only_symbol_is_registered()
     test_simple_guard_reads_the_current_version()
+    test_a_chained_compare_is_the_conjunction_of_its_links()
+    test_a_chained_compare_over_symbols_guards_the_branch()
+    test_a_chained_compare_reads_each_operand_once()

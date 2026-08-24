@@ -18,6 +18,7 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.cpu_specialization import cpu_specialize
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, IDX_PREFIX,
                                                                                MASK_PREFIX, TOTAL_PREFIX)
 
@@ -62,8 +63,16 @@ def phases_under_a_loop(sdfg: dace.SDFG) -> bool:
 
 
 def build(program) -> dace.SDFG:
+    """Canonicalize, then specialize for the CPU -- the assertions below read emitted schedules.
+
+    The two are separate stages: ``canonicalize`` takes parallel wherever the choice is open and
+    ``cpu_specialize`` is what gives parallelism back for a scope that cannot pay for a region. A
+    test that counts ``#pragma omp parallel for`` is asking the second question, so it has to run
+    the second stage.
+    """
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    cpu_specialize(sdfg)
     sdfg.validate()
     return sdfg
 

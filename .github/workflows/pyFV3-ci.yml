@@ -30,6 +30,12 @@ jobs:
     steps:
      - name: Checkout to repository
        uses: actions/checkout@v7
+     - name: Install uv
+       uses: astral-sh/setup-uv@v7
+       with:
+         enable-cache: true
+         pyproject-file: pyproject.toml
+         cache-dependency-glob: pyproject.toml
      - name: Set matrix data
        id: set-matrix
        run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
@@ -56,13 +62,18 @@ jobs:
         path: 'dace'
         submodules: 'recursive'
 
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: 3.12
+        enable-cache: true
+        pyproject-file: dace/pyproject.toml
+        cache-dependency-glob: dace/pyproject.toml
 
     - name: Install OpenMPI
-      run: pip install openmpi
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopenmpi-dev openmpi-bin
 
     # Duplicated from .github/actions/setup-dace rather than taken from it: this job checks dace out
     # into a subdirectory and installs pyFV3 before dace on purpose, which the action's fused install
@@ -80,15 +91,20 @@ jobs:
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
-        pip install ./pyFV3[ndsl,test]
-        pip install ./dace
+        uv venv .venv
+        export VIRTUAL_ENV="$PWD/.venv"
+        export PATH="$VIRTUAL_ENV/bin:$PATH"
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
+        echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
+        uv pip install ./pyFV3[ndsl,test]
+        uv pip install ./dace
 
     - name: Print versions
       run: |
         gcc --version
         python --version
-        pip --version
-        pip list
+        uv --version
+        uv pip list
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)

@@ -92,6 +92,19 @@ augassign_ops = {
 # itself to reject the operand combinations numpy rejects.
 bitwise_augassign_ops = {'<<': 'LShift', '>>': 'RShift', '|': 'BitOr', '^': 'BitXor', '&': 'BitAnd'}
 
+#: Calls whose first positional argument (or ``shape=``) is an array SHAPE rather than data, so the
+#: arithmetic in it stays symbolic instead of being evaluated into a scalar transient. The
+#: ``*_like`` and ``*_scalar`` variants are absent on purpose: they take an array or no shape at all.
+SHAPE_ARGUMENT_FUNCTIONS = frozenset({
+    'numpy.empty',
+    'numpy.zeros',
+    'numpy.ones',
+    'numpy.full',
+    'numpy.ndarray',
+    'dace.define_local',
+    'dace.ndarray',
+})
+
 # Mappings for determining variable name based on operator
 _UNOP_TO_NAME = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
 _BINOP_TO_NAME = {
@@ -2995,6 +3008,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
+        # The write ends the version any promoted symbol was read from.
+        self.forget_promoted_scalar(target_name)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3797,8 +3812,14 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                                 Memlet.from_array(
                                                                                     result, self.sdfg.arrays[result])):
                         continue
-                    else:
-                        raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
+                    # Re-viewing the same slice of the same array is a no-op. ``col = a[0:2]`` twice
+                    # builds a second anonymous view, so the two results differ by name while the
+                    # data they see does not; compare what each one views instead.
+                    viewed, viewed_memlet = self.views[true_name]
+                    if (viewed in self.views and result in self.views and self.views[viewed] == self.views[result]
+                            and viewed_memlet == Memlet.from_array(viewed, self.sdfg.arrays[viewed])):
+                        continue
+                    raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
                 if (isinstance(result, str) and result in self.sdfg.arrays
                         and self.sdfg.arrays[result].is_equivalent(true_array)):
                     # Skip error if the arrays are defined exactly in the same way.
@@ -4192,7 +4213,21 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (shape, dtype)
 
-    def _parse_function_arg(self, arg: ast.AST):
+    def _parse_function_arg(self, arg: ast.AST, as_shape: bool = False):
+        """One call argument. ``as_shape`` marks the argument that is an array SHAPE.
+
+        A shape is symbolic, not data. Visiting ``np.empty(lp + 1)`` as an ordinary expression
+        evaluates the arithmetic into a scalar transient and promotes THAT to one opaque symbol, so
+        the extent becomes ``__sym_lp_plus_1``. A slice bound built from the same scalars keeps the
+        arithmetic (``__sym_lp + 1``), and the copy between the two arrays is then refused although
+        the extents are the same value. Promoting the LEAVES here gives both spellings one form.
+        """
+        if as_shape:
+            if isinstance(arg, (ast.Tuple, ast.List)):
+                return [self._parse_function_arg(element, as_shape=True) for element in arg.elts]
+            folded = self.slice_bound_over_promoted_leaves(arg)
+            if folded is not None:
+                return folded
         # Obtain a string representation
         result = self.visit(arg)
         if isinstance(result, (list, tuple)):
@@ -5026,6 +5061,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Set arguments
         args = []
+        shape_call = funcname in SHAPE_ARGUMENT_FUNCTIONS
 
         # NumPy ufunc support
         found_ufunc = False
@@ -5117,8 +5153,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     mpi_args.append(self._parse_function_arg(arg))
             args.extend(mpi_args)
         else:
-            args.extend([self._parse_function_arg(arg) for arg in node.args])
-        keywords = {arg.arg: self._parse_function_arg(arg.value) for arg in node.keywords}
+            args.extend([
+                self._parse_function_arg(arg, as_shape=shape_call and index == 0) for index, arg in enumerate(node.args)
+            ])
+        keywords = {
+            arg.arg: self._parse_function_arg(arg.value, as_shape=shape_call and arg.arg == 'shape')
+            for arg in node.keywords
+        }
 
         self._add_state('call_%d' % node.lineno)
         self.last_block.set_default_lineinfo(self.current_lineinfo)
@@ -5511,15 +5552,46 @@ class ProgramVisitor(ExtNodeVisitor):
             last = self._visit_op(node, last, node.values[i])
         return last
 
+    def evaluated_operand(self, node: ast.AST):
+        """The single value ``node`` evaluates to, raising on a tuple as the operand paths do."""
+        parsed = self._gettype(node)
+        if len(parsed) > 1:
+            raise DaceSyntaxError(self, node, 'Operand cannot be a tuple')
+        return parsed[0][0]
+
     def visit_Compare(self, node: ast.Compare):
-        if len(node.ops) > 1 or len(node.comparators) > 1:
-            raise NotImplementedError
-        binop_node = ast.BinOp(node.left,
-                               node.ops[0],
-                               node.comparators[0],
-                               lineno=node.lineno,
-                               col_offset=node.col_offset)
-        return self.visit_BinOp(binop_node)
+        """A comparison, chained or not. ``0 <= i < n`` is the commonest bounds test there is.
+
+        Python defines a chain as the conjunction of its links with every operand evaluated ONCE:
+        ``a < b <= c`` is ``(a < b) and (b <= c)`` where ``b`` is read a single time. Rebuilding the
+        chain out of AST nodes would visit each middle operand twice -- a second read of a
+        subscript, a second call of whatever produced it -- so the operands are evaluated here and
+        the VALUES are handed to :meth:`_visit_op`, which takes either (``visit_BoolOp`` already
+        does this with its accumulator).
+
+        The links are not short-circuited, exactly as ``and``/``or`` are not: an operand is a value
+        in a dataflow graph, so evaluating one the chain would have skipped costs a read, never a
+        side effect.
+        """
+        if len(node.ops) == 1:
+            binop_node = ast.BinOp(node.left,
+                                   node.ops[0],
+                                   node.comparators[0],
+                                   lineno=node.lineno,
+                                   col_offset=node.col_offset)
+            return self.visit_BinOp(binop_node)
+        operands = [self.evaluated_operand(operand) for operand in (node.left, *node.comparators)]
+        conjunction = ast.BoolOp(op=ast.And(), values=[], lineno=node.lineno, col_offset=node.col_offset)
+        result = None
+        for index, op in enumerate(node.ops):
+            link = ast.BinOp(left=node.left,
+                             op=op,
+                             right=node.comparators[index],
+                             lineno=node.lineno,
+                             col_offset=node.col_offset)
+            value = self._visit_op(link, operands[index], operands[index + 1])
+            result = value if result is None else self._visit_op(conjunction, result, value)
+        return result
 
     def _add_read_slice(self, array: str, node: ast.Subscript, expr: MemletExpr):
 
@@ -5643,39 +5715,53 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
-    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
+    def forget_promoted_scalar(self, scalar: str) -> None:
+        """Drop ``scalar``'s promoted symbol, because the scalar has just been written again.
+
+        The symbol carries the value the scalar had when it was read, so it belongs to that
+        ASSIGNMENT and not to the name. Keeping it across a rebind is what let a second array sized
+        from the same name collapse onto the first one's extent. Promotions cached under an
+        EXPRESSION need no invalidation: nothing rebinds a name they hold, and each read re-assigns
+        the symbol on its own interstate edge.
+        """
+        self.indirections.pop(scalar, None)
+
+    def promote_scalar_to_symbol(self,
+                                 scalar: str,
+                                 key: Optional[str] = None,
+                                 for_shape: bool = False) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
+        ONE symbol per scalar VERSION: the promotion is cached under ``key`` and dropped when the
+        scalar is written again (:meth:`forget_promoted_scalar`), so two shapes sized from the same
+        REASSIGNED name keep their own values -- while a shape and a slice bound built from the same
+        assignment share one symbol. Without that sharing ``a = np.empty(n); a[:n] = x`` sizes the
+        allocation from one symbol and the store from another, and a copy whose extents are equal by
+        construction is refused as a shape mismatch.
+
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
-        :param fresh: Mint a new suffixed symbol instead of reusing a cached one, so two shapes
-                      sized from the same reassigned scalar keep their own values.
+        :param key: Cache key, the scalar's name by default. Repeated promotions of the same
+                    EXPRESSION pass its text, so ``A_col[A_row[i]:A_row[i + 1]]`` and
+                    ``A_val[A_row[i]:A_row[i + 1]]`` get one symbol per bound and their extents stay
+                    comparable; each read mints its own scalar transient, so the name cannot say so.
+        :param for_shape: The symbol is an array extent, so it must resolve inside nested scopes,
+                          which look up free symbols in ``globals``. Subscript promotions stay out
+                          of ``globals``: they shadow names there.
         :return: The symbol carrying the scalar's value.
         """
-        key = key if key is not None else scalar
+        key = scalar if key is None else key
         desc = self.sdfg.arrays[scalar]
-        sym = None if fresh else self.indirections.get(key)
+        sym = self.indirections.get(key)
         if sym is None:
-            base = f'__sym_{scalar}'
-            if fresh:
-                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
-                # reuses; a later index on the same scalar would otherwise re-bind the extent.
-                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
-                name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
-            else:
-                name = base
-                try:
-                    self.sdfg.add_symbol(name, desc.dtype)
-                except FileExistsError:
-                    pass  # A cached promotion may re-add an existing symbol.
+            # A NEW name per version: re-minting the bare ``__sym_<scalar>`` after a rebind would
+            # re-bind the extent an earlier array already took.
+            reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
+            name = self.sdfg.add_symbol(find_new_name(f'__sym_{scalar}', reserved), desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
-            if not fresh:
-                self.indirections[key] = sym
-            else:
-                # Shape symbols must resolve inside nested scopes, which look up free symbols in
-                # ``globals``. Subscript promotions must stay out: they shadow names there.
-                self.globals[str(sym)] = sym
+            self.indirections[key] = sym
+        if for_shape:
+            self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
@@ -5731,7 +5817,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(desc, data.Scalar):
                 if desc.dtype not in dtypes.INTEGER_TYPES:
                     return None
-                repl[leaf] = self.promote_scalar_to_symbol(resolved, key=name)
+                repl[leaf] = self.promote_scalar_to_symbol(resolved)
             elif desc is not None:
                 return None  # an array cannot be a bound
             elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):

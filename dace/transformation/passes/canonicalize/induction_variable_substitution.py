@@ -668,17 +668,26 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
 
 
 def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -> bool:
-    """Whether ``sym_name`` is assigned on a direct interstate edge of any
-    ``LoopRegion`` other than ``loop`` -- i.e. it is a counter shared with a
-    nested or enclosing loop (TSVC s126). Such a symbol has no per-loop closed
-    form, so the caller refuses to substitute it."""
-    for region in sdfg.all_control_flow_regions():
-        if not isinstance(region, LoopRegion) or region is loop:
-            continue
-        for e in region.edges():
-            if sym_name in (e.data.assignments or {}):
-                return True
-    return False
+    """Whether ``sym_name`` is also stepped by a loop NESTED INSIDE ``loop``.
+
+    Such a counter has no per-loop closed form here: ``loop``'s own step is not the only thing that
+    happens to it per iteration, so ``sym + trip * step`` under-counts by whatever the inner loop
+    added.
+
+    A step in an ENCLOSING or a SIBLING loop is a different matter and is allowed. The substitution
+    reads ``sym`` as the value live at THIS loop's entry and materialises ``sym + trips * step`` on
+    the way out, so the outer picture is preserved whatever else steps the symbol elsewhere. That is
+    what unwinds a two-level counter (TSVC ``s126``: ``k += 1`` in the inner loop and once more per
+    outer iteration): closing the inner loop turns its whole contribution into one exit assignment,
+    which leaves the outer loop with a single step per iteration for the next round of the pass'
+    fixed point to close in turn.
+
+    :param sdfg: The SDFG owning ``loop``.
+    :param loop: The loop whose counter is being closed.
+    :param sym_name: The counter symbol.
+    """
+    inner = [r for r in loop.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r is not loop]
+    return any(sym_name in (e.data.assignments or {}) for region in inner for e in region.edges())
 
 
 def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
@@ -990,6 +999,47 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
     return False
 
 
+def staged_iedge_rhs(rhs: str, src_state, sdfg: SDFG):
+    """The arithmetic an interstate assignment's RHS stands for when it is staged through a
+    transient, or ``None`` when ``rhs`` is not such a staging and should be read as written.
+
+    The frontend does not always leave a bare ``k := k + inc`` on the edge. When the step is a
+    promoted scalar argument it emits the arithmetic as a TASKLET writing a transient scalar and
+    binds the symbol to that slot -- ``k := k_plus_inc`` with ``k_plus_inc = k + dace.int64(inc)``
+    (TSVC ``s318``) -- so the value the edge carries sits one dataflow hop away and the edge itself
+    names nothing but a buffer. Resolve that hop when ``rhs`` is exactly such a slot: a transient
+    scalar written once, in the edge's own source state, by a single-statement tasklet with no data
+    inputs. No inputs means every operand is already a symbol, so the tasklet body IS the
+    expression; a data input would make it a runtime value with no symbolic form.
+    """
+    desc = sdfg.arrays.get(rhs)
+    if desc is None or not desc.transient or desc.total_size != 1 or not isinstance(src_state, SDFGState):
+        return None
+    writes = [n for n in src_state.data_nodes() if n.data == rhs and src_state.in_degree(n) > 0]
+    if len(writes) != 1 or src_state.in_degree(writes[0]) != 1:
+        return None
+    in_edge = src_state.in_edges(writes[0])[0]
+    tasklet = in_edge.src
+    if (not isinstance(tasklet, nodes.Tasklet) or src_state.in_degree(tasklet) > 0 or src_state.out_degree(tasklet) != 1
+            or tasklet.has_side_effects(sdfg)):
+        return None
+    code = tasklet.code
+    if code.language is not dtypes.Language.Python or len(code.code) != 1:
+        return None
+    stmt = code.code[0]
+    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+        return None
+    if astutils.rname(stmt.targets[0]) != in_edge.src_conn:
+        return None
+    value = _UnwrapTypecasts().visit(copy.deepcopy(stmt.value))
+    try:
+        return symbolic.pystr_to_symbolic(astutils.unparse(value))
+    except Exception:
+        # A body that is not an arithmetic expression (a call, a comparison) carries no value
+        # this can stand in for.
+        return None
+
+
 def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
                              sdfg_free_symbols: Set[str]) -> bool:
     """Substitute an interstate-edge induction variable (``sym := sym + literal``)
@@ -1076,7 +1126,8 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             continue
         ((lhs, rhs), ) = e.data.assignments.items()
         try:
-            rhs_expr = symbolic.pystr_to_symbolic(rhs)
+            staged = staged_iedge_rhs(rhs, e.src, sdfg)
+            rhs_expr = symbolic.pystr_to_symbolic(rhs) if staged is None else staged
             lhs_sym = symbolic.pystr_to_symbolic(lhs)
             diff = symbolic.simplify(rhs_expr - lhs_sym)
         except Exception:

@@ -15,6 +15,15 @@ The match is conservative: a constant positive step, a body made only of states,
 subscripts and/or in interstate gather assignments such as ``idx = b[ip[i+k]]``),
 structurally identical lanes, and contiguous coverage (``step == m*g``, or
 overlapping pure writes). Anything else is left untouched.
+
+A lane that READS PAST its own position -- TSVC ``s116``, ``a[i+k] = a[i+k+1] *
+a[i+k]`` -- does not fit that per-edge classifier: its ``m`` lanes carry ``m + 1``
+distinct offsets, so ``step < m*g`` and the read-modify-write refusal fires.
+:meth:`RerollUnrolledLoops._try_reroll_chain` handles it on a second pass, keying
+a lane on the VALUE COMPONENT it forms and on the offset that component stores
+at, with the read-ahead as one more boundary edge at a relative offset every lane
+must agree on. It additionally requires the lanes to RUN in ascending offset
+order, which is what makes the read-ahead see the same value in both forms.
 """
 
 import re
@@ -23,6 +32,7 @@ from typing import Dict, List, Optional, Tuple
 import dace
 from dace import symbolic
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -125,7 +135,7 @@ class RerollUnrolledLoops(ppl.Pass):
             rerolled = 0
             for sd in sdfg.all_sdfgs_recursive():
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                    if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg)
+                    if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg) or self._try_reroll_chain(cfg)
                                                         or self._try_reroll_accumulator_reduction(cfg)):
                         rerolled += 1
             if rerolled == 0:
@@ -559,6 +569,208 @@ class RerollUnrolledLoops(ppl.Pass):
             for s in drop_syms:
                 edge.data.assignments.pop(s, None)
 
+        self._rewrite_step(loop, loop_var, g, m)
+        return True
+
+    def _cut_nodes(self, state: SDFGState) -> Dict:
+        """AccessNodes of the loop's VISIBLE containers -- where the value walk stops.
+
+        A lane's private values live in transients; everything a lane reads from or stores to the
+        outside world crosses one of these nodes, which is what makes them the component boundary.
+
+        :param state: The body state.
+        :returns: The non-transient AccessNodes of ``state``.
+        """
+        arrays = state.sdfg.arrays
+        return dict.fromkeys(n for n in state.nodes()
+                             if isinstance(n, nodes.AccessNode) and not (n.data in arrays and arrays[n.data].transient))
+
+    def _cut_side_subset(self, edge, cut_node):
+        """The subset of ``edge`` that indexes ``cut_node``'s container.
+
+        :param edge: A boundary edge of a lane component.
+        :param cut_node: The boundary AccessNode the edge touches.
+        :returns: The memlet subset addressing ``cut_node``'s array, or ``None``.
+        """
+        mem = edge.data
+        if mem is None or mem.data is None:
+            return None
+        return mem.subset if mem.data == cut_node.data else mem.other_subset
+
+    def _topological_index(self, state: SDFGState) -> Dict[int, int]:
+        """Position of every node of ``state`` in a topological order, by node id.
+
+        :param state: The body state.
+        :returns: ``{node_id: position}``, unreachable nodes appended in insertion order.
+        """
+        try:
+            order = list(sdutil.dfs_topological_sort(state))
+        except Exception:
+            order = []
+        idx: Dict[int, int] = {}
+        for n in order:
+            idx.setdefault(state.node_id(n), len(idx))
+        for n in state.nodes():
+            idx.setdefault(state.node_id(n), len(idx))
+        return idx
+
+    def _value_components(self, states: List[SDFGState], cut: List[Dict]) -> List[List[Tuple[int, nodes.Node]]]:
+        """Partition the body's non-boundary nodes into connected VALUE components.
+
+        Two nodes are in one component when a value flows between them: along a non-empty memlet
+        that stays clear of the boundary, or through two AccessNodes of the same transient (a
+        component crosses a state boundary exactly there, which is how the frontend hands a lane's
+        read-ahead to the state that consumes it). Empty memlets are ordering edges and carry no
+        value, so they never join two components -- in ``s116`` they are precisely what ties one
+        lane's operands to the next lane's, and honouring them would fuse the whole body into one.
+
+        :param states: The body states.
+        :param cut: Per-state boundary AccessNodes, from :meth:`_cut_nodes`.
+        :returns: One list of ``(state index, node)`` pairs per component, deterministically ordered.
+        """
+        parent: Dict[Tuple[int, int], Tuple[int, int]] = {}
+
+        def find(key):
+            while parent[key] != key:
+                parent[key] = parent[parent[key]]
+                key = parent[key]
+            return key
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        for si, st in enumerate(states):
+            for n in st.nodes():
+                if n not in cut[si]:
+                    key = (si, st.node_id(n))
+                    parent[key] = key
+        for si, st in enumerate(states):
+            for e in st.edges():
+                if e.data is None or e.data.is_empty() or e.src in cut[si] or e.dst in cut[si]:
+                    continue
+                union((si, st.node_id(e.src)), (si, st.node_id(e.dst)))
+        first_seen: Dict[str, Tuple[int, int]] = {}
+        for si, st in enumerate(states):
+            for n in st.nodes():
+                if not isinstance(n, nodes.AccessNode) or n in cut[si]:
+                    continue
+                key = (si, st.node_id(n))
+                union(first_seen.setdefault(n.data, key), key)
+        groups: Dict[Tuple[int, int], List[Tuple[int, nodes.Node]]] = {}
+        for key in sorted(parent):
+            groups.setdefault(find(key), []).append((key[0], states[key[0]].node(key[1])))
+        return list(groups.values())
+
+    def _try_reroll_chain(self, loop: LoopRegion) -> bool:
+        """Re-roll a lane chain whose lanes READ PAST their own position (TSVC ``s116``).
+
+        :meth:`_try_reroll` keys a lane on the offset an edge carries, so a lane that reads
+        ``a[i + k + 1]`` while storing to ``a[i + k]`` contributes TWO offsets and the ``m`` lanes
+        look like ``m + 1`` of them -- ``step < m*g`` then meets the read-modify-write refusal and
+        the chain is left unrolled. Here a lane is a VALUE COMPONENT of the body instead, and its
+        offset is the offset it STORES at; the read-ahead is one more boundary edge of that
+        component, at a relative offset every lane must agree on.
+
+        Legality, given ``m`` lanes at ``{0, g, ..., (m-1)g}`` with ``step == m*g`` (every position
+        stored exactly once) and one shared set of relative offsets: lane ``k`` reading relative
+        ``r > 0`` reads a position lane ``k + r/g`` has not stored yet, and the re-rolled step-``g``
+        loop reads that same position ``r/g`` iterations early -- also unstored. For ``r < 0`` both
+        forms read a position already stored. That holds only while the lanes RUN in ascending
+        offset order, which is checked: in a descending body lane ``k``'s read-ahead would see a
+        stored value the ascending re-rolled loop does not.
+
+        :param loop: The candidate loop region.
+        :returns: ``True`` if the loop matched and was re-rolled.
+        """
+        loop_var = loop.loop_variable
+        if not loop_var:
+            return False
+        stride = loop_analysis.get_loop_stride(loop)
+        step = _const_int(stride) if stride is not None else None
+        if step is None or step < 2:
+            return False
+        states = self._body_states(loop)
+        if states is None:
+            return False
+        # A per-lane interstate symbol names the offset of a lane's READ, not of its store; that
+        # shape (the ``s353`` gather) is ``_try_reroll``'s and this path does not model it.
+        if self._interstate_lane_symbols(loop, loop_var):
+            return False
+
+        cut = [self._cut_nodes(st) for st in states]
+        comps = self._value_components(states, cut)
+        if not comps:
+            return False
+        owner: Dict[Tuple[int, int], int] = {}
+        for ci, comp in enumerate(comps):
+            for si, node in comp:
+                owner[(si, states[si].node_id(node))] = ci
+
+        bounds: List[List] = [[] for _ in comps]
+        for si, st in enumerate(states):
+            for e in st.edges():
+                if e.data is None or e.data.is_empty():
+                    continue
+                is_read, stores = e.src in cut[si], e.dst in cut[si]
+                if is_read and stores:
+                    return False  # a bare container-to-container copy belongs to no lane
+                if not is_read and not stores:
+                    continue
+                inner = e.dst if is_read else e.src
+                bounds[owner[(si, st.node_id(inner))]].append((si, e, e.src if is_read else e.dst, is_read))
+
+        topo = [self._topological_index(st) for st in states]
+        lanes: Dict[int, int] = {}
+        sigs: Dict[int, List[str]] = {}
+        order: Dict[int, Tuple[int, int]] = {}
+        for ci, comp in enumerate(comps):
+            offsets = []
+            for si, e, node, is_read in bounds[ci]:
+                off, ok = self._edge_offset(self._cut_side_subset(e, node), loop_var, {})
+                # A loop-invariant READ (a scalar coefficient) is shared by every lane and stays;
+                # a loop-invariant STORE is a carried value the re-roll would fold into one lane.
+                if not ok or (off is None and not is_read):
+                    return False
+                offsets.append((is_read, node.data, off, si, e))
+            stored_at = dict.fromkeys(off for is_read, _, off, _, _ in offsets if not is_read)
+            if len(stored_at) != 1:
+                return False
+            d = next(iter(stored_at))
+            if d in lanes:
+                return False
+            lanes[d] = ci
+            sigs[d] = sorted('%s|%s|%s' % ('r' if is_read else 'w', name, 'inv' if off is None else off - d)
+                             for is_read, name, off, _, _ in offsets)
+            sigs[d] += sorted(n.code.as_string for _, n in comp if isinstance(n, nodes.Tasklet))
+            order[d] = min((si, topo[si][states[si].node_id(e.dst)]) for is_read, _, _, si, e in offsets if not is_read)
+
+        distinct = sorted(lanes)
+        m = len(distinct)
+        if m < 2 or distinct[0] != 0:
+            return False
+        g = distinct[1]
+        if g <= 0 or distinct != [j * g for j in range(m)]:
+            return False
+        # Exact coverage only: a gap would leave positions the step-``g`` loop wrongly fills, an
+        # overlap would store a position twice, and both break the read-ahead argument above.
+        if step != m * g:
+            return False
+        if any(sigs[d] != sigs[0] for d in distinct[1:]):
+            return False
+        if sorted(distinct, key=lambda d: order[d]) != distinct:
+            return False
+
+        for d in distinct[1:]:
+            for si, node in comps[lanes[d]]:
+                st = states[si]
+                if node in st.nodes():
+                    st.remove_node(node)
+        for st in states:
+            for n in list(st.nodes()):
+                if isinstance(n, nodes.AccessNode) and st.degree(n) == 0:
+                    st.remove_node(n)
         self._rewrite_step(loop, loop_var, g, m)
         return True
 

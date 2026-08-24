@@ -1965,6 +1965,67 @@ def test_multi_slot_same_array_five_carries():
     assert np.allclose(acc, exp), f'multi-slot scan diverged: max diff {np.abs(acc - exp).max():.2e}'
 
 
+def test_linear_recurrence_is_refused_not_lifted_as_a_product_scan():
+    """``out[i] = out[i-1]*x[i] + x[i]`` is a first-order LINEAR recurrence, not a scan.
+
+    Its inner ``_Mult_`` is a perfectly shaped PRODUCT update -- carry on one side, an array slice
+    on the other -- so a matcher that only looks at that tasklet claims the loop and lifts a product
+    scan, whose result is then ADDED to. That computes something else entirely; the kernel came back
+    wrong by five orders of magnitude. The recurrence needs the affine monoid, which ``Scan`` does
+    not have, so the only right answer is to leave the loop alone.
+    """
+
+    @dace.program
+    def linear_recurrence(out: dace.float64[N], x: dace.float64[N]):
+        for i in range(1, N):
+            out[i] = out[i - 1] * x[i] + x[i]
+
+    sdfg = linear_recurrence.to_sdfg(simplify=True)
+    before = sdfg.hash_sdfg()
+    assert LoopToScan().apply_pass(sdfg, {}) is None, 'a linear recurrence must not lift to a scan'
+    assert _num_scan_nodes(sdfg) == 0
+    assert sdfg.hash_sdfg() == before, 'a pass that does not apply must not mutate'
+
+    n = 32
+    rng = np.random.default_rng(3)
+    seed, x = rng.random(n) * 0.5 + 0.5, rng.random(n) * 0.5 + 0.5
+    want = seed.copy()
+    for i in range(1, n):
+        want[i] = want[i - 1] * x[i] + x[i]
+    got = seed.copy()
+    sdfg(out=got, x=x, N=n)
+    assert np.allclose(got, want), f'max|diff| = {np.max(np.abs(got - want)):.3e}'
+
+
+def test_delta_may_be_a_computed_expression():
+    """The delta is any per-iteration value, and the body may keep folding in with the SAME op.
+
+    ``out[i] = out[i-1] + x[i]*y[i] + x[i]*z[i]`` hands the carry to the inner ``+`` and combines the
+    second product afterwards; that is the same scan because ``+`` associates, and refusing it would
+    give up every kernel whose delta is more than one array slice.
+    """
+
+    @dace.program
+    def computed_delta(out: dace.float64[N], x: dace.float64[N], y: dace.float64[N], z: dace.float64[N]):
+        for i in range(1, N):
+            out[i] = out[i - 1] + x[i] * y[i] + x[i] * z[i]
+
+    sdfg = computed_delta.to_sdfg(simplify=True)
+    assert LoopToScan().apply_pass(sdfg, {}) == 1
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 32
+    rng = np.random.default_rng(4)
+    seed = rng.random(n)
+    x, y, z = rng.random(n), rng.random(n), rng.random(n)
+    want = seed.copy()
+    for i in range(1, n):
+        want[i] = want[i - 1] + x[i] * y[i] + x[i] * z[i]
+    got = seed.copy()
+    sdfg(out=got, x=x, y=y, z=z, N=n)
+    assert np.allclose(got, want), f'max|diff| = {np.max(np.abs(got - want)):.3e}'
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

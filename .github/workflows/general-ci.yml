@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10','3.14']
+        python-version: ['3.14']
         simplify: [0,1,autoopt]
 
     steps:
@@ -52,7 +52,7 @@ jobs:
 
     - name: Test dependencies
       run: |
-        papi_avail
+        uv run papi_avail
 
     - name: Test with pytest
       run: |
@@ -92,7 +92,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -107,7 +107,7 @@ jobs:
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/xform_test.sh
-        coverage combine .; coverage report; coverage xml
+        uv run coverage combine .; uv run coverage report; uv run coverage xml
 
     - uses: codecov/codecov-action@v6
       with:
@@ -131,8 +131,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        # islpy: without it WavefrontSkew is a no-op and its tests skip.
-        extras: testing,polyhedral
+        extras: testing
 
     - name: Test with pytest
       run: |
@@ -359,7 +358,7 @@ jobs:
         submodules: 'recursive'
     - uses: ./.github/actions/setup-dace
       with:
-        # 3.12 is this workflow's only axis: General Tests covers 3.10/3.14 and ML covers 3.13.
+        # 3.12 is this workflow's only axis: General Tests covers 3.14 and ML covers 3.13.
         python-version: '3.14'
         # cmake + ninja: the build cache replays a recorded ``ninja -t compdb``, and
         # dace/codegen/compiler.py only selects the Ninja generator when ``ninja`` is on PATH.

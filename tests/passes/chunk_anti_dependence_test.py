@@ -12,6 +12,7 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
@@ -78,11 +79,48 @@ def _chunk_maps(sdfg):
     ]
 
 
+def _chunk_bodies(sdfg):
+    """Per chunk map, what its scope holds: the ``LoopRegion`` labels, and the inner map params."""
+    bodies = []
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.MapEntry) and node.map.params[0].startswith('antidep_chunk')):
+                continue
+            scope = state.scope_subgraph(node, include_entry=False, include_exit=False)
+            loops = sorted(region.label for inner in scope.nodes() if isinstance(inner, nodes.NestedSDFG)
+                           for region in inner.sdfg.all_control_flow_regions(recursive=True)
+                           if isinstance(region, LoopRegion))
+            maps = sorted(n.map.params[0] for n in scope.nodes() if isinstance(n, nodes.MapEntry))
+            bodies.append((loops, maps))
+    return sorted(bodies)
+
+
 def _ref_shift(a, b):
     out = a.copy()
     for i in range(len(a) - 1):
         out[i] = out[i + 1] + b[i]
     return out
+
+
+def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
+    """A Map asserts that its iterations carry NO dependence. The in-chunk sweep carries one.
+
+    Iteration ``i`` reads ``a[i + 1]``, which iteration ``i + 1`` overwrites, so reading the LIVE
+    array inside a chunk is legal only in order -- which is the whole trade this pass makes. A
+    ``Sequential`` schedule does not say that; it is a lowering hint, and consumers are entitled to
+    act on the parallelism claim anyway. The tile vectorizer did: it widened the sweep and sank the
+    ``a[i + 1]`` load past the ``a[i]`` store, so seven lanes in eight read values the same tile had
+    just overwritten. Only the CHUNKS are parallel, so only they are a map.
+    """
+    sdfg = _canonical(_shift)
+    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    bodies = _chunk_bodies(sdfg)
+    assert len(bodies) == 2, f'the body and the seam iterations each keep their chunk map: {bodies}'
+    sweeps = [(loops, maps) for loops, maps in bodies if loops]
+    assert len(sweeps) == 1, f'exactly one chunk map holds the in-chunk sweep: {bodies}'
+    assert len(sweeps[0][0]) == 1 and not sweeps[0][1], f'the sweep is a loop, not a map: {bodies}'
 
 
 def test_chunk_rewrite_is_bit_exact():
@@ -234,6 +272,7 @@ def test_chunk_rewrite_is_idempotent():
 
 
 if __name__ == '__main__':
+    test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
     test_chunk_rewrite_is_bit_exact()
     test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide()
     test_chunk_rewrite_copies_one_element_per_chunk()
@@ -254,12 +293,15 @@ def test_the_full_pipeline_reaches_the_seam_rewrite():
     inline the map body and fuse the snapshot copy in. It is -- but not into the shape the matcher
     needs, and it matched nothing there. The fuse / collapse / terminal-``LoopToMap`` stages that
     follow are what put the copy and its consumer map in one state with the read spelled as a
-    point, so the pass belongs in the terminal CPU band. Asserting on the seam buffer here makes a
-    future move that re-breaks the match fail loudly instead of quietly costing the traffic back.
+    point, so the pass belongs in the CPU specialization stage, which runs after that whole
+    pipeline. Asserting on the seam buffer here makes a future move that re-breaks the match fail
+    loudly instead of quietly costing the traffic back.
     """
     from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.cpu_specialization import cpu_specialize
 
     sdfg = canonicalize(_shift.to_sdfg(simplify=True), validate=True, validate_all=False, target='cpu')
+    cpu_specialize(sdfg)
     assert [n for n in sdfg.arrays if n.endswith('_antidep_seam')], 'ChunkAntiDependence did not fire'
     assert not _snapshot_copies(sdfg), 'the whole-window snapshot copy survived the rewrite'
 

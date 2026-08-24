@@ -28,8 +28,7 @@ from dace.libraries.blas.environments import openblas
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage,
                                                     libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import SequentializeUnprofitableParallelScopes
-from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
+from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
@@ -336,7 +335,10 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
                     f"schedule (only top-level maps parallelize) -- nesting emits stacked parallel regions.")
 
 
-def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -> SDFG:
+def finalize_for_target(sdfg: SDFG,
+                        target: str = 'cpu',
+                        validate: bool = True,
+                        break_anti_dependence: bool = True) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
     Selects fast library implementations (leaving the nodes un-expanded for
@@ -352,6 +354,9 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     :param sdfg: A canonicalized SDFG; for ``target='gpu'``, an offloaded one.
     :param target: ``'cpu'`` or ``'gpu'`` (selects the fast-library priority).
     :param validate: Validate the SDFG once at the end.
+    :param break_anti_dependence: Forwarded to the CPU specialization stage: chunk the
+                                  anti-dependence snapshots canonicalization left behind. Pass
+                                  ``False`` when canonicalization did not break anti dependences.
     :returns: The same ``sdfg`` instance, finalized.
     :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
     """
@@ -374,17 +379,16 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Storage-derived scheduling can leave a map/libnode/nested-SDFG on the device-parallel schedule
-    # while it is re-entered inside a parallel map or a long loop. Resolving that is the device
-    # specialization band's job, not canonicalization's, so the tail runs the band's own pass here
-    # -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules. On CPU the
-    # pass is the fork/join cost model (idempotent, so a graph canonicalized with ``target='cpu'``
-    # is simply re-confirmed); on GPU it is the nested-kernel resolution.
+    # Canonicalization stops at the maximally parallel form, so the target's specialization stage
+    # runs here -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules.
+    # On CPU that is the whole cpu_specialize stage (calibration, anti-dependence chunking,
+    # oversized-intermediate recompute, the fork/join cost model, transfer specialization); on GPU
+    # it is the nested-kernel resolution. Both are idempotent, so finalizing an already-specialized
+    # graph re-confirms the same verdicts rather than compounding them.
     if device == dtypes.DeviceType.GPU:
         SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     else:
-        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-        SpecializeCpuTransfers().apply_pass(sdfg, {})
+        cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
 
     canonicalize_set_fast_implementations(sdfg, device)
     # Select the fast implementation per library node but DO NOT expand here: a library

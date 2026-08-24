@@ -20,7 +20,10 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 
 N = dace.symbol('N')
 
@@ -586,3 +589,148 @@ def test_lanes_writing_different_arrays_are_not_rerolled():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+# --------------------------------------------------------------------------
+# Read-ahead lane chains (TSVC ``s116``): lane ``k`` STORES at ``i + k`` and
+# READS at ``i + k + 1``, so the lane offsets a per-edge classifier sees are
+# ``{0..m}`` -- one more than the ``m`` lanes there actually are. A lane is a
+# value component here, keyed on the offset it stores at, and the read-ahead is
+# just one more boundary edge of that component.
+#
+# The re-roll is only sound while the lanes RUN in ascending offset order (lane
+# ``k``'s read-ahead must see the value from BEFORE lane ``k+1`` stored), every
+# lane must agree on the relative offsets it touches, and the lanes must cover
+# the step exactly. The three refusal tests below pin one violation each.
+# --------------------------------------------------------------------------
+
+
+@dace.program
+def read_ahead_chain(a: dace.float64[N]):
+    for i in range(0, N - 4, 4):
+        a[i] = a[i + 1] * a[i]
+        a[i + 1] = a[i + 2] * a[i + 1]
+        a[i + 2] = a[i + 3] * a[i + 2]
+        a[i + 3] = a[i + 4] * a[i + 3]
+
+
+@dace.program
+def read_ahead_descending(a: dace.float64[N]):
+    for i in range(0, N - 4, 4):
+        a[i + 3] = a[i + 4] * a[i + 3]
+        a[i + 2] = a[i + 3] * a[i + 2]
+        a[i + 1] = a[i + 2] * a[i + 1]
+        a[i] = a[i + 1] * a[i]
+
+
+@dace.program
+def read_ahead_uneven(a: dace.float64[N]):
+    for i in range(0, N - 4, 4):
+        a[i] = a[i + 1] * a[i]
+        a[i + 1] = a[i + 3] * a[i + 1]
+        a[i + 2] = a[i + 3] * a[i + 2]
+        a[i + 3] = a[i + 4] * a[i + 3]
+
+
+@dace.program
+def read_ahead_gap(a: dace.float64[N]):
+    for i in range(0, N - 8, 8):
+        a[i] = a[i + 1] * a[i]
+        a[i + 1] = a[i + 2] * a[i + 1]
+        a[i + 2] = a[i + 3] * a[i + 2]
+        a[i + 3] = a[i + 4] * a[i + 3]
+
+
+def _reroll_only(program):
+    """Run ``RerollUnrolledLoops`` alone. :returns: ``(rerolled count or None, sdfg)``."""
+    sdfg = program.to_sdfg(simplify=True)
+    return RerollUnrolledLoops().apply_pass(sdfg, {}), sdfg
+
+
+def _loop_steps(sdfg):
+    return sorted(
+        str(loop_analysis.get_loop_stride(r)) for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def _read_ahead_ref(a0, n, step, lanes, read_at):
+    exp = a0.copy()
+    for i in range(0, n - step, step):
+        for k, r in zip(lanes, read_at):
+            exp[i + k] = exp[i + r] * exp[i + k]
+    return exp
+
+
+def test_read_ahead_chain_rerolls_to_one_lane():
+    count, sdfg = _reroll_only(read_ahead_chain)
+    assert count == 1, 'the s116 read-ahead chain must re-roll'
+    assert _loop_steps(sdfg) == ['1'], 'the step-4 chain must become a step-1 loop'
+    # One lane left: one multiply, storing at the loop variable and reading one position ahead.
+    muls = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and '*' in n.code.as_string]
+    assert len(muls) == 1, f'expected the 4 lanes to collapse to 1 multiply, got {len(muls)}'
+    subsets = sorted(
+        {str(e.data.subset)
+         for st in sdfg.states()
+         for e in st.edges() if e.data is not None and e.data.data == 'a'})
+    assert subsets == ['i', 'i + 1'], f'the surviving lane must touch only i and i + 1, got {subsets}'
+
+
+def test_read_ahead_chain_value_and_map():
+    n = 21
+    rng = np.random.default_rng(11)
+    a0 = rng.random(n) + 0.5
+    sdfg = read_ahead_chain.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = a0.copy()
+    sdfg(a=got, N=n)
+    assert np.allclose(got, _read_ahead_ref(a0, n, 4, (0, 1, 2, 3), (1, 2, 3, 4)))
+    assert _nmaps(sdfg) >= 1, 'the re-rolled read-ahead chain must reach a map'
+
+
+def test_read_ahead_descending_is_refused():
+    # Lane 3 runs first, so lane 2 reads the value lane 3 just stored -- the ascending re-rolled
+    # loop would read the pre-store value instead.
+    count, _ = _reroll_only(read_ahead_descending)
+    assert count is None, 'a descending lane chain must not re-roll'
+
+
+def test_read_ahead_descending_value_preserving():
+    n = 21
+    rng = np.random.default_rng(12)
+    a0 = rng.random(n) + 0.5
+    sdfg = read_ahead_descending.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = a0.copy()
+    sdfg(a=got, N=n)
+    exp = a0.copy()
+    for i in range(0, n - 4, 4):
+        for k in (3, 2, 1, 0):
+            exp[i + k] = exp[i + k + 1] * exp[i + k]
+    assert np.allclose(got, exp)
+
+
+def test_read_ahead_uneven_relative_offset_is_refused():
+    # Lane 1 reads two positions ahead while every other lane reads one: the lanes are not copies
+    # of each other, so no single-position body reproduces them.
+    count, _ = _reroll_only(read_ahead_uneven)
+    assert count is None, 'lanes that disagree on their relative offsets must not re-roll'
+
+
+def test_read_ahead_gap_is_refused():
+    # 4 lanes of spacing 1 under a step of 8: positions i+4..i+7 are never stored, and a step-1
+    # loop would store them.
+    count, _ = _reroll_only(read_ahead_gap)
+    assert count is None, 'a chain that does not cover its step must not re-roll'
+
+
+def test_read_ahead_gap_value_preserving():
+    n = 29
+    rng = np.random.default_rng(13)
+    a0 = rng.random(n) + 0.5
+    sdfg = read_ahead_gap.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = a0.copy()
+    sdfg(a=got, N=n)
+    assert np.allclose(got, _read_ahead_ref(a0, n, 8, (0, 1, 2, 3), (1, 2, 3, 4)))

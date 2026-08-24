@@ -1,11 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Transpose`` over an operand with a unit extent, on every expansion that can run here.
+"""``Transpose`` over a degenerate or strided operand, on every expansion that can run here.
 
 A ``(1, 1)`` transpose is a one-element copy, and the BLAS expansions take ``_inp`` / ``_out`` as
 buffers while the codegen types a single-element subset as a SCALAR -- so ``cblas_domatcopy`` was
 handed a value where it declared a pointer and the BUILD failed. The frontend used to route every
 unit extent around the node with a hand-written map; these pin that the node itself handles them,
 which is what let that detour go.
+
+That detour also covered a case the unit-extent tests do not: a strided operand. Every BLAS call
+here states the leading dimension as the operand's own extent, so a COLUMN of a wider array walks
+the wrong memory and answers plausible wrong numbers instead of failing (npbench ``nbody``, whose
+``pos[:, 0:1]`` is an ``(N, 1)`` view of an ``(N, 3)`` array).
 """
 import numpy as np
 import pytest
@@ -40,6 +45,25 @@ def run(shape, implementation):
     sdfg(a=a.copy(), out=out)
     # A transpose moves elements, it does not compute: anything but bitwise equality is a defect.
     assert np.array_equal(out, a.T), f"{implementation} {shape}: {out} != {a.T}"
+
+
+#: A column of a wider matrix: an ``(N, 1)`` operand whose consecutive elements sit ``COLUMNS``
+#: apart, which is the shape ``pos[:, 0:1]`` gives npbench's ``nbody``.
+ROWS, COLUMNS = 5, 3
+
+
+def build_strided(implementation):
+    """A Transpose whose input memlet is a strided COLUMN of a wider array."""
+    sdfg = dace.SDFG(f"transpose_strided_{implementation}")
+    sdfg.add_array("a", [ROWS, COLUMNS], dace.float64)
+    sdfg.add_array("out", [1, ROWS], dace.float64)
+    state = sdfg.add_state()
+    node = Transpose("t", dace.float64)
+    node.implementation = implementation
+    state.add_node(node)
+    state.add_edge(state.add_read("a"), None, node, "_inp", dace.Memlet(f"a[0:{ROWS}, 0:1]"))
+    state.add_edge(node, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
+    return sdfg
 
 
 @pytest.mark.parametrize("shape", SHAPES)
@@ -78,9 +102,38 @@ def test_a_genuine_matrix_still_reaches_the_blas_call(implementation):
         for n, _ in sdfg.all_nodes_recursive()), (f"{implementation} lost its library call")
 
 
+@pytest.mark.parametrize("implementation", ["MKL", "OpenBLAS", "cuBLAS"])
+def test_a_strided_operand_never_reaches_a_blas_call(implementation):
+    """Every BLAS call here states the leading dimension as the operand's own extent, so a column of
+    a wider array walks the wrong memory and answers plausible wrong numbers rather than failing.
+    Expanding to an SDFG rather than a CPP tasklet is what says the interception happened."""
+    from dace.sdfg.nodes import NestedSDFG
+    sdfg = build_strided(implementation)
+    sdfg.expand_library_nodes()
+    assert any(
+        isinstance(n, NestedSDFG)
+        for n, _ in sdfg.all_nodes_recursive()), (f"{implementation} emitted a library call for a strided operand")
+
+
+@pytest.mark.parametrize("implementation", ["pure", "OpenBLAS"])
+def test_a_strided_operand_transposes_correctly(implementation):
+    if implementation == "OpenBLAS" and not blas_environments.openblas.OpenBLAS.is_installed():
+        pytest.skip("OpenBLAS is not installed")
+    sdfg = build_strided(implementation)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    a = np.arange(ROWS * COLUMNS, dtype=np.float64).reshape(ROWS, COLUMNS)
+    out = np.zeros((1, ROWS), dtype=np.float64)
+    sdfg(a=a.copy(), out=out)
+    assert np.array_equal(out, a[:, 0:1].T), f"{implementation}: {out} != {a[:, 0:1].T}"
+
+
 if __name__ == '__main__':
     for s in SHAPES:
         test_transpose_pure_handles_a_unit_extent(s)
     for impl in ("MKL", "OpenBLAS", "cuBLAS"):
         test_a_one_element_operand_never_reaches_a_blas_call(impl)
         test_a_genuine_matrix_still_reaches_the_blas_call(impl)
+        test_a_strided_operand_never_reaches_a_blas_call(impl)
+    for impl in ("pure", "OpenBLAS"):
+        test_a_strided_operand_transposes_correctly(impl)

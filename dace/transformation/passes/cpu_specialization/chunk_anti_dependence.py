@@ -77,19 +77,42 @@ def _exact(bound):
     return bound.expr if isinstance(bound, symbolic.SymExpr) else bound
 
 
-def _clone_contents(src: SDFGState, dst: SDFGState) -> None:
-    """Copy every node and edge of ``src`` into the empty state ``dst``.
+def _clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> None:
+    """Copy every node and edge of ``src`` into the empty state ``dst``, privatizing the temporaries.
 
     The node list is deepcopied as ONE object so a MapEntry and its MapExit keep sharing
     the single ``Map`` they describe; deepcopying node by node would hand them two.
+
+    A transient every access to which sits INSIDE the map scope is one instance per iteration --
+    the privatized WCR accumulators, the split-statement temporaries. Sharing its name across the
+    clones would leave one descriptor serving three different map scopes, and codegen declares such
+    a transient in the scope it meets first: the prologue's loop body then declares it and the chunk
+    body and the seam iterations reference a name that is not in scope there (``s212``, ``'...' was
+    not declared in this scope``). So each clone gets its own descriptor. The seam buffer and the
+    arrays the map reads are entered from the state's top level, not from inside the scope, and stay
+    shared -- being read by all three states is what they are for.
     """
     src_nodes = src.nodes()
+    scope_local = {}
+    for node in src_nodes:
+        if isinstance(node, nodes.AccessNode):
+            scope_local[node.data] = scope_local.get(node.data, True) and src.entry_node(node) is not None
+    private = {
+        name: sdfg.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]), find_new_name=True)
+        for name, only_inside in scope_local.items() if only_inside and sdfg.arrays[name].transient
+    }
+
     clones = copy.deepcopy(src_nodes)
     mapping = dict(zip(src_nodes, clones))
     for n in clones:
+        if isinstance(n, nodes.AccessNode) and n.data in private:
+            n.data = private[n.data]
         dst.add_node(n)
     for e in src.edges():
-        dst.add_edge(mapping[e.src], e.src_conn, mapping[e.dst], e.dst_conn, copy.deepcopy(e.data))
+        memlet = copy.deepcopy(e.data)
+        if memlet is not None and memlet.data in private:
+            memlet.data = private[memlet.data]
+        dst.add_edge(mapping[e.src], e.src_conn, mapping[e.dst], e.dst_conn, memlet)
 
 
 @properties.make_properties
@@ -253,6 +276,30 @@ class ChunkAntiDependence(ppl.Pass):
         me.map.schedule = dtypes.ScheduleType.Sequential
         return outer
 
+    def _sequentialize(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry) -> None:
+        """Turn the in-chunk sweep into a ``LoopRegion``, leaving only the chunks a map.
+
+        A Map asserts that its iterations carry NO dependence, and the in-chunk sweep carries one:
+        iteration ``i`` reads ``arr[i + 1]``, which iteration ``i + 1`` overwrites, so it is the
+        ORDER inside a chunk that makes reading the live array legal here. A ``Sequential`` schedule
+        does not say that -- it is a lowering hint, and every consumer is still entitled to act on
+        the map's parallelism claim. The tile vectorizer does: it widens the sweep and sinks the
+        ``arr[i + 1]`` load past the ``arr[i]`` store, so seven lanes out of eight read values the
+        same tile has just overwritten (``s212``, silently wrong ``b``).
+
+        The chunk map above it stays a map, which is where the parallelism actually is: on a
+        many-core node the chunks fill the machine, and the sweep inside one is a plain C loop that
+        the host compiler is free to vectorize on its own dependence analysis.
+        """
+        # Avoid import loop: dataflow transformations import the pass pipeline this module defines.
+        from dace.transformation.dataflow.map_for_loop import MapToForLoop
+        to_loop = MapToForLoop()
+        # The loop belongs inside the chunk map's scope, so keep the wrapping NestedSDFG rather
+        # than inlining it up to the parent region, where a map scope cannot hold it.
+        to_loop.inline_after = False
+        to_loop.map_entry = me
+        to_loop.apply(state, sdfg)
+
     def _rewrite(self, state: SDFGState, sdfg: SDFG, match: Tuple) -> None:
         snap_node, arr, me, lo, hi = match
         snap = snap_node.data
@@ -278,8 +325,8 @@ class ChunkAntiDependence(ppl.Pass):
         pro = parent.add_state_before(state, label=f'{arr}_antidep_prologue')
         seam = parent.add_state_before(pro, label=f'{arr}_antidep_seams')
         tail = parent.add_state_after(state, label=f'{arr}_antidep_seam_iters')
-        _clone_contents(state, pro)
-        _clone_contents(state, tail)
+        _clone_contents(state, pro, sdfg)
+        _clone_contents(state, tail, sdfg)
 
         # Seam elements: each chunk's first element, gathered into consecutive slots, plus the
         # final read that no chunk boundary lands on. Strided source, contiguous destination.
@@ -311,6 +358,7 @@ class ChunkAntiDependence(ppl.Pass):
         for e in state.edges():
             if e.data is not None and e.data.data == snap:
                 e.data.data = arr
+        self._sequentialize(state, sdfg, me)
 
         # Seam iterations: the last index of every chunk, whose read-ahead crosses into the
         # next chunk and must come from the buffer -- chunk ``k`` reads slot ``k + 1``.

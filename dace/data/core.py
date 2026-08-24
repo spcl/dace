@@ -129,6 +129,11 @@ class Data:
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
         raise NotImplementedError
 
+    #: Sources of ``free_symbols``, all tuples or sympy expressions: reassigning one is the only way
+    #: any can change, so that is what drops the memo. Structure overrides and computes fresh.
+    SYMBOL_SOURCE_ATTRIBUTES = frozenset({'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype'})
+    _free_symbols_memo = None
+
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         """
         Returns a set of symbols that are used by this data descriptor.
@@ -148,7 +153,15 @@ class Data:
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        return self.used_symbols(all_symbols=True)
+        if self._free_symbols_memo is None:
+            # Frozen: the answer is shared, so one caller's edit would be every later caller's.
+            self._free_symbols_memo = frozenset(self.used_symbols(all_symbols=True))
+        return self._free_symbols_memo
+
+    def __setattr__(self, name, value):
+        if name in Data.SYMBOL_SOURCE_ATTRIBUTES:
+            object.__setattr__(self, '_free_symbols_memo', None)
+        object.__setattr__(self, name, value)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -697,10 +710,6 @@ class Array(Data):
                 result |= set(self.total_size.free_symbols)
         return result
 
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
-
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
         Used to set properties which depend on the shape of the array
@@ -1007,10 +1016,6 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
-
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
 
 
 @make_properties
