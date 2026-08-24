@@ -33,7 +33,10 @@ class ContinueToCondition(ppl.Pass):
         :returns: Number of continue blocks converted, or ``None`` if there were none.
         """
         converted = 0
-        for node, parent in sdfg.all_nodes_recursive():
+        # Materialised before the first apply: applying REMOVES the conditional block and the
+        # states after it from their region, so a generator over the live graph hands back nodes
+        # that no longer belong to it. ``can_be_applied`` re-checks each candidate for exactly that.
+        for node, _ in list(sdfg.all_nodes_recursive()):
             if self.can_be_applied(node):
                 self.apply(node, sdfg)
                 converted += 1
@@ -61,6 +64,11 @@ class ContinueToCondition(ppl.Pass):
 
         # ...and the parent graph must have a single successor..
         outer_cfg = pg.parent_graph
+        # A previous apply in this same pass can have detached ``pg`` from it -- ``parent_graph``
+        # still names the old region, but the region no longer holds the node, and ``successors``
+        # raises ``KeyError`` on it rather than answering zero (subset_sum, four nested continues).
+        if outer_cfg is None or pg not in outer_cfg.nodes():
+            return False
         if len(outer_cfg.successors(pg)) > 1:
             return False
 
