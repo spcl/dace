@@ -19,6 +19,7 @@ from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from ordered_set import OrderedSet
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
@@ -376,8 +377,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         assert set(arr_inputs) | symbol_inputs == free_vars
 
         tasklet = state.add_tasklet(name=f"condition_symbol_to_scalar_{lhs}_to_{float_lhs_name}_scalar",
-                                    inputs=dict.fromkeys(f"_in_{arr_input}_{i}"
-                                                         for i, arr_input in enumerate(arr_inputs)),
+                                    inputs=OrderedSet(f"_in_{arr_input}_{i}" for i, arr_input in enumerate(arr_inputs)),
                                     outputs={f"_out_{float_lhs_name}"},
                                     code=f"_out_{float_lhs_name} = ({cleaned})")
 
@@ -700,11 +700,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         # 3. Add the combine tasklet which performs: float_cond1 * tmp1 + (1 - float_cond1) * tmp2
         combine_tasklet = new_state.add_tasklet(
             name=f"combine_branch_values_for_{write_name}_{index}",
-            inputs={
-                "_in_left": None,
-                "_in_right": None,
-                "_in_factor": None
-            },
+            inputs=OrderedSet(('_in_left', '_in_right', '_in_factor')),
             outputs={"_out"},
             code="_out = (_in_factor * _in_left) + ((1.0 - _in_factor) * _in_right)")
 
@@ -1367,7 +1363,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 sdutil.set_nested_sdfg_parent_references(graph.sdfg)
 
         # This function my create empty conditionals we need to remove them
-        nodes_to_rm = set()
+        nodes_to_rm = OrderedSet()
         for node in graph.nodes():
             if isinstance(node, ConditionalBlock):
                 # 1 branch, 1 state, empty state

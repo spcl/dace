@@ -8,6 +8,7 @@ import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+from ordered_set import OrderedSet
 
 
 def collect_enclosing_conditions(block: ControlFlowBlock, stop: Optional[ControlFlowRegion] = None) -> sp.Basic:
@@ -394,7 +395,7 @@ def branch_merges(
         descendants_blacklist = set()
         disjoint_edges = set()
         for oedge in oedges:
-            branch_descendants = set(cfg.dfs_edges(oedge.dst))
+            branch_descendants = OrderedSet(cfg.dfs_edges(oedge.dst))
             branch_descendants.add(oedge.dst)
             frontier = adf[oedge.dst]
             if not frontier:

@@ -8,6 +8,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -115,7 +116,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout": None, "_res": None}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(('_xout', '_res')), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

@@ -43,6 +43,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+from ordered_set import OrderedSet
 
 
 def _is_single_element(size) -> bool:
@@ -795,7 +796,7 @@ class WidenAccesses(ppl.Pass):
         priv_sub = copy.deepcopy(edge.data.subset)
         oc_sub = (copy.deepcopy(edge.data.other_subset) if edge.data.other_subset is not None else subsets.Range([(0, 0,
                                                                                                                    1)]))
-        tasklet = ist.add_tasklet('reduce_accum', {'__in1': None, '__in2': None}, {'__out'}, f'__out = {body_expr}')
+        tasklet = ist.add_tasklet('reduce_accum', OrderedSet(('__in1', '__in2')), {'__out'}, f'__out = {body_expr}')
         ist.add_edge(ist.add_access(oc), None, tasklet, '__in1', Memlet(data=oc, subset=copy.deepcopy(oc_sub)))
         ist.add_edge(priv_node, None, tasklet, '__in2', Memlet(data=priv_node.data, subset=priv_sub))
         ist.add_edge(tasklet, '__out', edge.dst, None, Memlet(data=oc, subset=copy.deepcopy(oc_sub)))

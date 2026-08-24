@@ -20,6 +20,7 @@ import warnings
 
 from collections import defaultdict
 from itertools import chain
+from ordered_set import OrderedSet
 
 
 @make_properties
@@ -215,7 +216,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         in_data = set([n.data for n in in_nodes if isinstance(n, nodes.AccessNode)])
         out_data = set([n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
 
-        view_nodes = set()
+        view_nodes = OrderedSet()
         for node in chain(in_nodes, out_nodes, intermediate_nodes):
             if isinstance(node, nodes.AccessNode):
                 is_view = isinstance(sdfg.data(node.data), dace.data.View)
@@ -448,7 +449,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for node in intermediate_nodes | out_nodes:
             # these nodes must not lead to a map entry
-            nodes_to_check = set()
+            nodes_to_check = OrderedSet()
             for oedge in graph.out_edges(node):
                 if oedge.dst not in map_entries:
                     nodes_to_check.add(oedge.dst)

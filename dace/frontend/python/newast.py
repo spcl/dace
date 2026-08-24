@@ -45,6 +45,7 @@ numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 import dace.frontend.python.replacements
 
 from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
+from ordered_set import OrderedSet
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -3403,12 +3404,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
                 if op_name:
                     op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                    inp_conns = {'__in1': None, '__in2': None}
+                    inp_conns = OrderedSet(('__in1', '__in2'))
                     tasklet_code += f'__out = __in1 {op} __in2'
                 else:
-                    inp_conns = {'__in1': None}
+                    inp_conns = OrderedSet(('__in1', ))
                     tasklet_code += f'__out = __in1 {op} {operand}'
-                inp_conns.update(dict.fromkeys(input_memlets))
+                inp_conns.update(input_memlets)
                 op3 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
                 tasklet = state.add_tasklet(name=state.label,
                                             inputs=inp_conns,

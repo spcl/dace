@@ -14,6 +14,7 @@ from dace.sdfg import infer_types
 from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
+from ordered_set import OrderedSet
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
 
@@ -102,7 +103,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 continue
 
             # Remove nodes while preserving scopes
-            scopes_to_reconnect: Set[nodes.Node] = set()
+            scopes_to_reconnect: OrderedSet[nodes.Node] = OrderedSet()
             for node in state.nodes():
                 # Look for scope exits that will be disconnected
                 if isinstance(node, nodes.ExitNode) and node not in dead_nodes:

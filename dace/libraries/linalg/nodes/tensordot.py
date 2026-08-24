@@ -8,6 +8,7 @@ from dace import library, nodes, properties
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from ordered_set import OrderedSet
 
 
 @library.expansion
@@ -500,10 +501,7 @@ class TensorDot(nodes.LibraryNode):
     def __init__(self, name, left_axes=[], right_axes=[], permutation=None, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_left_tensor": None,
-                             "_right_tensor": None
-                         },
+                         inputs=OrderedSet(('_left_tensor', '_right_tensor')),
                          outputs={"_out_tensor"},
                          **kwargs)
         self.left_axes = left_axes

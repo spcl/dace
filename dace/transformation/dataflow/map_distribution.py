@@ -11,6 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
+from ordered_set import OrderedSet
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):
@@ -128,7 +129,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
         from dace.libraries.mpi import Bcast, Scatter, Gather
 
-        inputs = set()
+        inputs = OrderedSet()
         for src, _, _, _, m in graph.in_edges(map_entry):
             if not isinstance(src, nodes.AccessNode):
                 raise NotImplementedError
@@ -174,7 +175,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             else:
                 raise NotImplementedError
 
-        outputs = set()
+        outputs = OrderedSet()
         for _, _, dst, _, m in graph.out_edges(map_exit):
             if not isinstance(dst, nodes.AccessNode):
                 raise NotImplementedError
@@ -335,7 +336,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         from dace.libraries.mpi import Bcast
         from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
 
-        inputs = set()
+        inputs = OrderedSet()
         for src, _, _, _, m in graph.in_edges(map_entry):
             if not isinstance(src, nodes.AccessNode):
                 raise NotImplementedError
@@ -400,7 +401,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             else:
                 raise NotImplementedError
 
-        outputs = set()
+        outputs = OrderedSet()
         for _, _, dst, _, m in graph.out_edges(map_exit):
             if not isinstance(dst, nodes.AccessNode):
                 raise NotImplementedError

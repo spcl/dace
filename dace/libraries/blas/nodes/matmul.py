@@ -6,6 +6,7 @@ from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
 from math import prod
+from ordered_set import OrderedSet
 
 
 def _matrix_subset_size(subset):
@@ -328,4 +329,4 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         self.beta = beta
         self.transA = bool(transA)
         self.transB = bool(transB)
-        super().__init__(name, location=location, inputs={"_a": None, "_b": None}, outputs={"_c"})
+        super().__init__(name, location=location, inputs=OrderedSet(('_a', '_b')), outputs={"_c"})

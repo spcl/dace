@@ -16,6 +16,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -95,7 +96,7 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True, desc="True if the factor in _a is lower triangular")
 
     def __init__(self, name, lower=True, **kwargs):
-        super().__init__(name, inputs={"_a": None, "_bin": None}, outputs={"_bout": None, "_res": None}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_a', '_bin')), outputs=OrderedSet(('_bout', '_res')), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

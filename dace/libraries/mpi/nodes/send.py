@@ -6,6 +6,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
                                            expanded_input_connectors)
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -63,7 +64,7 @@ class Send(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer": None, "_dest": None, "_tag": None}, outputs={}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_buffer', '_dest', '_tag')), outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """

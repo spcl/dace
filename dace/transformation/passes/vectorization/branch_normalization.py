@@ -22,6 +22,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
+from ordered_set import OrderedSet
 
 
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
@@ -855,11 +856,7 @@ class BranchNormalization(ppl.Pass):
                     cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
                     ite_t = state.add_tasklet(
                         name=f"bn_ite_{arr_name}",
-                        inputs={
-                            "_c": None,
-                            "_new": None,
-                            "_old": None
-                        },
+                        inputs=OrderedSet(('_c', '_new', '_old')),
                         outputs={"_o"},
                         code="_o = ITE(_c, _new, _old)",
                     )
@@ -869,10 +866,7 @@ class BranchNormalization(ppl.Pass):
                 else:
                     ite_t = state.add_tasklet(
                         name=f"bn_ite_{arr_name}",
-                        inputs={
-                            "_new": None,
-                            "_old": None
-                        },
+                        inputs=OrderedSet(('_new', '_old')),
                         outputs={"_o"},
                         code=f"_o = ITE({cond_text}, _new, _old)",
                     )

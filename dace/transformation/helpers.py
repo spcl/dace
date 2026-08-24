@@ -149,8 +149,8 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
         # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
         # Sorted, since a set of container names carries no order of its own to preserve.
-        read_set = dict.fromkeys(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
-        write_set = dict.fromkeys(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
+        read_set = OrderedSet(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
         use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
@@ -231,7 +231,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     did_ret_tasklet = pre_state.add_tasklet('__did_ret_set', {}, {'out'}, 'out = 1')
                     did_ret_access = pre_state.add_access(did_return_inner)
                     pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
-                    write_set[did_return_inner] = None
+                    write_set.add(did_return_inner)
 
         if ret_cond is not None:
             pre_state = graph.add_state('before_nested_sdfg_parent')
@@ -321,7 +321,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
                 acc = out_state.add_access(nname)
                 out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
-                write_set[name] = None
+                write_set.add(name)
 
         # Add NestedSDFG node. ``strictly_defined_symbols`` already carries the counters the subgraph
         # binds itself, and subtracting it is what keeps a region-bound iterator out of the mapping --
@@ -772,7 +772,7 @@ def state_fission(
     # State fissions can not occur within a scope, i.e., the MapEntry of a Map scope can not end up
     #  in the first state while the MapExit lands in the second state. Extend the set of nodes to
     #  make sure we have only top level nodes and their scope.
-    initial_first_nodes: Set[nodes.Node] = set()
+    initial_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
     scope_dict = state.scope_dict()
     for node in subgraph.nodes():
         containing_scope = scope_dict[node]
@@ -796,7 +796,7 @@ def state_fission(
             initial_first_nodes.update(state.scope_subgraph(top_entry_node).nodes())
 
     # Notes that should end up in the first state.
-    first_nodes: Set[nodes.Node] = set()
+    first_nodes: OrderedSet[nodes.Node] = OrderedSet()
     for node in initial_first_nodes:
         utils.find_upstream_nodes(
             node_to_start=node,
@@ -808,8 +808,8 @@ def state_fission(
     #  AccessNode. We now have to inspect the boundary of the nodes defining `first_nodes`.
     #  If we found a Memlet that can not be split, then we add the node also to `first_nodes`.
     nodes_to_scan: List[nodes.Node] = list(first_nodes)
-    boundary_nodes: Set[nodes.Node] = set()
-    pure_first_nodes: Set[nodes.Node] = set()
+    boundary_nodes: OrderedSet[nodes.Node] = OrderedSet()
+    pure_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
 
     while len(nodes_to_scan) > 0:
         node_to_scan = nodes_to_scan.pop()
@@ -853,7 +853,9 @@ def state_fission(
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
     assert boundary_nodes.isdisjoint(pure_first_nodes)
-    assert boundary_nodes.union(pure_first_nodes) == first_nodes
+    # ``set()`` on both sides: OrderedSet is a Sequence, so ``OrderedSet == OrderedSet`` compares ORDER,
+    # and the two halves are collected in a different order than the scan that produced ``first_nodes``.
+    assert set(boundary_nodes) | set(pure_first_nodes) == set(first_nodes)
 
     if len(first_nodes) == 1:
         warnings.warn(

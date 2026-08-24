@@ -20,6 +20,7 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.transformation import helpers as xfh
+from ordered_set import OrderedSet
 
 
 @transformation.explicit_cf_compatible
@@ -481,7 +482,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # by the moved-inside step (no assignments, no condition), drop it
         # and also drop its source state when the source is an empty
         # placeholder that exists only to feed the ConditionalBlock.
-        states_to_try_remove: Set[SDFGState] = set()
+        states_to_try_remove: OrderedSet[SDFGState] = OrderedSet()
         for e in in_edges:
             if e.data.is_unconditional() and not e.data.assignments:
                 if isinstance(e.src, SDFGState):

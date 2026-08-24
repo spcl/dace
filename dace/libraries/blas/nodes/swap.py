@@ -17,6 +17,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -128,7 +129,7 @@ class Swap(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, **kwargs):
-        super().__init__(name, inputs={"_xin": None, "_yin": None}, outputs={"_xout": None, "_yout": None}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_xin', '_yin')), outputs=OrderedSet(('_xout', '_yout')), **kwargs)
         self.n = n
 
     def validate(self, sdfg, state):

@@ -25,6 +25,7 @@ from dace.sdfg.construction_utils import (
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
+from ordered_set import OrderedSet
 
 
 def free_names_outside_subscript_indices(code: str) -> set:
@@ -806,10 +807,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.remove_edge(edge)
         acc_t = state.add_tasklet(
             name=f"wcr_acc_{base_name}",
-            inputs={
-                "_base": None,
-                "_acc": None
-            },
+            inputs=OrderedSet(('_base', '_acc')),
             outputs={"_o"},
             code=f"_o = {op_code}",
         )
@@ -845,11 +843,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
             t = state.add_tasklet(
                 name=f"ITE_{arr_name}",
-                inputs={
-                    "_c": None,
-                    "_t": None,
-                    "_e": None
-                },
+                inputs=OrderedSet(('_c', '_t', '_e')),
                 outputs={"_o"},
                 code="_o = ITE(_c, _t, _e)",
             )
@@ -858,10 +852,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else:
             t = state.add_tasklet(
                 name=f"ITE_{arr_name}",
-                inputs={
-                    "_t": None,
-                    "_e": None
-                },
+                inputs=OrderedSet(('_t', '_e')),
                 outputs={"_o"},
                 code=f"_o = ITE({cond_text}, _t, _e)",
             )

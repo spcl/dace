@@ -18,6 +18,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -99,7 +100,7 @@ class Geqrf(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, **kwargs):
-        super().__init__(name, inputs={"_ain"}, outputs={"_aout": None, "_tau": None, "_res": None}, **kwargs)
+        super().__init__(name, inputs={"_ain"}, outputs=OrderedSet(('_aout', '_tau', '_res')), **kwargs)
 
     def validate(self, sdfg, state):
         """:return: ``((desc_A, lda_in, lda_out, m, n), desc_tau)``."""

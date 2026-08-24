@@ -17,6 +17,7 @@ from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRe
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from ordered_set import OrderedSet
 
 
 def _align_itersym(expr, itersym):
@@ -1264,8 +1265,8 @@ class LoopToMap(xf.MultiStateTransformation):
         # as sets they get numbered differently per interpreter run, because set iteration order
         # for strings is hash order. Sorted, since a set of container names carries no order of
         # its own to preserve.
-        read_set = dict.fromkeys(sorted(read_set))
-        write_set = dict.fromkeys(sorted(write_set))
+        read_set = OrderedSet(sorted(read_set))
+        write_set = OrderedSet(sorted(write_set))
 
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         fsymbols = set(sdfg.free_symbols)
@@ -1282,7 +1283,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.add_edge(e.src, e.dst, e.data)
 
         # Add NestedSDFG arrays
-        for name in dict.fromkeys((*read_set, *write_set)):
+        for name in read_set.union(write_set):
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name

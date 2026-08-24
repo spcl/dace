@@ -929,6 +929,29 @@ def test_state_fission_tower_of_views():
     assert any(ac.data == "a" for ac in new_state_ac)
 
 
+def test_state_fission_node_order_is_stable():
+    """``state_fission`` moves a node set into the new state, and a plain ``set`` of node objects
+    iterates in ``id()`` order -- not stable even under a pinned ``PYTHONHASHSEED``, because
+    identity hashes track memory addresses. The order the nodes land in decides how every later
+    pattern match walks the two states, so it has to be a property of the graph, not of the
+    allocator."""
+    import copy
+
+    def fission(sdfg: dace.SDFG) -> dace.SDFG:
+        state = sdfg.states()[0]
+        picked = [state.nodes()[i] for i in (0, 1, 2, 3)]
+        helpers.state_fission(graph.SubgraphView(state, picked))
+        sdfg.validate()
+        return sdfg
+
+    base = make_nested_sdfg_cpu()
+    orders = []
+    for _ in range(8):
+        fissioned = fission(copy.deepcopy(base))
+        orders.append([(type(n).__name__, str(n)) for n, _ in fissioned.all_nodes_recursive()])
+    assert all(o == orders[0] for o in orders), f'node order varies run to run: {len(set(map(tuple, orders)))} orders'
+
+
 if __name__ == "__main__":
     test_state_fission()
     test_state_fission_with_map_1()
@@ -936,3 +959,4 @@ if __name__ == "__main__":
     test_state_fission_with_view()
     test_state_fission_with_empty_memlet_1()
     test_state_fission_with_empty_memlet_2()
+    test_state_fission_node_order_is_stable()

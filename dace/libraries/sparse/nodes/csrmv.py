@@ -10,6 +10,7 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
+from ordered_set import OrderedSet
 
 
 def _is_complex(dtype):
@@ -191,10 +192,7 @@ class ExpandCSRMVPure(ExpandTransformation):
 
         # inner map -> indirection
         tasklet_ind = nstate.add_tasklet("Indirection",
-                                         inputs={
-                                             "__ind_b": None,
-                                             "index_a_cols_0": None
-                                         },
+                                         inputs=OrderedSet(('__ind_b', 'index_a_cols_0')),
                                          outputs={'lookup': None},
                                          code="lookup = __ind_b[index_a_cols_0]")
 
@@ -203,10 +201,8 @@ class ExpandCSRMVPure(ExpandTransformation):
         nstate.add_edge(inner_map_entry, "OUT_tmp_b", tasklet_ind, "__ind_b", mm.Memlet.from_array("_b", array_b))
 
         # inner map -> spmv
-        tasklet_mult = nstate.add_tasklet("spmv", {
-            "__a": None,
-            "__b": None
-        }, {"__o": None},
+        tasklet_mult = nstate.add_tasklet("spmv",
+                                          OrderedSet(('__a', '__b')), {"__o": None},
                                           code=f"__o = {node.alpha} * (__a * __b)")
 
         nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
@@ -523,18 +519,9 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs=({
-                             "_a_rows": None,
-                             "_a_cols": None,
-                             "_a_vals": None,
-                             "_b": None,
-                             "_cin": None
-                         } if beta != 0 else {
-                             "_a_rows": None,
-                             "_a_cols": None,
-                             "_a_vals": None,
-                             "_b": None
-                         }),
+                         inputs=(OrderedSet(
+                             ('_a_rows', '_a_cols', '_a_vals', '_b', '_cin')) if beta != 0 else OrderedSet(
+                                 ('_a_rows', '_a_cols', '_a_vals', '_b'))),
                          outputs={"_c"})
         self.alpha = alpha
         self.beta = beta

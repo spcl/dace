@@ -34,6 +34,7 @@ import dace
 from dace import library, properties, symbolic
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
+from ordered_set import OrderedSet
 
 _OP_CPP = {'max': '>', 'min': '<'}
 _OP_CUB = {'max': 'ArgMax', 'min': 'ArgMin'}
@@ -188,7 +189,7 @@ class ArgReduce(nodes.LibraryNode):
     def __init__(self, name: str, op: str = 'max', location: Optional[str] = None):
         if op not in _OP_CPP:
             raise ValueError(f"ArgReduce: op must be 'max' or 'min', got {op!r}")
-        super().__init__(name, location=location, inputs={'_in'}, outputs={'_out_val': None, '_out_idx': None})
+        super().__init__(name, location=location, inputs={'_in'}, outputs=OrderedSet(('_out_val', '_out_idx')))
         self.op = op
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:

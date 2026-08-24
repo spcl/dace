@@ -7,6 +7,7 @@ from .. import environments
 from dace import dtypes
 from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, resolve_comm,
                                            validate_integer_descriptor)
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -75,15 +76,7 @@ class Isend(MPINode):
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={
-                             "_buffer": None,
-                             "_dest": None,
-                             "_tag": None
-                         },
-                         outputs={"_request"},
-                         **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_buffer', '_dest', '_tag')), outputs={"_request"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

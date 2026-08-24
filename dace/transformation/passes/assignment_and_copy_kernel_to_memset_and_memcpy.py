@@ -11,6 +11,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy, fill
+from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -730,7 +731,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 state.add_edge(libnode, None, e.dst, None, Memlet())
 
     def rm_edges(self, state: dace.SDFGState, edges: Iterable[graph.Edge[Memlet]]):
-        nodes_to_check = set()
+        nodes_to_check = OrderedSet()
         for i, e in enumerate(edges):
             assert e in state.edges(), f"{e} not in {state.edges()}"
             state.remove_edge(e)

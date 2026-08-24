@@ -25,6 +25,7 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.pass_pipeline import Modifies
+from ordered_set import OrderedSet
 
 
 @registry.make_registry
@@ -941,7 +942,7 @@ class UnderapproximateWrites(ppl.Pass):
         #    approximation_dict
 
         # First, propagate nested SDFGs in a bottom-up fashion
-        dnodes: Set[nodes.AccessNode] = set()
+        dnodes: OrderedSet[nodes.AccessNode] = OrderedSet()
         for node in state.nodes():
             if isinstance(node, AccessNode):
                 dnodes.add(node)

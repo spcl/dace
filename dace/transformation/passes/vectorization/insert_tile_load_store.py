@@ -35,6 +35,7 @@ from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsup
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
                                                                         build_symbol_definition_map)
+from ordered_set import OrderedSet
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
@@ -1096,7 +1097,7 @@ class InsertTileLoadStore(ppl.Pass):
                                            find_new_name=True)
         out_an = inner_state.add_access(out_name)
         t = inner_state.add_tasklet(name=f"idxarith_{out_name}",
-                                    inputs=dict.fromkeys(conn for conn, _ in sym_to_conn.values()),
+                                    inputs=OrderedSet(conn for conn, _ in sym_to_conn.values()),
                                     outputs={"_out"},
                                     code=f"_out = {body}",
                                     language=dtypes.Language.Python)

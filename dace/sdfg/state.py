@@ -31,6 +31,7 @@ from dace.sdfg import propagation as sdprop
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
+from ordered_set import OrderedSet
 
 if TYPE_CHECKING:
     import dace.sdfg.scope
@@ -2861,7 +2862,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         if parent:
 
             # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
-            to_connect: Set[ControlFlowBlock] = set()
+            to_connect: OrderedSet[ControlFlowBlock] = OrderedSet()
             ends_context: Set[ControlFlowBlock] = set()
             block_to_state_map: Dict[ControlFlowBlock, SDFGState] = dict()
             for node in self.nodes():
@@ -3455,8 +3456,8 @@ class LoopRegion(ControlFlowRegion):
         # Add all loop states and make sure to keep track of all the ones that need to be connected in the end.
         # Return blocks are inlined as-is. If the parent graph is an SDFG, they are converted to states, otherwise
         # they are left as explicit exit blocks.
-        connect_to_latch: Set[SDFGState] = set()
-        connect_to_end: Set[SDFGState] = set()
+        connect_to_latch: OrderedSet[SDFGState] = OrderedSet()
+        connect_to_end: OrderedSet[SDFGState] = OrderedSet()
         block_to_state_map: Dict[ControlFlowBlock, SDFGState] = dict()
         for node in self.nodes():
             node.label = self.label + '_' + node.label

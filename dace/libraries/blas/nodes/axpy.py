@@ -10,6 +10,7 @@ from dace import data as dt, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -206,7 +207,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_x": None, "_y": None}, outputs={"_res"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_x', '_y')), outputs={"_res"}, **kwargs)
         self.a = a or dace.symbolic.symbol("a")
         self.n = n or dace.symbolic.symbol("n")
 

@@ -6,6 +6,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
                                            expanded_input_connectors)
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -53,13 +54,7 @@ class Sendrecv(MPINode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_inbuffer": None,
-                             "_dest": None,
-                             "_src": None,
-                             "_sendtag": None,
-                             "_recvtag": None
-                         },
+                         inputs=OrderedSet(('_inbuffer', '_dest', '_src', '_sendtag', '_recvtag')),
                          outputs={"_outbuffer"},
                          **kwargs)
 

@@ -17,6 +17,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from ordered_set import OrderedSet
 
 
 def _cblas_flags(node):
@@ -102,7 +103,7 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True if A has implicit unit diagonal")
 
     def __init__(self, name, uplo=False, transA=False, unit_diag=False, **kwargs):
-        super().__init__(name, inputs={"_A": None, "_xin": None}, outputs={"_xout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_A', '_xin')), outputs={"_xout"}, **kwargs)
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):

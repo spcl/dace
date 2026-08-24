@@ -13,6 +13,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from ordered_set import OrderedSet
 
 
 def _cblas_flags(node):
@@ -101,7 +102,7 @@ class Trmm(dace.sdfg.nodes.LibraryNode):
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     def __init__(self, name, side=False, uplo=False, transA=False, unit_diag=False, alpha=1, **kwargs):
-        super().__init__(name, inputs={"_A": None, "_Bin": None}, outputs={"_Bout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_A', '_Bin')), outputs={"_Bout"}, **kwargs)
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):

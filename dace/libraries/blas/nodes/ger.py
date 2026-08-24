@@ -17,6 +17,7 @@ import dace.sdfg.nodes
 
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from ordered_set import OrderedSet
 
 
 @library.expansion
@@ -214,7 +215,7 @@ class Ger(LibraryNode):
         default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A")
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
-        super().__init__(name, location=location, inputs={"_x": None, "_y": None, "_A": None}, outputs={"_res"})
+        super().__init__(name, location=location, inputs=OrderedSet(('_x', '_y', '_A')), outputs={"_res"})
 
         self.n = n
         self.m = m

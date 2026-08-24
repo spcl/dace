@@ -16,6 +16,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
+from ordered_set import OrderedSet
 
 
 @library.expansion
@@ -65,12 +66,7 @@ class Gatherv(MPINode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_inbuffer": None,
-                             "_recvcounts": None,
-                             "_displs": None,
-                             "_root": None
-                         },
+                         inputs=OrderedSet(('_inbuffer', '_recvcounts', '_displs', '_root')),
                          outputs={"_outbuffer"},
                          **kwargs)
 

@@ -12,6 +12,7 @@ from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 import copy
+from ordered_set import OrderedSet
 
 
 @transformation.explicit_cf_compatible
@@ -68,9 +69,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = dict.fromkeys(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
-                outputs = dict.fromkeys(edge.data.data for edge in state.in_edges(map_exit)
-                                        if edge.data.data is not None)
+                inputs = OrderedSet(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = OrderedSet(edge.data.data for edge in state.in_edges(map_exit) if edge.data.data is not None)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}

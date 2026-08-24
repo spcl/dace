@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Optional, Set
+from typing import Optional
 
 import copy
 import sympy
@@ -12,6 +12,7 @@ from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
+from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -35,7 +36,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     def _rm_map(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         map_exit = state.exit_node(map_entry)
-        map_inner_nodes = {n for n in state.all_nodes_between(map_entry, map_exit)}
+        map_inner_nodes = OrderedSet(state.all_nodes_between(map_entry, map_exit))
         map_inner_edges = state.all_edges(*map_inner_nodes)
         for e in map_inner_edges:
             state.remove_edge(e)
@@ -52,13 +53,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     def _move_map_to_if(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         map_exit = state.exit_node(map_entry)
-        map_inner_nodes = {n for n in state.all_nodes_between(map_entry, map_exit)}
+        map_inner_nodes = OrderedSet(state.all_nodes_between(map_entry, map_exit))
         map_inner_edges = state.all_edges(*map_inner_nodes)
         map_in_edges = state.in_edges(map_entry)
         map_out_edges = state.out_edges(map_exit)
-        inputs = dict.fromkeys(ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None)
-        outputs = dict.fromkeys(oe.data.data for oe in state.out_edges(state.exit_node(map_entry))
-                                if oe.data.data is not None)
+        inputs = OrderedSet(ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None)
+        outputs = OrderedSet(oe.data.data for oe in state.out_edges(state.exit_node(map_entry))
+                             if oe.data.data is not None)
 
         inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
 
@@ -85,9 +86,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         for n in map_inner_nodes:
             if isinstance(n, dace.nodes.AccessNode) and state.sdfg.arrays[n.data].transient is False:
                 if n.data not in inputs and state.out_degree(n) > 0:
-                    inputs[n.data] = None
+                    inputs.add(n.data)
                 if n.data not in outputs and state.in_degree(n) > 0:
-                    outputs[n.data] = None
+                    outputs.add(n.data)
 
         nsdfg = state.add_nested_sdfg(
             sdfg=inner_sdfg,
@@ -108,7 +109,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             else:
                 state.add_edge(nsdfg, None, oe.dst, None, dace.memlet.Memlet(None))
 
-        for data_name in dict.fromkeys((*inputs, *outputs)):
+        for data_name in inputs.union(outputs):
             if data_name not in inner_sdfg.arrays:
                 copydesc = copy.deepcopy(state.sdfg.arrays[data_name])
                 copydesc.transient = False
@@ -213,7 +214,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     def _apply(self, sdfg: SDFG) -> int:
         num_applied = 0
         for state in sdfg.all_states():
-            parentless_device_maps: Set[dace.nodes.MapEntry] = set()
+            parentless_device_maps: OrderedSet[dace.nodes.MapEntry] = OrderedSet()
             for node in state.nodes():
                 if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                         and state.scope_dict()[node] is None):
@@ -294,7 +295,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     def _assert_no_nested_gpu_device_maps(self, sdfg: SDFG):
         for state in sdfg.all_states():
-            parentless_device_maps = set()
+            parentless_device_maps = OrderedSet()
             for node in state.nodes():
                 if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                         and state.scope_dict()[node] is None):

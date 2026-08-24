@@ -55,6 +55,7 @@ from dace.transformation.passes.analysis import loop_analysis
 # the same four ops the libnode expansions cover.
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME,
                                                 INIT_CONNECTOR_NAME, in_connector, out_connector, init_connector)
+from ordered_set import OrderedSet
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {
@@ -3422,10 +3423,7 @@ def _emit_seed_add_nested(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: s
     out_write = state.add_write(info.out_name)
     code = _scan_op_expression(info.op)
     tasklet = state.add_tasklet(f'{state.label}_apply',
-                                inputs={
-                                    '_seed': None,
-                                    '_delta': None
-                                },
+                                inputs=OrderedSet(('_seed', '_delta')),
                                 outputs={'_o'},
                                 code=code)
     me, mx = state.add_map(state.label + '_map', {

@@ -14,6 +14,7 @@ from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
+from ordered_set import OrderedSet
 
 
 def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
@@ -147,7 +148,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_ain": None, "_bin": None}, outputs={"_bout"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_ain', '_bin')), outputs={"_bout"}, **kwargs)
         # NOTE: We currently do not support overwrite == True
         self.overwrite = False
 

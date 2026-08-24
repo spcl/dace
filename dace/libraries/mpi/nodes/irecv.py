@@ -6,6 +6,7 @@ from .. import environments
 from dace import dtypes
 from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, expanded_input_connectors,
                                            validate_integer_descriptor)
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -64,14 +65,8 @@ class Irecv(MPINode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_src": None,
-                             "_tag": None
-                         },
-                         outputs={
-                             "_buffer": None,
-                             "_request": None
-                         },
+                         inputs=OrderedSet(('_src', '_tag')),
+                         outputs=OrderedSet(('_buffer', '_request')),
                          **kwargs)
 
     def validate(self, sdfg, state):

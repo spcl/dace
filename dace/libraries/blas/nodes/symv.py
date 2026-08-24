@@ -16,6 +16,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -89,7 +90,7 @@ class Symv(dace.sdfg.nodes.LibraryNode):
     beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs={"_A": None, "_x": None, "_yin": None}, outputs={"_yout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_A', '_x', '_yin')), outputs={"_yout"}, **kwargs)
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):

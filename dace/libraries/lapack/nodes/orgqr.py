@@ -14,6 +14,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -91,7 +92,7 @@ class Orgqr(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, **kwargs):
-        super().__init__(name, inputs={"_ain": None, "_tau": None}, outputs={"_aout": None, "_res": None}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(('_ain', '_tau')), outputs=OrderedSet(('_aout', '_res')), **kwargs)
 
     def validate(self, sdfg, state):
         """:return: ``((desc_A, lda_in, lda_out, m, n), (desc_tau, k))``."""

@@ -89,6 +89,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, Contro
                              LoopRegion, SDFGState)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis.analysis import must_write_state
+from ordered_set import OrderedSet
 
 #: Array lifetimes we are allowed to attach a privatized scalar to (the scalar follows
 #: the same scoping rules; persistent / global lifetimes are out of scope for v1).
@@ -784,7 +785,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             parent = cur.parent_graph
             if parent is None:
                 return True
-            reachable: Set[Any] = set()
+            reachable: OrderedSet[Any] = OrderedSet()
             frontier = [cur]
             while frontier:
                 node = frontier.pop()

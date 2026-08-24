@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -57,7 +58,7 @@ class Reduce(MPINode):
     op = dace.properties.Property(dtype=str, default='MPI_SUM')
 
     def __init__(self, name, op='MPI_SUM', *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer": None, "_root": None}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_inbuffer', '_root')), outputs={"_outbuffer"}, **kwargs)
         self.op = op
 
     def validate(self, sdfg, state):

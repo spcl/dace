@@ -12,6 +12,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
 import numpy as np
 import warnings
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -392,14 +393,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs={
-                             "_A": None,
-                             "_x": None,
-                             "_y": None
-                         } if beta != 0 else {
-                             "_A": None,
-                             "_x": None
-                         },
+                         inputs=OrderedSet(('_A', '_x', '_y')) if beta != 0 else OrderedSet(('_A', '_x')),
                          outputs={"_y"})
         self.transA = transA
         self.alpha = alpha

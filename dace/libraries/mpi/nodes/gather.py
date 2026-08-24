@@ -7,6 +7,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, input_descriptor_name
+from ordered_set import OrderedSet
 
 
 @library.expansion
@@ -55,7 +56,7 @@ class Gather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer": None, "_root": None}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_inbuffer', '_root')), outputs={"_outbuffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

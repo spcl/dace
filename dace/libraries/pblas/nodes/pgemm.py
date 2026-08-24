@@ -4,6 +4,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -149,12 +150,7 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_a": None,
-                             "_b": None,
-                             "_a_block_sizes": None,
-                             "_b_block_sizes": None
-                         },
+                         inputs=OrderedSet(('_a', '_b', '_a_block_sizes', '_b_block_sizes')),
                          outputs={"_c"},
                          **kwargs)
         self.m = m

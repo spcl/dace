@@ -8,6 +8,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -135,7 +136,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout": None, "_ipiv": None, "_res": None}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(('_xout', '_ipiv', '_res')), **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -20,6 +20,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
+from ordered_set import OrderedSet
 
 
 @make_properties
@@ -441,8 +442,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
         new_outgoing_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
 
-        source_accesses = set()
-        sink_accesses = set()
+        source_accesses = OrderedSet()
+        sink_accesses = OrderedSet()
         for node in nstate.source_nodes():
             if (isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes):
                 try:
@@ -1403,8 +1404,8 @@ class NestSDFG(transformation.MultiStateTransformation):
                 nested_sdfg.symbols[s] = type
 
         # Add the nested SDFG to the parent state and connect it
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, dict.fromkeys(inputs.values()),
-                                                  dict.fromkeys(outputs.values()))
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, OrderedSet(inputs.values()),
+                                                  OrderedSet(outputs.values()))
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)

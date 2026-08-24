@@ -21,6 +21,7 @@ from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
+from ordered_set import OrderedSet
 
 
 def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> Optional[Tuple[str, List[str]]]:
@@ -127,11 +128,7 @@ class FuseMultiplyAdd(ppl.Pass):
         out_edge = next(e for e in state.out_edges(add) if e.src_conn == add_out_conn)
 
         fma = state.add_tasklet(name='fma',
-                                inputs={
-                                    '__in1': None,
-                                    '__in2': None,
-                                    '__in3': None
-                                },
+                                inputs=OrderedSet(('__in1', '__in2', '__in3')),
                                 outputs={'__out'},
                                 code='__out = fma(__in1, __in2, __in3)')
         state.add_edge(a_edge.src, a_edge.src_conn, fma, '__in1', dace.Memlet.from_memlet(a_edge.data))

@@ -10,6 +10,7 @@ from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
 from .. import environments
 import warnings
+from ordered_set import OrderedSet
 
 
 def refuse_broadcast_batches(node, state, sdfg) -> None:
@@ -502,7 +503,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, location=None):
-        super().__init__(name, location=location, inputs={'_a': None, '_b': None}, outputs={'_c'})
+        super().__init__(name, location=location, inputs=OrderedSet(('_a', '_b')), outputs={'_c'})
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)

@@ -11,6 +11,7 @@ from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
+from ordered_set import OrderedSet
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):
@@ -566,8 +567,8 @@ class StreamingMemory(xf.SingleStateTransformation):
                 maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
-                dict.fromkeys(m[1] for m in rmemlets),
-                dict.fromkeys(m[1] for m in wmemlets),
+                OrderedSet(m[1] for m in rmemlets),
+                OrderedSet(m[1] for m in wmemlets),
                 code,
             )
             for node, cname, memlet in rmemlets:

@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.pblas import environments
 from dace import dtypes
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -66,15 +67,8 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_inbuffer": None,
-                             "_block_sizes": None
-                         },
-                         outputs={
-                             "_outbuffer": None,
-                             "_gdescriptor": None,
-                             "_ldescriptor": None
-                         },
+                         inputs=OrderedSet(('_inbuffer', '_block_sizes')),
+                         outputs=OrderedSet(('_outbuffer', '_gdescriptor', '_ldescriptor')),
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -167,10 +161,7 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={
-                             "_inbuffer": None,
-                             "_block_sizes": None
-                         },
+                         inputs=OrderedSet(('_inbuffer', '_block_sizes')),
                          outputs={"_outbuffer"},
                          **kwargs)
 

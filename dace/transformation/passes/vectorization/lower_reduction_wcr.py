@@ -20,6 +20,7 @@ from dace import SDFG, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
+from ordered_set import OrderedSet
 
 
 def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
@@ -55,10 +56,8 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                 continue
             acc, acc_subset = dst.data, memlet.subset
             src_subset = memlet.get_src_subset(edge, state)
-            tasklet = state.add_tasklet('reduce_accum', {
-                '__in1': None,
-                '__in2': None
-            }, {'__out'}, f"__out = {_wcr_augassign_body(memlet.wcr)}")
+            tasklet = state.add_tasklet('reduce_accum', OrderedSet(('__in1', '__in2')), {'__out'},
+                                        f"__out = {_wcr_augassign_body(memlet.wcr)}")
             state.add_edge(state.add_access(acc), None, tasklet, '__in1',
                            Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             # ``__in2`` reads the reduction addend from ``edge.src`` -- the ``_wcr_priv_*`` buffer

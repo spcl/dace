@@ -186,7 +186,7 @@ def _find_nodes_impl(
     seen: Optional[Set[Node]],
 ) -> Set[Node]:
     to_scan: List[Node] = [node_to_start]
-    scanned_nodes: Set[Node] = set() if seen is None else seen
+    scanned_nodes: OrderedSet[Node] = OrderedSet() if seen is None else seen
     if forward:
         get_edges = state.out_edges
         get_node = lambda e: e.dst

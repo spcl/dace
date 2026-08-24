@@ -17,6 +17,7 @@ from dace import dtypes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, validate_integer_descriptor
+from ordered_set import OrderedSet
 
 
 @dace.library.expansion
@@ -55,7 +56,7 @@ class CommSplit(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_color": None, "_key": None}, outputs={"_newcomm"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_color', '_key')), outputs={"_newcomm"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

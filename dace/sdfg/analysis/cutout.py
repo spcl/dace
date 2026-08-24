@@ -19,6 +19,7 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
                                                 SingleStateTransformation)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
+from ordered_set import OrderedSet
 
 try:
     from numpy.typing import ArrayLike
@@ -549,7 +550,7 @@ def _transformation_determine_affected_nodes(sdfg: SDFG,
         preventing a transformation from affecting nodes that are not part of the pattern or subgraph they match to.
     """
     target_sdfg = sdfg
-    affected_nodes = set()
+    affected_nodes = OrderedSet()
 
     if isinstance(transformation, PatternTransformation):
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list:
@@ -714,7 +715,7 @@ def _reduce_in_configuration(state: SDFGState,
     else:
         scope_nodes = set(scope_children[source])
         scope_nodes.add(source)
-    expand_with = set()
+    expand_with = OrderedSet()
     for n in scope_nodes:
         if isinstance(n, nd.EntryNode):
             exit = state.exit_node(n)
