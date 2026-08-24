@@ -5,6 +5,7 @@ import numpy
 
 import dace
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.split_array import (SplitArray, resolve_aliases, copy_state_contents,
                                                     reverse_bfs_assignments)
 
@@ -262,6 +263,39 @@ def test_split_into_nested_sdfg_raises():
     assert raised, "expected SplitArray to reject split arrays feeding a nested SDFG"
 
 
+def indexed_by(expr_str: str, name: str):
+    """Every ``name[...]`` access in ``expr_str``, as a sorted list of index-string tuples."""
+    expr = dace.symbolic.pystr_to_symbolic(expr_str)
+    return sorted(
+        tuple(str(a) for a in node.args[1:]) for node in expr.atoms(dace.symbolic.Subscript)
+        if str(node.args[0]) == name)
+
+
+def test_split_rewrites_every_access_and_keeps_the_rest_of_the_expression():
+    """Interstate assignments hold whole expressions, not bare accesses.
+
+    The rewrite matched accesses with a greedy ``A\\[(.*)\\]`` regex, so on ``A[i, j, k] * B[i, j, k]``
+    it ran to B's closing bracket and reported five index parts for a rank-3 access; and the
+    substitution rebuilt the string as ``A[...]``, discarding everything around the access."""
+    split = SplitDimensions(split_map={})
+    masks, factors = [True, False, False], [2, 1, 1]
+
+    # the two-array product that made the greedy match overrun
+    out = split.split_array_accesses('(A[i, j, k] * B[i, j, k])', 'A', masks, factors)
+    assert indexed_by(out, 'A') == [('int_floor(i, 2)', 'j', 'k', 'Mod(i, 2)')], out
+    assert indexed_by(out, 'B') == [('i', 'j', 'k')], out  # the factor the substitution used to swallow
+
+    # every occurrence is rewritten, and the surrounding terms survive
+    out = split.split_array_accesses('A[i, j, k] * 2 + A[k, j, i]', 'A', masks, factors)
+    assert indexed_by(out, 'A') == [('int_floor(i, 2)', 'j', 'k', 'Mod(i, 2)'),
+                                    ('int_floor(k, 2)', 'j', 'i', 'Mod(k, 2)')], out
+    assert '2' in out
+
+    # a longer name that merely starts with the split array's name is not an access to it
+    assert split.split_array_accesses('AB[i, j, k]', 'A', masks, factors) == 'AB[i, j, k]'
+    assert split.split_array_accesses('C_slice', 'A', masks, factors) == 'C_slice'
+
+
 if __name__ == "__main__":
     test_resolve_aliases_dedup_and_none_passthrough()
     test_copy_state_contents_preserves_graph()
@@ -272,4 +306,5 @@ if __name__ == "__main__":
     test_data_dependent_index_branches_bit_exact()
     test_index_read_from_split_array_is_rewritten_bit_exact()
     test_split_into_nested_sdfg_raises()
+    test_split_rewrites_every_access_and_keeps_the_rest_of_the_expression()
     print("split_array extra tests PASS")

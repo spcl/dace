@@ -3,6 +3,7 @@ import warnings
 
 from typing import Dict, List, Any, Tuple
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.layout.subscript_rewrite import rewrite_expression
 from dace.sdfg import nodes as nd
 from dataclasses import dataclass
 
@@ -589,21 +590,20 @@ def rewrite_einsum_if_permuted(edge, permute_indices: List[int]) -> None:
 
 
 def permute_args(expr, permute_map: dict[str, list[int]]):
-    """Recursively permutes call args in a SymPy expr; permute_map[func][new_pos] = old_pos."""
-    if not expr.args:
-        return expr
-    args = tuple(permute_args(a, permute_map) for a in expr.args)
-    name = str(expr.func)
-    if name in permute_map:
+    """Permutes the indices of every mapped array access in a SymPy expr; permute_map[name][new] = old."""
+
+    def permuted_indices(name: str, indices):
         perm = permute_map[name]
-        args = tuple(args[perm[i]] for i in range(len(args)))
-    if args == expr.args:
-        return expr
-    return expr.func(*args)
+        if len(perm) != len(indices):
+            raise ValueError(f'{name} is accessed with {len(indices)} indices, but its permutation has '
+                             f'{len(perm)} entries')
+        return [indices[perm[i]] for i in range(len(indices))]
+
+    for name in permute_map:
+        expr = rewrite_expression(expr, name, lambda indices, name=name: permuted_indices(name, indices))
+    return expr
 
 
 def _parse_interstate_edge(edge_data: str, permute_map: dict[str, list[int]], sdfg: dace.SDFG = None):
-    symbolic_expr: dace.symbolic.SymExpr = dace.symbolic.pystr_to_symbolic(edge_data)
-    permuted_symbolic_expr: dace.symbolic.SymExpr = permute_args(symbolic_expr, permute_map)
-    permuted_str_expr: str = dace.symbolic.symstr(sym=permuted_symbolic_expr, arrayexprs=frozenset(sdfg.arrays.keys()))
-    return permuted_str_expr
+    permuted: dace.symbolic.SymExpr = permute_args(dace.symbolic.pystr_to_symbolic(edge_data), permute_map)
+    return dace.symbolic.symstr(sym=permuted, arrayexprs=frozenset(sdfg.arrays.keys()))

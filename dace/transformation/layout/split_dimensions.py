@@ -2,10 +2,9 @@ import dace
 from typing import Dict, List, Any, Tuple
 from dace.sdfg.graph import Edge, EdgeT
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
 from dataclasses import dataclass
 import copy
-import re
-import sympy
 from sympy import simplify
 
 
@@ -311,47 +310,20 @@ class SplitDimensions(ppl.Pass):
                 for inner in inner_names:
                     self._replace_memlets_recursive(node.sdfg, inner, masks, factors)
 
-    def _extract_indices(self, expr: str, name: str):
-        m = re.search(rf'{re.escape(name)}\[(.*)\]', expr)
-        if not m:
-            return []
+    def split_array_accesses(self, expr_str: str, name: str, masks: List[bool], factors: List[int]) -> str:
+        """``expr_str`` with every ``name[...]`` access reindexed; the rest of the expression is kept."""
 
-        inside = m.group(1)
+        def split_indices(indices):
+            if len(indices) != len(masks):
+                raise ValueError(f'{name} is accessed with {len(indices)} indices, but its split map has '
+                                 f'{len(masks)} dimensions')
+            # mirrors _split_range_expr/_modulo_range_expr: masked dims are divided, unmasked ones kept,
+            # and one tile index per masked dim is appended. int_floor, never `//`: sympy floor is
+            # dropped by sym2cpp.
+            outer = [dace.symbolic.int_floor(b, f) if m else b for b, m, f in zip(indices, masks, factors)]
+            return outer + [b % f for b, m, f in zip(indices, masks, factors) if m]
 
-        # split on top-level commas (paren depth tracked)
-        parts = []
-        depth = 0
-        current = []
-        for ch in inside:
-            if ch == ',' and depth == 0:
-                parts.append(''.join(current).strip())
-                current = []
-            else:
-                if ch == '(':
-                    depth += 1
-                elif ch == ')':
-                    depth -= 1
-                current.append(ch)
-        if current:
-            parts.append(''.join(current).strip())
-
-        return parts
-
-    def _simplify_str(self, expr_str: str):
-        simplified = []
-        try:
-            sympy_expr = sympy.sympify(expr_str, evaluate=True)
-            simp = sympy.simplify(sympy_expr)
-            simplified = str(simp)
-        except Exception as ex:
-            simplified = expr_str
-        return simplified
-
-    def _replace_indices(self, expr_str: str, name: str, new_parts: list[str]) -> str:
-        m = re.search(rf'{re.escape(name)}\[(.*)\]', expr_str)
-        assert m
-
-        return f"{name}[{', '.join(new_parts)}]"
+        return rewrite_subscript_indices(expr_str, name, split_indices)
 
     def _replace_interstate_edges_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         # same index rewrite as _replace_memlets_recursive, but for interstate edge assignments
@@ -361,26 +333,7 @@ class SplitDimensions(ppl.Pass):
                 new_assignments = dict()
                 for k, v in edge.data.assignments.items():
                     assert k != arr_name  # arrays can't be assignment targets
-                    v_split = self._extract_indices(v, arr_name)
-                    block_shape = [f for m, f in zip(masks, factors) if m is True]
-                    array_shape = sdfg.arrays[arr_name].shape
-                    # empty v_split means expr references a different array
-                    assert len(v_split) + len(block_shape) == len(array_shape) or len(
-                        v_split
-                    ) == 0, f"{len(v_split)} (old access string length) + {len(block_shape)} (block length) is not equal to 0 or {len(array_shape)}"
-                    if len(v_split) + len(block_shape) == len(array_shape):
-                        new_split = []
-                        for i, b in enumerate(v_split):
-                            assert len(v_split) == len(masks)
-                            assert len(v_split) == len(factors)
-                            new_split.append(self._simplify_str(f"(({b}) // {factors[i]})"))
-                        for i, b in enumerate(v_split):
-                            if masks[i] is True:
-                                new_split.append(self._simplify_str(f"(({b}) % {factors[i]})"))
-                        new_assignments[k] = self._replace_indices(expr_str=v, name=arr_name, new_parts=new_split)
-                    else:
-                        new_split = v_split
-                        new_assignments[k] = v
+                    new_assignments[k] = self.split_array_accesses(v, arr_name, masks, factors)
 
                 edge.data.assignments = new_assignments
 

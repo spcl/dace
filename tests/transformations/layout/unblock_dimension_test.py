@@ -74,7 +74,48 @@ def test_unblock_native_blocked_kernel():
     assert numpy.allclose(C1, C0)
 
 
+def indexed_by(expr_str: str, name: str):
+    """Every ``name[...]`` access in ``expr_str``, as a sorted list of index-string tuples."""
+    expr = dace.symbolic.pystr_to_symbolic(expr_str)
+    return sorted(
+        tuple(str(a) for a in node.args[1:]) for node in expr.atoms(dace.symbolic.Subscript)
+        if str(node.args[0]) == name)
+
+
+def test_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression():
+    """Interstate assignments hold whole expressions, not bare accesses.
+
+    Accesses were located with a greedy ``A\\[(.*)\\]`` regex and folded back with a greedy
+    ``re.sub`` of the same pattern, so on ``A[i, j, t] * B[i, j]`` the substitution ran from A's
+    opening bracket to B's closing one and DELETED B's access outright. A rank mismatch also fell
+    through unrewritten, reshaping the array while leaving its index in the blocked space."""
+    unblock = UnblockDimensions(unblock_map={})
+    masks, factors = [True, False], [4, 1]
+
+    sdfg = dace.SDFG("probe")
+    st0 = sdfg.add_state("s0")
+    st1 = sdfg.add_state("s1")
+    edge = dace.InterstateEdge(assignments={"v": "(A[i, j, t] * B[i, j])"})
+    sdfg.add_edge(st0, st1, edge)
+    unblock._replace_interstate_edges_recursive(sdfg, "A", masks, factors)
+
+    out = edge.assignments["v"]
+    assert indexed_by(out, "A") == [("4*i + t", "j")], out
+    assert indexed_by(out, "B") == [("i", "j")], out  # the access the greedy re.sub used to delete
+
+    # a rank that does not match the blocked rank is an error, not a silent pass-through
+    edge.assignments["v"] = "A[i, j]"
+    raised = False
+    try:
+        unblock._replace_interstate_edges_recursive(sdfg, "A", masks, factors)
+    except ValueError as exc:
+        raised = True
+        assert "blocked rank" in str(exc)
+    assert raised, "expected UnblockDimensions to reject an access that is not in the blocked index space"
+
+
 if __name__ == "__main__":
     test_block_then_unblock_roundtrip()
     test_unblock_native_blocked_kernel()
+    test_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression()
     print("unblock tests PASS")

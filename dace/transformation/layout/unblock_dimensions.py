@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """UnblockDimensions -- inverse of SplitDimensions (Block): merges each blocked (outer, inner) dim pair back into one flat dim, ``outer*factor + inner``. Assumes layout normal form (post ``prepare_for_layout``), a packed blocked array, and single-tile outer accesses; multi-tile outer accesses raise."""
 import copy
-import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 import dace
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
 
 
 @dataclass
@@ -121,46 +121,24 @@ class UnblockDimensions(ppl.Pass):
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_memlets_recursive(nsdfg, inner, masks, factors)
 
-    def _extract_indices(self, expr: str, name: str) -> List[str]:
-        m = re.search(rf'{re.escape(name)}\[(.*)\]', expr)
-        if not m:
-            return []
-        inside = m.group(1)
-        parts, depth, current = [], 0, []
-        for ch in inside:
-            if ch == ',' and depth == 0:
-                parts.append(''.join(current).strip())
-                current = []
-            else:
-                if ch == '(':
-                    depth += 1
-                elif ch == ')':
-                    depth -= 1
-                current.append(ch)
-        if current:
-            parts.append(''.join(current).strip())
-        return parts
-
     def _replace_interstate_edges_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
+        expected = len(masks) + sum(1 for m in masks if m)
+
+        def merge_indices(indices):
+            if len(indices) != expected:
+                raise ValueError(f"UnblockDimensions: '{arr_name}' is accessed with {len(indices)} indices, "
+                                 f"expected its blocked rank {expected} for masks {masks}")
+            # fold each (outer, appended inner) pair back into the original index
+            return [
+                indices[d] * factors[d] + indices[self._inner_slot(masks, d)] if m else indices[d]
+                for d, m in enumerate(masks)
+            ]
+
         for edge in sdfg.all_interstate_edges():
-            new_assignments = dict()
-            for k, v in edge.data.assignments.items():
-                idx = self._extract_indices(v, arr_name)
-                expected = len(masks) + sum(1 for m in masks if m)
-                if len(idx) == expected:
-                    merged = []
-                    for d, m in enumerate(masks):
-                        if m:
-                            outer = idx[d]
-                            inner = idx[self._inner_slot(masks, d)]
-                            merged.append(f"(({outer}) * {factors[d]} + ({inner}))")
-                        else:
-                            merged.append(idx[d])
-                    new_assignments[k] = re.sub(rf'{re.escape(arr_name)}\[(.*)\]', f"{arr_name}[{', '.join(merged)}]",
-                                                v)
-                else:
-                    new_assignments[k] = v
-            edge.data.assignments = new_assignments
+            edge.data.assignments = {
+                k: rewrite_subscript_indices(v, arr_name, merge_indices)
+                for k, v in edge.data.assignments.items()
+            }
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_interstate_edges_recursive(nsdfg, inner, masks, factors)
 

@@ -1,7 +1,7 @@
 import copy
 import numpy as np
 import dace
-from dace.transformation.layout.permute_dimensions import PermuteDimensions
+from dace.transformation.layout.permute_dimensions import PermuteDimensions, permute_args
 
 
 def test_standalone_execution():
@@ -90,6 +90,26 @@ def test_standalone_execution():
     assert vals_B_close, f"vals_B differs, max {np.max(np.abs(vals_B_orig - vals_B_trans))}"
 
 
+def test_permute_args_permutes_subscript_indices():
+    """``pystr_to_symbolic('A[i, j, k]')`` is ``Subscript(A, i, j, k)``.
+
+    The array name is the FIRST ARGUMENT, not the function, so the old ``str(expr.func)`` lookup
+    never matched an array: descriptors and memlets were permuted while the index expressions
+    inlined into interstate assignments were silently left alone, reading the wrong element."""
+    expr = dace.symbolic.pystr_to_symbolic('(A[i, j, k] * B[i, j, k])')
+    permuted = permute_args(expr, {'A': [1, 0, 2]})
+
+    accesses = {str(sub.args[0]): [str(a) for a in sub.args[1:]] for sub in permuted.atoms(dace.symbolic.Subscript)}
+    assert accesses['A'] == ['j', 'i', 'k'], accesses
+    assert accesses['B'] == ['i', 'j', 'k'], accesses  # arrays outside the permute map are untouched
+
+    # new index position i takes old position perm[i], matching how the descriptor shape is permuted
+    assert [str(a) for a in permute_args(dace.symbolic.pystr_to_symbolic('A[i, j, k]'), {
+        'A': [2, 0, 1]
+    }).args[1:]] == ['k', 'i', 'j']
+
+
 if __name__ == "__main__":
     test_standalone_execution()
+    test_permute_args_permutes_subscript_indices()
     print("permute dimension test PASS")
