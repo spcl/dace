@@ -450,7 +450,7 @@ class NormalizeWCR(ppl.Pass):
         # --- mutate: clone the scatter map to the outer scope ---
         ksym, nksym = symbol(iparam), symbol(self._fresh_symbol(state.sdfg, '_wcr_' + iparam))
         new_me, new_mx = state.add_map('extract_' + oc, {str(nksym): str(ime.map.range)})
-        new_t = state.add_tasklet('extract_' + oc, set(tasklet.in_connectors), set(tasklet.out_connectors),
+        new_t = state.add_tasklet('extract_' + oc, tasklet.in_connectors.keys(), tasklet.out_connectors.keys(),
                                   tasklet.code.as_string)
         for ie, ext, top_src in plan:
             ml = unsqueeze_memlet(ie.data, ext.data)

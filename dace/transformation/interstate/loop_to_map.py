@@ -1259,6 +1259,14 @@ class LoopToMap(xf.MultiStateTransformation):
         read_set -= view_set
         write_set -= view_set
 
+        # Ordered from here on: these name the nested SDFG's connectors and fix the order its
+        # access nodes are wired in, which is what numbers the enclosing map's IN_n / OUT_n. Left
+        # as sets they get numbered differently per interpreter run, because set iteration order
+        # for strings is hash order. Sorted, since a set of container names carries no order of
+        # its own to preserve.
+        read_set = dict.fromkeys(sorted(read_set))
+        write_set = dict.fromkeys(sorted(write_set))
+
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         fsymbols = set(sdfg.free_symbols)
         body = graph.add_state_before(self.loop, 'single_state_body')
@@ -1274,7 +1282,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.add_edge(e.src, e.dst, e.data)
 
         # Add NestedSDFG arrays
-        for name in read_set | write_set:
+        for name in dict.fromkeys((*read_set, *write_set)):
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name

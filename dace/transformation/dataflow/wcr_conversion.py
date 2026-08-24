@@ -1341,7 +1341,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             code = _wcr_augassign_body(edge.data.wcr)
             edge.data.wcr = None
             in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            new_tasklet = state.add_tasklet('augassign', {'__in1': None, '__in2': None}, {'__out'}, f"__out = {code}")
             # `tmp` is a generic name minted into a graph whose connectors this transformation did
             # not choose, which is exactly the case that needs the connector-avoiding minter: an
             # array named after an existing connector is a graph validation rejects.
@@ -1359,7 +1359,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             for e in state.memlet_path(edge):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            new_tasklet = state.add_tasklet('augassign', {'__in1': None, '__in2': None}, {'__out'}, f"__out = {code}")
             # `tmp` is a generic name minted into a graph whose connectors this transformation did
             # not choose, which is exactly the case that needs the connector-avoiding minter: an
             # array named after an existing connector is a graph validation rejects.
@@ -1385,7 +1385,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             in_subset = m.get_src_subset(edge, state)
             dims = _multi_element_dims(out_subset) if out_subset is not None else []
             read_back = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            new_tasklet = state.add_tasklet('augassign', {'__in1': None, '__in2': None}, {'__out'}, f"__out = {code}")
 
             if not dims:
                 # Scalar RMW: ``__in1``/``__out`` address DEST (output); ``__in2`` reads SOURCE
@@ -1458,7 +1458,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             for e in state.memlet_path(edge):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            new_tasklet = state.add_tasklet('augassign', {'__in1': None, '__in2': None}, {'__out'}, f"__out = {code}")
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
             state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
                            Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))

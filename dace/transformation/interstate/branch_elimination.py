@@ -324,7 +324,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                      | dace.symbolic.arrays(rhs)) - {"AND", "OR", "NOT", "and", "or", "not", "And", "Or", "Not"}
 
         # Collect inputs we need
-        arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
+        arr_inputs = sorted(var for var in free_vars if var in state.sdfg.arrays)
         sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
         for sym_name in sym_inputs:
             if sym_name not in state.sdfg.symbols:
@@ -373,11 +373,11 @@ class BranchElimination(transformation.MultiStateTransformation):
                                                                                           arrays=set(
                                                                                               state.sdfg.arrays.keys()))
 
-        assert arr_inputs.union(symbol_inputs) == free_vars
+        assert set(arr_inputs) | symbol_inputs == free_vars
 
         tasklet = state.add_tasklet(name=f"condition_symbol_to_scalar_{lhs}_to_{float_lhs_name}_scalar",
-                                    inputs={f"_in_{arr_input}_{i}"
-                                            for i, arr_input in enumerate(arr_inputs)},
+                                    inputs=dict.fromkeys(f"_in_{arr_input}_{i}"
+                                                         for i, arr_input in enumerate(arr_inputs)),
                                     outputs={f"_out_{float_lhs_name}"},
                                     code=f"_out_{float_lhs_name} = ({cleaned})")
 
@@ -700,7 +700,11 @@ class BranchElimination(transformation.MultiStateTransformation):
         # 3. Add the combine tasklet which performs: float_cond1 * tmp1 + (1 - float_cond1) * tmp2
         combine_tasklet = new_state.add_tasklet(
             name=f"combine_branch_values_for_{write_name}_{index}",
-            inputs={"_in_left", "_in_right", "_in_factor"},
+            inputs={
+                "_in_left": None,
+                "_in_right": None,
+                "_in_factor": None
+            },
             outputs={"_out"},
             code="_out = (_in_factor * _in_left) + ((1.0 - _in_factor) * _in_right)")
 

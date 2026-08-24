@@ -1096,7 +1096,7 @@ class InsertTileLoadStore(ppl.Pass):
                                            find_new_name=True)
         out_an = inner_state.add_access(out_name)
         t = inner_state.add_tasklet(name=f"idxarith_{out_name}",
-                                    inputs=set(conn for conn, _ in sym_to_conn.values()),
+                                    inputs=dict.fromkeys(conn for conn, _ in sym_to_conn.values()),
                                     outputs={"_out"},
                                     code=f"_out = {body}",
                                     language=dtypes.Language.Python)

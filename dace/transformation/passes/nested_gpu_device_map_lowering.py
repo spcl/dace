@@ -67,8 +67,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_inner_edges = state.all_edges(*map_inner_nodes)
         map_in_edges = state.in_edges(map_entry)
         map_out_edges = state.out_edges(map_exit)
-        inputs = {ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None}
-        outputs = {oe.data.data for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None}
+        inputs = dict.fromkeys(ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None)
+        outputs = dict.fromkeys(oe.data.data for oe in state.out_edges(state.exit_node(map_entry))
+                                if oe.data.data is not None)
         #assert all({isinstance(ie.src, dace.nodes.AccessNode) for ie in map_in_edges if ie.data is not None}), f"{[ie.src for ie in map_in_edges if ie.data is not None]}"
         #assert all({isinstance(oe.dst, dace.nodes.AccessNode) for oe in map_out_edges if oe.data is not None}), f"{[oe.dst for oe in map_out_edges if ot.data is not None]}"
 

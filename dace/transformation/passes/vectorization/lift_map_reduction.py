@@ -433,8 +433,10 @@ class LiftMapReductionToReduce(ppl.Pass):
             partial, _ = sdfg.add_scalar(f"_red_partial_{acc}", dtype, transient=True, find_new_name=True)
             partial_node = state.add_access(partial)
             state.add_edge(red, None, partial_node, None, dace.Memlet(f"{partial}[0]"))
-            fold = state.add_tasklet("reduce_accum", {"__in1", "__in2"}, {"__out"},
-                                     f"__out = {_wcr_augassign_body(wcr)}")
+            fold = state.add_tasklet("reduce_accum", {
+                "__in1": None,
+                "__in2": None
+            }, {"__out"}, f"__out = {_wcr_augassign_body(wcr)}")
             state.add_edge(state.add_access(acc), None, fold, "__in1",
                            dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             state.add_edge(partial_node, None, fold, "__in2", dace.Memlet(f"{partial}[0]"))

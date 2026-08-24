@@ -3421,7 +3421,13 @@ def _emit_seed_add_nested(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: s
     scan_read = state.add_read(scan_buf)
     out_write = state.add_write(info.out_name)
     code = _scan_op_expression(info.op)
-    tasklet = state.add_tasklet(f'{state.label}_apply', inputs={'_seed', '_delta'}, outputs={'_o'}, code=code)
+    tasklet = state.add_tasklet(f'{state.label}_apply',
+                                inputs={
+                                    '_seed': None,
+                                    '_delta': None
+                                },
+                                outputs={'_o'},
+                                code=code)
     me, mx = state.add_map(state.label + '_map', {
         map_i: subsets.Range([(0, trip - 1, 1)]),
         map_j: subsets.Range([(inner_start, inner_end, 1)])

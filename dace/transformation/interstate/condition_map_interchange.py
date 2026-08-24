@@ -68,14 +68,9 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
+                inputs = dict.fromkeys(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = dict.fromkeys(edge.data.data for edge in state.in_edges(map_exit)
+                                        if edge.data.data is not None)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}

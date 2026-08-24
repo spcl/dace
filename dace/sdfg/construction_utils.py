@@ -612,8 +612,8 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
 
     # Ass tasklets
     t = state.add_tasklet(name=f"assign_{lhs}",
-                          inputs=set(in_connectors.values()),
-                          outputs=set(out_connectors.values()),
+                          inputs=dict.fromkeys(in_connectors.values()),
+                          outputs=dict.fromkeys(out_connectors.values()),
                           code=f"{lhs} = {rhs}")
 
     # Add connectors and accesses, do not duplicate array access nodes

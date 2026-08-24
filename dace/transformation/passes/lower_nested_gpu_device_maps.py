@@ -56,8 +56,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         map_inner_edges = state.all_edges(*map_inner_nodes)
         map_in_edges = state.in_edges(map_entry)
         map_out_edges = state.out_edges(map_exit)
-        inputs = {ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None}
-        outputs = {oe.data.data for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None}
+        inputs = dict.fromkeys(ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None)
+        outputs = dict.fromkeys(oe.data.data for oe in state.out_edges(state.exit_node(map_entry))
+                                if oe.data.data is not None)
 
         inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
 

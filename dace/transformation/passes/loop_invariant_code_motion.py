@@ -595,8 +595,8 @@ def _hoist_tasklet_to_preheader(
     # Clone the tasklet in preheader.
     new_tasklet = preheader.add_tasklet(
         name=tasklet.label + "_licm",
-        inputs=set(tasklet.in_connectors.keys()),
-        outputs=set(tasklet.out_connectors.keys()),
+        inputs=tasklet.in_connectors.keys(),
+        outputs=tasklet.out_connectors.keys(),
         code=tasklet.code.as_string if tasklet.code is not None else "",
         language=tasklet.language,
     )
@@ -817,8 +817,8 @@ def _hoist_tasklet_out_of_map(
     # Clone the tasklet outside the scope.
     new_tasklet = state.add_tasklet(
         name=tasklet.label + "_licm",
-        inputs=set(tasklet.in_connectors.keys()),
-        outputs=set(tasklet.out_connectors.keys()),
+        inputs=tasklet.in_connectors.keys(),
+        outputs=tasklet.out_connectors.keys(),
         code=tasklet.code.as_string if tasklet.code is not None else "",
         language=tasklet.language,
     )

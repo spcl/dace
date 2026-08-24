@@ -1,5 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+from ordered_set import OrderedSet
+
 import dace
 from dace import nodes, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
@@ -247,8 +250,8 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         # read only data will be passed as input, writeable data will be passed
         # as 'output' otherwise kernel cannot write to data
-        kernel_args_read = set()
-        kernel_args_write = set()
+        kernel_args_read = OrderedSet()
+        kernel_args_write = OrderedSet()
         for data in kernel_args:
             data_accesses_read_only = [
                 state.in_degree(node) == 0 for state in kernel_sdfg.states() for node in state

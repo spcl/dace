@@ -566,10 +566,8 @@ class StreamingMemory(xf.SingleStateTransformation):
                 maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
-                {m[1]
-                 for m in rmemlets},
-                {m[1]
-                 for m in wmemlets},
+                dict.fromkeys(m[1] for m in rmemlets),
+                dict.fromkeys(m[1] for m in wmemlets),
                 code,
             )
             for node, cname, memlet in rmemlets:

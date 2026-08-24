@@ -146,9 +146,11 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             if sdfg.arrays[name].transient and name not in outside_names:
                 unique_set.add(name)
 
-        # Find NestedSDFG's connectors
-        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+        # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
+        # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
+        # Sorted, since a set of container names carries no order of its own to preserve.
+        read_set = dict.fromkeys(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        write_set = dict.fromkeys(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
         use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
