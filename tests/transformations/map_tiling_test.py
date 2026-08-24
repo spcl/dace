@@ -146,6 +146,36 @@ def test_memlet_tree():
         MapTiling.apply_to(state.sdfg, {}, 0, True, map_entry=map_entry)
 
 
+def test_symbol_rename_reaches_strip_mined_bound():
+    """Renaming the tile iterator must rewrite the whole inner range, not just its start.
+
+    ``MapTiling`` gives the inner map the bound ``Min(N - 1, tile_i + 31)``, which DaCe stores as
+    a ``SymExpr`` (exact expression plus over-approximation). Symbol replacement used to hand any
+    non-``sympy.Basic`` value straight back, so the range came out half-renamed --
+    ``q:Min(N - 1, tile_i + 31)`` -- naming a symbol nothing binds any more.
+    """
+
+    @dace.program
+    def scale(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[0:N]:
+            b[i] = a[i] * 2.0
+
+    sdfg = scale.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(MapTiling, options=dict(tile_sizes=(32, ))) == 1
+    state = sdfg.states()[0]
+    outer = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is None)
+    inner = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is outer)
+    tile_param = outer.map.params[0]
+    assert tile_param in str(inner.map.range), 'the inner bound must depend on the tile iterator'
+
+    sdfg.replace(tile_param, 'q')
+
+    assert tile_param not in str(inner.map.range), f'stale tile iterator left in {inner.map.range}'
+    stale = [str(e.data) for e in state.edges() if e.data is not None and tile_param in str(e.data.subset)]
+    assert not stale, f'stale tile iterator left in memlets: {stale}'
+
+
 if __name__ == '__main__':
     test_map_tiling_with_strides()
     test_memlet_tree()
+    test_symbol_rename_reaches_strip_mined_bound()
