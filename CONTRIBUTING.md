@@ -80,7 +80,7 @@ and must also be commented out at the main section at the bottom of the file.
 Please refrain from adding new dependencies unless necessary. If they are necessary,
 indicate the reason in the pull request description. Prefer dependencies
 available in standard repositories (such as [PyPI](https://pypi.org/)) over git
-repositories. Add dependencies both to the [setup.py](setup.py) and [requirements.txt](requirements.txt) files.
+repositories.
 
 ## File Heading
 
