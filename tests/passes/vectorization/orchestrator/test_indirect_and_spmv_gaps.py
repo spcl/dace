@@ -1,37 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Gap tests pinning the v2 MVP's reject behaviour on kernels that need
-``TileLoad`` (gather) / ``TileStore`` (scatter) / ``TileReduce``.
+"""Kernels that need ``TileLoad`` (gather) / ``TileStore`` (scatter) / ``TileReduce``.
 
-Each kernel family below is checked rigorously. The **1D data gather**
-``a[i] = b[idx[i]] + ...`` now lands through
-:class:`PromoteNSDFGBodyToTiles` (the gather-descent slice: fan the
-per-lane index into a ``(W,)`` index tile, collapse the ``b[__sym]``
-reads into a :class:`TileLoad` (gather)), so its test is an end-to-end
-numerical equivalence assertion. The **2D / separable / SPMV (gather +
-reduction)** families are still refused with a loud
-:class:`NotImplementedError` (their descent + ``TileReduce`` slices are
-pending); those tests stay ``pytest.raises``.
+The **1D** and **2D data gathers** (``a[i] = b[idx[i]] + ...``) land through the walker --
+``WidenAccesses`` materialises the per-lane index tile, ``InsertTileLoadStore`` collapses the
+``b[__sym]`` reads into a :class:`TileLoad` carrying ``gather_dims`` -- so those tests assert
+end-to-end numerical equivalence against the unvectorized reference, plus the lowered shape for
+the 1D case (equal numbers alone cannot tell a real gather from a scalar fallback).
 
-This file is the executable contract: when each remaining post-MVP
-slice lands, its ``pytest.raises(NotImplementedError)`` block is
-replaced by an end-to-end numerical equivalence assertion.
+The **SpMV** and **WCR-reduction** families assert only that the orchestrator runs to completion:
+it lowers what it can and declines the reduction fold with a warning, leaving the kernel correct
+and un-tiled. When their ``TileReduce`` slice lands, those tests gain equivalence assertions too.
 """
 
+import numpy as np
 import pytest
 
-pytestmark = pytest.mark.skip(reason="1D indirect-stencil + elementwise tests trip a StopIteration in"
-                              " DaCe codegen's 1D-strided-copy shape inference (cpp.py:486). The"
-                              " function looks for a non-1 dim in ``dst_subset.size_exact()`` but the"
-                              " kernel's post-vec SDFG presents a copy where ``copy_shape`` has one"
-                              " non-1 dim while ``dst_copy_shape`` is all-1s -- an SDFG-side shape"
-                              " mismatch from staging, not a codegen bug. Fix belongs upstream in the"
-                              " walker / materialiser to produce memlets whose dst extent matches"
-                              " src. 2D + SpMV + WCR-reduction tests fail further downstream"
-                              " (compilation crashes, output-kind violations) -- distinct slices.")
-import numpy as np
-
 import dace
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileLoad, TileReduce
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -124,24 +109,19 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
 
 
 def test_1d_indirect_stencil_emits_tilegather():
-    """The 1D data gather lowers to a :class:`TileLoad` (gather) lib node (checked
-    before ``expand_library_nodes`` collapses it to its ``pure`` form)."""
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern, )
-    from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
-        GenerateTileIterationMask, )
-    from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-    from dace.transformation.passes.vectorization.promote_nsdfg_body_to_tiles import (
-        PromoteNSDFGBodyToTiles, )
-    from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
-        StrideMapByTileWidths, )
+    """The 1D data gather lowers to a :class:`TileLoad` (gather) lib node naming the gathered dim,
+    fed by a second :class:`TileLoad` that materialises the per-lane index tile. Checked on the
+    orchestrator's output, before ``expand_library_nodes`` collapses both to their ``pure`` form --
+    the numerical test above cannot see the difference between a real gather and a scalar fallback
+    that happens to compute the same values."""
     sdfg = _build_1d_indirect_stencil()
-    for p in (CleanAccessNodeToScalarSliceToTaskletPattern(), MarkTileDims(widths=(8, )),
-              GenerateTileIterationMask(widths=(8, )), StrideMapByTileWidths(widths=(8, )),
-              PromoteNSDFGBodyToTiles(widths=(8, ))):
-        p.apply_pass(sdfg, {})
-    assert any((isinstance(node, TileLoad) and tuple(node.gather_dims)) for node, _ in sdfg.all_nodes_recursive()), \
-        "expected a TileLoad (gather) for the 1D data gather"
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    loads = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, TileLoad)]
+    gathers = [node for node in loads if tuple(node.gather_dims)]
+    assert gathers, f"expected a TileLoad (gather) for the 1D data gather, got {[n.label for n in loads]}"
+    assert all(tuple(node.gather_dims) == (0, ) for node in gathers), \
+        f"the only gathered dim is the single data dim: {[tuple(n.gather_dims) for n in gathers]}"
+    assert len(loads) > len(gathers), "the gather reads its lane indices through a TileLoad of its own"
 
 
 @pytest.mark.parametrize("m,n", [(16, 16), (8, 24), (12, 17)])
@@ -174,14 +154,21 @@ def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
 
 
 def test_vectorize_cpu_multi_dim_accepts_spmv():
-    """SpMV (gather + reduction accumulator via wcr): the orchestrator's
-    ``InsertAssignTaskletsAtMapBoundary`` + ``NormalizeWCRSource`` +
-    ``EmitTileOps`` reduction emission now lower the shape without
-    refusal (prior contract was the inverse). Asserts the pipeline runs
-    end-to-end — numerical equivalence is covered by the broader
-    matches_reference tests in this file."""
+    """SpMV (gather + reduction): the orchestrator must run to completion rather than raise. It
+    declines the reduction fold -- the addend never widened to a tile, so no tile-op reduction
+    shape matches -- and leaves the kernel correct and un-tiled. The prior contract was a hard
+    ``NotImplementedError``; declining quietly and correctly is what this pins."""
     sdfg = _build_spmv()
     VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+
+    rng = np.random.default_rng(seed=20260824)
+    n, nnz = 12, 21  # neither extent divides either width: the decline must hold on the tail too
+    A = rng.random((n, nnz))
+    x = rng.random(n)
+    col = rng.integers(0, n, size=nnz).astype(np.int32)
+    y = np.zeros(n)
+    sdfg(y=y, A=A.copy(), x=x.copy(), col=col.copy(), N=n, NNZ=nnz)
+    np.testing.assert_allclose(y, A @ x[col], rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.parametrize("widths", [(8, ), (4, 8)])
@@ -219,3 +206,12 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
             external_edges=True,
         )
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+
+    assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive()), \
+        "the WCR fold must lower to a TileReduce, not stay a scalar accumulation"
+    rng = np.random.default_rng(seed=len(widths))
+    n = 37  # divides no width: the masked tail carries part of the sum
+    a = rng.random(n if len(widths) == 1 else (n, n))
+    total = np.zeros(1)
+    sdfg(a=a.copy(), s=total, N=n)
+    np.testing.assert_allclose(total[0], a.sum(), rtol=1e-12, atol=1e-12)
