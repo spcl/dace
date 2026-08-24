@@ -141,6 +141,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     for state in sdfg.states():
         candidates_in_state: Set[str] = set()
 
+        # Containers this state PRODUCES. A definition that depends on one of them cannot be
+        # hoisted into a preceding state, which is what promotion does (``state_fission`` peels the
+        # defining subgraph off in front). The per-edge checks below catch a dependence carried by a
+        # data EDGE; this set is what catches one carried by a memlet SUBSET, where the container is
+        # named as if it were a symbol and no edge records the read at all.
+        state_writes = {n.data for n in state.data_nodes() if state.in_degree(n) > 0}
+
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
                 continue
@@ -230,6 +237,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if state.in_degree(edge.src) > 0:
                     candidates.remove(candidate)
                     continue
+                # ... nor to anything its read subset indexes with.
+                if {str(s) for s in edge.data.free_symbols} & state_writes:
+                    candidates.remove(candidate)
+                    continue
             elif isinstance(edge.src, nodes.Tasklet):
                 # If input tasklet has more than one output, skip
                 if state.out_degree(edge.src) > 1:
@@ -254,6 +265,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         break
                     # If input array has inputs of its own (cannot promote within same state), skip
                     if state.in_degree(tinput.src) > 0:
+                        candidates.remove(candidate)
+                        break
+                    # Same reason, one indirection out: an INDEX that is itself produced here.
+                    # ``U[argmax_index, j]`` records no read edge for ``argmax_index`` -- it is a
+                    # symbol inside the subset -- so the degree test above never sees it, and
+                    # rayleigh_ritz_rotation promoted a definition whose index the same state was
+                    # still computing. The hoisted read then indexed with the INT_MAX initialiser
+                    # and segfaulted.
+                    if {str(s) for s in tinput.data.free_symbols} & state_writes:
                         candidates.remove(candidate)
                         break
                 else:

@@ -1023,6 +1023,45 @@ def test_non_transient_promotion_is_read_only():
     assert 'total' not in scalar_to_symbol.find_promotable_scalars(wr, transients_only=False)
 
 
+def test_index_produced_in_the_same_state_is_not_promotable():
+    """A definition whose INDEX the same state is still computing cannot be hoisted out of it.
+
+    Promotion peels the defining subgraph off into a preceding state (``state_fission``), so every
+    input it reads has to be ready before that state runs. The index here reaches the read through a
+    memlet SUBSET rather than a data edge -- ``ya[idx, 0]`` records no read edge for ``idx`` -- so
+    the degree tests over the tasklet's input edges never see the dependence. Promoting anyway put
+    the read in front of the map that writes ``idx``, and rayleigh_ritz_rotation segfaulted on the
+    untouched initialiser. ``val`` is a float, so it is a candidate only because an interstate
+    condition reads it, which is exactly how the real kernel reached the pass.
+    """
+    sdfg = dace.SDFG('index_from_same_state')
+    sdfg.add_array('ya', [4, 1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('idx', dace.int64, transient=True)
+    sdfg.add_scalar('val', dace.float64, transient=True)
+
+    state = sdfg.add_state(is_start_block=True)
+    idx_node = state.add_access('idx')
+    state.add_mapped_tasklet('pick', {'i': '0:4'}, {'y': dace.Memlet('ya[i, 0]')},
+                             'o = i', {'o': dace.Memlet('idx[0]')},
+                             external_edges=True,
+                             output_nodes={'idx': idx_node})
+    read = state.add_tasklet('read', {'y'}, {'v'}, 'v = y')
+    state.add_edge(state.add_access('ya'), None, read, 'y', dace.Memlet('ya[idx, 0]'))
+    state.add_edge(read, 'v', state.add_access('val'), None, dace.Memlet('val[0]'))
+
+    neg, pos = sdfg.add_state('neg'), sdfg.add_state('pos')
+    sdfg.add_edge(state, neg, dace.InterstateEdge(condition='val < 0.0'))
+    sdfg.add_edge(state, pos, dace.InterstateEdge(condition='not (val < 0.0)'))
+    for branch, value in ((neg, '-1.0'), (pos, '1.0')):
+        branch.add_edge(branch.add_tasklet('w', {}, {'o'}, f'o = {value}'), 'o', branch.add_access('out'), None,
+                        dace.Memlet('out[0]'))
+
+    promotable = scalar_to_symbol.find_promotable_scalars(sdfg, integers_only=False)
+    assert 'val' not in promotable, (
+        f"'val' was promoted despite indexing with 'idx', which the same state writes: {promotable}")
+
+
 if __name__ == '__main__':
     test_abs_complex_guard_compiles_and_runs()
     test_complex_scalar_from_array_not_promotable()
@@ -1058,3 +1097,4 @@ if __name__ == '__main__':
     test_scalar_index_regression(False)
     test_scalar_index_regression(True)
     test_non_transient_promotion_is_read_only()
+    test_index_produced_in_the_same_state_is_not_promotable()
