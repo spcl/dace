@@ -8,6 +8,7 @@ import numpy as np
 from dace import Memlet
 from dace.libraries.standard.helper import host_accessible_info_storage
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
+from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
@@ -166,6 +167,43 @@ class ExpandInvPure(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandInvPure(ExpandTransformation):
+    """``A^-1`` as loops and tasklets, with no library behind it.
+
+    The same elimination the pure ``Solve`` runs, against the identity: inverting is solving with
+    ``n`` right-hand sides. Correct rather than fast, and an explicit inverse is rarely what a
+    numerical program wants in the first place -- it exists so a program that already asks for one
+    can be rendered.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        if node.overwrite:
+            raise NotImplementedError('pure linalg.inv does not implement overwrite; the elimination needs the '
+                                      'original matrix while it builds the inverse.')
+        (shape_ain, dtype, strides_ain, shape_aout, _, strides_aout, n) = node.validate(parent_sdfg, parent_state)
+
+        gesv_core = gesv_core_program(dtype, n, n)
+
+        @dace.program
+        def inv_pure(_ain: dtype[n, n], _aout: dtype[n, n]):
+            work = dace.define_local([n, n], dtype)
+            work[:] = _ain
+            columns = dace.define_local([n, n], dtype)
+            columns[:] = 0
+            for i in dace.map[0:n]:
+                columns[i, i] = 1
+            gesv_core(work, columns)
+            _aout[:] = columns
+
+        nsdfg = inv_pure.to_sdfg(simplify=True)
+        restride(nsdfg, (('_ain', shape_ain, strides_ain), ('_aout', shape_aout, strides_aout)), dtype)
+        return nsdfg
+
+
+@dace.library.expansion
 class ExpandInvOpenBLAS(ExpandTransformation):
 
     environments = [blas_environments.openblas.OpenBLAS]
@@ -205,7 +243,12 @@ class ExpandInvCuSolverDn(ExpandTransformation):
 class Inv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
+    implementations = {
+        "pure": ExpandInvPure,
+        "OpenBLAS": ExpandInvOpenBLAS,
+        "MKL": ExpandInvMKL,
+        "cuSolverDn": ExpandInvCuSolverDn
+    }
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False)

@@ -444,5 +444,47 @@ def test_linear_solve_renders_as_loops_with_no_library(language):
     assert np.allclose(x, np.linalg.solve(a, b))
 
 
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_matrix_inverse_renders_as_loops_with_no_library(language):
+    """``np.linalg.inv`` is the third corpus call whose node only vendor BLAS implemented."""
+
+    @dace.program
+    def invert(A: dace.float64[6, 6], B: dace.float64[6, 6]):
+        B[:] = np.linalg.inv(A)
+
+    sdfg = invert.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_inv_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+
+    a = np.random.rand(6, 6) + 6 * np.eye(6)
+    result = np.zeros((6, 6))
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'A': a.copy(),
+        'B': result
+    })
+    assert np.allclose(result, np.linalg.inv(a))
+
+
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_conditional_expression_renders_as_a_ternary(language):
+    """``ITE`` needs no helper in either dialect: C and C++ both have ``?:``."""
+
+    @dace.program
+    def identity(out: dace.float64[6, 6]):
+        for i, j in dace.map[0:6, 0:6]:
+            out[i, j] = 1 if i == j else 0
+
+    sdfg = identity.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_ite_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+    assert re.search(r'\?\s*\(1\)\s*:\s*\(0\)', rendering.code), 'the conditional did not render as a ternary'
+
+    out = np.zeros((6, 6))
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {'out': out})
+    assert np.allclose(out, np.eye(6))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

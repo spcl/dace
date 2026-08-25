@@ -11,7 +11,7 @@ import copy
 import numpy
 import pytest
 import ast
-from dace.transformation.passes.split_tasklets import SplitTasklets
+from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
 from dace.transformation.passes.canonicalize import canonicalize
 
 # Format: (expression, expected_num_statements_after_split)
@@ -1364,3 +1364,37 @@ def test_split_is_deterministic_under_a_randomised_hash_seed():
             assert lines, f'child with PYTHONHASHSEED={seed} produced no signature: {res.stderr[-500:]!r}'
             sigs.append(lines[0])
     assert len(dict.fromkeys(sigs)) == 1, 'hash-seed dependent split:\n' + '\n'.join(sigs)
+
+
+def test_if_then_statement_folds_to_ite():
+    """``if c: y = a`` is an ITE whose false case is the value ``y`` already held.
+
+    The earlier write has to be versioned away, or the result is two assignments to one name and
+    the chain builder downstream sees one register written twice.
+    """
+    statements = to_ssa('y = 0.0\nif (x > 0.5):\n    y = x')
+    assert statements, 'the if-then body was declined'
+    assert statements[-1].startswith('y = ITE('), statements
+    targets = [line.split(' = ')[0] for line in statements]
+    assert len(targets) == len(set(targets)), f'not single-assignment: {statements}'
+
+
+def test_if_then_else_statement_folds_to_ite():
+    """With both branches present there is no earlier value to preserve, and no versioning needed."""
+    statements = to_ssa('if (x > 0.5):\n    y = x\nelse:\n    y = 0.0')
+    assert statements[-1] == 'y = ITE(__t0, x, 0.0)', statements
+
+
+def test_if_then_without_a_previous_value_is_declined():
+    """``if c: y = a`` alone would read an undefined ``y`` on the false path."""
+    assert to_ssa('if (x > 0.5):\n    y = x') == []
+
+
+def test_conditional_with_an_unassignable_branch_is_declined():
+    """A branch that is not a plain assignment cannot be blended, so the whole body is declined."""
+    assert to_ssa('y = 0.0\nif (x > 0.5):\n    z[0] = x') == []
+
+
+def test_multi_statement_body_without_a_conditional_is_still_declined():
+    """The annotation-then-assignment shape must keep being left intact."""
+    assert to_ssa('_out: dace.float64\n_out = a * b') == []

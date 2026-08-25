@@ -5537,6 +5537,38 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
+    def visit_IfExp(self, node: ast.IfExp):
+        """``a if cond else b`` as a symbolic :class:`~dace.symbolic.ITE`.
+
+        Preprocessing folds the conditional away when the condition is known at parse time; what
+        reaches here is the runtime case, and without this it fell through to the generic assignment
+        check with "the rhs may only be data, numerical/boolean constants and symbols" -- true, but
+        no help. ``ITE`` IS symbolic, so the ordinary assignment path takes it from here, and both
+        code generators already spell it (``dace::ITE`` with the runtime headers, a plain ``?:``
+        without them).
+
+        The three operands are read unconditionally, like the links of a chained comparison: an
+        operand is a value in a dataflow graph, so evaluating the branch not taken costs a read and
+        never a side effect.
+        """
+        condition = self.evaluated_operand(node.test)
+        when_true = self.evaluated_operand(node.body)
+        when_false = self.evaluated_operand(node.orelse)
+        # ITE is a SYMBOLIC blend, so it can only carry symbols and constants. With a DATA operand
+        # the choice is a dataflow one and belongs in a tasklet -- which is exactly what ``where``
+        # builds, including the mixed data/constant cases, so it is reused rather than repeated.
+        # ``b[i] = a[i] if cond else b[i]`` (an if-then that keeps the old value) is this case.
+        if any(
+                isinstance(operand, str) and operand in self.sdfg.arrays
+                for operand in (condition, when_true, when_false)):
+            from dace.frontend.python.replacements.filtering import _array_array_where
+            self._add_state('IfExp_%d' % node.lineno)
+            self.last_block.set_default_lineinfo(self.current_lineinfo)
+            result = _array_array_where(self, self.sdfg, self.last_block, condition, when_true, when_false)
+            self.last_block.set_default_lineinfo(None)
+            return result
+        return symbolic.ITE(condition, when_true, when_false)
+
     def visit_UnaryOp(self, node: ast.UnaryOp):
         return self._visit_op(node, node.operand, None)
 

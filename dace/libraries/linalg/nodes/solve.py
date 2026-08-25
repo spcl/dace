@@ -17,6 +17,53 @@ from dace.libraries.blas import environments as blas_environments
 from ordered_set import OrderedSet
 
 
+def gesv_core_program(dtype, n, rhs):
+    """``dace.program`` solving ``a x = b`` in place, for a given element type and shape.
+
+    A factory rather than a plain program because a ``dace.program``'s annotations need concrete
+    types, and because ``linalg.inv`` runs the same elimination against the identity -- the
+    algorithm is written once and both expansions call it.
+
+    :param dtype: element type of both operands.
+    :param n: matrix order.
+    :param rhs: number of right-hand sides.
+    :returns: the program, which overwrites ``a`` with its factorization and ``x`` with the solution.
+    """
+
+    @dace.program
+    def gesv_core(a: dtype[n, n], x: dtype[n, rhs]):
+        for k in range(n):
+            pivot = k
+            for i in range(k + 1, n):
+                if abs(a[i, k]) > abs(a[pivot, k]):
+                    pivot = i
+            if pivot != k:
+                for j in range(n):
+                    swap_a = a[k, j]
+                    a[k, j] = a[pivot, j]
+                    a[pivot, j] = swap_a
+                for j in range(rhs):
+                    swap_x = x[k, j]
+                    x[k, j] = x[pivot, j]
+                    x[pivot, j] = swap_x
+            for i in range(k + 1, n):
+                factor = a[i, k] / a[k, k]
+                a[i, k] = 0
+                for j in range(k + 1, n):
+                    a[i, j] = a[i, j] - factor * a[k, j]
+                for j in range(rhs):
+                    x[i, j] = x[i, j] - factor * x[k, j]
+        for step in range(n):
+            i = n - 1 - step
+            for j in range(rhs):
+                total = x[i, j]
+                for m in range(i + 1, n):
+                    total = total - a[i, m] * x[m, j]
+                x[i, j] = total / a[i, i]
+
+    return gesv_core
+
+
 def restride(nsdfg, connectors, dtype):
     """Give ``nsdfg``'s connector arrays the strides the caller's containers actually have.
 
@@ -152,36 +199,7 @@ class ExpandSolvePure(ExpandTransformation):
         (shape_ain, dtype, strides_ain, shape_bin, _, strides_bin, shape_out, _, strides_out, n, rhs,
          _) = node.validate(parent_sdfg, parent_state)
 
-        @dace.program
-        def gesv_core(a: dtype[n, n], x: dtype[n, rhs]):
-            for k in range(n):
-                pivot = k
-                for i in range(k + 1, n):
-                    if abs(a[i, k]) > abs(a[pivot, k]):
-                        pivot = i
-                if pivot != k:
-                    for j in range(n):
-                        swap_a = a[k, j]
-                        a[k, j] = a[pivot, j]
-                        a[pivot, j] = swap_a
-                    for j in range(rhs):
-                        swap_x = x[k, j]
-                        x[k, j] = x[pivot, j]
-                        x[pivot, j] = swap_x
-                for i in range(k + 1, n):
-                    factor = a[i, k] / a[k, k]
-                    a[i, k] = 0
-                    for j in range(k + 1, n):
-                        a[i, j] = a[i, j] - factor * a[k, j]
-                    for j in range(rhs):
-                        x[i, j] = x[i, j] - factor * x[k, j]
-            for step in range(n):
-                i = n - 1 - step
-                for j in range(rhs):
-                    total = x[i, j]
-                    for m in range(i + 1, n):
-                        total = total - a[i, m] * x[m, j]
-                    x[i, j] = total / a[i, i]
+        gesv_core = gesv_core_program(dtype, n, rhs)
 
         # ``overwrite`` is always False, so the elimination runs on a copy; a single right-hand side
         # is widened to one column so the core has one shape to handle rather than two.

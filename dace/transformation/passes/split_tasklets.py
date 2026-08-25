@@ -8,7 +8,7 @@ from ordered_set import OrderedSet
 from dace import graphlib as nx
 
 import dace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -155,6 +155,126 @@ class ASTSplitter:
         return ast.unparse(node)
 
 
+def branch_assignments(branch: List[ast.stmt]) -> Optional[Dict[str, ast.expr]]:
+    """``{name: value}`` for a branch that only assigns to plain names, else ``None``.
+
+    ``None`` means the branch does something an ``ITE`` blend cannot stand in for -- a nested
+    conditional, a call with an effect, a subscript target -- and the caller must decline.
+    """
+    assignments: Dict[str, ast.expr] = {}
+    for statement in branch:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            return None
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name):
+            return None
+        assignments[target.id] = statement.value
+    return assignments
+
+
+def fold_conditionals(body: List[ast.stmt]) -> Optional[List[ast.Assign]]:
+    """Rewrite ``if`` statements whose branches only assign into ``ITE`` assignments.
+
+    ``if c: y = a`` becomes ``y = ITE(c, a, y)`` -- the if-THEN form, where the false case is the
+    value ``y`` already held, so the variable must have been assigned earlier in the same body. An
+    if-then-ELSE needs no such history and becomes ``y = ITE(c, a, b)``.
+
+    Returns ``None`` rather than a partial result whenever the body is not expressible this way; a
+    branch that assigns to a variable with no previous value would read an undefined one, which is
+    a wrong answer rather than an error, so it declines too.
+
+    :param body: the statements of a tasklet body.
+    :returns: an equivalent list of plain assignments, or ``None`` to decline.
+    """
+    folded: List[ast.Assign] = []
+    assigned: Set[str] = set()
+    for statement in body:
+        if isinstance(statement, ast.Assign):
+            names = branch_assignments([statement])
+            if names is None:
+                return None
+            assigned.update(names)
+            folded.append(statement)
+            continue
+        if not isinstance(statement, ast.If):
+            return None
+        when_true = branch_assignments(statement.body)
+        when_false = branch_assignments(statement.orelse)
+        if when_true is None or when_false is None:
+            return None
+        for name in list(when_true) + [n for n in when_false if n not in when_true]:
+            true_value = when_true.get(name)
+            false_value = when_false.get(name)
+            if (true_value is None or false_value is None) and name not in assigned:
+                return None
+            blend = ast.Call(func=ast.Name(id='ITE', ctx=ast.Load()),
+                             args=[
+                                 statement.test, true_value or ast.Name(id=name, ctx=ast.Load()), false_value
+                                 or ast.Name(id=name, ctx=ast.Load())
+                             ],
+                             keywords=[])
+            folded.append(ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=blend))
+            assigned.add(name)
+    return folded
+
+
+def to_static_single_assignment(assignments: List[ast.Assign]) -> List[ast.Assign]:
+    """Version every name assigned more than once, so the result is single-assignment.
+
+    ``y = 0.0`` followed by ``y = ITE(c, x, y)`` is two writes to one name, which the chain builder
+    downstream reads as one register written twice. The earlier writes become temporaries and the
+    reads are repointed at them; the LAST write of each name keeps the name, because that is what
+    the tasklet's output connector is called.
+    """
+    final = {}
+    for index, assignment in enumerate(assignments):
+        final[assignment.targets[0].id] = index
+    versioned: List[ast.Assign] = []
+    current: Dict[str, str] = {}
+    counter = 0
+    for index, assignment in enumerate(assignments):
+        value = copy.deepcopy(assignment.value)
+        for node in ast.walk(value):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in current:
+                node.id = current[node.id]
+        name = assignment.targets[0].id
+        if final[name] != index:
+            renamed = '__fold%d' % counter
+            counter += 1
+            current[name] = renamed
+            name = renamed
+        else:
+            current.pop(assignment.targets[0].id, None)
+        versioned.append(ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=value))
+    return versioned
+
+
+def lower_assignments(assignments: List[ast.Assign], code: str) -> List[str]:
+    """Lower a list of plain assignments into single-operation SSA lines.
+
+    One ``ASTSplitter`` is shared across the list so its temporaries stay unique.
+
+    :param assignments: single-assignment statements, in order.
+    :param code: the original source, read only to seed the temporary counter past names it uses.
+    :returns: the SSA statements, or ``[]`` if nothing was produced.
+    """
+    ssa = ASTSplitter()
+    existing = [int(m) for m in re.findall(r"__t(\d+)\b", code)]
+    if existing:
+        ssa.n = max(existing) + 1
+    for assignment in assignments:
+        target = assignment.targets[0].id
+        if isinstance(assignment.value, (ast.Name, ast.Constant)):
+            ssa.stmts.append(f"{target} = {ssa.visit(assignment.value)}")
+            continue
+        rhs = ssa.visit(assignment.value)
+        if ssa.stmts and ssa.stmts[-1].startswith(rhs + ' ='):
+            ssa.stmts[-1] = ssa.stmts[-1].replace(rhs, target, 1)
+        else:
+            ssa.stmts.append(f"{target} = {rhs}")
+    return ssa.stmts
+
+
 def to_ssa(code: str) -> List[str]:
     """
     Convert a single Python assignment (or expression) into single-operation SSA lines.
@@ -170,8 +290,13 @@ def to_ssa(code: str) -> List[str]:
               when the body is not a single lowerable statement.
     """
     body = ast.parse(code).body
-    if len(body) != 1:
-        return []
+    # An ``if`` statement is an ITE in disguise; folding it first is what lets a body that assigns
+    # and then conditionally overwrites reach the single-statement lowering below.
+    if len(body) != 1 or isinstance(body[0], ast.If):
+        folded = fold_conditionals(body)
+        if folded is None or not any(isinstance(statement, ast.If) for statement in body):
+            return []
+        return lower_assignments(to_static_single_assignment(folded), code)
     tree = body[0]
     ssa = ASTSplitter()
     # Start the temp counter past any ``__t<N>`` already present in the input
