@@ -660,6 +660,16 @@ def set_fast_implementations(sdfg: SDFG,
                         and not is_devicelevel_gpu_kernel(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
+                    continue
+                # The whole-array algorithms -- Scan, FindFirst, ScatterConflictCheck -- name their
+                # device lowering ``CUDA``, which is in none of the ``find_fast_library`` priority
+                # lists (those name vendor BLAS). Without this they fall through to ``pure`` on the
+                # GPU: a scan loses its Blelloch/CUB sweep, a search and a conflict check lose theirs,
+                # and each becomes a serial walk inside a kernel launch. Host-side only -- a
+                # device-level instance keeps the pure expansion, which is what runs in-kernel.
+                if ('CUDA' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                        and state.scope_dict()[node] is None):
+                    node.implementation = 'CUDA'
 
 
 def make_transients_persistent(sdfg: SDFG,
@@ -784,7 +794,7 @@ def auto_optimize(sdfg: SDFG,
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
         * Tiled stream accumulation (MapTiling -> AccumulateTransient)
         * Collapse all maps to parallelize across all dimensions
-        * Set all library nodes to expand to ``fast`` expansion, which calls
+        * Set all library nodes to their ``fast`` implementation, which calls
           the fastest library on the target device
 
     :param sdfg: The SDFG to optimize.
@@ -797,9 +807,9 @@ def auto_optimize(sdfg: SDFG,
     :param find_fast_library_fn: Optional function that returns the prioritized list of
                                  implementations for the given device, which will take priority over
                                  the existing set of fast libraries found using auto-optimize.
-    :param expand: If True (default), select fast library implementations and expand all library
-                   nodes. If False, leave library nodes un-expanded (``implementation`` unset) so the
-                   optimized-but-high-level SDFG can be inspected before expansion.
+    :param expand: If True (default), select fast library implementations for the device. Library
+                   nodes are left un-expanded either way -- codegen expands whatever remains -- so
+                   this only decides whether ``implementation`` is set.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -855,14 +865,14 @@ def auto_optimize(sdfg: SDFG,
             # node.map.collapse = len(node.map.range)
             pass
 
-    # Set all library nodes to expand to fast library calls
+    # Pick each library node's fast implementation, but leave it UNEXPANDED. Expansion is codegen's
+    # job (``generate_code`` expands what is left), and doing it here throws away the one node the
+    # later passes can still reason about -- a Gemm is a Gemm until it becomes three nested maps.
+    # ``infer_types`` still runs, because choosing an implementation can change connector types.
     if expand:
         set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
-
-        # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
 

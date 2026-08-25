@@ -212,6 +212,12 @@ class FindFirst(nodes.LibraryNode):
     }
     default_implementation = 'OpenMP'
 
+    #: The ANSWER is a host scalar in every expansion, the CUDA one included: the device search
+    #: leaves its result in CUB scratch and ``find_first_index_device`` copies it back and writes
+    #: ``*out`` on the host. Promoting it to device memory makes host code write a device pointer --
+    #: which validates, then corrupts. Declared so an offloader keeps it where the expansion writes.
+    host_connectors = frozenset({OUTPUT_CONNECTOR_NAME})
+
     predicate = properties.Property(dtype=str,
                                     default='false',
                                     desc="C++ predicate over the in-connectors, indexed by "

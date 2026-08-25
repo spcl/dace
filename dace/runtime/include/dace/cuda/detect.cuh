@@ -69,9 +69,9 @@ struct MaxOp {
  */
 template <typename T, typename TagT>
 __global__ void detect_tag_kernel(const T *idx, long long n, TagT *owner, long long capacity) {
-    const long long stride = (long long)gridDim.x * blockDim.x;
-    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
-        const long long v = (long long)idx[i];
+    const long long stride = static_cast<long long>(gridDim.x) * blockDim.x;
+    for (long long i = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += stride) {
+        const long long v = static_cast<long long>(idx[i]);
         if (v >= 0 && v < capacity) owner[v] = (TagT)i;
     }
 }
@@ -89,10 +89,10 @@ __global__ void detect_verify_kernel(const T *idx, long long n, const TagT *owne
     __shared__ typename BlockOr::TempStorage tmp;
 
     int local = 0;
-    const long long stride = (long long)gridDim.x * blockDim.x;
-    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
-        const long long v = (long long)idx[i];
-        if (v >= 0 && v < capacity && (long long)owner[v] != i) local = 1;
+    const long long stride = static_cast<long long>(gridDim.x) * blockDim.x;
+    for (long long i = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += stride) {
+        const long long v = static_cast<long long>(idx[i]);
+        if (v >= 0 && v < capacity && static_cast<long long>(owner[v]) != i) local = 1;
     }
     const int any = BlockOr(tmp).Reduce(local, detect_detail::OrOp());
     if (threadIdx.x == 0 && any) atomicOr(flag, 1ull);
@@ -110,8 +110,8 @@ __global__ void detect_all_positive_kernel(const T *a, long long n, unsigned lon
     __shared__ typename BlockOr::TempStorage tmp;
 
     int local = 0;
-    const long long stride = (long long)gridDim.x * blockDim.x;
-    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+    const long long stride = static_cast<long long>(gridDim.x) * blockDim.x;
+    for (long long i = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += stride) {
         if (!(a[i] > 0)) local = 1;
     }
     const int any = BlockOr(tmp).Reduce(local, detect_detail::OrOp());
@@ -139,10 +139,10 @@ __global__ void find_first_kernel(long long begin, long long end, Pred pred, uns
     __shared__ typename BlockMin::TempStorage tmp;
     __shared__ long long stop;
 
-    const long long tile = (long long)blockDim.x;
-    const long long stride = tile * (long long)gridDim.x;
-    for (long long base = begin + (long long)blockIdx.x * tile; base < end; base += stride) {
-        if (threadIdx.x == 0) stop = (long long)*(volatile unsigned long long *)result;
+    const long long tile = static_cast<long long>(blockDim.x);
+    const long long stride = tile * static_cast<long long>(gridDim.x);
+    for (long long base = begin + static_cast<long long>(blockIdx.x) * tile; base < end; base += stride) {
+        if (threadIdx.x == 0) stop = static_cast<long long>(*static_cast<volatile unsigned long long *>(result));
         __syncthreads();
         if (base >= stop) break;  // uniform across the block: every thread read the same ``stop``
 
@@ -150,7 +150,7 @@ __global__ void find_first_kernel(long long begin, long long end, Pred pred, uns
         // Short-circuit: the predicate is only evaluated on an index the tile actually covers.
         const long long cand = (i < end && i < stop && pred(i)) ? i : end;
         const long long best = BlockMin(tmp).Reduce(cand, detect_detail::MinOp());
-        if (threadIdx.x == 0 && best < stop) atomicMin(result, (unsigned long long)best);
+        if (threadIdx.x == 0 && best < stop) atomicMin(result, static_cast<unsigned long long>(best));
         __syncthreads();  // the single TempStorage is reused by the next tile
     }
 }
@@ -169,8 +169,8 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, TagT *owne
 
     cudaError_t status = cudaSuccess;
     unsigned long long *flag =
-        (unsigned long long *)::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream,
-                                                                                   &status);
+        static_cast<unsigned long long *>(
+            ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
     if (flag == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
@@ -178,14 +178,14 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, TagT *owne
 
     status = cudaMemsetAsync(flag, 0, sizeof(unsigned long long), stream);
     if (status != cudaSuccess) return status;
-    detect_tag_kernel<<<(unsigned)blocks, DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity);
-    detect_verify_kernel<<<(unsigned)blocks, DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity, flag);
+    detect_tag_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity);
+    detect_verify_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity, flag);
 
     unsigned long long host_flag = 0;
     status = cudaMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
     if (status != cudaSuccess) return status;
     status = cudaStreamSynchronize(stream);
-    *out = (long long)(host_flag != 0);
+    *out = static_cast<long long>(host_flag != 0);
     return status;
 }
 
@@ -200,13 +200,13 @@ __global__ void detect_max_kernel(const T *idx, long long n, unsigned long long 
     __shared__ typename BlockMax::TempStorage tmp;
 
     long long local = 0;
-    const long long stride = (long long)gridDim.x * blockDim.x;
-    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
-        const long long v = (long long)idx[i];
+    const long long stride = static_cast<long long>(gridDim.x) * blockDim.x;
+    for (long long i = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += stride) {
+        const long long v = static_cast<long long>(idx[i]);
         if (v > local) local = v;
     }
     const long long best = BlockMax(tmp).Reduce(local, detect_detail::MaxOp());
-    if (threadIdx.x == 0 && best > 0) atomicMax(mx, (unsigned long long)best);
+    if (threadIdx.x == 0 && best > 0) atomicMax(mx, static_cast<unsigned long long>(best));
 }
 
 /**
@@ -220,8 +220,8 @@ template <typename T>
 inline cudaError_t detect_collision_device(const T *idx, long long n, long long capacity, long long *out,
                                           cudaStream_t stream) {
     cudaError_t status = cudaSuccess;
-    long long *owner = (long long *)::dace::cub::get_scratch< ::dace::cub::DetectOwnerTag>(
-        (size_t)capacity * sizeof(long long), stream, &status);
+    long long *owner = static_cast<long long *>(::dace::cub::get_scratch< ::dace::cub::DetectOwnerTag>(
+        static_cast<size_t>(capacity) * sizeof(long long), stream, &status));
     if (owner == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
     return detect_collision_device(idx, n, owner, capacity, out, stream);
 }
@@ -240,8 +240,8 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, long long 
 
     cudaError_t status = cudaSuccess;
     unsigned long long *mx =
-        (unsigned long long *)::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream,
-                                                                                   &status);
+        static_cast<unsigned long long *>(
+            ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
     if (mx == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
@@ -249,14 +249,14 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, long long 
 
     status = cudaMemsetAsync(mx, 0, sizeof(unsigned long long), stream);
     if (status != cudaSuccess) return status;
-    detect_max_kernel<<<(unsigned)blocks, DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, mx);
+    detect_max_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, mx);
 
     unsigned long long host_max = 0;
     status = cudaMemcpyAsync(&host_max, mx, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
     if (status != cudaSuccess) return status;
     status = cudaStreamSynchronize(stream);
     if (status != cudaSuccess) return status;
-    return detect_collision_device(idx, n, (long long)host_max + 1, out, stream);
+    return detect_collision_device(idx, n, static_cast<long long>(host_max) + 1, out, stream);
 }
 
 /**
@@ -269,8 +269,8 @@ inline cudaError_t detect_all_positive_device(const T *a, long long n, long long
 
     cudaError_t status = cudaSuccess;
     unsigned long long *bad =
-        (unsigned long long *)::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream,
-                                                                                   &status);
+        static_cast<unsigned long long *>(
+            ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
     if (bad == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
@@ -278,13 +278,13 @@ inline cudaError_t detect_all_positive_device(const T *a, long long n, long long
 
     status = cudaMemsetAsync(bad, 0, sizeof(unsigned long long), stream);
     if (status != cudaSuccess) return status;
-    detect_all_positive_kernel<<<(unsigned)blocks, DETECT_BLOCK_THREADS, 0, stream>>>(a, n, bad);
+    detect_all_positive_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(a, n, bad);
 
     unsigned long long host_bad = 0;
     status = cudaMemcpyAsync(&host_bad, bad, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
     if (status != cudaSuccess) return status;
     status = cudaStreamSynchronize(stream);
-    *out = (long long)(host_bad == 0);
+    *out = static_cast<long long>(host_bad == 0);
     return status;
 }
 
@@ -304,24 +304,24 @@ inline cudaError_t find_first_index_device(long long begin, long long end, Pred 
 
     cudaError_t status = cudaSuccess;
     unsigned long long *result =
-        (unsigned long long *)::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream,
-                                                                                   &status);
+        static_cast<unsigned long long *>(
+            ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
     if (result == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
 
     const long long span = end - begin;
     long long blocks = (span + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
     if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
-    const unsigned long long sentinel = (unsigned long long)end;
+    const unsigned long long sentinel = static_cast<unsigned long long>(end);
     status = cudaMemcpyAsync(result, &sentinel, sizeof(unsigned long long), cudaMemcpyHostToDevice, stream);
     if (status != cudaSuccess) return status;
-    find_first_kernel<<<(unsigned)blocks, DETECT_BLOCK_THREADS, 0, stream>>>(begin, end, pred, result);
+    find_first_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(begin, end, pred, result);
 
     unsigned long long host_result = sentinel;
     status = cudaMemcpyAsync(&host_result, result, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
     if (status != cudaSuccess) return status;
     status = cudaStreamSynchronize(stream);
-    *out = (long long)host_result;
+    *out = static_cast<long long>(host_result);
     return status;
 }
 

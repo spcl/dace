@@ -238,6 +238,10 @@ class ScatterConflictCheck(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
     SCRATCH_CONNECTOR_NAME = SCRATCH_CONNECTOR_NAME
 
+    #: Both stay on the host in EVERY expansion, the CUDA one included -- see ``_validate`` and
+    #: :class:`ExpandCUDA`. Declared so an offloader does not move them with the rest of the state.
+    host_connectors = frozenset({OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME})
+
     implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
     default_implementation = "CPU"
 

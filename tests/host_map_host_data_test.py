@@ -99,6 +99,11 @@ def create_increment_sdfg_with_views():
 @pytest.mark.parametrize(
     "sdfg_creator",
     [create_assign_sdfg, create_increment_sdfg, create_assign_sdfg_with_views, create_increment_sdfg_with_views])
+# ``host_maps`` / ``host_data`` are ``GPUTransformSDFG`` parameters, so this class is about that
+# transformation whatever the default offloader is: ``OffloadToAccelerator`` derives what stays on
+# the host instead of taking it as an input, and the no-constraint control below asserts this
+# transformation's ``gpu_A`` staging by name.
+@pytest.mark.old_gpu_transform_only
 class TestHostDataHostMapParams:
 
     def test_host_data(self, sdfg_creator):

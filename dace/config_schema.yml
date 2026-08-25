@@ -103,6 +103,19 @@ required:
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
 
+            new_gpu_offloading_pass:
+                type: bool
+                default: true
+                title: "Use the OffloadToAccelerator pass for GPU offloading"
+                description: >
+                    Offload with ``OffloadToAccelerator``, which decides placement from the whole
+                    control flow and copies where the location changes, instead of the older
+                    ``GPUTransformSDFG`` transformation, which copies around each kernel it makes.
+                    Set to false to go back to the old transformation. A call to
+                    ``apply_gpu_transformations`` that pins ``host_maps`` or ``host_data`` uses the
+                    old one either way -- the new pass derives what stays on the host rather than
+                    taking it as an input.
+
             canonicalization:
                 type: dict
                 title: Canonicalization pipeline defaults
@@ -1072,7 +1085,7 @@ required:
                             Maximum number of concurrent CUDA/HIP streams to
                             generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
-                        default: 0
+                        default: -1
 
                     syncdebug:
                         type: bool

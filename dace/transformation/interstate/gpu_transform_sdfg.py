@@ -178,9 +178,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         marked_sources = [
             sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_sources
         ]
-        marked_destinations = [
-            state.memlet_tree(e).root().edge.dst for e in state.in_edges(state.exit_node(entry_node))
-        ]
+        # A scope has its outputs on the matching exit; a library node carries its own. Asking for
+        # ``exit_node`` of one is a KeyError, not an empty answer, so the two cases split here.
+        out_of = state.in_edges(state.exit_node(entry_node)) if isinstance(
+            entry_node, nodes.EntryNode) else state.out_edges(entry_node)
+        marked_destinations = [state.memlet_tree(e).root().edge.dst for e in out_of]
         marked_destinations = [
             sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_destinations
         ]
@@ -232,6 +234,21 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if (mem.data not in self.host_data
                     and sdfg.arrays[mem.data].storage not in [dtypes.StorageType.GPU_Global]):
                 self.host_data.append(mem.data)
+
+        # A library node can keep part of its interface on the host whatever its schedule --
+        # ``ScatterConflictCheck`` reads its flag and sizes its tag buffer there even in the CUDA
+        # expansion -- and says so through ``host_connectors``. Promoting one of those to
+        # GPU_Global is rejected by the node's own validation, so pin them here.
+        for state in sdfg.states():
+            for node in state.nodes():
+                if not (isinstance(node, nodes.LibraryNode) and node.host_connectors):
+                    continue
+                for edge in state.in_edges(node):
+                    if edge.dst_conn in node.host_connectors and edge.data.data not in self.host_data:
+                        self.host_data.append(edge.data.data)
+                for edge in state.out_edges(node):
+                    if edge.src_conn in node.host_connectors and edge.data.data not in self.host_data:
+                        self.host_data.append(edge.data.data)
 
         for state in sdfg.states():
             sdict = state.scope_dict()

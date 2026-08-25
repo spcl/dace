@@ -1437,6 +1437,14 @@ class LibraryNode(CodeNode):
     #: libraries that set it.
     expand_before_peers: bool = False
 
+    #: Connector names whose descriptor must stay in HOST memory whatever the node's schedule is.
+    #: A node whose expansion is a device kernel can still keep part of its interface on the host:
+    #: ``ScatterConflictCheck`` tags on the device out of the CUB scratch pool but reads its flag,
+    #: and sizes its buffer from a scratch array, on the host. An offloader that moves every array a
+    #: node touches onto the device therefore has to be told. Class-level attribute for the same
+    #: reason as ``expand_before_peers``: it describes the node type, not a serialised value.
+    host_connectors: frozenset = frozenset()
+
     #: Whether device auto-selection (``auto_optimize.set_fast_implementations``) may overwrite
     #: :attr:`implementation`. False for nodes whose lowering is chosen DELIBERATELY by a
     #: transformation rather than by the target device -- the tile ops, whose backend is picked from

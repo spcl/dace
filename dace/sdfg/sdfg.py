@@ -3213,6 +3213,30 @@ class SDFG(ControlFlowRegion):
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
 
+        # ``OffloadToAccelerator`` decides placement from the whole control flow rather than per
+        # kernel, so it has nowhere to honour a caller-supplied host pin: ``host_maps`` /
+        # ``host_data`` name what must STAY on the host, which is an answer, not an input. A caller
+        # that pins anything therefore gets the old transformation, whatever the config says.
+        pinned = bool(host_maps) or bool(host_data)
+        # A Stream is a queue with a device-side push/pop protocol, not a buffer whose location can
+        # be decided and copied; the new pass classifies descriptors as array / scalar / view and
+        # has nowhere to put one. ``GPUTransformSDFG`` already handles them, so decline rather than
+        # raise out of the middle of a rewrite.
+        streams = any(
+            isinstance(desc, dt.Stream) for nsdfg in self.all_sdfgs_recursive() for desc in nsdfg.arrays.values())
+        # Same shape for a library node that keeps part of its interface on the host whatever its
+        # schedule (``ScatterConflictCheck``'s flag and its tag scratch): the new pass gives a whole
+        # state one location, so it would move those with the rest and the node's own validation
+        # then rejects the result.
+        host_pinned = any(isinstance(n, nd.LibraryNode) and n.host_connectors for n, _ in self.all_nodes_recursive())
+        if (Config.get_bool('optimizer', 'new_gpu_offloading_pass') and not pinned and not streams and not host_pinned):
+            # Avoiding import loops
+            from dace.transformation.passes.offloading import OffloadToAccelerator
+            OffloadToAccelerator().apply_pass(self, {})
+            if validate or validate_all:
+                self.validate()
+            return
+
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
