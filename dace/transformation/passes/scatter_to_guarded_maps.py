@@ -39,14 +39,14 @@ collision the abort fires before any consumer reads the corrupted output.
 """
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -481,13 +481,16 @@ def joint_key_read_arrays(write: JointScatterWrite) -> Set[str]:
 class JointGuardPlan(NamedTuple):
     """Where a joint guard's states go, and which enclosing parallel scopes its key must cover.
 
-    ``map_dims`` is one ``(param, extent)`` per map scope crossed on the way out, outermost first.
-    Crossing one means the guard now answers for every value of that param at once, so the key
-    grows a dimension for it -- flattened into the single dimension the conflict check reads.
+    ``map_dims`` is one ``(param, extent)`` per map scope crossed on the way out. Crossing one
+    means the guard now answers for every value of that param at once, so the key grows a
+    dimension for it -- flattened into the single dimension the conflict check reads. The order is
+    outermost-first within one climb step and inner-step-first across steps; either way each param
+    is paired with its own radix, so the flat position stays a bijection, which is all a key used
+    only for equality needs.
     """
     host_sdfg: SDFG
-    host_region: Any
-    anchor: Any
+    host_region: ControlFlowRegion
+    anchor: ControlFlowBlock
     map_dims: Tuple[Tuple[str, symbolic.SymbolicType], ...]
 
 
@@ -508,11 +511,18 @@ def owner_is_trivial_map_wrapper(owner_sdfg: SDFG) -> bool:
     return len(owner_sdfg.nodes()) == 1
 
 
-def map_scope_chain(state: SDFGState, node) -> list:
-    """The map entries enclosing ``node`` in ``state``, outermost first."""
-    chain = []
+def map_scope_chain(state: SDFGState, node: nodes.Node) -> Optional[List[nodes.MapEntry]]:
+    """The map entries enclosing ``node`` in ``state``, outermost first.
+
+    :returns: the chain, or ``None`` when a scope on it is not a map -- a Consume scope has no
+        ``map`` to read an extent off, and its iteration count is a runtime stream property rather
+        than a range, so a key cannot be sized to cover it.
+    """
+    chain: List[nodes.MapEntry] = []
     entry = state.entry_node(node)
     while entry is not None:
+        if not isinstance(entry, nodes.MapEntry):
+            return None
         chain.append(entry)
         entry = state.entry_node(entry)
     chain.reverse()
@@ -546,19 +556,22 @@ def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> 
     if not owner_is_trivial_map_wrapper(owner):
         return plan
 
-    names = {write.target} | joint_key_read_arrays(write)
-    free = set()
+    free: Set[str] = set()
     for expr in write.dim_exprs + ((write.mask_expr, ) if write.mask_expr else ()):
         free |= {str(sym) for sym in symbolic.pystr_to_symbolic(expr).free_symbols}
     free.discard(loop.loop_variable)
 
-    current, dims = owner, []
+    current = owner
+    dims: List[Tuple[str, symbolic.SymbolicType]] = []
     while owner_is_trivial_map_wrapper(current):
         nsdfg = current.parent_nsdfg_node
         state = current.parent
-        if any(str(nsdfg.symbol_mapping.get(sym, sym)) != sym for sym in free):
+        if any(str(nsdfg.symbol_mapping.get(sym, sym)) != sym for sym in sorted(free)):
             return None
-        for entry in map_scope_chain(state, nsdfg):
+        chain = map_scope_chain(state, nsdfg)
+        if chain is None:
+            return None
+        for entry in chain:
             for param, (lb, ub, step) in zip(entry.map.params, entry.map.range.ranges):
                 if symbolic.simplify(lb) != 0 or symbolic.simplify(step) != 1:
                     return None
@@ -566,7 +579,8 @@ def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> 
         current = state.sdfg
         plan = JointGuardPlan(current, state.parent_graph, state, tuple(dims))
 
-    for name in names:
+    # Parsed last: every refusal above is cheaper than walking the index expressions' ASTs.
+    for name in sorted({write.target} | joint_key_read_arrays(write)):
         desc = plan.host_sdfg.arrays.get(name)
         if desc is None or isinstance(desc, data.View):
             return None
