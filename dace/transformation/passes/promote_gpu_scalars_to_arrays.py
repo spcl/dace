@@ -13,34 +13,10 @@ left intact since a ``Scalar`` access already carries subset ``[0]``.
 from typing import Any, Dict, Optional
 
 from dace import data, dtypes, properties
-from dace.sdfg import SDFG, infer_types, nodes, SDFGState
+from dace.sdfg import SDFG, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
-from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots, rewrite_refs_to_element)
-
-
-def invalidate_array_connectors(sdfg: SDFG):
-    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` to
-    ``typeclass(None)`` so a follow-up ``infer_connector_types`` re-derives
-    them as pointer-typed.
-
-    A connector typed at construction time as a scalar dtype against an
-    ``Array`` inner descriptor produces a wrapper signature ``T name`` that the
-    body indexes ``name[0]`` (compile error). Common cause: cuBLAS expansion's
-    ``gpu_streams`` connector.
-    """
-    uninferred = dtypes.typeclass(None)
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.NestedSDFG):
-                    continue
-                for cname in list(node.in_connectors):
-                    if cname in node.sdfg.arrays and isinstance(node.sdfg.arrays[cname], data.Array):
-                        node.in_connectors[cname] = uninferred
-                for cname in list(node.out_connectors):
-                    if cname in node.sdfg.arrays and isinstance(node.sdfg.arrays[cname], data.Array):
-                        node.out_connectors[cname] = uninferred
+from dace.transformation.passes.scalar_promotion import (invalidate_array_connectors, promote_matching_scalars)
 
 
 @properties.make_properties
@@ -124,21 +100,15 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
 
         :returns: Number of scalars promoted, or ``None`` if nothing changed.
         """
-        promoted = 0
-        # Top-down so a parent's promotion is visible when we visit the child's
-        # matching descriptor (children inherit the parent's choice).
-        for nsdfg in list(sdfg.all_sdfgs_recursive()):
-            for name in list(nsdfg.arrays):
-                if not self._needs_promotion(nsdfg, name):
-                    continue
-                self._promote_one(nsdfg, name)
-                promoted += 1
-
+        promoted = promote_matching_scalars(sdfg, self.needs_promotion, self.storage_for)
+        # Unconditional: a connector can be mistyped against an Array inner descriptor that this
+        # pass did not create (cuBLAS expansion's ``gpu_streams``), so the reset is still needed
+        # when nothing was promoted here.
         invalidate_array_connectors(sdfg)
+        return promoted or None
 
-        return promoted if promoted > 0 else None
-
-    def _needs_promotion(self, sdfg: SDFG, name: str) -> bool:
+    def needs_promotion(self, sdfg: SDFG, name: str) -> bool:
+        """Whether ``name`` is a scalar GPU code generation cannot use as-is."""
         desc = sdfg.arrays[name]
         if not isinstance(desc, data.Scalar):
             return False
@@ -154,72 +124,9 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
             return False
         return written_by_gpu_map_exit(sdfg, name)
 
-    def _promote_one(self, sdfg: SDFG, name: str):
-        """Replace a Scalar descriptor with a length-1 Array and propagate the
-        change, recursing into nested SDFGs that re-declare the same name as a
-        Scalar.
-        """
-        scalar_desc: data.Scalar = sdfg.arrays[name]
-
-        # Rule 2 promotes Default / CPU-side scalars to GPU_Global because
-        # the kernel write needs real device memory; rule 1 keeps the
-        # pre-existing GPU storage.
-        target_storage = scalar_desc.storage
-        if target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            target_storage = dtypes.StorageType.GPU_Global
-
-        array_desc = data.Array(
-            dtype=scalar_desc.dtype,
-            shape=(1, ),
-            transient=scalar_desc.transient,
-            storage=target_storage,
-            location=scalar_desc.location,
-            strides=(1, ),
-            lifetime=scalar_desc.lifetime,
-            allow_conflicts=scalar_desc.allow_conflicts,
-            debuginfo=scalar_desc.debuginfo,
-        )
-
-        sdfg.remove_data(name, validate=False)
-        sdfg.add_datadesc(name, array_desc)
-
-        # Shared with the general Scalar <-> length-1 Array passes: the state-machine slots that name a
-        # descriptor textually, and the bare-reference -> ``name[0]`` transform, are the same rewrite.
-        rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, {name: name}))
-        self._rewrite_states(sdfg=sdfg, name=name)
-
-    def _rewrite_states(self, sdfg: SDFG, name: str) -> None:
-        """Apply the promotion in all states."""
-        for state in sdfg.states():
-            self._rewrite_state(state=state, name=name)
-
-    def _rewrite_state(self, state: SDFGState, name: str) -> None:
-        """Push the promotion into NestedSDFGs reached from ``state``.
-
-        Memlets are not touched -- a ``Scalar`` access always carries subset
-        ``[0]``, identical to a length-1 array's. What DOES need attention is
-        the inner descriptor when the NSDFG re-declares the promoted name as a
-        ``Scalar``; ``symbol_mapping`` values are handled by the shared
-        ``rewrite_code_slots`` walk.
-        """
-        for node in state.nodes():
-            if not isinstance(node, nodes.NestedSDFG):
-                continue
-
-            handled_inner_names: set[str] = set()  # If data is referenced as input and output.
-            for iedge in state.in_edges(node):
-                if iedge.data.is_empty():
-                    continue
-                inner_name = iedge.dst_conn
-                if iedge.data.data == name and isinstance(node.sdfg.arrays[inner_name], data.Scalar):
-                    assert inner_name not in handled_inner_names  # Can only appear once.
-                    self._promote_one(node.sdfg, inner_name)
-                    handled_inner_names.add(inner_name)
-
-            for oedge in state.out_edges(node):
-                if oedge.data.is_empty():
-                    continue
-                inner_name = oedge.src_conn
-                if oedge.data.data == name and inner_name not in handled_inner_names and isinstance(
-                        node.sdfg.arrays[inner_name], data.Scalar):
-                    self._promote_one(node.sdfg, inner_name)
+    def storage_for(self, sdfg: SDFG, name: str) -> dtypes.StorageType:
+        """Rule 2 needs real device memory for the kernel write; rule 1 keeps the GPU storage it has."""
+        storage = sdfg.arrays[name].storage
+        if storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+            storage = dtypes.StorageType.GPU_Global
+        return storage

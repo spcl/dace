@@ -286,7 +286,7 @@ class ReinferConnectorTypes(ppl.Pass):
         :returns: Number of connectors whose type changed, or ``None`` if none did.
         """
         from dace.sdfg import infer_types
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
         before = self._connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():

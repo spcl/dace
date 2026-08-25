@@ -18,6 +18,7 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+from dace import mpr_lowering
 from dace import symbolic_engine
 from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 # Re-exported so a consumer asks `symbolic` for a backend-neutral head instead of naming sympy.
@@ -3410,10 +3411,39 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
 
-    def __init__(self, arrays, cpp_mode=False, *args, **kwargs):
+    def __init__(self, arrays, cpp_mode=False, dialect=mpr_lowering.Dialect.RUNTIME, fp_ctype=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
         self.cpp_mode = cpp_mode
+        # Which C++ vocabulary this printer may emit; see mpr_lowering.Dialect for why the
+        # dialect is threaded through as an argument rather than read from configuration.
+        self.dialect = dialect
+        # C++ floating type this expression evaluates in ('float' / 'double'), or None when the
+        # caller does not know or the context is integral. A sympy Rational is a fraction of two
+        # INTEGERS, and C++ divides integers with truncation: ``x + 1/2`` reaches the compiler as
+        # ``x + 0``. Naming the floating type is what lets the fraction be emitted as a division
+        # of that type instead -- and it has to be the OUTPUT's type, because a double literal in
+        # an fp32 kernel silently widens the whole computation. Left None, integer division is
+        # preserved, which is what index arithmetic (``N // 8``) requires.
+        self.fp_ctype = fp_ctype
+
+    def _mpr_call(self, name, arguments):
+        """The standalone spelling of a call, or ``None`` if this dialect emits it unchanged.
+
+        A helper with an inline definition is emitted as a plain call; which definitions a
+        translation unit needs is recovered from the finished text by
+        :func:`~dace.mpr_lowering.helpers_used`, because ``symstr`` is memoized and per-printer
+        state would not survive a cache hit.
+        """
+        if self.dialect not in mpr_lowering.STANDALONE_DIALECTS:
+            return None
+        lowered = mpr_lowering.lowering_for(name, tuple(arguments), self.dialect)
+        if lowered is not None:
+            return lowered
+        if mpr_lowering.needs_definition(name, self.dialect):
+            return '%s(%s)' % (name, ', '.join(arguments))
+        return None
+
         # Print floats at the shortest precision that round-trips (``3.14`` instead of
         # ``3.14000000000000``); higher-precision values (e.g. HUGE) still print in full.
         self._settings['full_prec'] = False
@@ -3466,14 +3496,27 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # kind coercion that landed in an interstate-edge / memlet
         # expression keeps its exact (truncating for int) semantics.
         if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
-            return '%s(%s)' % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
+            target = _TYPECAST_CPP[str(expr.func)]
+            if self.dialect is mpr_lowering.Dialect.STANDALONE_C:
+                # C has neither ``static_cast`` nor a functional cast.
+                return '((%s)(%s))' % (mpr_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+            if self.dialect is mpr_lowering.Dialect.STANDALONE:
+                return 'static_cast<%s>(%s)' % (mpr_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+            return '%s(%s)' % (target, self._print(expr.args[0]))
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
+            lowered = self._mpr_call('conj', [self._print(expr.args[0])])
+            if lowered is not None:
+                return lowered
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
+        # ``and`` / ``or`` are C++ alternative tokens; in C they are macros from ``<iso646.h>``,
+        # which MPR does not include, so the C dialect spells the operators.
         if str(expr.func) == 'AND':
-            return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
+            keyword = '&&' if self.dialect is mpr_lowering.Dialect.STANDALONE_C else 'and'
+            return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
-            return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
+            keyword = '||' if self.dialect is mpr_lowering.Dialect.STANDALONE_C else 'or'
+            return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
             # TODO: We want to check that args[0] is a Structure.
             #       However, this is information is not currently passed from the code generator.
@@ -3512,12 +3555,19 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             op = '/' if self.cpp_mode else '//'
             return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
         if str(expr.func) == 'ipow' and self.cpp_mode:
-            return 'dace::math::ipow(%s, %s)' % (self._print(expr.args[0]), self._print(expr.args[1]))
+            arguments = [self._print(a) for a in expr.args]
+            lowered = self._mpr_call('ipow', arguments)
+            if lowered is not None:
+                return lowered
+            return 'dace::math::ipow(%s, %s)' % (arguments[0], arguments[1])
         if str(expr.func) == 'IfExpr':
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
                 return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
+        lowered = self._mpr_call(name, [self._print(a) for a in expr.args])
+        if lowered is not None:
+            return lowered
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
@@ -3531,7 +3581,49 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         """
         if not self.cpp_mode:
             return super()._print_Function(expr)
+        lowered = self._mpr_call('ceiling', [self._print(expr.args[0])])
+        if lowered is not None:
+            return lowered
         return 'ceil(%s)' % self._print(expr.args[0])
+
+    def _print_Rational(self, expr):
+        """A sympy ``Rational`` in C++.
+
+        Emitted as a floating quotient when the caller named the surrounding floating type, and
+        left as the integer fraction otherwise -- see ``fp_ctype``. The cast is written on BOTH
+        operands rather than on the result: casting the result would divide first and truncate
+        before the conversion ever happened.
+        """
+        if not self.cpp_mode or self.fp_ctype is None:
+            return super()._print_Rational(expr)
+        if expr.q == 1:
+            return self._fp_literal(expr.p)
+        return '(%s / %s)' % (self._fp_literal(expr.p), self._fp_literal(expr.q))
+
+    def _fp_literal(self, value) -> str:
+        """``value`` converted to ``fp_ctype``: a functional cast in C++, a cast expression in C."""
+        if self.dialect is mpr_lowering.Dialect.STANDALONE_C:
+            return '((%s)(%s))' % (self.fp_ctype, value)
+        return '%s(%s)' % (self.fp_ctype, value)
+
+    def _print_Max(self, expr):
+        return self._print_minmax('Max', expr)
+
+    def _print_Min(self, expr):
+        return self._print_minmax('Min', expr)
+
+    def _print_minmax(self, name, expr):
+        """``Max``/``Min`` printer.
+
+        sympy derives these from ``Application`` rather than ``Function``, so ``_print_Function``
+        never sees them and the generic ``_print_Basic`` fallback prints the sympy spelling. That
+        is a call to the DaCe runtime's variadic ``Max``, which standalone output cannot resolve.
+        """
+        arguments = [self._print(argument) for argument in expr.args]
+        lowered = self._mpr_call(name, arguments)
+        if lowered is not None:
+            return lowered
+        return '%s(%s)' % (name, ', '.join(arguments))
 
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
@@ -3572,6 +3664,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return '((%s) / (%s))' % (self._print(num), self._print(den))
         # Fallback: pure-real floor (e.g. ``floor(sin(x))``); emit the
         # math-library call.
+        lowered = self._mpr_call('floor', [self._print(arg)])
+        if lowered is not None:
+            return lowered
         return 'floor(%s)' % self._print(arg)
 
     def _print_Equality(self, expr):
@@ -3608,13 +3703,26 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
 
-        # Special case for square root
+        # Special case for square root. Decided on the sympy exponent, NOT on its printed form:
+        # ``Rational(1, 2)`` prints as ``1/2``, whose float() raises, so testing the text missed
+        # every symbolic sqrt and emitted ``pow(x, 1/2)`` -- and ``1/2`` is integer division in
+        # C++, i.e. ``pow(x, 0)``.
         if self.cpp_mode:
+            if expr.args[1] == sympy.Rational(1, 2):
+                lowered = self._mpr_call('sqrt', [base])
+                return lowered if lowered is not None else f'dace::math::sqrt({base})'
             try:
                 if float(exponent) == 0.5:
-                    return f'dace::math::sqrt({base})'
+                    lowered = self._mpr_call('sqrt', [base])
+                    return lowered if lowered is not None else f'dace::math::sqrt({base})'
             except ValueError:
                 pass
+            # A non-integer rational exponent must reach C++ as a FLOATING quotient; the bare
+            # ``p/q`` would truncate to an integer and silently change the power.
+            if isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
+                saved, self.fp_ctype = self.fp_ctype, (self.fp_ctype or 'double')
+                exponent = '(%s / %s)' % (self._fp_literal(expr.args[1].p), self._fp_literal(expr.args[1].q))
+                self.fp_ctype = saved
 
         # Special case for integer powers
         try:
@@ -3629,17 +3737,61 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 res += " * ({})".format(base)
 
             if negative:
-                res = f'reciprocal({res})'
+                lowered = self._mpr_call('reciprocal', [res])
+                res = lowered if lowered is not None else f'reciprocal({res})'
             return res
         except ValueError:
             if self.cpp_mode:
-                return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+                lowered = self._mpr_call('pow', [base, exponent])
+                if lowered is not None:
+                    return lowered
+                return "dace::math::pow({f}, {s})".format(f=base, s=exponent)
             else:
                 return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
 
 
+def infer_fp_ctype(expr) -> Optional[str]:
+    """The C++ floating type ``expr`` evaluates in, or ``None`` if it is not a floating expression.
+
+    Read off the expression's own atoms -- a :class:`symbol` and a :class:`TypedConstant` each
+    carry a ``dtype``, and a sympy ``Float`` is a double literal -- combined by DaCe's own
+    promotion rule. No symbol table is needed, and nothing is imported from the code generators,
+    which ``dace.symbolic`` must not depend on.
+
+    This is what makes a ``Rational`` printable: sympy stores ``x + 1/2`` as an exact fraction of
+    two integers, and C++ divides integers with truncation, so the term reaches the compiler as
+    ``x + 0``. Knowing the surrounding floating type lets the fraction be emitted in that type --
+    and it must be the type of the WHOLE expression, since a ``double`` literal inside an ``fp32``
+    kernel widens the computation around it.
+
+    An all-integer expression returns ``None``, which is what keeps index arithmetic (``N // 8``,
+    ``floor(N / 8)``) an integer division.
+
+    :param expr: the symbolic expression about to be printed.
+    :returns: ``'float'`` / ``'double'`` (or another floating ctype), or ``None``.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return None
+    found: List[dtypes.typeclass] = []
+    for atom in expr.atoms():
+        if isinstance(atom, (symbol, TypedConstant)):
+            found.append(atom.dtype)
+        elif isinstance(atom, sympy.Float):
+            found.append(dtypes.float64)
+    if not found:
+        return None
+    result = found[0] if len(found) == 1 else dtypes.result_type_of(found[0], *found[1:])
+    if not numpy.issubdtype(result.type, numpy.floating):
+        return None
+    return result.ctype
+
+
 @lru_cache(maxsize=16384, typed=True)
-def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
+def symstr(sym,
+           arrayexprs: Optional[FrozenSet[str]] = None,
+           cpp_mode=False,
+           dialect: Optional[mpr_lowering.Dialect] = None,
+           fp_ctype: Optional[str] = None) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -3648,11 +3800,29 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
+    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
+                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved here and handed to the
+                    memoized printer as an argument: it has to reach the cache key or one dialect
+                    would serve the other's cached answer.
+    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
+                     becomes a division of THAT type rather than a truncating integer division
+                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
+                     integer division, which index arithmetic needs. In the cache key for the
+                     same reason ``dialect`` is.
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
 
+    # Inferred, not required from the caller: every consumer of a symbolic expression would
+    # otherwise have to thread a dtype down, and the one that forgot would silently emit a
+    # truncating integer division. An explicit fp_ctype still wins, for a caller that knows the
+    # surrounding type better than the expression does (a float32 accumulator over int operands).
+    if dialect is None:
+        dialect = mpr_lowering.active_dialect()
+    if cpp_mode and fp_ctype is None:
+        fp_ctype = infer_fp_ctype(sym)
+
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, dialect=dialect, fp_ctype=fp_ctype)
 
     # A natively-parsed (idxalg) expression is rendered by converting back to sympy and reusing the
     # printer below, rather than by a parallel printer that could drift from DaCe's spellings.
@@ -3666,14 +3836,14 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
     # wrap them in parentheses that no longer round-trip. Print them bare instead.
     if isinstance(sym, (sympy.core.numbers.Infinity, sympy.core.numbers.NegativeInfinity, sympy.core.numbers.NaN,
                         sympy.logic.boolalg.BooleanAtom)):
-        return DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
+        return DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype).doprint(sym)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype).doprint(sym)
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, (sympy.Number, TypedConstant)) or dtypes.isconstant(sym):

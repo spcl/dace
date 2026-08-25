@@ -167,7 +167,7 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
         mem.other_subset = subsets.Range.from_string('0')
 
 
-def _descriptor_is_read(sdfg: SDFG, name: str) -> bool:
+def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -176,7 +176,7 @@ def _descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     return False
 
 
-def _descriptor_is_written(sdfg: SDFG, name: str) -> bool:
+def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -389,8 +389,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, arr_name)
-                is_written = _descriptor_is_written(sdfg, arr_name)
+                is_read = descriptor_is_read(sdfg, arr_name)
+                is_written = descriptor_is_written(sdfg, arr_name)
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
@@ -528,8 +528,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, name)
-                is_written = _descriptor_is_written(sdfg, name)
+                is_read = descriptor_is_read(sdfg, name)
+                is_written = descriptor_is_written(sdfg, name)
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.

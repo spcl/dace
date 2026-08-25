@@ -9,7 +9,7 @@ import warnings
 
 import numpy as np
 
-from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
+from dace import data, dtypes, mpr_lowering, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.config import set_temporary
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -1717,6 +1717,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
 
+        if mpr_lowering.standalone():
+            return self.standalone_wcr(memlet, redtype, ptr, inname, dtype, bool(atomic))
+
         # If there is a type mismatch and more than one element is used, cast
         # pointer (vector->vector WCR). Otherwise, generate vector->scalar
         # (horizontal) reduction.
@@ -1742,6 +1745,46 @@ class CPUCodeGen(TargetCodeGenerator):
         return (
             f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
         )
+
+    def standalone_wcr(self, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
+        """The MPR spelling of a conflict resolution, or a refusal.
+
+        MPR admits exactly the WCR forms that are TREE-reducible: one an enclosing OpenMP map folds
+        through a ``reduction(op:...)`` clause, and one that has no conflict at all (``nc``) and so
+        is a plain read-modify-write. The remaining form is a per-element atomic, which the runtime
+        provides as ``dace::wcr_fixed<...>::reduce_atomic`` -- serialized machinery, and a runtime
+        symbol MPR does not have. It is refused rather than rendered as an ``omp atomic``: the point
+        of MPR is to show the maximally parallel form of the program, and an atomic accumulation is
+        the form that says the parallelization was not resolved.
+
+        :param memlet: the memlet carrying the WCR, for the message.
+        :param redtype: the detected reduction type.
+        :param ptr: the C++ pointer expression for the target element.
+        :param inname: the value being accumulated.
+        :param dtype: the element type.
+        :param atomic: whether the write conflicts (no enclosing fold, more than one writer).
+        :returns: the C++ statement performing the accumulation.
+        :raises NotImplementedError: for a conflicting, custom or vector-typed WCR.
+        """
+        target = f'{memlet.data}[{memlet.subset}]'
+        if atomic:
+            raise NotImplementedError(
+                f'MPR cannot render the conflicting write-conflict resolution on {target}: it lowers to an '
+                'atomic, and MPR admits only tree-reducible WCR (an OpenMP reduction clause, or a '
+                'non-conflicting accumulation). Parallelize the map so the accumulator is reduced, or '
+                'render the SDFG that does.')
+        if isinstance(dtype, dtypes.vector):
+            raise NotImplementedError(f'MPR cannot render the vector WCR on {target}: the vector type is a DaCe '
+                                      'runtime template. Scalarize the map before rendering.')
+        operator = _REDUCTION_TO_OMP_OP.get(redtype)
+        if operator in ('+', '*', '&', '|', '^', '&&', '||'):
+            return f'*({ptr}) = *({ptr}) {operator} ({inname})'
+        if operator in ('min', 'max'):
+            # C has no ``std::min``; MPR emits its own typed pair (see mpr_lowering.C_MINMAX_TYPES).
+            spelling = f'mpr_{operator}' if mpr_lowering.standalone_c() else f'std::{operator}'
+            return f'*({ptr}) = {spelling}(*({ptr}), {inname})'
+        raise NotImplementedError(f'MPR has no standalone spelling for the {redtype} write-conflict resolution '
+                                  f'on {target}; it is provided by the DaCe reduction runtime.')
 
     def process_out_memlets(self,
                             sdfg: SDFG,
@@ -2471,6 +2514,13 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
+        # MPR emits no state struct at all (see framecode.generate_fileheader), so a nested function
+        # cannot take a pointer to it. Anything that would have been READ through it -- persistent
+        # buffers, instrumentation, environment handles -- is refused or demoted before rendering,
+        # so dropping the parameter drops nothing the body still needs.
+        if state_struct and mpr_lowering.standalone():
+            state_struct = False
+
         if state_struct:
             toplevel_sdfg: SDFG = sdfg.cfg_list[0]
             arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
@@ -2504,6 +2554,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
         prepend = []
+        if state_struct and mpr_lowering.standalone():
+            state_struct = False  # matches generate_nsdfg_header, which drops the parameter
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)

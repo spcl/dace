@@ -22,6 +22,21 @@ from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
 
+
+def mpr(sdfg, validate: bool = True, language: str = 'c++') -> str:
+    """Render ``sdfg`` as one self-contained translation unit (see :func:`dace.codegen.mpr.mpr`).
+
+    ``language`` is ``'c++'`` (C++20, the default) or ``'c'`` (C23); both build with a bare host
+    compiler and no DaCe runtime.
+
+    Imported on call rather than at module scope: the code generators pull in ``dace.nodes``, which
+    does not exist yet this early in ``dace/__init__``, and every ``import dace`` would otherwise
+    pay for a code generator most programs never run.
+    """
+    from dace.codegen.mpr import mpr as _mpr
+    return _mpr(sdfg, validate=validate, language=language)
+
+
 # Run Jupyter notebook code
 from .jupyter import *
 
