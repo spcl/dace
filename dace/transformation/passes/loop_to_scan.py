@@ -44,8 +44,10 @@ from typing import Any, Dict, List, NamedTuple, Optional
 import sympy
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
+from dace.frontend.python import astutils
 from dace import memlet as mm
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -54,7 +56,8 @@ from dace.transformation.passes.analysis import loop_analysis
 # Re-export the supported associative ops via :class:`ScanOp`; the matcher recognises
 # the same four ops the libnode expansions cover.
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME,
-                                                INIT_CONNECTOR_NAME, in_connector, out_connector, init_connector)
+                                                INIT_CONNECTOR_NAME, COEF_CONNECTOR_NAME, in_connector, out_connector,
+                                                init_connector)
 from ordered_set import OrderedSet
 
 #: Map AST BinOp class -> ScanOp.
@@ -484,6 +487,14 @@ class LoopToScan(ppl.Pass):
             sc = _match_scalar_carry(loop, owner)
             if sc is not None:
                 _rewrite_scalar_carry(parent, loop, sc, owner)
+                count += 1
+                continue
+            # Last: the AFFINE shape, the first-order LINEAR recurrence every matcher above
+            # refuses on purpose. Tried only after they all decline, so a loop the scalar ops
+            # can lift keeps its existing lowering unchanged.
+            aff = match_affine_scan(loop, owner)
+            if aff is not None:
+                rewrite_affine_scan(parent, loop, aff, owner)
                 count += 1
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
@@ -4176,3 +4187,451 @@ def _emit_scalar_carry_acc_post(state: SDFGState, sdfg: SDFG, info: _ScalarCarry
                           language=dtypes.Language.Python)
     state.add_edge(scan_read, None, t, '__v', mm.Memlet(data=scan_name, subset=copy.deepcopy(last)))
     state.add_edge(t, '__o', acc_write, None, mm.Memlet(data=info.acc_name, subset=subsets.Range([(0, 0, 1)])))
+
+
+# ---------------------------------------------------------------------------------------------
+# AFFINE (first-order linear) recurrence: ``out[i + k_w] = c(i) * out[i + k_w - 1] + d(i)``
+# ---------------------------------------------------------------------------------------------
+# Everything above lifts a loop whose carry is a VALUE combined by one associative scalar op.
+# This section lifts the shape those matchers deliberately refuse (see :func:`_stores_scan_result`):
+# a recurrence LINEAR in the carry rather than a plain combine. It is still a scan -- the carry is
+# the affine map ``x -> a*x + b`` and map composition is associative -- so it lowers to the same
+# ``Scan`` libnode with ``op=AFFINE``, which reads a second per-element array.
+#
+# WHAT IS AND IS NOT LIFTABLE. Linearity in the carry is the whole condition, and it is not a
+# formality: ``out[i] = f(out[i-1]) + d[i]`` for a nonlinear ``f`` is still associative under
+# composition, but the composed carry is then the FUNCTION and has no bounded-width representation
+# to scan over. So the matcher proves linearity symbolically -- it differentiates the body's value
+# with respect to the carry and requires the derivative to be carry-free AND the residual to
+# vanish -- rather than pattern-matching a ``carry * X + Y`` AST shape, which would happily accept
+# ``out[i-1] * out[i-1]`` written as a product of two reads of the same carry.
+#
+# WHY THE WHOLE BODY IS COMPOSED INTO ONE EXPRESSION. ``c[i]*x[i-1] + d[i]`` is never one tasklet:
+# the frontend emits ``_Mult_`` feeding ``_Add_``, and the carry is read by the FIRST of them while
+# the carrier is written from the last. Matching a single tasklet finds no carry at all. The walk
+# below therefore composes the entire straight-line chain behind the write into one expression over
+# LEAF reads, which is also what makes the coefficient and the offset emittable: each is rebuilt as
+# a tasklet reading those same leaves, so no precision is lost to a two-point ``f(1) - f(0)``
+# extraction and no intermediate of the original chain has to survive.
+#
+# SCOPE. The 1-D forward unit-stride direct-write shape only: ``out`` one-dimensional, ``k_r ==
+# k_w - 1``, no other-axis indices, no enclosing conditional and no inner loop. That is exactly
+# ``x[i] = c[i]*x[i-1] + d[i]``. The multi-dimensional, reverse, strided, masked, multi-slot and
+# nested variants the scalar ops support have no affine lowering yet and are not matched -- the
+# libnode refuses those shapes too, so there is nothing to mis-lower into.
+
+#: Prefix for the per-iteration COEFFICIENT buffer, the affine sibling of ``_DELTA_BUF_PREFIX``.
+_COEF_BUF_PREFIX = '_scan_coef_'
+
+#: Prefix for the synthetic connector names the value walk gives to leaf reads.
+_AFFINE_LEAF_PREFIX = '__aff_in'
+
+
+class _AffineLeaf(NamedTuple):
+    """One array read the recurrence's value is built from.
+
+    :param node: The AccessNode read.
+    :param conn: Its source connector (``None`` for a plain AccessNode).
+    :param memlet: The read's memlet, to be copied onto the rebuilt tasklets' edges.
+    """
+    node: nodes.AccessNode
+    conn: Optional[str]
+    memlet: Any
+
+
+class _AffineScan(NamedTuple):
+    """A matched first-order linear recurrence.
+
+    :param out_name: The carrier array.
+    :param body_state: The loop body state holding the update.
+    :param leaves: Synthetic connector name -> the leaf read it stands for.
+    :param chain: Nodes forming the value computation, removed by the rewrite.
+    :param coef_code: Python expression for ``c(i)`` over the leaf connectors.
+    :param delta_code: Python expression for ``d(i)`` over the leaf connectors.
+    :param write_an: The AccessNode the body stores the carrier through.
+    :param write_edge: The edge storing to it.
+    :param iter_start: First iteration value.
+    :param iter_end: Last iteration value (inclusive).
+    :param k_w: Constant offset on the write, ``out[i + k_w]``.
+    :param k_r: Constant offset on the carry read, ``out[i + k_r]``.
+    """
+    out_name: str
+    body_state: SDFGState
+    leaves: Dict[str, _AffineLeaf]
+    chain: List[Any]
+    coef_code: str
+    delta_code: str
+    write_an: nodes.AccessNode
+    write_edge: Any
+    iter_start: Any
+    iter_end: Any
+    k_w: Any
+    k_r: Any
+
+
+class _AffineRefused(Exception):
+    """Raised inside the value walk when the body is not a straight-line linear recurrence."""
+
+
+def tasklet_symbolic_output(tasklet: nodes.Tasklet, out_conn: str) -> Optional[Any]:
+    """The symbolic value ``tasklet`` writes to ``out_conn``, as an expression over its inputs.
+
+    Straight-line Python assignments only, substituted forward in order so intermediate names
+    disappear and the result is expressed purely in input connectors. Anything else -- a branch,
+    an augmented assignment, a subscript target, a call the symbolic parser will not take -- is
+    declined rather than approximated: this expression is what the linearity proof runs on, so a
+    partial reading of the body would prove the wrong thing.
+
+    :param tasklet: The candidate tasklet.
+    :param out_conn: The output connector whose value is wanted.
+    :returns: The symbolic expression, or ``None`` when the body is not straight-line arithmetic.
+    """
+    if tasklet.language != dtypes.Language.Python:
+        return None
+    try:
+        tree = ast.parse(tasklet.code.as_string)
+    except SyntaxError:
+        return None
+    env: Dict[Any, Any] = {}
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            return None
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name):
+            return None
+        try:
+            value = symbolic.pystr_to_symbolic(astutils.unparse(stmt.value))
+        except Exception:
+            return None
+        env[symbolic.pystr_to_symbolic(target.id)] = value.xreplace(env) if env else value
+    result = env.get(symbolic.pystr_to_symbolic(out_conn))
+    if result is None:
+        return None
+    # Every free symbol must be an input connector. A stray name is a symbol read from the SDFG
+    # scope, which is fine for the value but fatal for the tasklets rebuilt from it -- those get
+    # the leaf connectors and nothing else.
+    if not {str(s) for s in result.free_symbols} <= set(tasklet.in_connectors.keys()):
+        return None
+    return result
+
+
+def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any):
+    """Compose the whole straight-line chain behind ``write_edge`` into one symbolic expression.
+
+    Tasklets contribute their code, transient scalars written once in this state are walked
+    through, and every other read becomes a LEAF: a fresh synthetic connector standing for that
+    array access. The carrier read at ``i + k_w - 1`` becomes the distinguished CARRY leaf.
+
+    Refuses anything whose value is not fully determined here: a node whose result is consumed
+    somewhere else as well (removing it would break that consumer), a non-Python tasklet, a
+    tasklet with several outputs, or a second read of the carrier at a different offset -- that
+    last is a higher-order recurrence, liftable only with a wider carry.
+
+    :param state: The body state.
+    :param sdfg: SDFG owning the state.
+    :param write_edge: The edge storing to the carrier.
+    :param out_name: The carrier array.
+    :param loop_var: The loop iteration variable.
+    :param k_w: Constant offset of the carrier write.
+    :returns: ``(expr, leaves, chain, carry_name, k_r)``, or ``None`` when not liftable.
+    """
+    leaves: Dict[str, _AffineLeaf] = {}
+    chain: List[Any] = []
+    carry: List[Any] = []  # single-slot: [(name, k_r)] once the carry leaf is seen
+
+    def leaf_for(edge) -> Any:
+        subset = edge.data.subset
+        if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
+            axis, k_r, others, coef = _classify_subset(subset, loop_var)
+            if axis != 0 or coef != 1 or others or symbolic.simplify(k_w - k_r) != 1:
+                # A carrier read that is not the immediately preceding element: second order.
+                raise _AffineRefused('carrier read is not the previous element')
+            if carry:
+                if symbolic.simplify(carry[0][1] - k_r) != 0:
+                    raise _AffineRefused('two distinct carrier offsets')
+                return symbolic.pystr_to_symbolic(carry[0][0])
+            check_leaf_is_one_element(edge)
+            name = f'{_AFFINE_LEAF_PREFIX}_carry'
+            carry.append((name, k_r))
+            leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
+            return symbolic.pystr_to_symbolic(name)
+        check_leaf_is_one_element(edge)
+        name = f'{_AFFINE_LEAF_PREFIX}{len(leaves)}'
+        leaves[name] = _AffineLeaf(edge.src, edge.src_conn, edge.data)
+        return symbolic.pystr_to_symbolic(name)
+
+    def check_leaf_is_one_element(edge) -> None:
+        # Every leaf is rebuilt as an edge into a scalar tasklet connector, so it has to name ONE
+        # element on the array side. A copy edge carrying a multi-element region and an
+        # ``other_subset`` is a real copy, not a scalar read; it stays an AccessNode-to-AccessNode
+        # path for the copy lowering at codegen to handle, and this matcher declines it rather
+        # than flattening it into a connector read that means something narrower.
+        array_subset = edge.data.subset if edge.data.data == edge.src.data else edge.data.other_subset
+        if array_subset is None:
+            raise _AffineRefused('leaf read names neither side of its memlet')
+        count = symbolic.simplify(array_subset.num_elements())
+        if not (isinstance(count, (int, sympy.Integer)) and int(count) == 1):
+            raise _AffineRefused('leaf read is a multi-element copy, not a scalar read')
+
+    def value_of(edge) -> Any:
+        src = edge.src
+        if isinstance(src, nodes.AccessNode):
+            desc = sdfg.arrays.get(src.data)
+            in_edges = [e for e in state.in_edges(src) if not e.data.is_empty()]
+            # A transient written exactly once here and read exactly once is a wire, not a value.
+            if (desc is not None and desc.transient and src.data != out_name and len(in_edges) == 1
+                    and len(state.out_edges(src)) == 1):
+                chain.append(src)
+                return value_of(in_edges[0])
+            return leaf_for(edge)
+        if not isinstance(src, nodes.Tasklet):
+            raise _AffineRefused(f'{type(src).__name__} in the value chain')
+        if len([e for e in state.out_edges(src) if not e.data.is_empty()]) != 1:
+            raise _AffineRefused('tasklet feeds more than one consumer')
+        expr = tasklet_symbolic_output(src, edge.src_conn)
+        if expr is None:
+            raise _AffineRefused('tasklet body is not straight-line arithmetic')
+        chain.append(src)
+        # Sorted by connector name so the leaf numbering -- and therefore the emitted code -- is
+        # the same on every run, whatever order the edges happen to be stored in.
+        replacement = {}
+        for e in sorted((e for e in state.in_edges(src) if not e.data.is_empty()), key=lambda e: e.dst_conn or ''):
+            if e.dst_conn is None:
+                raise _AffineRefused('tasklet input without a connector')
+            replacement[symbolic.pystr_to_symbolic(e.dst_conn)] = value_of(e)
+        return expr.xreplace(replacement)
+
+    try:
+        expr = value_of(write_edge)
+    except _AffineRefused:
+        return None
+    if not carry:
+        return None
+    return expr, leaves, chain, carry[0][0], carry[0][1]
+
+
+def split_linear_in_carry(expr: Any, carry: str) -> Optional[tuple]:
+    """Split ``expr`` into ``(coefficient, offset)`` with ``expr == coefficient * carry + offset``.
+
+    The proof, not a pattern match. ``diff`` gives a candidate coefficient for ANY expression;
+    what decides linearity is that the coefficient is free of the carry and that the residual
+    vanishes identically. ``carry**2`` differentiates to ``2*carry``, ``sin(carry)`` to
+    ``cos(carry)``, ``Max(carry, w)`` to a Heaviside in the carry -- each drags the carry into the
+    coefficient and is refused there.
+
+    :param expr: The recurrence's composed value.
+    :param carry: Name of the leaf holding ``out[i + k_r]``.
+    :returns: ``(coef, offset)``, or ``None`` when the value is not linear in the carry.
+    """
+    sym = symbolic.pystr_to_symbolic(carry)
+    if sym not in expr.free_symbols:
+        return None
+    try:
+        coef = sympy.diff(expr, sym)
+        offset = expr.subs({sym: 0})
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if sym in coef.free_symbols or sym in offset.free_symbols:
+        return None
+    if symbolic.simplify(expr - (coef * sym + offset)) != 0:
+        return None
+    return coef, offset
+
+
+def python_code_for(expr: Any) -> Optional[str]:
+    """Render ``expr`` as a Python tasklet expression, or ``None`` if it does not round-trip.
+
+    The round-trip is the point: the rebuilt tasklets must compute what the matcher proved about,
+    and the symbolic printer is not contractually a Python emitter -- an expression carrying a
+    function the parser will not read back is refused here rather than emitted as code that means
+    something else.
+    """
+    text = str(expr)
+    try:
+        if symbolic.simplify(symbolic.pystr_to_symbolic(text) - expr) != 0:
+            return None
+    except Exception:
+        return None
+    return text
+
+
+def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> Optional[_AffineScan]:
+    """Match ``out[i + k_w] = c(i) * out[i + k_w - 1] + d(i)`` in ``loop``, or return ``None``.
+
+    :param loop: Candidate loop.
+    :param sdfg: SDFG owning it.
+    :returns: The match, or ``None``.
+    """
+    if loop_analysis.get_loop_stride(loop) != 1:
+        return None
+    iter_start = loop_analysis.get_init_assignment(loop)
+    iter_end = loop_analysis.get_loop_end(loop)
+    if iter_start is None or iter_end is None:
+        return None
+    state, inner_loop = _descend_to_content_state(loop)
+    # An inner loop under the carry is the nested shape; the affine lowering has no vector form
+    # yet, so it is left unmatched rather than matched and mis-emitted.
+    if state is None or inner_loop is not None or _in_conditional_branch(state):
+        return None
+    loop_var = loop.loop_variable
+    out_name = _find_carried_array(state, sdfg, loop_var)
+    if out_name is None:
+        return None
+    desc = sdfg.arrays.get(out_name)
+    if not isinstance(desc, data.Array) or len(desc.shape) != 1:
+        return None
+
+    write_edge = _find_unique_write_edge(state, out_name)
+    if write_edge is None or not isinstance(write_edge.dst, nodes.AccessNode):
+        return None
+    write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_var)
+    if write_axis != 0 or write_coef != 1 or write_others:
+        return None
+
+    walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w)
+    if walked is None:
+        return None
+    expr, leaves, chain, carry_name, k_r = walked
+    split = split_linear_in_carry(expr, carry_name)
+    if split is None:
+        return None
+    coef_code, delta_code = python_code_for(split[0]), python_code_for(split[1])
+    if coef_code is None or delta_code is None:
+        return None
+    if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, 1):
+        return None
+    return _AffineScan(out_name=out_name,
+                       body_state=state,
+                       leaves=leaves,
+                       chain=chain,
+                       coef_code=coef_code,
+                       delta_code=delta_code,
+                       write_an=write_edge.dst,
+                       write_edge=write_edge,
+                       iter_start=iter_start,
+                       iter_end=iter_end,
+                       k_w=k_w,
+                       k_r=k_r)
+
+
+def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _AffineScan, sdfg: SDFG):
+    """Replace ``loop`` with a coefficient/delta build followed by an affine ``Scan``.
+
+    The body becomes a pure per-iteration build of the two arrays the recurrence is made of -- no
+    carry, so the loop is data-parallel and ``LoopToMap`` takes it afterwards exactly as it does
+    for the scalar ops -- and one post-loop state runs the libnode, seeded from the carrier's
+    pre-loop value through ``_scan_init``, writing its result straight back into ``out``.
+
+    :param parent: CFG owning ``loop``.
+    :param loop: The matched loop.
+    :param info: The match.
+    :param sdfg: SDFG owning ``loop``.
+    """
+    out_desc = sdfg.arrays[info.out_name]
+    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{info.out_name}', [trip],
+                                  out_desc.dtype,
+                                  transient=True,
+                                  find_new_name=True)
+    coef_buf, _ = sdfg.add_array(f'{_COEF_BUF_PREFIX}{info.out_name}', [trip],
+                                 out_desc.dtype,
+                                 transient=True,
+                                 find_new_name=True)
+    mutate_body_to_affine_buffers(info, delta_buf, coef_buf)
+
+    out_edges = list(parent.out_edges(loop))
+    s_scan = parent.add_state(loop.label + '_affine_scan')
+    parent.add_edge(loop, s_scan, InterstateEdge())
+    for e in out_edges:
+        parent.remove_edge(e)
+        parent.add_edge(s_scan, e.dst, e.data)
+    emit_affine_scan(s_scan, sdfg, info, delta_buf, coef_buf, trip)
+    sdfg.reset_cfg_list()
+
+
+def emit_affine_build_tasklet(state: SDFGState, info: _AffineScan, label: str, code: str, buf: str, idx: Any) -> None:
+    """Emit one per-iteration build tasklet writing ``buf[idx]``.
+
+    Only the leaves the expression actually names are wired, and never the carry: these two
+    tasklets are exactly the parts of the recurrence that do NOT depend on the previous
+    iteration, which is what leaves the loop data-parallel.
+    """
+    used = {str(sym) for sym in symbolic.pystr_to_symbolic(code).free_symbols} & set(info.leaves.keys())
+    out_conn = '__out'
+    tasklet = state.add_tasklet(label,
+                                inputs={name: None
+                                        for name in sorted(used)},
+                                outputs={out_conn: None},
+                                code=f'{out_conn} = {code}',
+                                language=dtypes.Language.Python)
+    for name in sorted(used):
+        leaf = info.leaves[name]
+        # The recorded read is usually a copy INTO a scalar transient, so it carries an
+        # ``other_subset`` naming that scalar. The rebuilt edge lands on a tasklet connector
+        # instead, so only the array side survives -- and it has to be taken from whichever end
+        # of the original memlet actually names the array.
+        subset = leaf.memlet.subset if leaf.memlet.data == leaf.node.data else leaf.memlet.other_subset
+        assert subset is not None, 'matcher proved the array side names one element'
+        state.add_edge(leaf.node, leaf.conn, tasklet, name, mm.Memlet(data=leaf.node.data,
+                                                                      subset=copy.deepcopy(subset)))
+    state.add_edge(tasklet, out_conn, state.add_write(buf), None,
+                   mm.Memlet(data=buf, subset=subsets.Range([(idx, idx, 1)])))
+
+
+def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str, coef_buf: str):
+    """In place: replace the recurrence with two independent per-iteration writes.
+
+    The original computation chain is removed wholesale rather than rewired. Every node in it was
+    proven single-consumer by the value walk, so nothing else depends on it, and the two rebuilt
+    tasklets read the same leaves it did -- so the body computes the same arithmetic on the same
+    inputs, minus the carry.
+    """
+    state = info.body_state
+    idx = symbolic.simplify(symbolic.pystr_to_symbolic(state.parent_graph.loop_variable) - info.iter_start)
+
+    emit_affine_build_tasklet(state, info, 'affine_coef', info.coef_code, coef_buf, idx)
+    emit_affine_build_tasklet(state, info, 'affine_delta', info.delta_code, delta_buf, idx)
+
+    state.remove_edge(info.write_edge)
+    for node in info.chain:
+        if node in state.nodes():
+            state.remove_node(node)
+    # The carrier's read and write AccessNodes are what carried the dependence; with the chain
+    # gone they are isolated, and leaving them would keep the loop looking carried to LoopToMap.
+    for node in list(state.nodes()):
+        if isinstance(node, nodes.AccessNode) and node.data == info.out_name and state.degree(node) == 0:
+            state.remove_node(node)
+
+
+def emit_affine_scan(state: SDFGState, sdfg: SDFG, info: _AffineScan, delta_buf: str, coef_buf: str, trip: Any):
+    """Wire the ``Scan(op=AFFINE)`` node reading both buffers and writing ``out`` directly.
+
+    ``_scan_init`` carries ``out[start + k_r]``, the value the sequential loop entered with. It
+    goes through a scalar transient rather than straight off ``out`` so this state reads and
+    writes the carrier through separate nodes -- the same shape the scalar direct-write path uses.
+    """
+    out_desc = sdfg.arrays[info.out_name]
+    write_start = symbolic.simplify(info.iter_start + info.k_w)
+    node = Scan(name=f'{state.label}_op', op=ScanOp.AFFINE, exclusive=False)
+    state.add_node(node)
+
+    seed_name, _ = sdfg.add_scalar(f'{_SEED_SCALAR_PREFIX}{info.out_name}',
+                                   out_desc.dtype,
+                                   transient=True,
+                                   find_new_name=True)
+    seed_axis = symbolic.simplify(info.iter_start + info.k_r)
+    seed_an = state.add_access(seed_name)
+    node.add_in_connector(INIT_CONNECTOR_NAME)
+    state.add_edge(
+        state.add_read(info.out_name), None, seed_an, None,
+        mm.Memlet(data=info.out_name,
+                  subset=subsets.Range([(seed_axis, seed_axis, 1)]),
+                  other_subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name,
+                                                                       subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(state.add_read(delta_buf), None, node, INPUT_CONNECTOR_NAME,
+                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(state.add_read(coef_buf), None, node, COEF_CONNECTOR_NAME,
+                   mm.Memlet(data=coef_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write(info.out_name), None,
+                   mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_start + trip - 1, 1)])))

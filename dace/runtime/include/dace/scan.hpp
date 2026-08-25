@@ -426,6 +426,68 @@ inline void blocked_scan(long n, long elem_bytes, T seed, Reduce reduce, Scan sc
     scan(0, n, seed);
 }
 
+/// The affine map ``x -> a*x + b``: the carry of a first-order linear recurrence.
+///
+/// A plain scan carries a value; this carries a FUNCTION, which is what makes
+/// ``out[k] = c[k]*out[k-1] + d[k]`` block at all. Composition is associative -- function
+/// composition always is -- so the three-phase shape above applies with no change to its
+/// structure. The map is only closed under composition because the recurrence is LINEAR in the
+/// carry: ``f(x) = x*x`` or ``f(x) = max(x, w)`` compose into something with no fixed-width
+/// representation, and the matcher that produces these buffers refuses them.
+template <typename E>
+struct affine_map {
+    E a;
+    E b;
+};
+
+/// Compose two affine maps: ``y`` applied AFTER ``x``.
+///
+/// ``y(x(v)) = y.a*(x.a*v + x.b) + y.b``. Argument order matches ``blocked_scan``'s combine,
+/// which folds the accumulated prefix on the left and the next block on the right.
+template <typename E>
+inline affine_map<E> affine_compose(const affine_map<E>& x, const affine_map<E>& y) {
+    return affine_map<E>{y.a * x.a, y.a * x.b + y.b};
+}
+
+/// Fold one block's coefficients and deltas into a single affine map.
+///
+/// ``m.a`` ends as the block's running product of ``c``, and that product is the ONLY one this
+/// lowering ever forms. The seed carries ``a == 0``, so every cross-block composition multiplies
+/// the accumulated ``a`` by zero and it never grows: the exponent is bounded by ONE BLOCK, which
+/// ``block_span`` sizes to L2, not by ``n``. The single-thread path skips this function entirely
+/// and forms no product at all. That is the difference between this lowering and the closed form
+/// ``out[k] = P[k] * (seed + sum_j d[j]/P[j])``, which divides by a product over the whole prefix
+/// and loses the result to overflow long before it finishes.
+template <typename E, typename CIt, typename DIt>
+inline affine_map<E> fold_affine(CIt c, DIt d, long lo, long hi) {
+    affine_map<E> m{static_cast<E>(1), static_cast<E>(0)};
+    for (long k = lo; k < hi; ++k) {
+        const E ck = static_cast<E>(c[k]);
+        m.b = ck * m.b + static_cast<E>(d[k]);
+        m.a = ck * m.a;
+    }
+    return m;
+}
+
+/// Write ``out[lo:hi]`` for the recurrence entered with the composed map ``off``.
+///
+/// ``off.a`` is zero by construction (see ``fold_affine``), so ``off.b`` IS the value the block
+/// starts from and the pass is the plain sequential recurrence -- bit-identical to what the
+/// sequential lowering computes for the same block.
+///
+/// No ``simd inscan`` here, unlike the four scalar ops: every element multiplies the carry by a
+/// coefficient known only at that element, so the chain is a genuine dependent multiply-add and
+/// the in-register shift network those ops use has nothing to shift. The parallelism is the
+/// blocking alone.
+template <typename E, typename CIt, typename DIt, typename OutIt>
+inline void scan_incl_affine(CIt c, DIt d, OutIt o, long lo, long hi, affine_map<E> off) {
+    E acc = off.b;
+    for (long k = lo; k < hi; ++k) {
+        acc = static_cast<E>(c[k]) * acc + static_cast<E>(d[k]);
+        o[k] = acc;
+    }
+}
+
 }  // namespace detail
 
 // --- INCLUSIVE -----------------------------------------------------------------
@@ -690,6 +752,33 @@ inline void strided_inclusive_max(It first, OutIt out, long n, long s) {
     using T = typename std::iterator_traits<It>::value_type;
     detail::strided_scan(first, out, n, s, [](const T& x) { return x; },
                          [](const T& a, const T& b) { return std::max<T>(a, b); });
+}
+
+// --- FIRST-ORDER LINEAR RECURRENCE ---------------------------------------------
+// ``out[k] = c[k]*out[k-1] + d[k]`` over ``k in [0, n)``, entered with ``out[-1] = seed``.
+//
+// This is a scan whose monoid is affine-map composition rather than one of the four scalar ops
+// above, so it reuses ``blocked_scan`` unchanged with ``T = affine_map<E>``; only the fold, the
+// seeded pass and the combine differ. The seed enters as the CONSTANT map ``{0, seed}``, which
+// is what pins the composed ``a`` at zero -- see ``fold_affine`` for why that is the numerically
+// load-bearing choice and not just a convenient encoding.
+//
+// Association: within a block the seeded pass reproduces the sequential left-to-right recurrence
+// exactly, so the result moves with ``OMP_NUM_THREADS`` only through the block-boundary carries,
+// and the one-thread path is exact. Callers needing a reproducible result take the sequential
+// shape, as with every other op in this header.
+
+template <typename CIt, typename DIt, typename OutIt, typename T>
+inline void inclusive_affine(CIt coef, DIt delta, OutIt out_first, long n, T seed) {
+    using E = typename std::iterator_traits<OutIt>::value_type;
+    using M = detail::affine_map<E>;
+    detail::blocked_scan<M>(
+        n, static_cast<long>(3 * sizeof(E)), M{static_cast<E>(0), static_cast<E>(seed)},
+        [coef, delta](long lo, long hi) { return detail::fold_affine<E>(coef, delta, lo, hi); },
+        [coef, delta, out_first](long lo, long hi, M off) {
+            detail::scan_incl_affine<E>(coef, delta, out_first, lo, hi, off);
+        },
+        [](M x, M y) { return detail::affine_compose<E>(x, y); });
 }
 
 }}  // namespace dace::scan

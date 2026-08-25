@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.scan import Scan, in_connector, init_connector, out_connector
+from dace.libraries.standard.nodes.scan import Scan, ScanOp, in_connector, init_connector, out_connector
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
@@ -21,6 +21,12 @@ def _num_loops(sdfg):
 
 def _num_scan_nodes(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+
+
+def _scan_ops(sdfg):
+    """Which ops the lifted Scan nodes carry -- an AFFINE lift and a SUM lift are not the same
+    result, and several refusal tests here turn on exactly that difference."""
+    return [n.op for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
 
 
 def test_inclusive_sum_1d():
@@ -167,8 +173,14 @@ def test_tsvc_s1221_residue_class_scan_inplace():
     assert np.allclose(b, expected), f's1221 mismatch: got {b}, expected {expected}'
 
 
-def test_refuses_non_associative_op():
-    """Subtraction isn't associative; the pass refuses any op outside +, *, max, min."""
+def test_subtraction_lifts_through_the_affine_monoid_not_a_scalar_op():
+    """Subtraction is not associative, so none of the four scalar ops may claim this loop.
+
+    It is still a scan: ``out[i+1] = 1*out[i] + (-delta[i])`` is an affine map, and MAP COMPOSITION
+    is associative even though ``-`` is not. So the affine path lifts it -- and at ``c == 1`` the
+    composed coefficient is identically one, so no product is ever formed and the result is exact.
+    What must never happen is a SUM or PRODUCT node here; that would compute a different function.
+    """
 
     @dace.program
     def sub(out: dace.float64[N + 1], delta: dace.float64[N]):
@@ -178,7 +190,18 @@ def test_refuses_non_associative_op():
     sdfg = sub.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    assert _num_scan_nodes(sdfg) == 0
+    assert _scan_ops(sdfg) == [ScanOp.AFFINE]
+
+    n = 33
+    delta = np.random.default_rng(3).random(n)
+    want = np.zeros(n + 1)
+    want[0] = 0.7
+    for i in range(n):
+        want[i + 1] = want[i] - delta[i]
+    got = np.zeros(n + 1)
+    got[0] = 0.7
+    sdfg(out=got, delta=delta, N=n)
+    assert np.allclose(got, want, rtol=0, atol=1e-13)
 
 
 def test_refuses_delta_reads_carry_array():
@@ -201,9 +224,14 @@ def test_refuses_delta_reads_carry_array():
                                         "'delta' aa[j-1, i] is another read of the carry array.")
 
 
-def test_refuses_extra_non_transient_write():
-    """The body writes a *second* non-transient array (``aux[i]``); that's per-iteration
-    output we'd need to preserve outside the rewrite. The matcher refuses."""
+def test_extra_non_transient_write_survives_the_lift():
+    """A second per-iteration output (``aux[i]``) must still be written, and written correctly.
+
+    The scalar path refuses this shape because its rewrite reroutes "the body's final write" and a
+    second non-transient write makes that ambiguous. The affine rewrite is CHAIN-SCOPED -- it
+    removes only the nodes it proved belong to the recurrence -- so an unrelated write is not its
+    business and simply stays where it was, riding the same now-parallel loop.
+    """
 
     @dace.program
     def with_aux(out: dace.float64[N + 1], delta: dace.float64[N], aux: dace.float64[N]):
@@ -214,7 +242,20 @@ def test_refuses_extra_non_transient_write():
     sdfg = with_aux.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    assert _num_scan_nodes(sdfg) == 0
+    assert _scan_ops(sdfg) == [ScanOp.AFFINE]
+
+    n = 33
+    delta = np.random.default_rng(4).random(n)
+    want = np.zeros(n + 1)
+    want[0] = 0.3
+    for i in range(n):
+        want[i + 1] = want[i] + delta[i]
+    got = np.zeros(n + 1)
+    got[0] = 0.3
+    aux = np.full(n, -99.0)
+    sdfg(out=got, delta=delta, aux=aux, N=n)
+    assert np.allclose(got, want, rtol=0, atol=1e-13)
+    assert np.array_equal(aux, delta * 2.0), 'the unrelated per-iteration output was dropped'
 
 
 def test_refuses_double_buffer_ring_carry():
@@ -439,10 +480,14 @@ def test_v2_computed_delta_with_scale():
     assert np.allclose(out, expected)
 
 
-def test_refuses_when_delta_is_same_array():
-    """``out[i+1] = out[i] + out[i]`` -- the delta IS the carry. The rewrite would
-    self-alias; refused (this also catches scaling shapes like ``out[i+1] = 2*out[i]``
-    once the frontend lowers them)."""
+def test_delta_that_is_the_carry_is_a_scaling_recurrence():
+    """``out[i+1] = out[i] + out[i]`` has no delta at all -- it is ``out[i+1] = 2*out[i]``.
+
+    A SUM matcher would self-alias here, which is why the scalar path refuses. Read as an affine
+    map it is simply ``c == 2, d == 0``, so the affine path lifts it and the answer is EXACT: the
+    coefficients are integral, so the blocked product reproduces the sequential doubling bit for
+    bit.
+    """
 
     @dace.program
     def self_double(out: dace.float64[N + 1]):
@@ -452,9 +497,17 @@ def test_refuses_when_delta_is_same_array():
     sdfg = self_double.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    # Assert the refusal itself: apply_pass legitimately returns 0 rather than None when its
-    # preprocessing normalizes the body (here a frontend identity-copy tasklet) without lifting.
-    assert _num_scan_nodes(sdfg) == 0
+    assert _scan_ops(sdfg) == [ScanOp.AFFINE]
+
+    n = 20
+    want = np.zeros(n + 1)
+    want[0] = 1.5
+    for i in range(n):
+        want[i + 1] = want[i] + want[i]
+    got = np.zeros(n + 1)
+    got[0] = 1.5
+    sdfg(out=got, N=n)
+    assert np.array_equal(got, want)
 
 
 def test_multi_state_body_with_empty_wrappers():
@@ -1965,14 +2018,18 @@ def test_multi_slot_same_array_five_carries():
     assert np.allclose(acc, exp), f'multi-slot scan diverged: max diff {np.abs(acc - exp).max():.2e}'
 
 
-def test_linear_recurrence_is_refused_not_lifted_as_a_product_scan():
-    """``out[i] = out[i-1]*x[i] + x[i]`` is a first-order LINEAR recurrence, not a scan.
+def test_linear_recurrence_lifts_as_affine_never_as_a_product_scan():
+    """``out[i] = out[i-1]*x[i] + x[i]`` is a first-order LINEAR recurrence.
 
     Its inner ``_Mult_`` is a perfectly shaped PRODUCT update -- carry on one side, an array slice
     on the other -- so a matcher that only looks at that tasklet claims the loop and lifts a product
     scan, whose result is then ADDED to. That computes something else entirely; the kernel came back
-    wrong by five orders of magnitude. The recurrence needs the affine monoid, which ``Scan`` does
-    not have, so the only right answer is to leave the loop alone.
+    wrong by five orders of magnitude. The guard against THAT is what this test exists for, and it
+    still holds: the node here must be AFFINE and nothing else.
+
+    What changed is the alternative. The recurrence needs the affine monoid, and ``Scan`` now has
+    it, so the right answer is no longer to leave the loop alone -- it is to lift it with a carry
+    that is the map ``x -> c*x + d`` rather than a value.
     """
 
     @dace.program
@@ -1981,10 +2038,9 @@ def test_linear_recurrence_is_refused_not_lifted_as_a_product_scan():
             out[i] = out[i - 1] * x[i] + x[i]
 
     sdfg = linear_recurrence.to_sdfg(simplify=True)
-    before = sdfg.hash_sdfg()
-    assert LoopToScan().apply_pass(sdfg, {}) is None, 'a linear recurrence must not lift to a scan'
-    assert _num_scan_nodes(sdfg) == 0
-    assert sdfg.hash_sdfg() == before, 'a pass that does not apply must not mutate'
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {}) == 1
+    assert _scan_ops(sdfg) == [ScanOp.AFFINE]
 
     n = 32
     rng = np.random.default_rng(3)
