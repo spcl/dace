@@ -53,7 +53,9 @@ def _array_rank(arr: Any) -> int:
     """How many indices ``arr`` must be given before it yields a scalar."""
     rank = 0
     sort = arr.sort()
-    while z3.is_array_sort(sort):
+    # ``z3.is_array_sort`` takes an EXPRESSION and reads its sort; handed a sort it raises
+    # ``ast is not an expression``. The sort itself is what has to be classified here.
+    while isinstance(sort, z3.ArraySortRef):
         rank += 1
         sort = sort.range()
     return rank

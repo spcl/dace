@@ -207,6 +207,24 @@ def test_boxes_of_different_rank_are_inconclusive():
     assert smt_dependence.prove_disjoint_access_boxes([(I, I)], [(I, I), (I, I)], 'i', 0, M - 1, 1) is None
 
 
+def test_an_indirect_read_reaches_the_solver():
+    """``A[IDX[i]]`` read against ``A[i]`` written: the subscript becomes a Select, not an exception.
+
+    The rank of a cached z3 array is measured off its SORT. Classifying that sort with the
+    expression-level ``z3.is_array_sort`` raises ``ast is not an expression`` and takes every
+    subscripted read down with it, so this asserts the verdict, not merely that nothing raised.
+    """
+    assert smt_dependence.classify_read_write_pair(symbolic.pystr_to_symbolic('IDX[i]'), I, 'i', 0, N) == 'RAW'
+
+
+def test_one_name_read_at_two_ranks_is_refused():
+    """``A[IDX[i]]`` against ``A[IDX[i, i]]``: the array cache is keyed by NAME, so one rank's Select
+    chain would be applied to the other's sort. z3 does not reject the ill-sorted term -- it
+    segfaults inside the solver -- so the oracle has to abstain here."""
+    assert smt_dependence.classify_read_write_pair(symbolic.pystr_to_symbolic('IDX[i]'),
+                                                   symbolic.pystr_to_symbolic('IDX[i, i]'), 'i', 0, N) is None
+
+
 if __name__ == '__main__':
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -228,3 +246,5 @@ if __name__ == '__main__':
     test_a_backward_loop_is_reasoned_about_in_its_own_direction()
     test_an_unknown_step_direction_is_inconclusive()
     test_boxes_of_different_rank_are_inconclusive()
+    test_an_indirect_read_reaches_the_solver()
+    test_one_name_read_at_two_ranks_is_refused()
