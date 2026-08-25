@@ -2173,7 +2173,10 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    # ``b != 1``: a rounding call with nothing to divide by is not an integer division. Without it
+    # ``floor(sin(x))`` matches ``floor(e / b)`` with ``b = 1`` and becomes ``int_floor(sin(x), 1)``,
+    # which prints as a division by one -- the rounding silently dropped (spcl/dace#2524).
+    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
@@ -3516,6 +3519,19 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
         return super()._print_Function(expr)
+
+    def _print_ceiling(self, expr):
+        """sympy ``ceiling(...)`` printer, the counterpart of :meth:`_print_floor`.
+
+        Only a ceiling with nothing to divide by reaches here -- ``sympy_intdiv_fix`` turns every
+        real integer division into ``int_ceil(a, b)`` first. The runtime's one-argument
+        ``ceiling`` overload returns ``FLT_MAX``/``DBL_MAX`` for floating arguments (it exists for
+        the integer case, where it is the identity), so printing the sympy name unchanged would
+        emit a poison value rather than a rounding. Emit the math-library call instead.
+        """
+        if not self.cpp_mode:
+            return super()._print_Function(expr)
+        return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
