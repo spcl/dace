@@ -253,20 +253,27 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
         end_z = _sympy_to_z3(end, {}, {})
     if start_z is None or end_z is None:
         return []
-    # DaCe loop bounds are inclusive and the step divides (i - start).
-    cons = [i >= start_z, i <= end_z]
     try:
         step_v = int(symbolic.evaluate(step, {}))
-        if step_v != 1:
-            # (i - start) % step == 0, so the solver knows two distinct iterations are a whole
-            # stride apart rather than adjacent. ``z3.SRem`` is bitvector-only and raises on an
-            # Int term, so it silently lost this constraint to the ``except`` below and every
-            # strided loop was reasoned about as if it stepped by one. ``%`` is SMT-LIB ``mod``,
-            # non-negative for a positive divisor, and ``i >= start`` above makes the dividend
-            # non-negative too, so the two agree here.
-            cons.append((i - start_z) % z3.IntVal(step_v) == 0)
     except Exception:
-        pass
+        step_v = 0
+    if step_v == 0:
+        # The direction is unknown, and guessing it is not safe in either direction: a
+        # ``start <= i <= end`` box is EMPTY for a backward loop, an empty antecedent makes every
+        # implication vacuously valid, and every caller here reads validity as "provably disjoint".
+        # Refuse to bound instead -- callers treat the absence of bounds as inconclusive.
+        return []
+    # DaCe loop bounds are inclusive and stated in ITERATION order, so a negative step counts DOWN
+    # from ``start`` to ``end`` and the interval is the other way round.
+    lo, hi = (start_z, end_z) if step_v > 0 else (end_z, start_z)
+    cons = [i >= lo, i <= hi]
+    if abs(step_v) != 1:
+        # (i - start) % |step| == 0, so the solver knows two distinct iterations are a whole
+        # stride apart rather than adjacent. ``z3.SRem`` is bitvector-only and raises on an
+        # Int term, so it silently lost this constraint and every strided loop was reasoned about
+        # as if it stepped by one. ``%`` is SMT-LIB ``mod``; the magnitude is what is asked for
+        # because divisibility does not care which way the loop travels.
+        cons.append((i - start_z) % z3.IntVal(abs(step_v)) == 0)
     return cons
 
 
@@ -401,6 +408,82 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
 
     consequent = z3.Not(z3.And(lo1 <= hi2, lo2 <= hi1))
     return _prove_unsat(antecedent, consequent, timeout_ms)
+
+
+def prove_disjoint_access_boxes(box1: List[Any],
+                                box2: List[Any],
+                                itervar: str,
+                                start: Any,
+                                end: Any,
+                                step: Any = 1,
+                                domain_assumptions: Optional[sp.Basic] = None,
+                                timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+    """Prove that two MULTI-DIMENSIONAL range accesses never touch the same element on
+    two different iterations.
+
+    The multi-dimensional generalization of :func:`prove_disjoint_write_ranges`, which compares one
+    interval expression against itself. Here each access is its own box -- a list of one inclusive
+    ``(lo, hi)`` interval per dimension, both in terms of ``itervar`` -- so the two can index the
+    iteration variable in DIFFERENT dimensions. That is the shape a mirrored triangular access has:
+    polybench covariance writes ``cov[i, i:M]`` and ``cov[i:M, i]`` and reads the first back, and
+    those boxes intersect only on the diagonal of a single iteration. No dimension is disjoint on
+    its own and neither box is a point, so the per-dimension and affine-certificate tests both
+    abstain.
+
+    A ``True`` verdict says the two accesses are independent ACROSS iterations, which serves both a
+    write/write pair (neither ordering is observable) and a read/write pair (any alias has distance
+    zero, so it lives inside one iteration whose body order is preserved).
+
+    SOUNDNESS: every symbol but ``itervar`` becomes ONE z3 constant shared by both boxes, which
+    describes the loop only while that symbol holds a single value for its whole execution. A symbol
+    that varies INSIDE the body takes independent values in the two iterations and sharing it
+    manufactures a bogus proof, so the caller must screen those out first (see
+    ``loop_varying_symbols``).
+
+    Two boxes intersect iff EVERY dimension's intervals intersect, and two inclusive intervals
+    intersect iff ``lo1 <= hi2 and lo2 <= hi1``; an empty interval (``lo > hi``) falsifies its
+    dimension, so an iteration that writes nothing is covered by the same formula. An inner stride
+    only thins an interval, so proving the boxes disjoint proves the written sets disjoint whatever
+    the strides are.
+
+    :param box1: Inclusive ``(lo, hi)`` bounds of the first access, one pair per dimension.
+    :param box2: The same for the second access; must have the same rank.
+    :returns: ``True`` if z3 proves disjointness; ``False``/``None`` otherwise.
+    """
+    if not _HAS_Z3:
+        return None
+    if len(box1) != len(box2) or not box1:
+        return None
+
+    # One cache pair for both boxes, so every symbol and array read outside ``itervar`` is the SAME
+    # z3 constant on both sides -- a per-call cache would compare two unrelated uninterpreted terms.
+    sym_cache: Dict[str, Any] = {}
+    arr_cache: Dict[str, Any] = {}
+    i1 = z3.Int(f'{itervar}_1')
+    i2 = z3.Int(f'{itervar}_2')
+    intersects = []
+    for (lo1, hi1), (lo2, hi2) in zip(box1, box2):
+        sym_cache[itervar] = i1
+        a1 = _sympy_to_z3(lo1, sym_cache, arr_cache)
+        b1 = _sympy_to_z3(hi1, sym_cache, arr_cache)
+        sym_cache[itervar] = i2
+        a2 = _sympy_to_z3(lo2, sym_cache, arr_cache)
+        b2 = _sympy_to_z3(hi2, sym_cache, arr_cache)
+        if a1 is None or b1 is None or a2 is None or b2 is None:
+            return None
+        intersects += [a1 <= b2, a2 <= b1]
+
+    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    if not bounds:
+        return None
+
+    antecedent = z3.And(i1 != i2, *bounds)
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            antecedent = z3.And(antecedent, dom)
+
+    return _prove_unsat(antecedent, z3.Not(z3.And(*intersects)), timeout_ms)
 
 
 def _overlap_pair(write_expr: sp.Basic,

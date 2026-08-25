@@ -129,6 +129,84 @@ def test_an_empty_interval_never_collides():
     assert smt_dependence.prove_disjoint_write_ranges(I + 1, I, 'i', 0, N, 1) is True
 
 
+M = symbolic.pystr_to_symbolic('M')
+
+
+def test_mirrored_triangular_boxes_meet_only_inside_one_iteration():
+    """Polybench covariance: iteration ``i`` writes row tail ``cov[i, i:M]`` and column tail
+    ``cov[i:M, i]``. An element in both needs ``i' >= i`` from the column and ``i >= i'`` from the
+    row, so the two boxes can only meet when the iterations coincide. Neither box is a point and
+    neither dimension is disjoint on its own, so this is the case no other test in the file covers
+    and the one that decides whether covariance parallelizes at all."""
+    row = [(I, I), (I, M - 1)]
+    col = [(I, M - 1), (I, I)]
+    assert smt_dependence.prove_disjoint_access_boxes(row, col, 'i', 0, M - 1, 1) is True
+
+
+def test_full_row_against_full_column_is_refused():
+    """Drop the triangular clamp and the same shape becomes a genuine conflict: ``cov[i, 0:M]``
+    and ``cov[0:M, i]`` share element ``(i, i')`` for EVERY pair. Refusing this is what stops the
+    certificate from being read off the transpose alone."""
+    row = [(I, I), (sp.Integer(0), M - 1)]
+    col = [(sp.Integer(0), M - 1), (I, I)]
+    assert smt_dependence.prove_disjoint_access_boxes(row, col, 'i', 0, M - 1, 1) is False
+
+
+def test_one_dimension_disjoint_settles_the_whole_box():
+    """A box needs only ONE dimension to separate. ``a[2*i, 0:M]`` against ``a[2*i + 1, 0:M]``
+    splits the rows even/odd, so the boxes never alias however total the second dimension is."""
+    even = [(2 * I, 2 * I), (sp.Integer(0), M - 1)]
+    odd = [(2 * I + 1, 2 * I + 1), (sp.Integer(0), M - 1)]
+    assert smt_dependence.prove_disjoint_access_boxes(even, odd, 'i', 0, M - 1, 1) is True
+
+
+def test_a_shifted_row_pair_is_refused():
+    """The near miss of the case above: ``a[i, :]`` and ``a[i + 1, :]`` DO collide, because
+    iteration ``i`` and iteration ``i + 1`` both land on row ``i + 1``. Parallelizing that is a
+    write-write race, so the split must come from the indices, not from the pair being distinct."""
+    here = [(I, I), (sp.Integer(0), M - 1)]
+    next_ = [(I + 1, I + 1), (sp.Integer(0), M - 1)]
+    assert smt_dependence.prove_disjoint_access_boxes(here, next_, 'i', 0, M - 1, 1) is False
+
+
+def test_neighbouring_row_bands_are_refused():
+    """``a[i:i+2, :]`` against itself: consecutive iterations share a row, so the boxes overlap
+    and the oracle must refuse. Guards the intersection test against being read off the lower
+    bounds alone, the box analogue of the interval case above."""
+    band = [(I, I + 1), (sp.Integer(0), M - 1)]
+    assert smt_dependence.prove_disjoint_access_boxes(band, band, 'i', 0, M - 1, 1) is False
+
+
+def test_a_backward_loop_is_reasoned_about_in_its_own_direction():
+    """A negative step counts DOWN, so the iteration domain is ``end .. start``.
+
+    Emitting ``start <= i <= end`` for it makes the domain EMPTY, and an implication with an
+    unsatisfiable antecedent is vacuously valid -- so every query on a backward loop came back
+    "provably disjoint". adi's backward sweep is the shape: iteration ``j`` writes column ``j``
+    and reads column ``j+1``, which iteration ``j+1`` wrote, and it was certified disjoint and
+    parallelized. Both directions of the same access pair are asserted here because a fix that
+    merely swaps the bounds unconditionally would break the forward one instead.
+    """
+    j = symbolic.pystr_to_symbolic('j')
+    here = [(sp.Integer(1), M - 2), (j, j)]
+    ahead = [(sp.Integer(1), M - 2), (j + 1, j + 1)]
+    assert smt_dependence.prove_disjoint_access_boxes(here, ahead, 'j', M - 2, 1, -1) is False
+    assert smt_dependence.prove_disjoint_access_boxes(here, ahead, 'j', 1, M - 2, 1) is False
+
+
+def test_an_unknown_step_direction_is_inconclusive():
+    """A symbolic step could travel either way, and the wrong guess is the vacuity above -- so
+    the oracle abstains instead of picking one."""
+    row = [(I, I), (sp.Integer(0), M - 1)]
+    col = [(I, M - 1), (I, I)]
+    assert smt_dependence.prove_disjoint_access_boxes(row, col, 'i', 0, M - 1, symbolic.pystr_to_symbolic('s')) is None
+
+
+def test_boxes_of_different_rank_are_inconclusive():
+    """Nothing to align dimension-wise, so the oracle abstains rather than guessing."""
+    assert smt_dependence.prove_disjoint_access_boxes([(I, I)], [(I, I), (I, I)], 'i', 0, M - 1, 1) is None
+
+
 if __name__ == '__main__':
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -142,3 +220,11 @@ if __name__ == '__main__':
     test_overlapping_chunks_are_refused()
     test_a_range_wider_than_the_step_is_refused()
     test_an_empty_interval_never_collides()
+    test_mirrored_triangular_boxes_meet_only_inside_one_iteration()
+    test_full_row_against_full_column_is_refused()
+    test_one_dimension_disjoint_settles_the_whole_box()
+    test_a_shifted_row_pair_is_refused()
+    test_neighbouring_row_bands_are_refused()
+    test_a_backward_loop_is_reasoned_about_in_its_own_direction()
+    test_an_unknown_step_direction_is_inconclusive()
+    test_boxes_of_different_rank_are_inconclusive()

@@ -101,28 +101,7 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
-        from dace.sdfg.propagation import propagate_memlets_sdfg
-
-        # Wrapper so memlet propagation slots into the Pass list. Memlet propagation
-        # is value-preserving and computes scope-summary memlets that ``LoopToMap``'s
-        # uniqueness analysis later relies on; re-running after unroll+simplify rebuilds
-        # those summaries with the now-correct ``symbols_defined_at`` (which folds in
-        # enclosing-LoopRegion loop variables -- the fix that kept ``tendency_loc_cld``
-        # from being widened to its full array extent in cloudsc).
-        class _PropagateMemlets(ppl.Pass):
-
-            def modifies(self_):
-                return ppl.Modifies.Memlets
-
-            def should_reapply(self_, _modified):
-                return False
-
-            def depends_on(self_):
-                return set()
-
-            def apply_pass(self_, sdfg, _pipeline_results):
-                propagate_memlets_sdfg(sdfg)
-                return 1
+        from dace.transformation.passes.propagate_memlets import PropagateMemlets
 
         return [
             # Loop-structure transforms first (unroll, peel; reversal lives inside
@@ -148,7 +127,7 @@ class ParallelizePipeline(ppl.Pass):
             # propagation had previously widened to the full array extent stay stale and
             # cause ``LoopToMap`` to refuse with "dynamic write not indexed by the
             # iteration variable" -- the cloudsc ``tendency_loc_cld`` shape.
-            _PropagateMemlets(),
+            PropagateMemlets(),
             SymbolPropagation(),
             ConstantPropagation(),
             PrivatizeScalars(),

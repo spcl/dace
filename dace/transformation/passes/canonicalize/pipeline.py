@@ -35,6 +35,7 @@ from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, PinCarriedTopLevelLoops,
                                                        RetargetWCRAccumulator)
 from dace.transformation.passes.loop_to_scan import LoopToScan
+from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -1042,6 +1043,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
           ('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map))]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
+    # ``LoopToMap`` reads the scope-summary memlets as its write set, so rebuild them from the
+    # bodies first: the inline stages above expose exact body subsets without re-propagating the
+    # enclosing map, which leaves polybench ``covariance``'s map exit claiming ``cov[0:M, 0:M]``
+    # while the body writes ``cov[i, i:M]``. See :class:`PropagateMemlets`.
+    s += [('parallelize', PropagateMemlets())]
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
     # ``LoopToMap`` is where body NestedSDFGs are MINTED, and it derives their connector set from
@@ -1107,6 +1113,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduction_to_wcr_map', PinCarriedTopLevelLoops())]
     s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
+    # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
+    s += [('reduction_to_wcr_map', PropagateMemlets())]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
     # states whose intermediate transients share names across siblings --
@@ -1197,6 +1205,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('loop_fuse', ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [('loop_fuse', LoopFusion())]
     s += [('loop_fuse', WavefrontSkew(target=target))]
+    # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
+    s += [('loop_fuse', PropagateMemlets())]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
     s += _inline_single_state('loop_fuse')
     s += _structural_cleanup('loop_fuse')
@@ -1455,6 +1465,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelizes the enclosing loop. Runs post-canon (loops in fissioned /
     # normalized form) right before the terminal parallelize sweep.
     s += [('end', LiftLoopCarriedReduction())]
+    # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
+    s += [('end', PropagateMemlets())]
     s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
     s += _inline_single_state('end')
 

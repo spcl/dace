@@ -228,17 +228,23 @@ def test_count_histogram_bit_exact():
     assert np.array_equal(res, ref)
 
 
-def test_knob_off_leaves_scatter_unprivatized():
-    """With the knob off the array-section reduction is not surfaced for the scatter (the
-    pass is what introduces it). The fail-safe refuse-guard in ``NormalizeWCR`` means the
-    scatter is ALSO not mangled into the unsound per-iteration whole-array ``_nnr_out``
-    buffer -- it falls back to the correct per-element atomic, so the count histogram stays
-    bit-exact (this path used to silently miscompile via the whole-buffer rewrite)."""
+def test_knob_off_leaves_scatter_unmangled():
+    """With the knob off the scatter must still not be mangled into the unsound per-iteration
+    whole-array ``_nnr_out`` buffer -- that is the rewrite this path used to silently miscompile
+    through, and the fail-safe refuse-guard in ``NormalizeWCR`` is what holds it off.
+
+    The array-section reduction is deliberately NOT asserted either way here. It used to be a
+    reliable marker for "the privatization pass ran", because the pipeline dropped the map-exit
+    WCR otherwise and codegen fell back to a per-element atomic on the shared histogram. Once the
+    scope summaries are rebuilt before each lift the WCR survives on its own, so CPU codegen
+    reaches the same ``reduction(+:hist[0:bins])`` from exact memlets with the pass switched off.
+    Both lowerings are correct; what the knob still decides is whether the pass ran, which
+    :func:`test_count_histogram_is_bit_exact` covers on the other side.
+    """
     sdfg = count_histogram.to_sdfg(simplify=True)
     _unique_build(sdfg, 'knoboff')
     canonicalize(sdfg, validate=True, target='cpu', privatize_scatter_reductions=False)
     code = _codegen_text(sdfg)
-    assert 'reduction(+:' not in code, 'knob off must not surface the array-section reduction'
     assert '_nnr_out' not in code, 'the scatter must not be mangled into a whole-array _nnr_out buffer'
 
     rng = np.random.default_rng(4)

@@ -29,22 +29,20 @@ def _align_itersym(expr, itersym):
 
 def _check_range(subset, a, itersym, b, step):
     found = False
-    for rb, re, _ in subset.ndrange():
+    for rb, _, _ in subset.ndrange():
         # ``ndrange()`` yields plain ints as well as sympy expressions, and an int has no ``match``
         # -- a fixed-slot write such as a scalar's ``[0]`` would raise instead of failing the test.
-        rb, re = _align_itersym(sp.sympify(rb), itersym), _align_itersym(sp.sympify(re), itersym)
-        if rb != 0:
-            m = rb.match(a * itersym + b)
-            if m is None:
-                continue
-            if (abs(m[a]) >= 1) != True:
-                continue
-        else:
-            m = re.match(a * itersym + b)
-            if m is None:
-                continue
-            if (abs(m[a]) >= 1) != True:
-                continue
+        rb = _align_itersym(sp.sympify(rb), itersym)
+        # The LOWER bound is what identifies the element this iteration starts at. Matching the
+        # upper bound instead whenever the lower one happened to fold to ``0`` accepted a range
+        # that GROWS with the iteration -- ``a[0:i+1]`` reads as "uniquely indexed by ``i``" while
+        # every iteration rewrites element 0. tsvc_2_5 ``wf_diff_skew`` is the wavefront it
+        # parallelized; the branch only ever fired on a 0-based range, which is never injective.
+        m = rb.match(a * itersym + b)
+        if m is None:
+            continue
+        if (abs(m[a]) >= 1) != True:
+            continue
         found = True
         break
     return found
@@ -311,6 +309,43 @@ def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
             # written sets disjoint whatever that stride is.
             r = smt_dependence.prove_disjoint_write_ranges(symbolic.pystr_to_symbolic(str(rb)),
                                                            symbolic.pystr_to_symbolic(str(re_)), *args, **kwargs)
+    except Exception:
+        return False
+    return r is True
+
+
+def _smt_proves_disjoint_boxes(sub1: subsets.Subset, sub2: subsets.Subset, itersym, start, end, step,
+                               varying: Set[str]) -> bool:
+    """Ask the SMT oracle whether two multi-dimensional RANGE accesses can collide across iterations.
+
+    The range counterpart of :func:`_collision_forces_same_iteration`, which only accepts point
+    subsets: a mirrored triangular access such as covariance's ``cov[i, i:M]`` against
+    ``cov[i:M, i]`` has no point dimension at all, so the affine certificate never gets to run.
+
+    ``varying`` carries the same soundness screen the affine certificate applies: the oracle shares
+    one constant per non-iteration symbol between the two boxes, which only describes the loop while
+    that symbol is fixed for the loop's whole execution. Conservative: returns ``False`` whenever z3
+    is unavailable, a body-varying symbol appears, the ranks differ, or the solver returns
+    ``unknown``.
+    """
+    if not smt_dependence.has_z3():
+        return False
+    nd1 = list(sub1.ndrange())
+    nd2 = list(sub2.ndrange())
+    if len(nd1) != len(nd2) or not nd1:
+        return False
+    try:
+        box1 = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd1]
+        box2 = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd2]
+        for lo, hi in box1 + box2:
+            if any(str(s) in varying for s in set(lo.free_symbols) | set(hi.free_symbols)):
+                return False
+        r = smt_dependence.prove_disjoint_access_boxes(box1,
+                                                       box2,
+                                                       str(itersym),
+                                                       symbolic.pystr_to_symbolic(str(start)),
+                                                       symbolic.pystr_to_symbolic(str(end)),
+                                                       step=symbolic.pystr_to_symbolic(str(step)))
     except Exception:
         return False
     return r is True
@@ -611,7 +646,7 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, varying: Set[str]) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: Set[str]) -> bool:
     """ Conservatively decide whether two write memlets to the same container
         can address the same element on different loop iterations. Returns
         ``False`` only if some subset dimension is provably disjoint (the
@@ -644,6 +679,11 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     # may appear in different dimensions of the two writes (a transpose), yet a collision can still
     # force the two iterations to coincide.
     if _collision_forces_same_iteration(m1.subset, m2.subset, itersym, varying):
+        return False
+    # Still undecided, and the certificate above needs POINT subsets. A mirrored triangular write
+    # (``cov[i, i:M]`` against ``cov[i:M, i]``) has none, yet the two boxes provably meet only on
+    # the diagonal of a single iteration -- which the SMT oracle can show directly.
+    if _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying):
         return False
     return True
 
@@ -863,6 +903,16 @@ class LoopToMap(xf.MultiStateTransformation):
                         # ``_read_and_write_sets`` already skips empty memlets for the same reason.
                         if e.data is None or e.data.is_empty():
                             continue
+                        # The edge that DEFINES a view rebinds it; it moves no data. Every
+                        # iteration re-establishes the same binding, so it carries no dependence --
+                        # but its subset spans whatever the view looks at (``np.reshape(Xi, ...)``
+                        # binds all of ``Xi``), which the ``a*i+b`` test below reads as an
+                        # unindexed whole-array store and refuses on (npbench ``mandelbrot2``).
+                        # Real traffic THROUGH the view keeps its own edges and is still analysed:
+                        # a write-through view's defining edge is its OUT edge, which never appears
+                        # here, and a store into the view node is a separate in-edge.
+                        if isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn):
+                            continue
                         if e.data.dynamic and e.data.wcr is None:
                             # Dynamic write (no WCR) is safe across iterations if its dst subset
                             # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
@@ -941,7 +991,7 @@ class LoopToMap(xf.MultiStateTransformation):
             reps = list(distinct.values())
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
-                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, varying) and not permissive:
+                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, end, varying) and not permissive:
                         return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
                                       "may overlap across iterations")
 
@@ -1095,6 +1145,12 @@ class LoopToMap(xf.MultiStateTransformation):
             # ``i``, read and write alias only at ``j == i``) is exactly this case; the ``varying``
             # guard inside the certificate is what keeps its OUTER ``i`` loop sequential.
             if _collision_forces_same_iteration(read, write, itersym, varying):
+                continue
+            # The range form of the same certificate: neither subset need be a point, so a
+            # triangular read against its mirrored write (covariance reads ``cov[i, i:M]`` back to
+            # store ``cov[i:M, i]``) is decided here rather than falling through to the
+            # propagate+intersect fallback, which widens both to the whole array and always aliases.
+            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying):
                 continue
             # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
             # never alias across iterations) admits the pair. A 'WAR' verdict is NOT enough:
