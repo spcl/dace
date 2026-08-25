@@ -265,6 +265,24 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: while clang rejects the same code. Measured, not assumed; see the constexpr probes in
 #: ``tests/codegen/mpr/test_lowering_table.py``.
 INLINE_DEFINITIONS: Dict[str, str] = {
+    'mpr_max':
+    'template <typename T>\n'
+    'static constexpr inline T mpr_max(const T& value) {\n'
+    '    return value;\n'
+    '}\n'
+    'template <typename T, typename... Ts>\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type mpr_max(const T& a, const Ts&... rest) {\n'
+    '    return (a > mpr_max(rest...)) ? a : mpr_max(rest...);\n'
+    '}',
+    'mpr_min':
+    'template <typename T>\n'
+    'static constexpr inline T mpr_min(const T& value) {\n'
+    '    return value;\n'
+    '}\n'
+    'template <typename T, typename... Ts>\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type mpr_min(const T& a, const Ts&... rest) {\n'
+    '    return (a < mpr_min(rest...)) ? a : mpr_min(rest...);\n'
+    '}',
     'sign':
     'template <typename T>\n'
     'static constexpr inline T sign(const T& value) {\n'
@@ -550,10 +568,11 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'np_modf': ('<type_traits>', ),
 }
 
-#: ``Max``/``Min`` are variadic in the runtime and map onto ``std::max``/``std::min``, which are
-#: binary or initializer-list. Handled by :func:`variadic_minmax` rather than a table entry,
-#: because the spelling depends on the argument count.
-VARIADIC_MINMAX: Dict[str, str] = {'Max': 'std::max', 'Min': 'std::min', 'max': 'std::max', 'min': 'std::min'}
+#: ``Max``/``Min`` are variadic in the runtime, and NOT ``std::max``/``std::min``: those pick the
+#: FIRST argument when the comparison is false, the runtime's pick the SECOND. The two agree on
+#: ordinary values and disagree on a NaN operand and on signed zero, so MPR emits the runtime's own
+#: definition (see :data:`INLINE_DEFINITIONS`) rather than the standard one.
+VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'mpr_max', 'min': 'mpr_min'}
 
 #: Headers MPR always includes: the exact-width integer types and the maths every kernel may reach,
 #: plus the two the readable generator's own allocations need -- ``<new>`` for the aligned
@@ -616,10 +635,10 @@ def ctype_for(ctype: str, dialect: Optional[Dialect] = None) -> str:
 def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialect] = None) -> Optional[str]:
     """Spell a variadic ``Max``/``Min`` for ``dialect``.
 
-    The runtime's ``Max`` takes any number of arguments. ``std::max`` takes two or one
-    ``initializer_list``, so the C++ dialect uses the braced form past two. C has no initializer
-    list to fold over, so the C dialect NESTS the binary macro instead -- and it nests left to
-    right, which is the association the braced form has too.
+    The runtime's ``Max`` takes any number of arguments, and so does the C++ dialect's own
+    ``mpr_max`` template, so that one is called with the arguments as they stand. C has no
+    variadic macro to fold over, so the C dialect NESTS the binary macro instead -- left to right,
+    which is the association the recursive template has too.
 
     :param name: the runtime function name.
     :param arguments: already-printed argument expressions.
@@ -639,7 +658,7 @@ def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dia
         for argument in arguments[1:]:
             nested = '%s(%s, %s)' % (target, nested, argument)
         return nested
-    return '%s({%s})' % (target, ', '.join(arguments))
+    return '%s(%s)' % (target, ', '.join(arguments))
 
 
 def needs_definition(name: str, dialect: Optional[Dialect] = None) -> bool:

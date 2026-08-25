@@ -277,6 +277,10 @@ def test_rewrites_use_each_argument_once(dialect):
 #: The out-parameter helpers are wrapped in a ``constexpr`` function, which is the only way to
 #: constant-evaluate something that writes through references.
 CONSTEXPR_PROBES = {
+    'mpr_max':
+    'static_assert(mpr_max(2.0, 1.0, 3.0) == 3.0);\nstatic_assert(mpr_max(0.0, -0.0) == 0.0);',
+    'mpr_min':
+    'static_assert(mpr_min(2.0, 1.0, 3.0) == 1.0);\nstatic_assert(mpr_min(2, 1.5) == 1.5);',
     'ifloor':
     'static_assert(ifloor(-3.5) == -4);\nstatic_assert(ifloor(static_cast<int64_t>(7)) == 7);',
     'int_ceil':
@@ -462,10 +466,11 @@ def test_c_refuses_a_scan_identity_it_cannot_order():
 
 
 def test_variadic_minmax_nests_binary_calls_in_c():
-    """C has no initializer list to fold over, so a three-way ``Max`` nests the binary macro."""
+    """C has no variadic macro to fold over, so a three-way ``Max`` nests the binary one; the C++
+    template takes all three directly, and both associate left to right."""
     arguments = ('a', 'b', 'c')
     assert mpr_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE_C) == 'mpr_max(mpr_max(a, b), c)'
-    assert mpr_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE) == 'std::max({a, b, c})'
+    assert mpr_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE) == 'mpr_max(a, b, c)'
 
 
 def test_c_scan_helpers_keep_the_parallel_inscan_form():

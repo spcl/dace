@@ -318,9 +318,38 @@ def test_output_builds_without_warnings():
             y[i] = min(max(x[i], 0.0), 1.0)
 
     _, code = render(clamp, 'mpr_clamp')
-    assert 'std::max' in code or 'std::min' in code, 'min/max must come from the standard library'
+    assert 'mpr_max' in code or 'mpr_min' in code, 'min/max must be the runtime form, not the standard one'
     diagnostics = compile_diagnostics(code, 'mpr_clamp')
     assert not diagnostics.strip(), f'MPR output warns:\n{diagnostics}'
+
+
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_minmax_matches_the_runtime_on_nan(language):
+    """``max``/``min`` are the RUNTIME's, not ``std::``'s.
+
+    ``std::max(a, b)`` yields ``a`` when the comparison is false and the runtime's yields ``b``, so
+    a NaN operand survives one and not the other. That is not a corner case nobody writes: CloudSC
+    clamps with ``max(x, 0.0)`` on values that can be NaN, and the two spellings disagree on every
+    such point. The oracle is the compiled SDFG, since MPR's contract is stated against it.
+    """
+
+    @dace.program
+    def clamp_nan(x: dace.float64[4], y: dace.float64[4]):
+        for i in dace.map[0:4]:
+            y[i] = min(max(x[i], 0.0), 1.0)
+
+    sdfg = clamp_nan.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_minmax_nan_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+
+    x = np.array([np.nan, -1.0, 0.5, 2.0])
+    reference = np.zeros(4)
+    sdfg(x=x.copy(), y=reference)
+    assert not np.isnan(reference[0]), 'the SDFG kept the NaN, so the two lowerings cannot disagree here'
+
+    y = np.zeros(4)
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {'x': x, 'y': y})
+    assert np.array_equal(y, reference), 'MPR clamps NaN to %r, the SDFG to %r' % (y[0], reference[0])
 
 
 def test_persistent_lifetime_is_demoted_not_left_in_a_state():

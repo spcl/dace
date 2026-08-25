@@ -83,7 +83,7 @@ def test_sym2cpp_memoization_does_not_mix_dialects(first):
     # Max is an UNQUALIFIED runtime global, so the runtime spelling carries no ``dace::`` marker
     # at all -- which is why the harness checks these by name rather than by namespace.
     assert runtime.startswith('Max('), runtime
-    assert 'std::max' in standalone, standalone
+    assert standalone.startswith('mpr_max('), standalone
 
 
 def test_sym2cpp_defaults_to_the_runtime_dialect():
