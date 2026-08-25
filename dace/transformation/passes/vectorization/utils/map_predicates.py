@@ -223,6 +223,16 @@ def map_body_has_tiled_param_dependent_branch(state: SDFGState, map_entry: dace.
     return False
 
 
+NO_VECTORIZE_MARKER = "__no_vectorize"
+"""Label suffix marking a map as program-level SCAFFOLDING the vectorizer must never touch.
+
+A guard, a counter fill, a trap: emitted by a correctness pass, sized by the program rather than
+by the data being widened, and frequently of a rank the requested tiling has no meaning at. The
+scatter guard's other pieces are already invisible -- its check is a library node, its trap a C++
+tasklet -- and this names the same exemption for the one piece that is an ordinary Python map.
+"""
+
+
 def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Optional[int] = None) -> bool:
     """True if an (assumed innermost) ``map_entry`` can be safely tiled/vectorized.
 
@@ -478,6 +488,8 @@ def is_vectorizable_map(state: SDFGState,
         ``None`` disables the cache (identical behavior to before).
     :returns: ``True`` if every tile pass may treat this map as a candidate.
     """
+    if map_entry.map.label.endswith(NO_VECTORIZE_MARKER):
+        return False
     if not (is_innermost_map(state, map_entry) and is_tile_eligible(state, map_entry, K)):
         return False
     if map_body_has_library_node(state, map_entry):

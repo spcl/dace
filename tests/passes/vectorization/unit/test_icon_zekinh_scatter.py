@@ -88,6 +88,21 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
     assert n_scatter >= 1, (
         f"The mixed-scatter destination must yield at least one TileStore (scatter); got {n_scatter}.")
 
+    # The scatter guard is HOISTED out of the loop's own single-block wrapper: leaving it there
+    # makes that wrapper multi-state, a multi-state nested sdfg inside a map cannot be inlined, and
+    # the surrounding nest then never collapses to the two params K=2 needs. Hoisting it costs the
+    # key a dimension per map scope crossed, which is what this checks -- a key sized by the inner
+    # trip alone would mean the guard went back inside.
+    keys = [(name, desc) for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items()
+            if name.startswith('_scatter_joint_key')]
+    assert len(keys) == 1, f'expected the one joint key array; got {[n for n, _ in keys]}'
+    # Symbols resolve out of the shape itself: re-minting one from its bare name gives a
+    # different dtype instance, and the subtraction then refuses to fold.
+    extent = keys[0][1].shape[0]
+    syms = {str(sym): sym for sym in extent.free_symbols}
+    assert dace.symbolic.simplify(extent - syms['NLEV'] * syms['NPROMA']) == 0, (
+        f'the hoisted key must cover the crossed NLEV map as well as the NPROMA loop; got {extent}')
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

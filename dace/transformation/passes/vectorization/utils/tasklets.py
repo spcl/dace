@@ -13,22 +13,27 @@ from dace.memlet import Memlet
 from dace import typeclass
 
 
+def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
+    """Whether ``node``'s body is a Python expression, i.e. whether parsing it is even defined.
+
+    Every pass that reads ``code.as_string`` as an expression raises on a non-Python body rather
+    than declining. The scatter guard's trap (``if (sym > 0) {{ std::abort(); }}``) is the one that
+    reaches the vectorizer.
+    """
+    return node.language == dace.dtypes.Language.Python
+
+
 def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
-    """Whether the vectorizer may rewrite ``node`` at all.
+    """Whether the vectorizer may rewrite ``node`` INTO LANES.
 
-    Two kinds are off limits and both are structural, not heuristic:
-
-    * a TOP-LEVEL tasklet -- one with no enclosing map scope. Vectorization rewrites a map body
-      into lanes; a tasklet outside every map has no lane dimension to be widened along, so any
-      rewrite of it is a rewrite of scalar program-level code.
-    * a non-Python tasklet. Its body is not a Python expression, so every pass that parses
-      ``code.as_string`` raises on it rather than declining. The scatter guard's trap
-      (``if (sym > 0) {{ std::abort(); }}``) is the one that reaches here, and it is top level as
-      well -- so this is belt and braces on a tasklet that must never be touched.
+    Adds the scope condition to :func:`is_python_tasklet`: a TOP-LEVEL tasklet -- one with no
+    enclosing map scope -- has no lane dimension to be widened along, so widening it is a rewrite
+    of scalar program-level code. A pass that only READS a tasklet's symbols, and rewrites the
+    SDFG rather than the lane structure, wants :func:`is_python_tasklet` instead.
     """
     if state.entry_node(node) is None:
         return False
-    return node.language == dace.dtypes.Language.Python
+    return is_python_tasklet(node)
 
 
 def materialise_lane_id_index_tile(inner_state,

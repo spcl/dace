@@ -39,7 +39,7 @@ collision the abort fires before any consumer reads the corrupted output.
 """
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
@@ -52,6 +52,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.scatter_conflict_guard import (ScatterIndexSlice, build_guard_states,
                                                                insert_scatter_guard)
+from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
 
 
 @properties.make_properties
@@ -121,7 +122,8 @@ class ScatterToGuardedMaps(ppl.Pass):
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
 
-        scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
+        scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(
+            sdfg, allow_hoisted_joint=not self.emit_unparallelized_else_branch)
 
         if self.assume_no_conflicts:
             # Caller asserts every idx array is a permutation: skip the sort +
@@ -145,15 +147,12 @@ class ScatterToGuardedMaps(ppl.Pass):
         # index array can. Emitted first so the count symbols exist for the dispatcher below.
         joint_dup_syms: dict = {}
         for loop, write in joint_writes:
-            # The key array and the guard states belong to the sdfg that OWNS the loop, which is a
-            # NESTED one whenever the scatter sits inside a map body. Adding them to the root
-            # instead leaves the fill state naming a descriptor its own sdfg does not have
-            # ("Data descriptor _scatter_joint_key_... not defined in SDFG" -- npbench mandelbrot2
-            # under the canonicalize+vectorize pipeline).
-            trap_sym = guard_joint_scatter_write(_owning_sdfg(sdfg, loop),
-                                                 loop,
-                                                 write,
-                                                 emit_trap=not self.emit_unparallelized_else_branch)
+            # The key array and the guard states belong to the sdfg named by the write's plan --
+            # the loop's own owner normally, and the region above it when that owner is a trivial
+            # map wrapper. Putting them anywhere else leaves the fill state naming a descriptor its
+            # own sdfg does not have ("Data descriptor _scatter_joint_key_... not defined in SDFG"
+            # -- npbench mandelbrot2 under the canonicalize+vectorize pipeline).
+            trap_sym = guard_joint_scatter_write(sdfg, loop, write, emit_trap=not self.emit_unparallelized_else_branch)
             if trap_sym is not None:
                 joint_dup_syms.setdefault(id(loop), []).append(trap_sym)
 
@@ -244,7 +243,7 @@ def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
     return idx_arrays | {idx_name for _loop, idx_name, _index_slice in sliced_guards}
 
 
-def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
+def detect_scatter_loops_and_idx_arrays(sdfg: SDFG, allow_hoisted_joint: bool = True):
     """Scan ``sdfg`` (and nested SDFGs) for scatter loops; return
     ``(scatter_loops, idx_arrays, sliced_guards, joint_writes)``.
 
@@ -260,6 +259,9 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
     keyed is dropped from the scan entirely rather than falling back to that stronger check.
 
     :param sdfg: The SDFG to scan; nested SDFGs are walked too.
+    :param allow_hoisted_joint: whether a joint guard may be HOISTED out of a trivial map wrapper
+        (:func:`joint_guard_plan`). False under the dispatcher policy, whose duplicate-count symbol
+        is read inside the loop's own sdfg and would not be defined once the guard moves out.
     :returns: ``(list[LoopRegion], set[str], list[tuple], list[tuple])`` -- deterministic-order list
               of the scatter ``LoopRegion`` instances; the set of 1-D ``idx`` array names (guarded
               once, at ``sdfg``, over the whole array); the deterministic-order list of
@@ -280,9 +282,16 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
             if joint is None:
                 continue  # an indirect write this cannot key -- leave the loop sequential
             if joint:
-                scatter_loops.append(region)
-                joint_writes += [(region, w) for w in joint]
-                continue
+                plans = [joint_guard_plan(sdfg, region, w) for w in joint]
+                if all(p is not None and (allow_hoisted_joint or not p.map_dims) for p in plans):
+                    scatter_loops.append(region)
+                    joint_writes += [(region, w) for w in joint]
+                    continue
+            # A keyable write whose guard cannot be placed (see :func:`joint_guard_plan`) falls
+            # through to the per-index scan below, and is left sequential when that finds nothing
+            # either. Those guards are strictly stronger -- each index array must be a permutation
+            # on its own -- so this can trap a program whose index PAIRS are distinct, which is the
+            # case the joint key exists for. It buys back the enclosing nest's rank.
             loop_arrays = _scatter_idx_targets_for_loop(region, sd)
             if not loop_arrays:
                 continue
@@ -459,6 +468,111 @@ class JointScatterWrite(NamedTuple):
     mask_expr: Optional[str]
 
 
+def joint_key_read_arrays(write: JointScatterWrite) -> Set[str]:
+    """Every array name subscripted inside ``write``'s index and mask expressions."""
+    names: Set[str] = set()
+    for expr in write.dim_exprs + ((write.mask_expr, ) if write.mask_expr else ()):
+        for node in ast.walk(ast.parse(expr, mode='eval')):
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                names.add(node.value.id)
+    return names
+
+
+class JointGuardPlan(NamedTuple):
+    """Where a joint guard's states go, and which enclosing parallel scopes its key must cover.
+
+    ``map_dims`` is one ``(param, extent)`` per map scope crossed on the way out, outermost first.
+    Crossing one means the guard now answers for every value of that param at once, so the key
+    grows a dimension for it -- flattened into the single dimension the conflict check reads.
+    """
+    host_sdfg: SDFG
+    host_region: Any
+    anchor: Any
+    map_dims: Tuple[Tuple[str, symbolic.SymbolicType], ...]
+
+
+def owner_is_trivial_map_wrapper(owner_sdfg: SDFG) -> bool:
+    """Whether ``owner_sdfg`` is a ONE-BLOCK nested sdfg sitting inside a map scope.
+
+    That is the shape ``LoopToMap`` leaves behind, and states may not be added to it: a
+    multi-state nested sdfg in a map scope cannot be inlined, so the surrounding map nest never
+    collapses and every map in it stays one-dimensional (``MarkTileDims`` then refuses the whole
+    nest for want of ``K`` params). The guard has to be placed further out -- see
+    :func:`joint_guard_plan`.
+    """
+    nsdfg = owner_sdfg.parent_nsdfg_node
+    if nsdfg is None or owner_sdfg.parent is None:
+        return False
+    if owner_sdfg.parent.entry_node(nsdfg) is None:
+        return False
+    return len(owner_sdfg.nodes()) == 1
+
+
+def map_scope_chain(state: SDFGState, node) -> list:
+    """The map entries enclosing ``node`` in ``state``, outermost first."""
+    chain = []
+    entry = state.entry_node(node)
+    while entry is not None:
+        chain.append(entry)
+        entry = state.entry_node(entry)
+    chain.reverse()
+    return chain
+
+
+def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> Optional[JointGuardPlan]:
+    """Where to put the guard for ``loop``, climbing out of any trivial map wrapper on the way.
+
+    Placing the states beside the loop is the normal answer and needs no climb. When the loop's
+    owning sdfg is one of the wrappers :func:`owner_is_trivial_map_wrapper` describes, the states
+    move to the region holding that wrapper's own state, and the key grows one dimension per map
+    scope crossed -- the guard is now answering for the whole parallel scope at once, which is the
+    right question anyway: the crossed maps are already parallel, so an injective key over the
+    joint space is exactly what makes the write race-free.
+
+    Climbing is refused, and the caller left to fall back to the per-index guards, when the move
+    would change what the key MEANS rather than merely where it is computed:
+
+    * a crossed map that is not ``0:N:1`` -- the flattened key position would need the general
+      affine inverse, and no shape here has ever needed it;
+    * a nested sdfg that RENAMES a symbol the key reads (its ``symbol_mapping`` is not the
+      identity there), since the index expressions are written in the inner names;
+    * a target or index array that the host sdfg does not have under the same name, or that is a
+      View there -- the read would bind to nothing.
+
+    :returns: the plan, or ``None`` when the guard cannot be placed without changing its meaning.
+    """
+    owner = _owning_sdfg(root, loop)
+    plan = JointGuardPlan(owner, loop.parent_graph, loop, ())
+    if not owner_is_trivial_map_wrapper(owner):
+        return plan
+
+    names = {write.target} | joint_key_read_arrays(write)
+    free = set()
+    for expr in write.dim_exprs + ((write.mask_expr, ) if write.mask_expr else ()):
+        free |= {str(sym) for sym in symbolic.pystr_to_symbolic(expr).free_symbols}
+    free.discard(loop.loop_variable)
+
+    current, dims = owner, []
+    while owner_is_trivial_map_wrapper(current):
+        nsdfg = current.parent_nsdfg_node
+        state = current.parent
+        if any(str(nsdfg.symbol_mapping.get(sym, sym)) != sym for sym in free):
+            return None
+        for entry in map_scope_chain(state, nsdfg):
+            for param, (lb, ub, step) in zip(entry.map.params, entry.map.range.ranges):
+                if symbolic.simplify(lb) != 0 or symbolic.simplify(step) != 1:
+                    return None
+                dims.append((param, symbolic.simplify(ub + 1)))
+        current = state.sdfg
+        plan = JointGuardPlan(current, state.parent_graph, state, tuple(dims))
+
+    for name in names:
+        desc = plan.host_sdfg.arrays.get(name)
+        if desc is None or isinstance(desc, data.View):
+            return None
+    return plan
+
+
 def point_index_expressions(subset) -> Optional[List[str]]:
     """Per-dimension index of a subset addressing exactly one element, or ``None`` if it spans."""
     exprs: List[str] = []
@@ -627,7 +741,7 @@ def flat_index_bound(desc: data.Array) -> symbolic.SymbolicType:
     return symbolic.simplify(1 + sum((s - 1) * st for s, st in zip(desc.shape, desc.strides)))
 
 
-def joint_scatter_key(sdfg: SDFG, loop: LoopRegion,
+def joint_scatter_key(plan: JointGuardPlan, loop: LoopRegion,
                       write: JointScatterWrite) -> Optional[Tuple[str, symbolic.SymbolicType]]:
     """Materialize the flat target slot ``loop`` writes on each iteration, and return it.
 
@@ -636,9 +750,17 @@ def joint_scatter_key(sdfg: SDFG, loop: LoopRegion,
     iteration is sent to ``domain + k`` instead -- past every real slot and distinct per iteration,
     so it can collide with nothing, which is what "this iteration writes nothing" has to mean here.
 
+    ``plan.map_dims`` names the map scopes the guard was hoisted out of. The key covers those too,
+    one entry per (scope point, iteration), flattened so the conflict check still reads a single
+    dimension. That widens the question from "is this loop injective" to "is the whole parallel
+    space injective" -- which is what those maps' own parallelism already rests on -- and since the
+    slot value carries every dimension of the target, two points differing only in a crossed map
+    param hold different keys and cannot read as a collision.
+
     :returns: ``(key array name, exclusive bound on its values)``, or ``None`` when the loop's trip
               count is not derivable.
     """
+    sdfg = plan.host_sdfg
     init = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     lstride = loop_analysis.get_loop_stride(loop)
@@ -648,18 +770,24 @@ def joint_scatter_key(sdfg: SDFG, loop: LoopRegion,
     desc = sdfg.arrays[write.target]
     domain = flat_index_bound(desc)
 
-    key_name, _ = sdfg.add_array(f"_scatter_joint_key_{write.target}", [trip],
+    entries = trip
+    for _param, extent in plan.map_dims:
+        entries = symbolic.simplify(entries * extent)
+    key_name, _ = sdfg.add_array(f"_scatter_joint_key_{write.target}", [entries],
                                  dtypes.int64,
                                  transient=True,
                                  find_new_name=True)
-    parent = loop.parent_graph
-    fill_state = parent.add_state_before(loop,
+    parent = plan.host_region
+    fill_state = parent.add_state_before(plan.anchor,
                                          f"_scatter_joint_key_fill_{key_name}",
-                                         is_start_block=loop is parent.start_block)
+                                         is_start_block=plan.anchor is parent.start_block)
 
     # Every index read becomes one tasklet connector, so the body stays pure arithmetic on scalars
     # and can be a Python tasklet (a C++ one is only allowed inside a library-node expansion).
-    conns: Dict[Tuple[str, str], str] = {}
+    # Keyed by (array, per-dimension index expressions): an index array is read at its own rank,
+    # so a rank-2 read carries two expressions and yields a rank-2 memlet below. Flattening them
+    # into one string loses the split -- ``pystr_to_symbolic`` hands back a LIST for "i, j".
+    conns: Dict[Tuple[str, Tuple[str, ...]], str] = {}
 
     def to_connectors(expr: str) -> str:
 
@@ -672,63 +800,86 @@ def joint_scatter_key(sdfg: SDFG, loop: LoopRegion,
                 idx = node.slice
                 if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
                     idx = idx.value
-                key = (node.value.id, astutils.unparse(idx))
+                dims = idx.elts if isinstance(idx, ast.Tuple) else [idx]
+                key = (node.value.id, tuple(astutils.unparse(d) for d in dims))
                 return ast.Name(id=conns.setdefault(key, f"__ji{len(conns)}"), ctx=ast.Load())
 
         return astutils.unparse(Pull().visit(ast.parse(expr, mode='eval').body))
 
     linear = ' + '.join(f"({to_connectors(x)}) * ({desc.strides[d]})" for d, x in enumerate(write.dim_exprs))
-    code = (f"__out = {linear}" if write.mask_expr is None else
-            f"__out = ({linear}) if ({to_connectors(write.mask_expr)}) else ({domain} + __jk)")
+    # One point per (crossed map point, iteration), addressed row-major with the iteration
+    # innermost. With nothing crossed this is just ``__jk``, the un-hoisted key.
+    ranges = {param: f"0:{extent}" for param, extent in plan.map_dims}
+    ranges['__jk'] = f"0:{trip}"
+    slot = symbolic.pystr_to_symbolic('__jk')
+    span = trip
+    for param, extent in reversed(plan.map_dims):
+        slot = slot + symbolic.pystr_to_symbolic(param) * span
+        span = symbolic.simplify(span * extent)
+    # A masked-off point still needs a slot of its own, past every real one.
+    code = (f"__out = {linear}"
+            if write.mask_expr is None else f"__out = ({linear}) if ({to_connectors(write.mask_expr)}) "
+            f"else ({domain} + {symbolic.symstr(slot)})")
 
-    entry, exit_node = fill_state.add_map(f"scatter_joint_key_{key_name}", {'__jk': f"0:{trip}"})
-    tasklet = fill_state.add_tasklet(f"scatter_joint_key_{key_name}", set(conns.values()), {'__out'}, code)
+    # Scaffolding, not compute: flat and program-sized, so a K-dim tiling has nothing to say about
+    # it. The guard's other pieces are already invisible to the vectorizer (library-node check,
+    # C++ trap); this one is an ordinary Python map and needs the marker to say so.
+    entry, exit_node = fill_state.add_map(f"scatter_joint_key_{key_name}{NO_VECTORIZE_MARKER}", ranges)
+    tasklet = fill_state.add_tasklet(f"scatter_joint_key_{key_name}", dict.fromkeys(conns.values()), {'__out': None},
+                                     code)
     # ``__jk`` counts iterations; the index expressions are written in the loop variable.
     iteration = symbolic.pystr_to_symbolic(f"({init}) + __jk * ({lstride})")
     loop_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    for (arr, idx_expr), conn in conns.items():
-        at = symbolic.pystr_to_symbolic(idx_expr).subs({loop_sym: iteration})
+    for (arr, idx_exprs), conn in conns.items():
+        at = [symbolic.pystr_to_symbolic(e).subs({loop_sym: iteration}) for e in idx_exprs]
         fill_state.add_memlet_path(replicate_read(sdfg, loop, fill_state, arr),
                                    entry,
                                    tasklet,
                                    dst_conn=conn,
-                                   memlet=mm.Memlet(data=arr, subset=subsets.Range([(at, at, 1)])))
+                                   memlet=mm.Memlet(data=arr, subset=subsets.Range([(a, a, 1) for a in at])))
     fill_state.add_memlet_path(tasklet,
                                exit_node,
                                fill_state.add_write(key_name),
                                src_conn='__out',
-                               memlet=mm.Memlet(data=key_name, subset=subsets.Range.from_string('__jk')))
+                               memlet=mm.Memlet(data=key_name, subset=subsets.Range([(slot, slot, 1)])))
 
-    return key_name, (domain if write.mask_expr is None else symbolic.simplify(domain + trip))
+    return key_name, (domain if write.mask_expr is None else symbolic.simplify(domain + entries))
 
 
-def guard_joint_scatter_write(sdfg: SDFG, loop: LoopRegion, write: JointScatterWrite, emit_trap: bool) -> Optional[str]:
-    """Key ``write`` across all of its dimensions and splice a conflict check in before ``loop``.
+def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterWrite, emit_trap: bool) -> Optional[str]:
+    """Key ``write`` across all of its dimensions and splice a conflict check in before it runs.
 
-    The guard sits between the key fill and the loop rather than at the earliest point the key is
-    defined: the key is rebuilt on every pass through an enclosing loop (mandelbrot2 recomputes it
-    each round of its ``while``), so a guard hoisted to the definition would check a stale key.
+    The guard sits between the key fill and the guarded block rather than at the earliest point the
+    key is defined: the key is rebuilt on every pass through an enclosing loop (mandelbrot2
+    recomputes it each round of its ``while``), so a guard hoisted to the definition would check a
+    stale key. How far out "before it runs" is comes from :func:`joint_guard_plan`.
 
+    :param root: the top-level SDFG the loop is somewhere inside; the plan resolves the rest.
     :returns: The duplicate-count symbol when ``emit_trap`` is False, else ``None``.
     """
-    built = joint_scatter_key(sdfg, loop, write)
+    plan = joint_guard_plan(root, loop, write)
+    if plan is None:
+        return None
+    built = joint_scatter_key(plan, loop, write)
     if built is None:
         return None
     key_name, bound = built
-    parent = loop.parent_graph
-    check_state, trap_state, count_name, trap_sym = build_guard_states(sdfg,
+    parent, anchor = plan.host_region, plan.anchor
+    check_state, trap_state, count_name, trap_sym = build_guard_states(plan.host_sdfg,
                                                                        key_name,
                                                                        emit_trap=emit_trap,
                                                                        region=parent,
                                                                        domain=bound)
-    for e in list(parent.in_edges(loop)):
+    # ``joint_scatter_key`` already put the fill immediately before ``anchor``; splice the check
+    # (and trap) into that one edge, so the order is fill -> check -> [trap] -> anchor.
+    for e in list(parent.in_edges(anchor)):
         parent.remove_edge(e)
         parent.add_edge(e.src, check_state, e.data)
     if trap_state is None:
-        parent.add_edge(check_state, loop, dace.InterstateEdge(assignments={trap_sym: count_name}))
+        parent.add_edge(check_state, anchor, dace.InterstateEdge(assignments={trap_sym: count_name}))
     else:
         parent.add_edge(check_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
-        parent.add_edge(trap_state, loop, dace.InterstateEdge())
+        parent.add_edge(trap_state, anchor, dace.InterstateEdge())
     return None if emit_trap else trap_sym
 
 

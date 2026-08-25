@@ -5,7 +5,7 @@ import dace
 from dace import SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
-from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
+from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 
@@ -56,7 +56,10 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             free_conditional_symbols: Dict[str, None] = {}
             for state in cfg.nodes():
                 for node in state.nodes():
-                    if (isinstance(node, nodes.Tasklet) and is_vectorizable_tasklet(state, node)
+                    # Python-bodied only -- the expression parse below is undefined otherwise.
+                    # NOT the lane-level guard: this demotes a symbol SDFG-wide and the conditional
+                    # arm it reads is lowered before any map scope exists around it.
+                    if (isinstance(node, nodes.Tasklet) and is_python_tasklet(node)
                             and node.label.startswith(self.conditional_assignment_tasklet_prefix)):
                         expr = symbolic.SymExpr(node.code.as_string.split(" = ")[-1])
                         syms = expr.free_symbols

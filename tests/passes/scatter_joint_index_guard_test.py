@@ -19,6 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes import scatter_to_guarded_maps as sgm
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 
 M, N, K = (dace.symbol(s, dtype=dace.int64) for s in ('M', 'N', 'K'))
 
@@ -47,6 +48,14 @@ def else_branch_pair_scatter(out: dace.int64[M, N], xi: dace.int64[K], yi: dace.
             out[xi[j], yi[j]] = val[j]
         else:
             out[xi[j], yi[j]] = -val[j]
+
+
+@dace.program
+def row_pair_scatter(out: dace.int64[M, N], xi: dace.int64[2, K], yi: dace.int64[2, K], val: dace.int64[K]):
+    # Rank-2 index arrays, read at a fixed row: the key fill has to address them at BOTH of their
+    # dimensions.
+    for j in range(K):
+        out[xi[1, j], yi[1, j]] = val[j]
 
 
 def loop_labels(sdfg: dace.SDFG):
@@ -174,6 +183,43 @@ def test_a_repeated_pair_routes_to_the_sequential_branch():
     assert np.array_equal(got, ref), 'the colliding run must fall back to the sequential branch'
 
 
+def test_an_index_array_is_read_at_its_own_rank():
+    """``xi[1, j]`` is one element of a rank-2 array, so the key fill reads it through a rank-2
+    memlet. Flattening the subscript into a single expression string instead makes
+    ``pystr_to_symbolic`` hand back a LIST for ``"1, j"`` and takes the whole guard down with
+    ``'list' object has no attribute 'subs'``."""
+    m, n = 3, 4
+    xi2, yi2 = grid_indices(m, n, seed=11)
+    xi = np.stack([np.zeros_like(xi2), xi2])
+    yi = np.stack([np.zeros_like(yi2), yi2])
+    val = np.arange(1, m * n + 1, dtype=np.int64)
+
+    sdfg = built(row_pair_scatter)
+    assert sgm.ScatterToGuardedMaps().apply_pass(sdfg, {}) == 1
+    assert loop_labels(sdfg) == [] and has_map(sdfg)
+    sdfg.validate()
+
+    ref = np.zeros((m, n), dtype=np.int64)
+    ref[xi[1], yi[1]] = val
+    got = np.zeros((m, n), dtype=np.int64)
+    sdfg(out=got, xi=xi, yi=yi, val=val, M=m, N=n, K=m * n)
+    assert np.array_equal(got, ref)
+
+
+def test_the_key_fill_map_is_not_a_vectorizer_candidate():
+    """The fill is program-level scaffolding: flat, sized by the loop's trip count, and of a rank a
+    K-dim tiling has nothing to say about. The guard's other pieces are already invisible to the
+    vectorizer -- the check is a library node, the trap a C++ tasklet -- and MarkTileDims raises
+    outright on a candidate map with fewer params than K, so this one has to opt out by name."""
+    sdfg = built(pair_scatter)
+    sgm.ScatterToGuardedMaps().apply_pass(sdfg, {})
+    fills = [(n, g) for n, g in sdfg.all_nodes_recursive()
+             if isinstance(n, nodes.MapEntry) and n.map.label.startswith('scatter_joint_key')]
+    assert len(fills) == 1, f'expected the one key-fill map; got {[n.map.label for n, _ in fills]}'
+    entry, state = fills[0]
+    assert not is_vectorizable_map(state, entry, 2)
+
+
 if __name__ == '__main__':
     test_a_pair_indexed_write_is_keyed_across_both_dimensions()
     test_a_masked_write_carries_its_mask()
@@ -182,3 +228,5 @@ if __name__ == '__main__':
     test_repeated_coordinates_are_not_a_collision()
     test_a_masked_scatter_keeps_its_values()
     test_a_repeated_pair_routes_to_the_sequential_branch()
+    test_an_index_array_is_read_at_its_own_rank()
+    test_the_key_fill_map_is_not_a_vectorizer_candidate()

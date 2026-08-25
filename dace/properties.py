@@ -20,7 +20,7 @@ from numbers import Number
 from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dace.data import Data as dData
+    pass
 
 T = TypeVar('T')
 
@@ -194,9 +194,10 @@ class Property(Generic[T]):
             # Called on the class rather than an instance, so return the
             # property object itself
             return self
-        # If a custom getter is specified, use it
-        if self.getter:
-            return self.getter(obj)
+        # ``_getter`` directly, not the ``getter`` Python property in front of it: this runs on every
+        # attribute read of every property-bearing object, and the wrapper is a whole frame per read.
+        if self._getter is not None:
+            return self._getter(obj)
         # Otherwise look for attribute prefixed by "_"
         name = self.private_name
         if name is None:
@@ -204,9 +205,9 @@ class Property(Generic[T]):
         return getattr(obj, name)
 
     def __set__(self, obj, val):
-        # If custom setter is specified, use it
-        if self.setter:
-            return self.setter(obj, val)
+        # ``_setter`` directly, for the same reason as ``_getter`` in ``__get__``.
+        if self._setter is not None:
+            return self._setter(obj, val)
         if self.private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
@@ -896,6 +897,7 @@ class SetProperty(Property):
 
     Despite its name, the property models a `frozenset`, this means that the set can
     not be modified in place. Instead a new value has to be assigned to the property.
+    The stored value is a `frozenset` (see `__set__`), so it is handed out unprotected.
     """
 
     def __init__(
@@ -952,14 +954,6 @@ class SetProperty(Property):
         if l is None:
             return None
         return frozenset(l)
-
-    def __get__(self, obj, objtype=None):
-        val = super(SetProperty, self).__get__(obj, objtype)
-        if val is None:
-            return val
-
-        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
-        return val
 
     def __set__(self, obj, val):
         if val is None:
@@ -1429,12 +1423,9 @@ class TypeProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
-class TypeClassProperty(Property):
+class TypeClassProperty(Property[typeclass]):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
-
-    def __get__(self, obj, objtype=None) -> typeclass:
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):
@@ -1471,11 +1462,8 @@ class TypeClassProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
-class NestedDataClassProperty(Property):
+class NestedDataClassProperty(Property['dData']):
     """ Custom property type for nested data. """
-
-    def __get__(self, obj, objtype=None) -> 'dData':
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):
