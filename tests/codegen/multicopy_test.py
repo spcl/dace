@@ -16,8 +16,11 @@ def test_multicopy():
     state.add_nedge(a, b, dace.Memlet('A[0]'))
     state.add_nedge(a, c, dace.Memlet('C[0]'))
 
-    # Check generated code
-    assert sdfg.generate_code()[0].clean_code.count('CopyND') == 2
+    # Check generated code. The regression under test is DUPLICATED copy code, so what matters is
+    # the count, not which lowering produced it: with explicit copy nodes a single-element copy
+    # becomes a scalar-assignment tasklet instead of the dace::CopyND runtime template.
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count('CopyND') + code.count('_cpy_out = _cpy_in;') == 2
 
     # Check outputs
     A = np.random.rand(1)
