@@ -116,6 +116,20 @@ required:
                     old one either way -- the new pass derives what stays on the host rather than
                     taking it as an input.
 
+            gpu_taskloop_heuristics:
+                type: bool
+                default: false
+                title: "Recognize kernel-launching maps as host taskloops"
+                description: >
+                    Let ``OffloadToAccelerator`` keep a map on the host when its body only launches
+                    work, rather than making every top-level map a kernel. A map qualifies when all
+                    computation under it sits inside inner maps (its own scope holds no tasklet), or
+                    when it encloses a library node that is neither a copy nor a fill -- a
+                    device-wide call such as a BLAS node cannot be issued from inside a kernel, so
+                    every map around it has to stay host code. The maps and library nodes below such
+                    a taskloop become the kernels, nested SDFGs included, which is the ICON blocking
+                    shape: the ``nblks`` map launches, the ``nproma``/``nlev`` maps compute.
+
             canonicalization:
                 type: dict
                 title: Canonicalization pipeline defaults

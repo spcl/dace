@@ -9,7 +9,10 @@ changes rather than around every kernel.
 from copy import deepcopy
 from typing import Any, Set
 
+from ordered_set import OrderedSet
+
 from dace import dtypes, properties, data, Memlet, subsets
+from dace.config import Config
 from dace.sdfg import nodes, SDFG, InterstateEdge
 from dace.sdfg.state import (SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock,
                              BreakBlock, ControlFlowBlock, AbstractControlFlowRegion)
@@ -19,6 +22,7 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
+from dace.transformation.passes.offloading.taskloop import taskloop_maps
 
 PRINT_NAMES = 500
 
@@ -191,16 +195,18 @@ class OffloadToAccelerator(ppl.Pass):
         :return: Some object if pass was applied, or None if nothing changed.
         """
 
+        self.taskloop_heuristics = Config.get_bool('optimizer', 'gpu_taskloop_heuristics')
         self.cache_scopes(sdfg)
-        #try:
-        # step 1: set schedule of maps and library nodes -> heuristic only!
-        self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
-        self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
 
-        # Schedule nesting this assumes: a library node under no map goes to the GPU, and a
-        # library node under a map is sequential whatever that map's own schedule is. A
-        # user-set GPU_Device schedule is honoured, which also means such a map cannot be
-        # offloaded -- a known limitation.
+        # step 1: set schedule of maps and library nodes -> heuristic only!
+        self.find_taskloops(sdfg)
+        self.assign_schedules(sdfg)
+
+        self.place_and_copy(sdfg)
+        self.offload_taskloop_bodies(sdfg)
+
+    def place_and_copy(self, sdfg: SDFG) -> None:
+        """Place every array across ONE host level and copy accordingly; taskloop bodies come later."""
         # step 2:
         # Names already put through a conversion. A SIGNATURE descriptor is not rewritten in place:
         # ``preserve_abi`` stages a transient beside it and copies, so the array itself is still an
@@ -291,46 +297,94 @@ class OffloadToAccelerator(ppl.Pass):
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
 
-        #except Exception as e:
-        #    print(e)
-        #    sdfg.view(filename=f"output_sdfg")
+    def offload_taskloop_bodies(self, sdfg: SDFG) -> None:
+        """Place again inside every nested SDFG a taskloop launches: the body is its own host level.
+
+        Its connector-bound descriptors already carry this level's storage, so the body seeds from
+        that and copies only what its own control flow needs. Schedules were assigned tree-wide.
+        """
+        if not self.taskloop_heuristics:
+            return
+
+        # Copy insertion added states; the cached scopes predate them.
+        self.cache_scopes(sdfg)
+        for state in sdfg.states():
+            for entry in self.cached_scope_children[state].get(None, ()):
+                if not isinstance(entry, nodes.MapEntry) or entry not in self.taskloops:
+                    continue
+                for node in self.host_level_nested_sdfgs(state, entry):
+                    self.inherit_binding_storage(sdfg, state, node)
+                    body = type(self)()
+                    body.taskloop_heuristics = True
+                    body.taskloops = self.taskloops
+                    body.cache_scopes(node.sdfg)
+                    body.place_and_copy(node.sdfg)
+                    body.offload_taskloop_bodies(node.sdfg)
+
+    def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry):
+        """Nested SDFGs under ``entry`` reached through taskloops only -- one below a kernel is device code."""
+        for node in self.cached_scope_children[state].get(entry, ()):
+            if isinstance(node, nodes.NestedSDFG):
+                yield node
+            elif isinstance(node, nodes.MapEntry) and node in self.taskloops:
+                yield from self.host_level_nested_sdfgs(state, node)
+
+    def inherit_binding_storage(self, sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
+        """Bind inner descriptors to their outer storage: the body reads these as starting locations."""
+        for edge in state.in_edges(nsdfg_node) + state.out_edges(nsdfg_node):
+            if edge.data is None or edge.data.is_empty():
+                continue
+            connector = edge.dst_conn if edge.dst is nsdfg_node else edge.src_conn
+            if connector is None or connector not in nsdfg_node.sdfg.arrays:
+                continue
+            outer = sdfg.arrays[edge.data.data]
+            nsdfg_node.sdfg.arrays[connector].storage = outer.storage
 
     def cache_scopes(self, sdfg):
+        # Nested SDFGs too: a taskloop's body is a host level, read by the walk and the analysis.
         self.cached_scopes = {}
-        for state in sdfg.states():
-            self.cached_scopes[state] = state.scope_dict()
+        self.cached_scope_children = {}
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                self.cached_scopes[state] = state.scope_dict()
+                self.cached_scope_children[state] = state.scope_children()
 
     ### STEP 1 ###
-    def set_toplevel_to_GPU(self, sdfg: SDFG, type: type):
-        assert type in (nodes.MapEntry, nodes.MapExit, nodes.LibraryNode)
+    def find_taskloops(self, sdfg: SDFG) -> None:
+        """Record which maps only launch work; with the heuristics off, none do."""
+        self.taskloops = taskloop_maps(sdfg) if self.taskloop_heuristics else OrderedSet()
+
+    def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
+        """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
+
+        With no taskloops this is the old rule: top-level maps are the kernels.
+        """
+
+        def walk(state: SDFGState, entry, host_level: bool) -> None:
+            for node in self.cached_scope_children[state].get(entry, ()):
+                if isinstance(node, nodes.MapEntry):
+                    is_kernel = host_level and node not in self.taskloops
+                    self.set_schedule(node,
+                                      dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential)
+                    walk(state, node, host_level and not is_kernel)
+
+                elif isinstance(node, nodes.LibraryNode):
+                    self.set_schedule(node,
+                                      dtypes.ScheduleType.GPU_Device if host_level else dtypes.ScheduleType.Sequential)
+
+                elif isinstance(node, nodes.NestedSDFG):
+                    # A host level only under a taskloop; otherwise its maps stay sequential.
+                    self.assign_schedules(node.sdfg, host_level and self.taskloop_heuristics)
 
         for state in sdfg.states():
-            scope_dict = self.cached_scopes.get(state)  # None -> within a nested SDFG
+            walk(state, None, host_level)
 
-            for node in state.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    self.set_toplevel_to_GPU(node.sdfg, type)
-                    continue
-
-                if not isinstance(node, type):  # filter
-                    continue
-
-                if scope_dict and node in scope_dict and scope_dict[node] is None:  # toplevel node -> change schedule
-                    if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
-                        node.map.schedule = dtypes.ScheduleType.GPU_Device
-
-                    elif isinstance(node, nodes.LibraryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                    else:
-                        raise TypeError(f'cannot set a GPU schedule on {node} of type {type(node).__name__}')
-
-                else:  # within nested scope -> must not have GPU schedule (defensive check)
-                    if self.has_GPU_schedule(node):
-                        raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass." \
-                        "All maps must have default or CPU schedule before pass." \
-                        f"Node {node} has schedule type {self.get_schedule(node)}" )
-                    # Sequential specifically: Default can be lowered to CUDA in the wrong places.
-                    node.schedule = dtypes.ScheduleType.Sequential
+    def set_schedule(self, node, schedule: dtypes.ScheduleType) -> None:
+        # Sequential specifically: Default can be lowered to CUDA in the wrong places.
+        if schedule is dtypes.ScheduleType.Sequential and self.has_GPU_schedule(node):
+            raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass. All maps must have default or CPU "
+                               f"schedule before pass. Node {node} has schedule type {self.get_schedule(node)}")
+        node.schedule = schedule
 
     ### generic HELPERS ###
 
@@ -493,9 +547,17 @@ class OffloadToAccelerator(ppl.Pass):
         """
 
         # helper to validate data and add it to correct set
-        def _add_data(data_name: str, gpu_set: set[str], cpu_set: set[str], is_gpu: bool) -> tuple[set[str], set[str]]:
+        def _add_data(data_name: str,
+                      gpu_set: set[str],
+                      cpu_set: set[str],
+                      is_gpu: bool,
+                      host_level: bool = False) -> tuple[set[str], set[str]]:
             if data_name in gpu_set:  # has already been accessed on GPU
                 if not is_gpu:  # is now accessed on CPU
+                    if host_level:
+                        # A launcher staging on the host for a kernel is a hybrid state, not an error.
+                        cpu_set.add(data_name)
+                        return
                     raise RuntimeError("GPU->CPU inside a map: an inner sequential map still runs as a kernel, so data "
                                        "under a GPU map has to stay on the GPU")
 
@@ -509,9 +571,16 @@ class OffloadToAccelerator(ppl.Pass):
                 (gpu_set if is_gpu else cpu_set).add(data_name)
 
         # main work horse, can recurse to nested maps
-        def _recursive_helper(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, gpu_set: set[str],
-                              cpu_set: set[str], is_gpu: bool):
+        def _recursive_helper(sdfg: SDFG,
+                              state: SDFGState,
+                              map_entry: nodes.MapEntry,
+                              gpu_set: set[str],
+                              cpu_set: set[str],
+                              is_gpu: bool,
+                              host_level: bool = True):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES  # TODO Q: how not to hardcode?
+            is_taskloop = map_entry in self.taskloops
+            host_level = host_level and is_taskloop
 
             # get all nodes within this map's scope
             map_nodes = [n for n, parent in self.cached_scopes[state].items() if parent is map_entry]
@@ -520,7 +589,9 @@ class OffloadToAccelerator(ppl.Pass):
             input_and_output = self.get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry) | self.get_data_used_by_outgoing_access_nodes(
                     sdfg, state, state.exit_node(map_entry))
-            if is_gpu:
+            if is_taskloop:
+                pass  # transparent for now, resolved below once the body has spoken
+            elif is_gpu:
                 gpu_set |= input_and_output
             else:
                 cpu_set |= input_and_output
@@ -528,15 +599,17 @@ class OffloadToAccelerator(ppl.Pass):
             # internal nodes
             for node in map_nodes:
                 if isinstance(node, nodes.MapEntry):  # recurse on inner map
-                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu, host_level)
 
                 elif isinstance(node, nodes.AccessNode):  # find accessed arrays -> add
-                    for name in self.get_data_used_by_outgoing_access_nodes(sdfg, state, node):
-                        _add_data(name, gpu_set, cpu_set, is_gpu)
+                    # Staging between a launcher and a kernel says nothing about where data belongs.
+                    if not host_level:
+                        for name in self.get_data_used_by_outgoing_access_nodes(sdfg, state, node):
+                            _add_data(name, gpu_set, cpu_set, is_gpu, host_level)
 
                 elif isinstance(node, nodes.Tasklet):  # find accessed arrays -> add
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
-                        _add_data(name, gpu_set, cpu_set, is_gpu)
+                        _add_data(name, gpu_set, cpu_set, is_gpu, host_level)
 
                 elif isinstance(node, (ControlFlowRegion)):
                     g, c = self.get_data_locations_of_cfregion(sdfg, node)
@@ -546,17 +619,59 @@ class OffloadToAccelerator(ppl.Pass):
                     else:
                         gpu_set |= g | c
 
-                elif isinstance(node, (nodes.NestedSDFG, nodes.MapExit, nodes.LibraryNode)):
-                    pass  # nothing to do (do not analyse the arrays within a nested sdfg)
+                elif isinstance(node, nodes.LibraryNode):
+                    # Launched from the host, reading device memory: the schedule around it says nothing.
+                    on_gpu = is_gpu or self.has_GPU_schedule(node)
+                    for name in self.get_arrays_used_by_node(sdfg, state, node):
+                        _add_data(name, gpu_set, cpu_set, on_gpu, host_level)
+
+                elif isinstance(node, nodes.NestedSDFG):
+                    if is_gpu:
+                        pass  # inside a kernel everything below is on the device already
+                    else:
+                        g, c = self.get_data_locations_of_nested_sdfg(sdfg, state, node)
+                        gpu_set |= g
+                        cpu_set |= c
+
+                elif isinstance(node, nodes.MapExit):
+                    pass
 
                 else:
                     raise RuntimeError(f"unhandled node {node.label} of type {type(node).__name__} inside map "
                                        f"{map_entry} in state {state}")
 
+            if is_taskloop:
+                # Unclaimed by the body means device data, or every iteration pays for a copy of it.
+                gpu_set |= input_and_output - cpu_set
+
         # function body, calls recursive helper
         gpu_set: set[str] = set()
         cpu_set: set[str] = set()
         _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
+        return gpu_set, cpu_set
+
+    def get_data_locations_of_nested_sdfg(self, sdfg: SDFG, state: SDFGState,
+                                          node: nodes.NestedSDFG) -> tuple[set[str], set[str]]:
+        """Where a nested SDFG wants its bound arrays, in the OUTER SDFG's names."""
+        # Its hybrid states are resolved when the body is offloaded; wrapping them needs that SDFG.
+        outer_hybrid = self.hybrid_states
+        self.hybrid_states = set()
+        inner_gpu, inner_cpu = self.get_data_locations_of_cfregion(node.sdfg, node.sdfg)
+        self.hybrid_states = outer_hybrid
+
+        gpu_set: set[str] = set()
+        cpu_set: set[str] = set()
+        for edge in state.in_edges(node) + state.out_edges(node):
+            if edge.data is None or edge.data.is_empty():
+                continue
+            connector = edge.dst_conn if edge.dst is node else edge.src_conn
+            name = edge.data.data
+            if connector is None or name not in sdfg.arrays or not self._is_array(name, sdfg):
+                continue
+            if connector in inner_gpu:
+                gpu_set.add(name)
+            elif connector in inner_cpu:
+                cpu_set.add(name)
         return gpu_set, cpu_set
 
     def get_data_locations_of_state(self,
@@ -588,6 +703,10 @@ class OffloadToAccelerator(ppl.Pass):
                     g = self.get_arrays_used_by_node(sdfg, state, node)
                 else:
                     c = self.get_arrays_used_by_node(sdfg, state, node)
+
+            # a nested SDFG at the top of a state is host code holding its own maps
+            elif isinstance(node, nodes.NestedSDFG):
+                g, c = self.get_data_locations_of_nested_sdfg(sdfg, state, node)
 
             # recurse if nested
             elif isinstance(node, ControlFlowRegion):
@@ -697,6 +816,15 @@ class OffloadToAccelerator(ppl.Pass):
         else:
             raise NotImplementedError(f"array {array_name!r} lives in {storage}, which this pass does not offload")
 
+    def written_arrays(self, sdfg: SDFG) -> set[str]:
+        """Names this SDFG writes: an access node with an incoming edge."""
+        written: set[str] = set()
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                if state.in_degree(node) > 0:
+                    written.add(node.data)
+        return written
+
     def sdfg_to_IR(self, sdfg: SDFG):
 
         # remember initial non-transient array locations
@@ -723,8 +851,11 @@ class OffloadToAccelerator(ppl.Pass):
 
         # finish graph: tie the final node together with the inital close node
         end.append_node(IR.close)
-        IR.close.gpu_set = initially_on_gpu
-        IR.close.cpu_set = initially_on_cpu  # arrays end up where they started
+        # Only what this SDFG WROTE goes back: restoring a read-only input is dead traffic, and
+        # inside a nested SDFG it writes an input connector, which is invalid.
+        written = self.written_arrays(sdfg)
+        IR.close.gpu_set = initially_on_gpu & written
+        IR.close.cpu_set = initially_on_cpu & written
 
         self._propagate_arrays(IR)
 
