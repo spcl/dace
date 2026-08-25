@@ -1342,10 +1342,11 @@ class OffloadToAccelerator(ppl.Pass):
         return {node for node in bounded_set if state.out_degree(node) == 0}
 
     def _get_boundary_in_edges(self, state: SDFGState, node, bounded_set: set):
-        return {e for e in state.in_edges(node) if e.src not in bounded_set}
+        # A list, not a set: the connector numbering below follows this order.
+        return [e for e in state.in_edges(node) if e.src not in bounded_set]
 
     def _get_boundary_out_edges(self, state: SDFGState, node, bounded_set: set):
-        return {e for e in state.out_edges(node) if e.dst not in bounded_set}
+        return [e for e in state.out_edges(node) if e.dst not in bounded_set]
 
     def _get_entry_nodes(self, state: SDFGState, bounded_set: set):
         return {node for node in bounded_set if all(e.src not in bounded_set for e in state.in_edges(node))}
@@ -1362,11 +1363,10 @@ class OffloadToAccelerator(ppl.Pass):
                                             schedule=dtypes.ScheduleType.GPU_Device)
 
         # MAP ENTRY
-        boundary_in_edges = set()
+        boundary_in_edges = []
         for node in region_nodes:
-            boundary_in_edges |= self._get_boundary_in_edges(state, node, region_nodes)
+            boundary_in_edges += self._get_boundary_in_edges(state, node, region_nodes)
 
-        idx = 0
         if not boundary_in_edges:  # if there are no boundary in edges, add new dependcy edges
             root_nodes = self._get_root_nodes(state, region_nodes)
             assert root_nodes, f"region: {region_nodes}"
@@ -1374,24 +1374,32 @@ class OffloadToAccelerator(ppl.Pass):
                 state.add_nedge(map_entry, root, Memlet())
 
         else:  # if there are, rewire them through the map
-            for idx, edge in enumerate(boundary_in_edges):
+            idx = 0
+            for edge in boundary_in_edges:
                 src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
                 ext_memlet = deepcopy(edge.data)
                 int_memlet = deepcopy(edge.data)
                 state.remove_edge(edge)
 
+                # An empty memlet ORDERS; it carries no data and so may not carry a connector.
+                if ext_memlet.is_empty():
+                    state.add_nedge(src, map_entry, ext_memlet)
+                    state.add_nedge(map_entry, dst, int_memlet)
+                    continue
+
                 in_conn = f"IN_REGION_IN_{idx}"
                 out_conn = f"OUT_REGION_IN_{idx}"
                 map_entry.add_in_connector(in_conn)
                 map_entry.add_out_connector(out_conn)
+                idx += 1
 
                 state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
                 state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
 
         # MAP EXIT
-        boundary_out_edges = set()
+        boundary_out_edges = []
         for node in region_nodes:
-            boundary_out_edges |= self._get_boundary_out_edges(state, node, region_nodes)
+            boundary_out_edges += self._get_boundary_out_edges(state, node, region_nodes)
 
         if not boundary_out_edges:  # add new dependency edges
             leaf_nodes = self._get_leaf_nodes(state, region_nodes)
@@ -1400,16 +1408,23 @@ class OffloadToAccelerator(ppl.Pass):
                 state.add_nedge(leaf, map_exit, Memlet())
 
         else:  # rewire out edges
-            for idx, edge in enumerate(boundary_out_edges):
+            idx = 0
+            for edge in boundary_out_edges:
                 src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
                 int_memlet = deepcopy(edge.data)
                 ext_memlet = deepcopy(edge.data)
                 state.remove_edge(edge)
 
+                if int_memlet.is_empty():  # ordering edge, see above
+                    state.add_nedge(src, map_exit, int_memlet)
+                    state.add_nedge(map_exit, dst, ext_memlet)
+                    continue
+
                 in_conn = f"IN_REGION_OUT_{idx}"
                 out_conn = f"OUT_REGION_OUT_{idx}"
                 map_exit.add_in_connector(in_conn)
                 map_exit.add_out_connector(out_conn)
+                idx += 1
 
                 state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
                 state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
