@@ -73,15 +73,16 @@ jobs:
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
-        uv pip install --system ./pyFV3[ndsl,test]
-        uv pip install --system ./dace
+        uv venv
+        uv pip install ./pyFV3[ndsl,test]
+        uv pip install ./dace
 
     - name: Print versions
       run: |
         gcc --version
-        python --version
+        uv run python --version
         uv --version
-        uv pip list --system
+        uv pip list
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)
