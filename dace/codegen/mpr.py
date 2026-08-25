@@ -38,7 +38,7 @@ from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.sdfg import SDFG, nodes
-from dace.transformation.passes.promote_output_scalars_to_arrays import PromoteOutputScalarsToArrays
+from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types MPR can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
 #: nothing else: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the
@@ -414,8 +414,8 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
     Four things happen: every written signature scalar is promoted to a length-1 array so it is
-    addressable (:class:`~dace.transformation.passes.promote_output_scalars_to_arrays.
-    PromoteOutputScalarsToArrays`), what that could not make renderable is refused
+    addressable (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`),
+    what that could not make renderable is refused
     (:func:`refuse_by_value_returns`), every library node is pointed at its pure implementation and
     expanded (:func:`force_pure_expansions`), and lifetimes that would need a state struct are
     demoted (see :data:`LIFETIME_DEMOTIONS`). Anything MPR cannot express raises here rather than
@@ -435,7 +435,7 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     if device:
         raise NotImplementedError('MPR renders one host translation unit, but ' + '; '.join(device) +
                                   '. Render the CPU form of this SDFG instead.')
-    PromoteOutputScalarsToArrays().apply_pass(sdfg, {})
+    PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
     force_pure_expansions(sdfg, provenance)
     for _, _, desc in sdfg.arrays_recursive():

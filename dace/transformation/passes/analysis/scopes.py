@@ -3,6 +3,7 @@
 import collections
 from typing import Dict, List, Optional, Set
 
+import dace
 from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG

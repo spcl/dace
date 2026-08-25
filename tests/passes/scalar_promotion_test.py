@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``PromoteOutputScalarsToArrays``: written signature scalars become addressable, read-only ones do not.
+"""``PromoteScalarOutputsToArrays``: written signature scalars become addressable, read-only ones do not.
 
 The pass exists because a non-transient ``Scalar`` has no addressable spelling in either signature it
 can appear in -- ``T name`` on the entry point, ``T &name`` on a nested SDFG connector -- so a written
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.promote_output_scalars_to_arrays import PromoteOutputScalarsToArrays
+from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 
 def scalar_output_sdfg(name: str = 'scalar_out') -> dace.SDFG:
@@ -29,7 +29,7 @@ def test_written_signature_scalar_becomes_a_pointer_parameter():
     sdfg = scalar_output_sdfg()
     assert 'double out' in sdfg.signature(), 'the premise is gone: a signature Scalar is no longer by value'
 
-    assert PromoteOutputScalarsToArrays().apply_pass(sdfg, {}) == 1
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) == 1
     descriptor = sdfg.arrays['out']
     assert isinstance(descriptor, dace.data.Array) and descriptor.shape == (1, ), descriptor
     assert 'double * __restrict__ out' in sdfg.signature()
@@ -48,7 +48,7 @@ def test_read_only_signature_scalar_is_left_by_value():
     state.add_edge(state.add_access('alpha'), None, tasklet, 's', dace.Memlet('alpha[0]'))
     state.add_edge(tasklet, 'o', state.add_access('b'), None, dace.Memlet('b[0]'))
 
-    assert PromoteOutputScalarsToArrays().apply_pass(sdfg, {}) is None
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) is None
     assert isinstance(sdfg.arrays['alpha'], dace.data.Scalar)
     assert 'double alpha' in sdfg.signature()
 
@@ -58,7 +58,7 @@ def test_transient_scalar_is_left_alone():
     sdfg = scalar_output_sdfg('scalar_transient')
     sdfg.arrays['out'].transient = True
 
-    assert PromoteOutputScalarsToArrays().apply_pass(sdfg, {}) is None
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) is None
     assert isinstance(sdfg.arrays['out'], dace.data.Scalar)
 
 
@@ -75,7 +75,7 @@ def test_nested_scalar_connector_is_promoted_with_its_parent():
 
     # One promotion, not two: promoting the outer descriptor CASCADES into the connector it binds,
     # so the inner scalar is never reached as an independent candidate.
-    assert PromoteOutputScalarsToArrays().apply_pass(sdfg, {}) == 1
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) == 1
     assert isinstance(sdfg.arrays['out'], dace.data.Array)
     assert isinstance(nested.arrays['out'], dace.data.Array), ('the inner descriptor is still a Scalar, so the '
                                                                'nested call would bind it by reference')
@@ -101,7 +101,7 @@ def test_promoted_sdfg_matches_a_hand_written_array_output():
     reference(a=a, out=ref_out)
 
     promoted = scalar_output_sdfg('promote_run')
-    PromoteOutputScalarsToArrays().apply_pass(promoted, {})
+    PromoteScalarOutputsToArrays().apply_pass(promoted, {})
     assert promoted.signature() == reference.signature(), (f'{promoted.signature()!r} is not the signature a hand-'
                                                            f'written array output gives: {reference.signature()!r}')
     out = np.zeros(1)

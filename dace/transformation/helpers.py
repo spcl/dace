@@ -4,6 +4,7 @@ import ast
 import copy
 import itertools
 import warnings
+import dace
 from dace.graphlib import MultiDiGraph
 from ordered_set import OrderedSet
 

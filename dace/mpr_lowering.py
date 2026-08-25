@@ -27,7 +27,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 import contextlib
 import enum
 import re
-from typing import Dict, NamedTuple, Optional, Set, Tuple
+from typing import Dict, FrozenSet, NamedTuple, Optional, Set, Tuple
 
 
 class Dialect(enum.Enum):
@@ -708,6 +708,9 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
         if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
             raise NotImplementedError(f'MPR cannot emit the type {qualified!r}: {reason}')
 
+    if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
+        code = c_scan_identities(code)
+
     def replace(match: 're.Match') -> str:
         name = match.group(1)
         if name in tables.unsupported:
@@ -1245,24 +1248,18 @@ C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'scan_excl_max': ('mpr_max', ),
 }
 
-#: What the C dialect refuses, and why. ``min_identity`` / ``max_identity`` are the scan's neutral
-#: elements, and the ``Scan`` expansion names them with an EXPLICIT template argument
-#: (``min_identity<double>()``) in hand-written C++ that never reaches an expression printer. C has
-#: no function template and no spelling for that call, so a ``min``/``max`` scan is refused rather
-#: than rendered with a wrong identity.
-C_UNSUPPORTED: Dict[str, str] = {
-    'min_identity':
-    'the scan min identity is named with an explicit C++ template argument '
-    '(min_identity<T>()), which C has no equivalent for; render the min/max scan as C++',
-    'max_identity':
-    'the scan max identity is named with an explicit C++ template argument '
-    '(max_identity<T>()), which C has no equivalent for; render the min/max scan as C++',
-}
+#: What the C dialect refuses, and why. Empty: every construct MPR reaches has a C spelling.
+C_UNSUPPORTED: Dict[str, str] = {}
+
+#: Helpers C answers with a REWRITE rather than a definition or a refusal -- a third lane, and the
+#: only one, so the anti-rot tests can still insist every C++ helper is accounted for. Both are the
+#: scan's neutral elements, whose call site spells its own type (:func:`c_scan_identities`).
+C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_identity'})
 
 #: Headers MPR's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
 #: section header above.
-C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<stdlib.h>', '<string.h>', '<complex.h>')
+C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<complex.h>')
 
 #: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
 #: macro is removed immediately after the include; complex literals are built with ``CMPLX``.
@@ -1356,6 +1353,45 @@ C_CAST_TYPES: Tuple[str,
 
 _C_STATIC_CAST = re.compile(r'\bstatic_cast\s*<\s*([^<>;{}]+?)\s*>\s*\(')
 _C_FUNCTIONAL_CAST = re.compile(r'(?<![\w:.])(' + '|'.join(C_CAST_TYPES) + r')\s*\(')
+
+#: The scan's min / max neutral element per element type, as a C constant expression. Mirrors
+#: ``dace::scan::min_identity`` / ``max_identity``: infinity where the type has one, otherwise the
+#: extreme value. The C++ version is one function template; C needs the type spelled out, and the
+#: call site already spells it (``min_identity<double>()``), so a constant is enough and no
+#: definition has to be emitted.
+C_SCAN_IDENTITIES: Dict[str, Tuple[str, str]] = {
+    'int': ('INT_MAX', 'INT_MIN'),
+    'long': ('LONG_MAX', 'LONG_MIN'),
+    'long long': ('LLONG_MAX', 'LLONG_MIN'),
+    'float': ('INFINITY', '-INFINITY'),
+    'double': ('INFINITY', '-INFINITY'),
+    'long double': ('INFINITY', '-INFINITY'),
+}
+
+#: ``min_identity<double>()`` as a hand-written expansion writes it, qualified or not.
+_C_IDENTITY_CALL = re.compile(r'(?:::)?(?:\w+::)*\b(min|max)_identity\s*<\s*([A-Za-z_][A-Za-z_ ]*?)\s*>\s*\(\s*\)')
+
+
+def c_scan_identities(code: str) -> str:
+    """Replace every ``min_identity<T>()`` / ``max_identity<T>()`` with its C constant.
+
+    Must run BEFORE the qualified-name rewrite: the name carries an explicit template argument, so
+    it is not an ordinary call the name table could map.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the identities spelled as C.
+    :raises NotImplementedError: on an element type with no ordered extreme (complex).
+    """
+
+    def replace(match: 're.Match') -> str:
+        kind, ctype = match.group(1), match.group(2)
+        identities = C_SCAN_IDENTITIES.get(ctype)
+        if identities is None:
+            raise NotImplementedError(f'MPR cannot spell the scan {kind} identity for {ctype!r}: it has no ordered '
+                                      'extreme value, so only sum and product scans are defined for it.')
+        return identities[0] if kind == 'min' else identities[1]
+
+    return _C_IDENTITY_CALL.sub(replace, code)
 
 
 def c_cast_native_code(code: str) -> str:

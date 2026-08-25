@@ -372,12 +372,16 @@ def test_non_constexpr_definitions_are_not_marked_constexpr(name):
 #: Names the C tables deliberately do NOT cover, with the reason each one is refused rather than
 #: guessed. Kept as a test-side copy so a silent addition to ``C_UNSUPPORTED`` fails here: a
 #: refusal is a capability gap, and it has to be a decision rather than an omission.
-EXPECTED_C_REFUSALS = {'min_identity', 'max_identity'}
+#: Nothing: every C++ helper is answered in C by a definition or by a rewrite.
+EXPECTED_C_REFUSALS = set()
 
 
 def test_c_refuses_exactly_the_names_it_says_it_does():
     """The C dialect's refusal list is what it claims to be, and each entry says why."""
     assert set(mpr_lowering.C_UNSUPPORTED) == EXPECTED_C_REFUSALS
+    # The scan identities were once refused and are now rewritten; a refusal that reappears for
+    # them means the rewrite was lost.
+    assert not (mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE & set(mpr_lowering.C_UNSUPPORTED))
     for name, reason in mpr_lowering.C_UNSUPPORTED.items():
         assert len(reason) > 20, f'{name} is refused without saying why'
 
@@ -385,9 +389,10 @@ def test_c_refuses_exactly_the_names_it_says_it_does():
 def test_every_cpp_definition_has_a_c_form_or_a_refusal():
     """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable."""
     unclassified = sorted(
-        set(mpr_lowering.INLINE_DEFINITIONS) - set(mpr_lowering.C_INLINE_DEFINITIONS) - set(mpr_lowering.C_UNSUPPORTED))
-    assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form and no entry in '
-                              'C_UNSUPPORTED, so a kernel calling one would render C that does not build')
+        set(mpr_lowering.INLINE_DEFINITIONS) - set(mpr_lowering.C_INLINE_DEFINITIONS) -
+        set(mpr_lowering.C_UNSUPPORTED) - mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE)
+    assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
+                              'in C_UNSUPPORTED, so a kernel calling one would render C that does not build')
 
 
 def test_every_cpp_std_rename_has_a_c_form():
@@ -436,16 +441,24 @@ def test_every_c_definitions_dependencies_are_real():
                 f'{name} does not mention {dependency}')
 
 
-@pytest.mark.parametrize('name', sorted(mpr_lowering.C_UNSUPPORTED))
-def test_c_unsupported_names_refuse_loudly(name):
-    """A refused helper raises where it is reached, naming itself -- it never passes through."""
-    with pytest.raises(NotImplementedError, match=name):
-        mpr_lowering.lowering_for(name, (), Dialect.STANDALONE_C)
-    with pytest.raises(NotImplementedError, match=name):
-        mpr_lowering.rewrite_native_code('::dace::scan::detail::%s<double>()' % name, Dialect.STANDALONE_C)
-    # The same name is fine in C++, which is what makes this a dialect gap rather than a hole.
-    assert mpr_lowering.rewrite_native_code('::dace::scan::detail::%s<double>()' % name,
-                                            Dialect.STANDALONE).startswith(name)
+@pytest.mark.parametrize('name', sorted(mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE))
+@pytest.mark.parametrize('ctype', sorted(mpr_lowering.C_SCAN_IDENTITIES))
+def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
+    """The identity has no C function template, so C spells it as the constant for that type.
+
+    Both dialects are asserted: C++ keeps the templated call it already emits, so a rewrite that
+    leaked into C++ would show up here rather than as a numeric difference in a min/max scan.
+    """
+    call = '::dace::scan::detail::%s<%s>()' % (name, ctype)
+    expected = mpr_lowering.C_SCAN_IDENTITIES[ctype][0 if name.startswith('min') else 1]
+    assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE_C) == expected
+    assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
+
+
+def test_c_refuses_a_scan_identity_it_cannot_order():
+    """Complex has no ordered extreme, so a min/max scan over it must raise, not pick a wrong seed."""
+    with pytest.raises(NotImplementedError, match='no ordered extreme'):
+        mpr_lowering.rewrite_native_code('min_identity<double _Complex>()', Dialect.STANDALONE_C)
 
 
 def test_variadic_minmax_nests_binary_calls_in_c():

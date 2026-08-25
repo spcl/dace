@@ -12,11 +12,10 @@ left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
 from typing import Any, Dict, Optional
 
-from dace import data, dtypes, properties
+from dace import properties
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
-from dace.transformation.passes.scalar_promotion import (invalidate_array_connectors, promote_matching_scalars)
+from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 
 @properties.make_properties
@@ -70,63 +69,13 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class PromoteGPUScalarsToArrays(ppl.Pass):
-    """Replace GPU-incompatible ``Scalar`` descriptors with length-1 Arrays."""
+class PromoteGPUScalarsToArrays(PromoteScalarOutputsToArrays):
+    """:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays` under the
+    GPU criteria, plus the storage inference it needs to see a final storage decision."""
 
-    # Register-storage scalars are thread-local; widening would force
-    # per-thread ``cudaMalloc`` inside the kernel body.
-    _RULE2_EXEMPT_STORAGES = frozenset({dtypes.StorageType.Register})
-
-    non_transient_only = properties.Property(dtype=bool,
-                                             default=True,
-                                             desc="Rule 2 only promotes non-transient kernel-output scalars. "
-                                             "A transient scalar written by a GPU map exit stays a Scalar -- the "
-                                             "host never observes the value, so it can live in registers / "
-                                             "per-thread stack. Disable to promote every kernel-output scalar.")
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gpu = True
 
     def depends_on(self):
         return {InferDefaultSchedulesAndStorages}
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # Adding new GPU-storage Scalars (e.g. via library expansion) re-arms
-        # the pass; harmless when nothing matches.
-        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
-
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Promote every GPU-incompatible scalar across the SDFG hierarchy.
-
-        :returns: Number of scalars promoted, or ``None`` if nothing changed.
-        """
-        promoted = promote_matching_scalars(sdfg, self.needs_promotion, self.storage_for)
-        # Unconditional: a connector can be mistyped against an Array inner descriptor that this
-        # pass did not create (cuBLAS expansion's ``gpu_streams``), so the reset is still needed
-        # when nothing was promoted here.
-        invalidate_array_connectors(sdfg)
-        return promoted or None
-
-    def needs_promotion(self, sdfg: SDFG, name: str) -> bool:
-        """Whether ``name`` is a scalar GPU code generation cannot use as-is."""
-        desc = sdfg.arrays[name]
-        if not isinstance(desc, data.Scalar):
-            return False
-
-        # Rule 1: GPU storage is incompatible with Scalar.
-        if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            return True
-
-        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
-        if desc.storage in self._RULE2_EXEMPT_STORAGES:
-            return False
-        if self.non_transient_only and desc.transient:
-            return False
-        return written_by_gpu_map_exit(sdfg, name)
-
-    def storage_for(self, sdfg: SDFG, name: str) -> dtypes.StorageType:
-        """Rule 2 needs real device memory for the kernel write; rule 1 keeps the GPU storage it has."""
-        storage = sdfg.arrays[name].storage
-        if storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            storage = dtypes.StorageType.GPU_Global
-        return storage

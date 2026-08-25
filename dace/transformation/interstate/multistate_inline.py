@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dc
 import itertools
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 from dace import Memlet, symbolic, subsets
 from dace.sdfg import nodes

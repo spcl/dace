@@ -18,6 +18,12 @@ sides run single-threaded from sequential schedules under IEEE flags, which is w
 machine-precision tolerance meaningful -- a parallel reduction reorders floating-point accumulation
 run to run, and a tolerance loose enough to absorb that would also absorb a real defect.
 
+There is deliberately no parallel-form test here. CloudSC as built has ZERO maps -- it is all
+LoopRegions -- so an assertion that the rendering carries ``#pragma omp parallel for`` would be
+testing a property the input never had. Giving it one costs a 49-minute ``canonicalize`` run for
+129 maps, which does not belong on top of the numeric leg; ``test_emission.py`` already asserts the
+pragma on SDFGs whose maps exist.
+
 Marked ``integration``: building CloudSC is minutes and the rendered translation unit is large. It
 is NOT skipped -- on a box with a compiler it is expected to run and pass.
 """
@@ -129,21 +135,6 @@ def test_cloudsc_renders_standalone_and_reproduces_the_sdfg():
         'MPR output diverges from the SDFG on ' +
         ', '.join(f'{name} (abs={abs_err:.3e} rel={rel_err:.3e})'
                   for name, (abs_err, rel_err) in sorted(mismatched.items(), key=lambda kv: -kv[1][1])[:5]))
-
-
-@pytest.mark.integration
-def test_cloudsc_parallel_form_renders_with_openmp():
-    """The parallel schedules CloudSC ships with must survive into the rendering.
-
-    Rendering-only: the numeric leg above runs the sequential form on purpose. What this adds is
-    that MPR does not quietly lose the parallelism -- a rendering with every map serialized would
-    still reproduce the numbers, and would not be a maximal parallel rendering of anything.
-    """
-    sdfg = build_cloudsc_sdfg(simplify=False)
-    code = render(sdfg, validate=False).code
-    assert_standalone(code, 'cloudsc-parallel')
-    assert '#pragma omp parallel for' in code, ('CloudSC renders with no parallel loop at all; the schedules were '
-                                                'lost somewhere between the SDFG and the emitted text')
 
 
 if __name__ == '__main__':

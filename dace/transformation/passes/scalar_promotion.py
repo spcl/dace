@@ -1,21 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The mechanism for replacing a ``Scalar`` descriptor with a length-1 ``Array``.
+"""``PromoteScalarOutputsToArrays`` -- replace a written ``Scalar`` descriptor with a length-1 ``Array``.
 
-Mechanism only: nothing here decides WHICH scalars to promote. Two passes supply that separately
-and for unrelated reasons -- ``PromoteGPUScalarsToArrays`` because device memory has no scalar form,
-``PromoteOutputScalarsToArrays`` because a written signature scalar is passed by value (entry point)
-or by C++ reference (nested SDFG connector), and neither returns a result a C caller can read.
+Two callers want this for unrelated reasons, and only their CRITERIA differ:
 
-Keeping the rewrite in one place is what stops the two from drifting. The subtle parts -- walking the
-hierarchy top-down so a parent's promotion is already visible when its children are visited, pushing
+* host (the default): a written non-transient scalar has no addressable spelling in either signature
+  it can appear in. On an entry point ``Scalar.as_arg`` emits ``T name`` -- by value, so the result
+  is computed into the callee's copy and discarded. On a nested SDFG ``cpp.emit_memlet_reference``
+  binds it as ``T &name``, which C cannot spell at all.
+* ``gpu=True``: device memory has no scalar form, so a GPU-storage scalar or a GPU kernel output
+  must be widened, and the latter forced to ``GPU_Global``.
+
+One pass with a flag rather than two, so the rewrite cannot drift between them. The subtle parts --
+walking the hierarchy top-down so a parent's promotion is already visible at its children, pushing
 the change through NestedSDFG connectors, and rewriting the state-machine slots that name a
 descriptor as text rather than through a memlet -- are identical whatever the criteria are.
 """
-from typing import Callable, Optional, Set
+from typing import Any, Callable, Dict, Optional, Set
 
-from dace import data, dtypes
+from dace import data, dtypes, properties
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots, rewrite_refs_to_element)
+from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_is_written, rewrite_code_slots,
+                                                                           rewrite_refs_to_element)
 
 #: Decides whether ``sdfg.arrays[name]`` is promoted.
 PromotionRule = Callable[[SDFG, str], bool]
@@ -144,3 +150,77 @@ def promote_matching_scalars(sdfg: SDFG,
             promote_scalar_to_array(nsdfg, name, None if storage_for is None else storage_for(nsdfg, name))
             promoted += 1
     return promoted
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PromoteScalarOutputsToArrays(ppl.Pass):
+    """Replace every written ``Scalar`` the criteria accept with a length-1 ``Array``."""
+
+    gpu = properties.Property(dtype=bool,
+                              default=False,
+                              desc="Use the GPU criteria: promote a GPU-storage scalar (keeping its storage) or a "
+                              "scalar written by a GPU map exit (forcing GPU_Global), rather than a written "
+                              "non-transient scalar with its storage left alone.")
+    non_transient_only = properties.Property(dtype=bool,
+                                             default=True,
+                                             desc="GPU only: the kernel-output rule promotes non-transient scalars "
+                                             "only. A transient scalar written by a GPU map exit stays a Scalar -- "
+                                             "the host never observes the value, so it can live in registers / "
+                                             "per-thread stack. Disable to promote every kernel-output scalar.")
+
+    #: GPU only. Register-storage scalars are thread-local; widening would force a per-thread
+    #: ``cudaMalloc`` inside the kernel body.
+    _RULE2_EXEMPT_STORAGES = frozenset({dtypes.StorageType.Register})
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # A library expansion can introduce a fresh scalar connector, which re-arms the pass.
+        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Promote every matching scalar across the SDFG hierarchy.
+
+        :param sdfg: the outermost SDFG, modified in place.
+        :param pipeline_results: unused.
+        :returns: how many descriptors were promoted, or ``None`` if none were.
+        """
+        promoted = promote_matching_scalars(sdfg, self.needs_promotion, self.storage_for)
+        # Under the GPU criteria this is unconditional: a connector can be mistyped against an Array
+        # inner descriptor this pass did not create (cuBLAS expansion's ``gpu_streams``), so the
+        # reset is still needed when nothing was promoted here.
+        if self.gpu or promoted:
+            invalidate_array_connectors(sdfg)
+        return promoted or None
+
+    def needs_promotion(self, sdfg: SDFG, name: str) -> bool:
+        """Whether ``name`` is a scalar its target cannot use as-is."""
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, data.Scalar):
+            return False
+        if not self.gpu:
+            return not desc.transient and descriptor_is_written(sdfg, name)
+
+        # Rule 1: GPU storage is incompatible with Scalar.
+        if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+            return True
+
+        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
+        if desc.storage in self._RULE2_EXEMPT_STORAGES:
+            return False
+        if self.non_transient_only and desc.transient:
+            return False
+        # Local: gpu_helpers imports the GPU wrapper, which imports this module.
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
+        return written_by_gpu_map_exit(sdfg, name)
+
+    def storage_for(self, sdfg: SDFG, name: str) -> Optional[dtypes.StorageType]:
+        """Storage for the new array: the scalar's own, or real device memory for a GPU kernel write."""
+        if not self.gpu:
+            return None
+        storage = sdfg.arrays[name].storage
+        if storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+            storage = dtypes.StorageType.GPU_Global
+        return storage
