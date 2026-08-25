@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional, Set
 
 from dace.sdfg import SDFG
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.propagation import propagate_memlets_scope
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -28,6 +28,12 @@ class PropagateMemlets(ppl.Pass):
       before them were built against a smaller ``symbols_defined_at`` (this is what widened
       cloudsc's ``tendency_loc_cld`` to its full extent).
 
+    Only the SCOPE boundaries are rebuilt -- a nested SDFG's connector memlets are left alone.
+    Re-deriving those means folding the body's frame back into the caller's, and where the body
+    holds the whole array and indexes it absolutely the only sound result keeps the outer base,
+    so ``a[it]`` widens to the growing range ``a[0:it + 1]``. That reads downstream as a
+    triangular write and refuses the very parallelization this pass exists to enable.
+
     Propagation is value-preserving -- it only ever rewrites derived edges -- so this is safe to
     schedule anywhere. Cost is one walk per state, which is why it is scheduled at the few points
     that consume the summaries rather than after every rewrite.
@@ -43,5 +49,7 @@ class PropagateMemlets(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
-        propagate_memlets_sdfg(sdfg)
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                propagate_memlets_scope(nested, state, state.scope_leaves())
         return 1

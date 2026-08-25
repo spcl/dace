@@ -13,6 +13,24 @@ from dace.memlet import Memlet
 from dace import typeclass
 
 
+def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
+    """Whether the vectorizer may rewrite ``node`` at all.
+
+    Two kinds are off limits and both are structural, not heuristic:
+
+    * a TOP-LEVEL tasklet -- one with no enclosing map scope. Vectorization rewrites a map body
+      into lanes; a tasklet outside every map has no lane dimension to be widened along, so any
+      rewrite of it is a rewrite of scalar program-level code.
+    * a non-Python tasklet. Its body is not a Python expression, so every pass that parses
+      ``code.as_string`` raises on it rather than declining. The scatter guard's trap
+      (``if (sym > 0) {{ std::abort(); }}``) is the one that reaches here, and it is top level as
+      well -- so this is belt and braces on a tasklet that must never be touched.
+    """
+    if state.entry_node(node) is None:
+        return False
+    return node.language == dace.dtypes.Language.Python
+
+
 def materialise_lane_id_index_tile(inner_state,
                                    expr: str,
                                    iter_vars: Tuple[str, ...],

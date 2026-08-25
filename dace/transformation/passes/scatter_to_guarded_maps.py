@@ -145,7 +145,15 @@ class ScatterToGuardedMaps(ppl.Pass):
         # index array can. Emitted first so the count symbols exist for the dispatcher below.
         joint_dup_syms: dict = {}
         for loop, write in joint_writes:
-            trap_sym = guard_joint_scatter_write(sdfg, loop, write, emit_trap=not self.emit_unparallelized_else_branch)
+            # The key array and the guard states belong to the sdfg that OWNS the loop, which is a
+            # NESTED one whenever the scatter sits inside a map body. Adding them to the root
+            # instead leaves the fill state naming a descriptor its own sdfg does not have
+            # ("Data descriptor _scatter_joint_key_... not defined in SDFG" -- npbench mandelbrot2
+            # under the canonicalize+vectorize pipeline).
+            trap_sym = guard_joint_scatter_write(_owning_sdfg(sdfg, loop),
+                                                 loop,
+                                                 write,
+                                                 emit_trap=not self.emit_unparallelized_else_branch)
             if trap_sym is not None:
                 joint_dup_syms.setdefault(id(loop), []).append(trap_sym)
 

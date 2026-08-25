@@ -36,6 +36,7 @@ from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
@@ -400,6 +401,36 @@ class WidenAccesses(ppl.Pass):
                 except Exception:  # noqa: BLE001 -- unparseable RHS -> token fallback
                     promoted |= {tok for tok in re.findall(r"\b[A-Za-z_]\w*\b", str(rhs)) if tok in names}
         return promoted
+
+    def staged_lane_dependent_index(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
+                                    nt_lane_dep: Set[str]) -> Optional[str]:
+        """The name of a per-lane gather index staged through a transient scalar, if any.
+
+        The per-lane fanout (:func:`emit_per_lane_symbol_fanout`) needs the Bypass form
+        ``__sym = idx[i]``: the iter-var must appear in the interstate assignment itself so lane
+        ``l`` can be given ``idx[i + l]``. When the read is instead staged -- ``idx[i]`` copied
+        into a scalar in one state, promoted by ``__sym = scalar`` on the edge out of it -- the
+        assignment carries no iter-var, every lane resolves to the same index, and the scatter
+        would write one element W times. The staging cannot be folded away either: the source is
+        typically a reshape ``View``, which an interstate assignment cannot read.
+
+        Returns the staged scalar so the caller can refuse the kernel instead of mis-lowering it.
+        """
+        index_symbols = self._index_promoted_names(inner_sdfg)
+        if not index_symbols:
+            return None
+        for state in inner_sdfg.states():
+            for edge in state.edges():
+                if not (isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode)):
+                    continue
+                if edge.dst.data not in index_symbols or edge.src.data not in nt_lane_dep:
+                    continue
+                desc = inner_sdfg.arrays.get(edge.dst.data)
+                if desc is None or not desc.transient:
+                    continue
+                if self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars):
+                    return edge.dst.data
+        return None
 
     def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...], nt_lane_dep: Set[str]) -> Set[str]:
         """Forward-propagate lane-dep through Tasklets AND AN -> AN copies to a fixed point. Two
@@ -833,6 +864,14 @@ class WidenAccesses(ppl.Pass):
             total += self._lower_reduction_copybacks(_state, nsdfg_node, inner_sdfg)
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
+            # A per-lane gather index that only reaches its subset through a staged scalar has
+            # no Bypass form to fan out, so every lane would share lane 0's index. Refuse the
+            # kernel here -- before any widening -- so the caller restores the pristine input and
+            # leaves it correct but un-tiled.
+            staged_index = self.staged_lane_dependent_index(inner_sdfg, iter_vars, nt_lane_dep)
+            if staged_index is not None:
+                raise VectorizeUnsupported(f"gather index staged through transient scalar ``{staged_index}`` in "
+                                           f"{inner_sdfg.name}: the per-lane fanout needs the ``__sym = idx[i]`` form")
             # Step 2: widen non-transient boundary memlets. SYMMETRIC over
             # gather/scatter edges.
             for name in sorted(nt_lane_dep):

@@ -49,6 +49,16 @@ def _pow_to_mul(base, exp):
     return out
 
 
+def _array_rank(arr: Any) -> int:
+    """How many indices ``arr`` must be given before it yields a scalar."""
+    rank = 0
+    sort = arr.sort()
+    while z3.is_array_sort(sort):
+        rank += 1
+        sort = sort.range()
+    return rank
+
+
 def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, Any]) -> Any:
     """Translate a sympy expression into a z3 integer term.
 
@@ -86,6 +96,8 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
     if isinstance(expr, symbolic.Subscript):
         arr_name = str(expr.args[0])
         rank = len(expr.args) - 1
+        if rank < 1:
+            return None
         if arr_name not in arr_cache:
             # Build a nested array type of the right rank; rank 1 is the common case.
             range_sort = z3.IntSort()
@@ -93,7 +105,11 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
                 range_sort = z3.ArraySort(z3.IntSort(), range_sort)
             arr_cache[arr_name] = z3.Array(arr_name, z3.IntSort(), range_sort)
         arr = arr_cache[arr_name]
-        if rank < 1:
+        # The cache is keyed by NAME, so the same array read at two different ranks would apply
+        # this rank's Select chain to the other's sort. z3 does not reject the ill-sorted term --
+        # it SEGFAULTS inside ``Z3_solver_assert``, taking the interpreter with it. Refuse instead:
+        # the two reads cannot be related here anyway.
+        if _array_rank(arr) != rank:
             return None
         # Nested Select for multi-dimensional subscripts.
         cur = arr
@@ -251,7 +267,10 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
         end_z = z3.IntVal(int(end))
     else:
         end_z = _sympy_to_z3(end, {}, {})
-    if start_z is None or end_z is None:
+    # Both bounds must be INTEGER terms. A bound that translated to an array read (or anything
+    # else non-arithmetic) builds an ill-sorted ``i >= start``, and z3 answers that by aborting the
+    # process inside ``Z3_solver_assert`` rather than raising -- so it has to be caught here.
+    if start_z is None or end_z is None or not z3.is_int(start_z) or not z3.is_int(end_z):
         return []
     try:
         step_v = int(symbolic.evaluate(step, {}))
@@ -281,6 +300,11 @@ def _prove_unsat(antecedent: Any, consequent: Any, timeout_ms: int = DEFAULT_TIM
     """Return ``True`` if ``antecedent => consequent`` is valid (consequent holds
     for every model of antecedent), ``False`` if a counter-model exists, and
     ``None`` if the solver gives up or the encoding failed."""
+    # An ill-sorted term reaches z3 as a process ABORT, not an exception, so every query is
+    # sort-checked before the solver sees it. Callers build these from translated sympy, where a
+    # single untranslatable subterm can leave a non-boolean behind.
+    if not (z3.is_bool(antecedent) and z3.is_bool(consequent)):
+        return None
     s = z3.Solver()
     s.set('timeout', timeout_ms)
     s.add(antecedent)
@@ -469,7 +493,10 @@ def prove_disjoint_access_boxes(box1: List[Any],
         sym_cache[itervar] = i2
         a2 = _sympy_to_z3(lo2, sym_cache, arr_cache)
         b2 = _sympy_to_z3(hi2, sym_cache, arr_cache)
-        if a1 is None or b1 is None or a2 is None or b2 is None:
+        # Every bound must be an INTEGER term. A partially-applied array read comes back as an
+        # array, and comparing one with ``<=`` builds an ill-sorted term that segfaults z3 rather
+        # than raising, so the check has to happen before the term is built, not inside the solver.
+        if any(t is None or not z3.is_int(t) for t in (a1, b1, a2, b2)):
             return None
         intersects += [a1 <= b2, a2 <= b1]
 

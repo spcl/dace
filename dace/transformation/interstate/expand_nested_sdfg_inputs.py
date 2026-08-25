@@ -63,6 +63,12 @@ def _rewrite_scalar_reads_in_tasklets(inner_sdfg: SDFG, inner_name: str, outer_n
     distinct ``inner_name``; the memlet already names the widened ``outer_name`` descriptor."""
     for state in inner_sdfg.states():
         for tnode in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+            if tnode.language != dtypes.Language.Python:
+                # The code below is parsed as PYTHON. A C++ tasklet is not, and the scatter guard's
+                # trap (``if (sym > 0) { std::abort(); }``) raises SyntaxError here rather than
+                # being skipped. Nothing to rewrite either way: a non-Python tasklet reads its
+                # symbols directly, not through this connector-folding path.
+                continue
             if inner_name in tnode.in_connectors:
                 continue  # already a dataflow read, not a symbolic one
             loads = {
@@ -714,12 +720,18 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # Per user direction 2026-06-10: all symbols in any array's shape/strides/offsets must be
         # added to the inner NSDFG (if absent) AND bound in symbol_mapping (identity default). Use
         # ``Data.free_symbols`` (aggregates shape+strides+offset) not per-field walking.
+        #
+        # A symbol the inner SDFG DEFINES itself is excluded: a scope-lifetime transient may be
+        # sized by an inner loop iterator (a triangular reduction buffer ``_red_buf[M - it - 1]``
+        # inside the ``it`` loop). Such a name has no binding in the caller's scope, so putting it
+        # in ``symbol_mapping`` makes codegen pass an undeclared variable at the call site.
+        inner_defined = set(inner_sdfg.symbols.keys()) - {str(s) for s in inner_sdfg.free_symbols}
         for inner_arr_name, inner_desc in inner_sdfg.arrays.items():
             for sym in inner_desc.free_symbols:
                 sym_name = str(sym)
                 if sym_name in nsdfg_node.in_connectors or sym_name in nsdfg_node.out_connectors:
                     continue
-                if sym_name in inner_sdfg.constants_prop:
+                if sym_name in inner_sdfg.constants_prop or sym_name in inner_defined:
                     continue
                 if sym_name not in nsdfg_node.symbol_mapping:
                     introduced_symbols.add(sym_name)

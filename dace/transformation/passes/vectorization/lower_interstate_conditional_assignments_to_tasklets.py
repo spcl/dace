@@ -5,6 +5,7 @@ import dace
 from dace import SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
+from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 
@@ -55,8 +56,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             free_conditional_symbols: Dict[str, None] = {}
             for state in cfg.nodes():
                 for node in state.nodes():
-                    if isinstance(node, nodes.Tasklet) and node.label.startswith(
-                            self.conditional_assignment_tasklet_prefix):
+                    if (isinstance(node, nodes.Tasklet) and is_vectorizable_tasklet(state, node)
+                            and node.label.startswith(self.conditional_assignment_tasklet_prefix)):
                         expr = symbolic.SymExpr(node.code.as_string.split(" = ")[-1])
                         syms = expr.free_symbols
                         # If not in inconnectors then it is a symbol

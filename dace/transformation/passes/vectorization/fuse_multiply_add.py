@@ -20,6 +20,7 @@ import dace
 from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
+from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
 from dace.transformation import pass_pipeline as ppl
 from ordered_set import OrderedSet
 
@@ -82,7 +83,7 @@ class FuseMultiplyAdd(ppl.Pass):
 
     def _fuse_in_state(self, sdfg: dace.SDFG, state: SDFGState) -> int:
         fused = 0
-        for mul in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+        for mul in [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and is_vectorizable_tasklet(state, n)]:
             m = _binop_tasklet(mul, '*')
             if m is None:
                 continue

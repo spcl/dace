@@ -1022,7 +1022,12 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
                 continue
 
             edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
-            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+            # An EMPTY memlet is an ordering edge: it sequences a WAR/WAW hazard and moves no
+            # data, so it contributes nothing to what the connector transfers. Collecting it
+            # anyway folds a subset-less memlet into the union, which falls back to the whole
+            # array -- a per-iteration border write ``a[i]`` came out as ``a[0:Max(i, N-1)+1]``
+            # with volume 2, and the vectorizer then read the ordering edge as dataflow.
+            border_memlets[direction][node.label].extend(edge.data for edge in edges if not edge.data.is_empty())
 
 
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
@@ -1536,19 +1541,26 @@ def _propagate_node(dfg_state, node):
 
     for edge in external_edges:
         if edge.data.is_empty():
-            new_memlet = Memlet()
-        else:
-            if defined_variables is None:
-                defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys()
-            internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
-            new_memlet = propagate_memlet(dfg_state,
-                                          aligned_memlet,
-                                          node,
-                                          True,
-                                          connector=geteconn(edge),
-                                          defined_variables=defined_variables)
-        edge.data = new_memlet
+            edge.data = Memlet()
+            continue
+        if defined_variables is None:
+            defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys()
+        connector = geteconn(edge)
+        # An empty internal edge is an ORDERING edge, and ``propagate_memlet`` answers Memlet()
+        # for one. Taking it as the seed collapses the external DATA edge to a connector with no
+        # array behind it, which later reads as a Code->Code connector of unknowable type. Seed
+        # from a real data edge instead; when every internal edge on this connector only orders,
+        # there is nothing to derive and the external memlet stands as it is.
+        internal_edge = next((e for e in internal_edges if geticonn(e) == connector and not e.data.is_empty()), None)
+        if internal_edge is None:
+            continue
+        aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
+        edge.data = propagate_memlet(dfg_state,
+                                     aligned_memlet,
+                                     node,
+                                     True,
+                                     connector=connector,
+                                     defined_variables=defined_variables)
 
 
 def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
