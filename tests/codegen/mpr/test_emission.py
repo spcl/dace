@@ -390,5 +390,34 @@ def test_complex_containers_render_in_both_dialects(language):
     assert np.allclose(b, a * 2.0)
 
 
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_cholesky_renders_as_loops_with_no_library(language):
+    """``np.linalg.cholesky`` reaches a library node that only vendor BLAS implements.
+
+    MPR renders it through the pure expansion instead, so the output links against nothing. The
+    provenance comment is asserted too: a factorization rendered as anonymous loops is exactly what
+    the comment exists to prevent.
+    """
+
+    @dace.program
+    def factorize(A: dace.float64[8, 8], L: dace.float64[8, 8]):
+        L[:] = np.linalg.cholesky(A)
+
+    sdfg = factorize.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_cholesky_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+    assert '// Cholesky factorization' in rendering.code, 'the expansion rendered without its provenance comment'
+
+    matrix = np.random.rand(8, 8)
+    a = matrix @ matrix.T + 8 * np.eye(8)
+    result = np.zeros((8, 8))
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'A': a.copy(),
+        'L': result
+    })
+    assert np.allclose(result, np.linalg.cholesky(a))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

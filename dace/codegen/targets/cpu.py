@@ -1203,9 +1203,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment.
             alignment = '' if variable_length_array else '  DACE_ALIGN(64)'
+            # ``alignas`` says the same thing without a DaCe macro, and is a keyword in both C++11
+            # and C23, so a standalone unit that includes no DaCe header can still be aligned.
+            prefix = ''
+            if alignment and mpr_lowering.standalone():
+                alignment, prefix = '', 'alignas(64) '
             if node.setzero and not variable_length_array:
                 declaration_stream.write(
-                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
+                    "%s%s %s[%s]%s = {0};\n" % (prefix, nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                     cfg,
                     state_id,
                     node,
@@ -1213,7 +1218,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
+                "%s%s %s[%s]%s;\n" % (prefix, nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
                 cfg,
                 state_id,
                 node,
