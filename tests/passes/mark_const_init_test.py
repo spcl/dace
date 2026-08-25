@@ -599,21 +599,24 @@ def test_symbolic_fill_map_never_becomes_const_runtime():
 
 
 def _same_state_fill_sdfg(name):
-    """A constant fill whose consumer lives in the same state (what ``apply_gpu_transformations`` produces)."""
+    """A constant fill whose consumer lives in the same state, built directly.
+
+    State fusion is what used to produce this shape, so which offloading path runs decided whether
+    the case under test existed at all; the shape is the point, so it is spelled out here.
+    """
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [8], dace.float64, transient=True)
     sdfg.add_array('B', [8], dace.float64)
-    s1 = sdfg.add_state('init')
-    s2 = sdfg.add_state('use')
-    sdfg.add_edge(s1, s2, dace.InterstateEdge())
-    s1.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
-    s2.add_mapped_tasklet('use',
-                          dict(i='0:8'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp * 2',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
-    sdfg.apply_gpu_transformations()  # fuses init into use; pure SDFG rewrite, needs no GPU
+    state = sdfg.add_state('fill_and_use')
+    state.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    filled = next(n for n in state.data_nodes() if n.data == 'A')
+    state.add_mapped_tasklet('use',
+                             dict(i='0:8'),
+                             dict(inp=dace.Memlet('A[i]')),
+                             'out = inp * 2',
+                             dict(out=dace.Memlet('B[i]')),
+                             external_edges=True,
+                             input_nodes={'A': filled})
     sdfg.validate()
     return sdfg
 
