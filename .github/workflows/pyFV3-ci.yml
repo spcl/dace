@@ -73,20 +73,15 @@ jobs:
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
-        uv venv .venv
-        export VIRTUAL_ENV="$PWD/.venv"
-        export PATH="$VIRTUAL_ENV/bin:$PATH"
-        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
-        echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
-        uv pip install ./pyFV3[ndsl,test]
-        uv pip install ./dace
+        uv pip install --system ./pyFV3[ndsl,test]
+        uv pip install --system ./dace
 
     - name: Print versions
       run: |
         gcc --version
         python --version
         uv --version
-        uv pip list
+        uv pip list --system
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)
