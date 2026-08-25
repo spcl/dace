@@ -621,6 +621,9 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
             with mpr_lowering.provenance_scope(provenance):
                 objects = codegen.generate_code(prepared, validate=validate)
                 body = frame_object(objects, sdfg.name).clean_code
+                # Type names reach the text from the entry signature and from declarations, neither
+                # of which goes through an expression printer, so the rename runs over the whole unit.
+                body = mpr_lowering.rewrite_ctypes(body, dialect)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
     return Rendering(code, prepared)

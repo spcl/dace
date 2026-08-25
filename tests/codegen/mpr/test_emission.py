@@ -365,5 +365,30 @@ def test_gpu_schedules_are_refused_with_a_reason():
         mpr(sdfg)
 
 
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_complex_containers_render_in_both_dialects(language):
+    """A complex-typed CONTAINER, not just a complex expression inside a tasklet.
+
+    The element type reaches the text through the entry signature and the transient declarations,
+    which no expression printer sees, so this is the case a lowering table alone does not cover.
+    """
+
+    @dace.program
+    def scale(a: dace.complex128[16], b: dace.complex128[16]):
+        b[:] = a * 2.0
+
+    sdfg = scale.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_complex_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    expected = 'double _Complex' if language == 'c' else 'std::complex<double>'
+    assert expected in rendering.code, f'the container type is not spelled {expected}'
+    assert_standalone(rendering.code, sdfg.name, language=language)
+
+    a = np.random.rand(16) + 1j * np.random.rand(16)
+    b = np.zeros(16, dtype=np.complex128)
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {'a': a, 'b': b})
+    assert np.allclose(b, a * 2.0)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -682,6 +682,28 @@ def lowering_for(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialec
 _QUALIFIED_NAME = re.compile(r'(?:::)?\bdace::(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\b')
 
 
+def rewrite_ctypes(code: str, dialect: Optional[Dialect] = None) -> str:
+    """Spell every DaCe ctype in ``code`` the standalone way.
+
+    Type names reach the emitted text from places no expression printer sees -- the entry
+    signature, transient declarations, casts -- so this runs over the finished unit as well as over
+    hand-written tasklet bodies. Purely a rename, from the same table
+    (:data:`CTYPE_RENAMES` / :data:`C_CTYPE_RENAMES`) both callers share, so a container's type and
+    a tasklet's cast cannot be spelled differently.
+
+    :param code: emitted text, of any size.
+    :param dialect: which standalone dialect emitted it; ambient when omitted.
+    :returns: the text with DaCe type names replaced.
+    :raises NotImplementedError: if the text names a type with no standalone spelling.
+    """
+    for qualified, reason in UNSUPPORTED_CTYPES.items():
+        if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
+            raise NotImplementedError(f'MPR cannot emit the type {qualified!r}: {reason}')
+    for qualified, plain in tables_for(dialect).ctype_renames.items():
+        code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
+    return code
+
+
 def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
 
@@ -702,11 +724,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     :raises NotImplementedError: if the body names a type or function this dialect cannot express.
     """
     tables = tables_for(dialect)
-    for qualified, plain in tables.ctype_renames.items():
-        code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
-    for qualified, reason in UNSUPPORTED_CTYPES.items():
-        if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
-            raise NotImplementedError(f'MPR cannot emit the type {qualified!r}: {reason}')
+    code = rewrite_ctypes(code, dialect)
 
     if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
         code = c_scan_identities(code)
