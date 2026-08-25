@@ -1589,9 +1589,26 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.data.Stream)
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
+
+            # A state machine needs a barrier between its states wherever it runs: a nested SDFG
+            # with several states (or control flow) below the kernel still synchronizes between
+            # them. An SDFG that is one lone state has no state transition to order, so below the
+            # kernel's own SDFG it emits no barrier -- it may run inside a single-thread-guarded
+            # component, where a barrier is reached by one thread and never releases. Its writes
+            # are ordered by the enclosing state's own barrier instead.
+            lone_state = sdfg.number_of_nodes() == 1 and isinstance(sdfg.nodes()[0], SDFGState)
+            can_sync = not (self._below_toplevel_sdfg and lone_state)
+
             for stream in streams_to_reset:
                 ptrname = self.ptr(stream.data, stream.desc(sdfg), sdfg)
                 callsite_stream.write("{}.reset();".format(ptrname), cfg, state.block_id)
+
+            # The reset rewinds the queue head for the whole grid, and every block runs it. The
+            # barrier ending the previous state releases the blocks, it does not hold them in step,
+            # so a block entering late rewinds the head under a block that already pushed -- those
+            # slots are handed out twice, while the consumer's count keeps counting every push.
+            if streams_to_reset and can_sync:
+                callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -1643,14 +1660,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            # A state machine needs a barrier between its states wherever it runs: a nested SDFG
-            # with several states (or control flow) below the kernel still synchronizes between
-            # them. An SDFG that is one lone state has no state transition to order, so below the
-            # kernel's own SDFG it emits no barrier -- it may run inside a single-thread-guarded
-            # component, where a barrier is reached by one thread and never releases. Its writes
-            # are ordered by the enclosing state's own barrier instead.
-            lone_state = sdfg.number_of_nodes() == 1 and isinstance(sdfg.nodes()[0], SDFGState)
-            if not (self._below_toplevel_sdfg and lone_state):
+            if can_sync:
                 callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated
