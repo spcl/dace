@@ -35,6 +35,29 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     return sdfg
 
 
+def test_cholesky_pure_refuses_a_slice_of_a_higher_rank_array():
+    """A connector that is a slice of a bigger array is refused, not read as if it were contiguous.
+
+    ``Cholesky.validate`` returns the caller's whole descriptor alongside a SQUEEZED shape, so the
+    slice's own strides are not recoverable in the expansion. No implementation supports this (the
+    vendor path fails with a bare ``TypeError`` about stride length); the pure one at least says
+    which connector and why.
+    """
+    size = 5
+    sdfg = dace.SDFG('linalg_cholesky_pure_sliced')
+    sdfg.add_array('xin', [2, size, size], dace.float64)
+    sdfg.add_array('xout', [2, size, size], dace.float64)
+    state = sdfg.add_state('dataflow')
+    node = Cholesky('cholesky', lower=True)
+    node.implementation = 'pure'
+    subset = '1, 0:%d, 0:%d' % (size, size)
+    state.add_memlet_path(state.add_read('xin'), node, dst_conn='_a', memlet=Memlet.simple('xin', subset))
+    state.add_memlet_path(node, state.add_write('xout'), src_conn='_b', memlet=Memlet.simple('xout', subset))
+
+    with pytest.raises(NotImplementedError, match='rank-2 slice of a rank-3'):
+        sdfg.expand_library_nodes()
+
+
 @pytest.mark.parametrize("implementation, dtype, storage", [
     pytest.param("pure", dace.float32, dace.StorageType.Default),
     pytest.param("pure", dace.float64, dace.StorageType.Default),

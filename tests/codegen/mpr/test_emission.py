@@ -419,5 +419,30 @@ def test_cholesky_renders_as_loops_with_no_library(language):
     assert np.allclose(result, np.linalg.cholesky(a))
 
 
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_linear_solve_renders_as_loops_with_no_library(language):
+    """``np.linalg.solve`` is the other corpus call whose node only vendor BLAS implemented."""
+
+    @dace.program
+    def solve(A: dace.float64[6, 6], B: dace.float64[6, 3], X: dace.float64[6, 3]):
+        X[:] = np.linalg.solve(A, B)
+
+    sdfg = solve.to_sdfg(simplify=True)
+    sdfg.name = 'mpr_solve_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+    assert '// solve the linear system' in rendering.code, 'the expansion rendered without its provenance comment'
+
+    a = np.random.rand(6, 6) + 6 * np.eye(6)
+    b = np.random.rand(6, 3)
+    x = np.zeros((6, 3))
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'A': a.copy(),
+        'B': b.copy(),
+        'X': x
+    })
+    assert np.allclose(x, np.linalg.solve(a, b))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

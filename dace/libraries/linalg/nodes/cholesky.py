@@ -9,6 +9,7 @@ from dace import dtypes
 
 from dace import Memlet
 from dace.libraries.lapack import Potrf
+from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
@@ -113,7 +114,7 @@ class ExpandCholeskyPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        inp_desc, inp_shape, out_desc, _ = node.validate(parent_sdfg, parent_state)
+        inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
         dtype = inp_desc.dtype
         n = inp_shape[0]
         lower = node.lower
@@ -138,7 +139,11 @@ class ExpandCholeskyPure(ExpandTransformation):
             for i, j in dace.map[0:n, 0:n]:
                 _b[i, j] = factor[i, j] if lower else factor[j, i]
 
-        return cholesky_pure.to_sdfg(simplify=True)
+        nsdfg = cholesky_pure.to_sdfg(simplify=True)
+        # See ``restride``: a connector may be a strided slice of a bigger array, and a contiguous
+        # reading of it is silently wrong rather than an error.
+        restride(nsdfg, (('_a', inp_shape, inp_desc.strides), ('_b', out_shape, out_desc.strides)), dtype)
+        return nsdfg
 
 
 @dace.library.expansion

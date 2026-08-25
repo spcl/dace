@@ -17,11 +17,40 @@ from dace.libraries.blas import environments as blas_environments
 from ordered_set import OrderedSet
 
 
+def restride(nsdfg, connectors, dtype):
+    """Give ``nsdfg``'s connector arrays the strides the caller's containers actually have.
+
+    A pure expansion built from a ``dace.program`` gets contiguous strides, which is wrong whenever
+    the library node reads a strided slice of a bigger array -- the elements are then read from the
+    wrong addresses, and the result is silently numeric garbage rather than an error.
+
+    :param nsdfg: the expansion SDFG, modified in place.
+    :param connectors: ``(name, shape, strides)`` per connector.
+    :param dtype: element type of every connector.
+    """
+    for name, shape, strides in connectors:
+        if len(strides) != len(shape):
+            # The caller passed a slice of a higher-rank array whose descriptor was never squeezed
+            # down to the connector's rank, so which strides belong to the slice is not recoverable
+            # here. Refuse: reading it as contiguous would be numeric garbage, not an error.
+            raise NotImplementedError('%s is a rank-%d slice of a rank-%d container; pass it as an array of its '
+                                      'own rank.' % (name, len(shape), len(strides)))
+        transient = nsdfg.arrays[name].transient
+        nsdfg.remove_data(name, validate=False)
+        nsdfg.add_array(name, shape, dtype=dtype, strides=strides, transient=transient)
+
+
 def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
     (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n, rhs,
      storage) = arr_desc
+
+    # The vendor path stages the right-hand side through a rank-2 ``_binout``, which does not match
+    # a rank-1 ``_bout``. Refused rather than silently reshaped; the pure expansion handles it.
+    if len(out_shape) == 1:
+        raise NotImplementedError('linalg.solve with a single right-hand side is only implemented by the pure '
+                                  'expansion; pass it as an (n, 1) matrix to use %s.' % implementation)
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
@@ -108,6 +137,87 @@ class ExpandSolvePure(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandSolvePure(ExpandTransformation):
+    """``A x = b`` as loops and tasklets, with no library behind it.
+
+    Gaussian elimination with partial pivoting, then back substitution -- the same thing LAPACK's
+    ``?GESV`` does, spelled so that MPR can render it into a translation unit that links against
+    nothing. Correct rather than fast; a build with MKL or OpenBLAS should keep using them.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        (shape_ain, dtype, strides_ain, shape_bin, _, strides_bin, shape_out, _, strides_out, n, rhs,
+         _) = node.validate(parent_sdfg, parent_state)
+
+        @dace.program
+        def gesv_core(a: dtype[n, n], x: dtype[n, rhs]):
+            for k in range(n):
+                pivot = k
+                for i in range(k + 1, n):
+                    if abs(a[i, k]) > abs(a[pivot, k]):
+                        pivot = i
+                if pivot != k:
+                    for j in range(n):
+                        swap_a = a[k, j]
+                        a[k, j] = a[pivot, j]
+                        a[pivot, j] = swap_a
+                    for j in range(rhs):
+                        swap_x = x[k, j]
+                        x[k, j] = x[pivot, j]
+                        x[pivot, j] = swap_x
+                for i in range(k + 1, n):
+                    factor = a[i, k] / a[k, k]
+                    a[i, k] = 0
+                    for j in range(k + 1, n):
+                        a[i, j] = a[i, j] - factor * a[k, j]
+                    for j in range(rhs):
+                        x[i, j] = x[i, j] - factor * x[k, j]
+            for step in range(n):
+                i = n - 1 - step
+                for j in range(rhs):
+                    total = x[i, j]
+                    for m in range(i + 1, n):
+                        total = total - a[i, m] * x[m, j]
+                    x[i, j] = total / a[i, i]
+
+        # ``overwrite`` is always False, so the elimination runs on a copy; a single right-hand side
+        # is widened to one column so the core has one shape to handle rather than two.
+        if len(shape_bin) == 1:
+
+            @dace.program
+            def solve_pure(_ain: dtype[n, n], _bin: dtype[n], _bout: dtype[n]):
+                work = dace.define_local([n, n], dtype)
+                work[:] = _ain
+                columns = dace.define_local([n, rhs], dtype)
+                for i in dace.map[0:n]:
+                    columns[i, 0] = _bin[i]
+                gesv_core(work, columns)
+                for i in dace.map[0:n]:
+                    _bout[i] = columns[i, 0]
+        else:
+
+            @dace.program
+            def solve_pure(_ain: dtype[n, n], _bin: dtype[n, rhs], _bout: dtype[n, rhs]):
+                work = dace.define_local([n, n], dtype)
+                work[:] = _ain
+                columns = dace.define_local([n, rhs], dtype)
+                columns[:] = _bin
+                gesv_core(work, columns)
+                _bout[:] = columns
+
+        nsdfg = solve_pure.to_sdfg(simplify=True)
+        # ``to_sdfg`` gives the connectors contiguous strides, but they are VIEWS of the caller's
+        # containers and may be strided slices of a larger array. Restating them is what makes the
+        # expansion read the same elements the vendor path does.
+        restride(nsdfg, (('_ain', shape_ain, strides_ain), ('_bin', shape_bin, strides_bin),
+                         ('_bout', shape_out, strides_out)), dtype)
+        return nsdfg
+
+
+@dace.library.expansion
 class ExpandSolveOpenBLAS(ExpandTransformation):
 
     environments = [blas_environments.openblas.OpenBLAS]
@@ -141,7 +251,12 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
 class Solve(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"OpenBLAS": ExpandSolveOpenBLAS, "MKL": ExpandSolveMKL, "cuSolverDn": ExpandSolveCuSolverDn}
+    implementations = {
+        "pure": ExpandSolvePure,
+        "OpenBLAS": ExpandSolveOpenBLAS,
+        "MKL": ExpandSolveMKL,
+        "cuSolverDn": ExpandSolveCuSolverDn
+    }
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False)
@@ -221,5 +336,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         if desc_bin is desc_out:
             raise ValueError("Overwriting input B is not supported")
 
+        # A single right-hand side is a VECTOR, whose squeezed shape has no second entry; it is one
+        # column. Reading shape_out[1] unconditionally raised IndexError for that case.
         return (shape_ain, desc_ain.dtype, strides_ain, shape_bin, desc_bin.dtype, strides_bin, shape_out,
-                desc_out.dtype, strides_out, shape_out[0], shape_out[1], desc_ain.storage)
+                desc_out.dtype, strides_out, shape_out[0], shape_out[1] if len(shape_out) > 1 else 1, desc_ain.storage)
