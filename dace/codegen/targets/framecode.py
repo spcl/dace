@@ -222,7 +222,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 2:
+        # NOTE: GPU_TX_MARKERS only emits NVTX/rocTX ranges and never writes to __state->report,
+        # so skip the report machinery when it is the only instrumentation in use.
+        if (len(self._dispatcher.instrumentation) > 2
+                and any(type(i).__name__ != 'GPUTXMarkersProvider'
+                        for i in self._dispatcher.instrumentation.values() if i is not None)):
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -252,7 +256,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and len(self._dispatcher.instrumentation) > 2
+                and any(type(i).__name__ != 'GPUTXMarkersProvider'
+                        for i in self._dispatcher.instrumentation.values() if i is not None)):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -362,7 +368,9 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and len(self._dispatcher.instrumentation) > 2
+                and any(type(i).__name__ != 'GPUTXMarkersProvider'
+                        for i in self._dispatcher.instrumentation.values() if i is not None)):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
