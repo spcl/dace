@@ -1236,20 +1236,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
-            # Allocate in each OpenMP thread
-            aligned = ''
-            if use_aligned_operator_new(nodedesc):
-                align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f'(std::align_val_t({align_value}))'
-
+            # Allocate in each OpenMP thread, through the same statement builder as CPU_Heap so a
+            # generator that spells allocation differently (MPR's C dialect: aligned_alloc) is not
+            # bypassed by this branch.
             allocation_stream.write(
-                """
-                #pragma omp parallel
-                {{
-                    {name} = new {aligned}{ctype} [{arrsize}];""".format(aligned=aligned,
-                                                                         ctype=nodedesc.dtype.ctype,
-                                                                         name=alloc_name,
-                                                                         arrsize=cpp.sym2cpp(arrsize)),
+                '\n#pragma omp parallel\n{\n' + self.heap_alloc_stmt(alloc_name,
+                                                                     nodedesc.dtype.ctype,
+                                                                     cpp.sym2cpp(arrsize),
+                                                                     nodedesc.alignment,
+                                                                     sdfg=sdfg,
+                                                                     nodedesc=nodedesc,
+                                                                     data_name=node.data),
                 cfg,
                 state_id,
                 node,
@@ -1297,18 +1294,8 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg,
                                   state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
-            # Deallocate in each OpenMP thread
-            if isinstance(nodedesc, data.Array):
-                # Aligned pairing + trivial-destructibility guard as above.
-                if use_aligned_operator_new(nodedesc):
-                    align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                                   f"\"aligned heap deallocation skips destructors\"); "
-                                   f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));")
-                else:
-                    delete_stmt = f"delete[] {alloc_name};"
-            else:
-                delete_stmt = f"delete {alloc_name};"
+            # Deallocate in each OpenMP thread, through the same statement builder as the allocation.
+            delete_stmt = self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc)
             callsite_stream.write(
                 f"""#pragma omp parallel
                 {{

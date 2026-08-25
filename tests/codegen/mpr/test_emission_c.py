@@ -522,5 +522,52 @@ def test_the_cpp_gate_still_allows_the_cpp_constructs():
         mpr_module.verify(line + '\n', 'probe', mpr_lowering.Dialect.STANDALONE)
 
 
+def thread_local_sdfg(name: str) -> dace.SDFG:
+    """A parallel map with a ``CPU_ThreadLocal`` transient, which is allocated per OpenMP thread."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [64], dace.float64)
+    sdfg.add_array('b', [64], dace.float64)
+    sdfg.add_array('scratch', [8],
+                   dace.float64,
+                   transient=True,
+                   storage=dace.StorageType.CPU_ThreadLocal,
+                   lifetime=dace.AllocationLifetime.SDFG)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('outer', {'i': '0:64'}, schedule=dace.ScheduleType.CPU_Multicore)
+    stage = state.add_tasklet('stage', {'i_'}, {'o'}, 'o = i_ * 2.0')
+    reread = state.add_tasklet('reread', {'i_'}, {'o'}, 'o = i_ + 1.0')
+    scratch = state.add_access('scratch')
+    state.add_memlet_path(state.add_access('a'), entry, stage, dst_conn='i_', memlet=dace.Memlet('a[i]'))
+    state.add_edge(stage, 'o', scratch, None, dace.Memlet('scratch[0]'))
+    state.add_edge(scratch, None, reread, 'i_', dace.Memlet('scratch[0]'))
+    state.add_memlet_path(reread, exit_node, state.add_access('b'), src_conn='o', memlet=dace.Memlet('b[i]'))
+    return sdfg
+
+
+def test_thread_local_storage_allocates_with_aligned_alloc():
+    """``CPU_ThreadLocal`` builds its allocation on its own branch, which once bypassed the C form.
+
+    The branch emitted a ``new``-expression directly instead of going through the statement builder
+    every other storage uses, so C rendering produced a C++ allocation that the gate caught but
+    could not spell. Both dialects are asserted, because the fix must not move the C++ output.
+    """
+    rendering = render_sdfg(thread_local_sdfg('mpr_c_threadlocal'), validate=False, language='c')
+    assert 'aligned_alloc(64,' in rendering.code, 'the thread-local allocation did not reach the C form'
+    assert 'free(scratch)' in rendering.code, 'the matching free did not reach the C form'
+    assert '#pragma omp threadprivate(scratch)' in rendering.code, 'the storage stopped being thread-local'
+    assert_standalone(rendering.code, 'mpr_c_threadlocal', language='c')
+
+    cpp = render_sdfg(thread_local_sdfg('mpr_cpp_threadlocal'), validate=False).code
+    assert 'new (std::align_val_t(64))' in cpp, 'the C++ allocation changed shape'
+
+    a = np.random.rand(64)
+    b = np.zeros(64)
+    call_standalone(build_standalone(rendering.code, 'mpr_c_threadlocal', language='c'), rendering.sdfg, {
+        'a': a,
+        'b': b
+    })
+    assert np.allclose(b, a * 2.0 + 1.0)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
