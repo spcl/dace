@@ -82,7 +82,11 @@ def map_over_fill() -> dace.SDFG:
     fill = FillLibraryNode('fill', value=1.0)
     state.add_node(fill)
     state.add_nedge(entry, fill, dace.Memlet())
-    state.add_memlet_path(fill, exit_node, state.add_write('B'), src_conn='_fill_out', memlet=dace.Memlet('B[i, 0:16]'))
+    state.add_memlet_path(fill,
+                          exit_node,
+                          state.add_write('B'),
+                          src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet('B[i, 0:16]'))
     sdfg.validate()
     return sdfg
 
