@@ -61,7 +61,7 @@ def _build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:
                                 src_conn='_b',
                                 memlet=dace.Memlet('b_out[__j, __i]'))
 
-    nsdfg = state.add_nested_sdfg(inner, set(), {'a_in': None, 'b_out': None}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a_in": None, "b_out": None}, symbol_mapping={"__k": "__k"})
     a_write = state.add_write('A')
     b_write = state.add_write('B')
     state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
@@ -172,3 +172,83 @@ def test_inner_kernel_with_internal_inout_node_lowers_clean():
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
+
+
+def _build_inner_kernel_with_range(inner_range: str) -> dace.SDFG:
+    """Outer ``GPU_Device`` map over ``0:K`` wrapping one inner ``GPU_Device`` map over ``inner_range``.
+
+    :param inner_range: Range string for the inner kernel's single parameter ``__j``.
+    """
+    K = dace.symbol('K', dtype=dace.int32)
+
+    sdfg = dace.SDFG('inner_range_kernel')
+    sdfg.add_array('A', [K, 32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('vertical', dict(__k='0:K'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    inner = dace.SDFG('nested')
+    inner.add_symbol('__k', dace.int32)
+    inner.add_array('a_out', [32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('root', is_start_block=True)
+    me, mx = inner_state.add_map('horizontal', dict(__j=inner_range), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tasklet = inner_state.add_tasklet('w', {}, {'_a': dace.float64}, '_a = 1.0')
+    inner_state.add_memlet_path(me, tasklet, memlet=dace.Memlet())
+    inner_state.add_memlet_path(tasklet,
+                                mx,
+                                inner_state.add_write('a_out'),
+                                src_conn='_a',
+                                memlet=dace.Memlet('a_out[__j]'))
+
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a_out': None}, symbol_mapping={'__k': '__k'})
+    state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
+    state.add_memlet_path(nsdfg, outer_mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[__k, 0:32]'))
+    return sdfg
+
+
+def _absorbed_range(sdfg: dace.SDFG, param: str) -> tuple:
+    """The kernel map's range for ``param`` after lowering."""
+    kernel = next(n for state in sdfg.states() for n in state.nodes()
+                  if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+    return kernel.map.range[kernel.map.params.index(param)]
+
+
+def _guard_conditions(sdfg: dace.SDFG) -> list:
+    """Condition strings of every ``ConditionalBlock`` branch in the hierarchy."""
+    return [
+        branch[0].as_string for s in sdfg.all_sdfgs_recursive() for block in s.all_control_flow_blocks()
+        if isinstance(block, dace.sdfg.state.ConditionalBlock) for branch in block.branches if branch[0] is not None
+    ]
+
+
+def test_absorbed_range_keeps_the_inner_lower_bound():
+    """A kernel starting above zero must not be widened down to an origin no map asked for."""
+    sdfg = _build_inner_kernel_with_range('5:10')
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    begin, end, _ = _absorbed_range(sdfg, '__j')
+    assert begin == 5, f'lower bound widened to {begin}, launching iterations no inner map owned'
+    assert end == 9, end
+    sdfg.validate()
+
+
+def test_bound_check_reproduces_a_strided_range():
+    """A strided inner map must not let the iterations it skips into its body."""
+    sdfg = _build_inner_kernel_with_range('0:10:2')
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    conditions = _guard_conditions(sdfg)
+    assert len(conditions) == 1, conditions
+    # The step is what distinguishes the owned iterations from the absorbed unit-step range.
+    assert '% 2' in conditions[0], f'guard {conditions[0]!r} admits the iterations the step skips'
+    sdfg.validate()
+
+
+def test_unit_step_bound_check_stays_a_plain_interval():
+    """The step term is only emitted when there is a step to check."""
+    sdfg = _build_inner_kernel_with_range('0:10')
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    conditions = _guard_conditions(sdfg)
+    assert len(conditions) == 1, conditions
+    assert '%' not in conditions[0], conditions[0]

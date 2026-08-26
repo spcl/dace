@@ -84,3 +84,92 @@ if __name__ == '__main__':
     test_get_new_shape_info_multidim_prepend_strides()
     test_get_new_shape_info_keeps_fortran_layout()
     test_get_new_shape_info_rejects_unsupported_layout()
+
+
+def _kernel_with_internal_transient() -> dace.SDFG:
+    """``GPU_Device`` map holding a ``GPU_Global`` transient too large to demote to registers."""
+    sdfg = dace.SDFG('flat_lift')
+    sdfg.add_array('A', [128], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_transient('buf', [1024], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('kernel', dict(i='0:128'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    buf = state.add_access('buf')
+    produce = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, 'o', buf, None, dace.Memlet('buf[0]'))
+    consume = state.add_tasklet('consume', {'b'}, {'o'}, 'o = b')
+    state.add_edge(buf, None, consume, 'b', dace.Memlet('buf[0]'))
+    state.add_memlet_path(consume, mx, state.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def _kernel_with_transient_behind_a_nested_sdfg() -> dace.SDFG:
+    """The same transient, one nested-SDFG boundary below the kernel."""
+    inner = dace.SDFG('inner')
+    inner.add_array('a_out', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_transient('buf', [1024], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('i', is_start_block=True)
+    buf = inner_state.add_access('buf')
+    produce = inner_state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    inner_state.add_edge(produce, 'o', buf, None, dace.Memlet('buf[0]'))
+    consume = inner_state.add_tasklet('consume', {'b'}, {'o'}, 'o = b')
+    inner_state.add_edge(buf, None, consume, 'b', dace.Memlet('buf[0]'))
+    inner_state.add_edge(consume, 'o', inner_state.add_write('a_out'), None, dace.Memlet('a_out[0]'))
+
+    sdfg = dace.SDFG('nested_lift')
+    sdfg.add_array('A', [128], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('kernel', dict(i='0:128'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a_out': None})
+    state.add_edge(me, None, nsdfg, None, dace.Memlet())
+    state.add_memlet_path(nsdfg, mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def _buf_scopes(sdfg: dace.SDFG) -> list:
+    """Enclosing scope of every ``buf`` access node across the hierarchy."""
+    return [
+        state.scope_dict()[node] for sub in sdfg.all_sdfgs_recursive() for state in sub.states()
+        for node in state.data_nodes() if node.data == 'buf'
+    ]
+
+
+def test_flat_transient_is_lifted_out_of_the_kernel():
+    """The transient gains a dimension per kernel iteration and reaches an access node outside it."""
+    sdfg = _kernel_with_internal_transient()
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == 1
+
+    assert tuple(sdfg.arrays['buf'].shape) == (128, 1024), sdfg.arrays['buf'].shape
+    assert tuple(sdfg.arrays['buf'].strides) == (1024, 1), sdfg.arrays['buf'].strides
+    assert sdfg.arrays['buf'].transient, 'the lifted array must still be allocated, not expected as input'
+    # One access node stays inside the kernel writing its slice, one lands outside it.
+    assert None in _buf_scopes(sdfg), 'nothing carries the array out of the kernel'
+    sdfg.validate()
+
+
+def test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary():
+    """The descriptor is lifted through the nested SDFG and becomes an outer-level transient."""
+    sdfg = _kernel_with_transient_behind_a_nested_sdfg()
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == 1
+
+    assert 'buf' in sdfg.arrays, 'the descriptor never reached the kernel-owning SDFG'
+    assert tuple(sdfg.arrays['buf'].shape) == (128, 1024), sdfg.arrays['buf'].shape
+    assert sdfg.arrays['buf'].transient
+    # Its inner counterpart is now a connector-bound argument rather than an allocation.
+    inner = next(s for s in sdfg.all_sdfgs_recursive() if s is not sdfg)
+    assert not inner.arrays['buf'].transient, 'the inner copy must be passed in, not allocated in-kernel'
+    assert _buf_scopes(sdfg) == [None, None], _buf_scopes(sdfg)
+    sdfg.validate()
+
+
+def test_small_transient_is_demoted_to_registers_instead():
+    """Under the element threshold the array becomes per-thread ``Register`` and is not lifted."""
+    sdfg = _kernel_with_internal_transient()
+    sdfg.arrays['buf'].set_shape((8, ))
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == 1
+
+    assert sdfg.arrays['buf'].storage == dace.dtypes.StorageType.Register
+    assert tuple(sdfg.arrays['buf'].shape) == (8, ), 'a demoted array keeps its own shape'
