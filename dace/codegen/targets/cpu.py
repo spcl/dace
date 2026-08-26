@@ -1494,17 +1494,15 @@ class CPUCodeGen(TargetCodeGenerator):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         elif (var_type == DefinedType.Scalar and isinstance(conntype, dtypes.pointer)
                               and not isinstance(desc.dtype, dtypes.opaque)):
-                            # Scalar source feeding a pointer-typed connector
-                            # (e.g. CopyLibraryNode -> cudaMemcpyAsync from a host
-                            # scalar argument). The connector's pointer type wins
-                            # over the source's scalar ctypedef, and we have to
-                            # take the address of the host variable. Skip for
-                            # opaque dtypes (MPI_Comm / MPI_Request / cuda handles
-                            # etc.) -- the value is already a pointer-like handle,
-                            # so address-of would add an unwanted indirection
-                            # that breaks the libnode call (e.g. ``MPI_Bcast``
-                            # expects ``MPI_Comm``, not ``MPI_Comm *``).
-                            result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
+                            # Scalar source feeding a pointer-typed connector (e.g. CopyLibraryNode
+                            # -> cudaMemcpyAsync from a host scalar argument). The connector's
+                            # pointer type wins over the source's scalar ctypedef, and the address
+                            # of the variable is what the callee wants; `define_out_memlet` already
+                            # does this on the write side. Skip opaque dtypes (MPI_Comm /
+                            # MPI_Request / GPU handles) -- the value is already a pointer-like
+                            # handle, so address-of adds an indirection the callee rejects
+                            # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
+                            result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                         else:
                             # Pointer reference
                             result += "{} {} = {};".format(ctypedef, local_name, expr)

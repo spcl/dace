@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <complex>
+#include <limits>  // std::numeric_limits (specialized for the low-precision structs at the bottom)
 #include <type_traits>
 #include <bit>  // std::bit_cast (C++20)
 
@@ -315,5 +316,46 @@ namespace dace
         Exchange = 13
     };
 }
+
+#if !defined(__CUDACC__) && !defined(__HIPCC__)
+// std::numeric_limits for the low-precision structs; unspecialized, max()/lowest()/infinity() are
+// all T() (zero), silently breaking a min/max reduction seeded from them. IEEE binary16 / bfloat16 values.
+#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, MAXV, MINV, EPSV,    \
+                       DENV)                                                                                        \
+    template <>                                                                                                     \
+    struct numeric_limits<::dace::TYPE> {                                                                           \
+        static constexpr bool is_specialized = true, is_signed = true, is_integer = false;                          \
+        static constexpr bool is_exact = false, has_infinity = true, has_quiet_NaN = true;                          \
+        static constexpr bool has_signaling_NaN = false, is_bounded = true, is_modulo = false;                      \
+        static constexpr bool is_iec559 = IEC, traps = false, tinyness_before = false;                              \
+        static constexpr int radix = 2, digits = DIGITS, digits10 = DIG10, max_digits10 = MAXDIG10;                 \
+        static constexpr int min_exponent = MINEXP, min_exponent10 = MINEXP10;                                      \
+        static constexpr int max_exponent = MAXEXP, max_exponent10 = MAXEXP10;                                      \
+        static constexpr float_round_style round_style = round_to_nearest;                                          \
+        static constexpr ::dace::TYPE min() noexcept { return ::dace::TYPE(MINV); }                                 \
+        static constexpr ::dace::TYPE max() noexcept { return ::dace::TYPE(MAXV); }                                 \
+        static constexpr ::dace::TYPE lowest() noexcept { return ::dace::TYPE(-(MAXV)); }                           \
+        static constexpr ::dace::TYPE epsilon() noexcept { return ::dace::TYPE(EPSV); }                             \
+        static constexpr ::dace::TYPE round_error() noexcept { return ::dace::TYPE(0.5f); }                         \
+        static constexpr ::dace::TYPE denorm_min() noexcept { return ::dace::TYPE(DENV); }                          \
+        static constexpr ::dace::TYPE quiet_NaN() noexcept { return ::dace::TYPE(__builtin_nanf("")); }             \
+        static constexpr ::dace::TYPE signaling_NaN() noexcept { return ::dace::TYPE(__builtin_nanf("")); }         \
+        static constexpr ::dace::TYPE infinity() noexcept { return ::dace::TYPE(__builtin_huge_valf()); }           \
+    }
+namespace std
+{
+    DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, 6.5504e+4, 6.103515625e-05, 9.765625e-04,
+                   5.9604644775390625e-08);
+    DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, false, 3.38953139e+38, 1.17549435e-38, 7.8125e-03,
+                   9.18354962e-41);
+}
+#undef DACE_LP_LIMITS
+
+// Pin the bit patterns so a typo in a literal above can't pass as plausible.
+static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) == 0x7BFF &&
+              std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
+static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
+              std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+#endif
 
 #endif  // __DACE_TYPES_H

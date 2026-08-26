@@ -755,6 +755,9 @@ class ExpandTransformation(PatternTransformation):
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 
+        # The node the expansion replaces is the one the user asked to measure.
+        expansion.instrument = node.instrument
+
         expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)
