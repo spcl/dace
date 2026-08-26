@@ -129,8 +129,10 @@ class SpecializeEinsum(xf.ExpandTransformation):
             if symbolic.equal_valued(0, beta):
                 scale = state.add_tasklet('dot_scale', {'__d'}, {'__o'}, f'__o = ({alpha}) * __d')
             else:
-                scale = state.add_tasklet('dot_scale', {'__d', '__oin'}, {'__o'},
-                                          f'__o = ({alpha}) * __d + ({beta}) * __oin')
+                scale = state.add_tasklet('dot_scale', {
+                    '__d': None,
+                    '__oin': None
+                }, {'__o'}, f'__o = ({alpha}) * __d + ({beta}) * __oin')
                 state.add_edge(state.add_read(output), None, scale, '__oin', Memlet(f'{output}[0]'))
             state.add_edge(state.add_read('__dot_res'), None, scale, '__d', Memlet('__dot_res[0]'))
             state.add_edge(scale, '__o', state.add_write(output), None, Memlet(f'{output}[0]'))
