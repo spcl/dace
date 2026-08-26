@@ -661,8 +661,11 @@ VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'm
 #: plus the two the readable generator's own allocations need -- ``<new>`` for the aligned
 #: ``operator new[](std::align_val_t)`` it allocates heap transients with, and ``<type_traits>``
 #: for the ``std::is_trivially_destructible`` static assertion it pairs with the matching delete.
-BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<algorithm>', '<complex>', '<numeric>', '<new>',
-                                 '<type_traits>')
+#: ``<cstdlib>`` is for ``std::abort``, which canonicalization writes into the assumption-guard
+#: tasklet (``if ((N < 0)) { std::abort(); }``) -- a body no printer sees, so nothing else would
+#: pull the declaration in.
+BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<complex>',
+                                 '<numeric>', '<new>', '<type_traits>')
 
 #: Runtime functions MPR deliberately does NOT lower, and why. Reaching one is a refusal, not a
 #: pass-through: the name is declared by a DaCe header MPR does not include, so passing it through
@@ -817,7 +820,8 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
 
     In C the same pass also rewrites the two call shapes C cannot express as a call at all -- the
     scan identities and the find-first over a lambda predicate (:func:`c_scan_identities`,
-    :func:`c_find_first`) -- before the name table is consulted.
+    :func:`c_find_first`) -- and re-spells the ``std::`` names a pass wrote directly
+    (:func:`c_native_renames`), before the name table is consulted.
 
     Textual by necessity, and deliberately conservative: only the qualified name is rewritten, only
     when the identifier is one MPR knows, and never with knowledge of the arguments. A
@@ -834,7 +838,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     code = rewrite_ctypes(code, dialect)
 
     if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
-        code = c_find_first(c_scan_identities(code))
+        code = c_native_renames(c_find_first(c_scan_identities(code)))
 
     def replace(match: 're.Match') -> str:
         name = match.group(1)
@@ -1640,6 +1644,29 @@ def c_find_first(code: str) -> str:
     return _C_FIND_FIRST_CALL.sub(
         lambda match: 'mpr_find_first(%s, %s, %s, %s, %s);' %
         (match.group(1).strip(), match.group(2).strip(), match.group(3), match.group(5), match.group(4).strip()), code)
+
+
+#: A ``std::`` name DaCe's own passes write STRAIGHT into a tasklet body, and the C spelling of it.
+#: These never reach an expression printer and are not ``dace::`` names either, so neither lowering
+#: lane sees them -- and in C a ``std::`` name is not a name at all.
+#:
+#: One entry, and it is the assumption guard: canonicalization's last pass traps a violated symbol
+#: assumption with ``if ((N < 0)) { std::abort(); }``, and that pass DEDUPS its own guards by
+#: searching tasklet bodies for the literal ``std::abort``, so the spelling is fixed at the source
+#: and cannot be changed there without breaking the dedup. C declares ``abort`` in ``<stdlib.h>``,
+#: which :data:`C_BASE_HEADERS` already includes.
+C_NATIVE_RENAMES: Dict[str, str] = {'std::abort': 'abort'}
+
+
+def c_native_renames(code: str) -> str:
+    """Spell the ``std::`` names a hand-written body carries the C way.
+
+    :param code: the body as the pass wrote it.
+    :returns: the body with each :data:`C_NATIVE_RENAMES` name replaced.
+    """
+    for qualified, plain in C_NATIVE_RENAMES.items():
+        code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
+    return code
 
 
 def c_cast_native_code(code: str) -> str:

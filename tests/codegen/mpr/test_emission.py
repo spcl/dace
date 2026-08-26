@@ -26,6 +26,8 @@ import dace
 from dace.libraries.standard.nodes import FindFirst
 from dace import mpr
 from dace.codegen.mpr import render as render_sdfg
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (insert_assumption_guards,
+                                                                                set_symbol_nonnegative_assumptions)
 
 from tests.codegen.mpr.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
                                         compile_diagnostics, wcr_sdfg)
@@ -712,3 +714,60 @@ def test_runtime_only_constructs_are_refused_with_a_reason(label, builder, reaso
     sdfg.validate()  # the refusal has to be MPR's, not a malformed SDFG the builder wrote
     with pytest.raises(NotImplementedError, match=re.escape(reason)):
         mpr(sdfg, language=language)
+
+
+def assumption_guard_sdfg(name: str) -> dace.SDFG:
+    """A map over a symbolic extent, carrying canonicalization's OWN assumption guard.
+
+    The guard is inserted by the pass rather than written here, because the exact spelling is the
+    thing under test: ``insert_assumption_guards`` traps a violated assumption with
+    ``if ((N < 0)) {{ std::abort(); }}`` and then DEDUPS its own guards by searching tasklet bodies
+    for the literal ``std::abort``, so the spelling cannot be changed at the source. A hand-written
+    trap would keep passing after the pass moved on.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('out', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': '0:N'})
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x * 2.0')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('out'), src_conn='y', memlet=dace.Memlet('out[i]'))
+    set_symbol_nonnegative_assumptions(sdfg)
+    insert_assumption_guards(sdfg)
+    return sdfg
+
+
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_the_assumption_guard_renders_in_both_dialects(language):
+    """Canonicalization's trap is a body no printer sees, and each dialect has to spell it.
+
+    The guard tasklet is emitted verbatim, so ``std::abort`` reaches the text without passing
+    through the expression printers and without being a ``dace::`` name -- neither lowering lane
+    would see it. C++ therefore needs ``<cstdlib>`` in the preamble, which nothing else pulls in,
+    and C needs the name itself rewritten: ``std::`` is not a namespace there, it is a syntax
+    error. Both legs are built by their own driver in an empty directory, which is what turns a
+    missing declaration into a failure rather than an inherited include path.
+    """
+    sdfg = assumption_guard_sdfg(f'mpr_guard_{"cpp" if language == "c++" else "c"}')
+    guards = [
+        node.code.as_string for state in sdfg.states() for node in state.nodes()
+        if isinstance(node, dace.sdfg.nodes.Tasklet) and 'std::abort' in node.code.as_string
+    ]
+    assert guards, 'the pass inserted no guard, so this test would assert nothing'
+
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+    if language == 'c':
+        assert 'std::abort' not in rendering.code, 'std:: is not a namespace in C'
+        assert re.search(r'\babort\(\);', rendering.code), 'the trap itself must survive the rename'
+        assert '<stdlib.h>' in rendering.code, 'abort is declared in <stdlib.h>'
+    else:
+        assert 'std::abort();' in rendering.code, 'the C++ dialect keeps the pass spelling'
+        assert '<cstdlib>' in rendering.code, 'std::abort is declared in <cstdlib>'
+
+    library = build_standalone(rendering.code, sdfg.name, language=language)
+    rng = np.random.default_rng(0)
+    a, out = rng.random(64), np.zeros(64)
+    call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'N': 64})
+    assert_matches({'out': a * 2.0}, {'out': out}, sdfg.name)
