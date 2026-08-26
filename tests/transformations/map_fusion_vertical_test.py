@@ -3476,7 +3476,7 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     N = dace.symbol("N")
 
     # The inner mark SDFG: writes one element, the connector claims the full array.
-    inner_mark = dace.SDFG("mark_inner")
+    inner_mark = dace.SDFG(unique_name("mark_inner"))
     inner_mark.add_symbol("i", dace.int32)
     inner_mark.add_symbol("N", dace.int32)
     inner_mark.add_array("A", (N, 5), dace.bool_, strides=(1, N))
@@ -3489,7 +3489,7 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, idx_at - 1]"))
 
     # The inner search SDFG: reads one row, the connector claims the full array.
-    inner_search = dace.SDFG("search_inner")
+    inner_search = dace.SDFG(unique_name("search_inner"))
     inner_search.add_symbol("j", dace.int32)
     inner_search.add_symbol("N", dace.int32)
     inner_search.add_array("A", (N, 5), dace.bool_, strides=(1, N))
@@ -3610,7 +3610,7 @@ def _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark: SDFG) -> SDFG:
     """
     N = dace.symbol("N")
 
-    inner_search = SDFG("search_inner")
+    inner_search = SDFG(unique_name("search_inner"))
     inner_search.add_symbol("j", dace.int32)
     inner_search.add_symbol("N", dace.int32)
     inner_search.add_array("A", (N, 5), dace.float64)
@@ -3721,7 +3721,7 @@ def test_fusion_refuses_rank_mismatched_inner_write():
     dimensionality mismatch instead of raising, so the guard used to read that error as
     "covered" and accepted a nest that defines a single element of `A[0:N, 0:5]`.
     """
-    inner_mark = SDFG("mark_inner_scalar")
+    inner_mark = SDFG(unique_name("mark_inner_scalar"))
     inner_mark.add_symbol("i", dace.int32)
     inner_mark.add_symbol("N", dace.int32)
     inner_mark.add_scalar("A", dace.float64, transient=False)
@@ -3754,7 +3754,7 @@ def test_fusion_refuses_conditionally_written_shared_intermediate():
     stays undefined and the write back would publish it.
     """
     N = dace.symbol("N")
-    inner_mark = SDFG("mark_inner_conditional")
+    inner_mark = SDFG(unique_name("mark_inner_conditional"))
     inner_mark.add_symbol("i", dace.int32)
     inner_mark.add_symbol("N", dace.int32)
     inner_mark.add_array("A", (N, 5), dace.float64)
@@ -3797,7 +3797,7 @@ def test_fusion_refuses_inner_write_without_a_destination_subset():
     row of `A` is written. The guard used to read the `None` as a whole array write.
     """
     N = dace.symbol("N")
-    inner_mark = SDFG("mark_inner_no_dst_subset")
+    inner_mark = SDFG(unique_name("mark_inner_no_dst_subset"))
     inner_mark.add_symbol("i", dace.int32)
     inner_mark.add_symbol("N", dace.int32)
     inner_mark.add_array("A", (N, 5), dace.float64)
