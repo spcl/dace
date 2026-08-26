@@ -18,6 +18,7 @@ from dace import dtypes
 from dace import subsets
 import warnings
 from dace.sdfg import scope
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic, simplify
 from dace.libraries.standard.environments.cuda import CUDA
@@ -77,8 +78,27 @@ class ExpandReducePure(pm.ExpandTransformation):
     environments = []
 
     @staticmethod
+    def map_schedules(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        """``(outermost, inner)`` schedule for the maps this expansion builds.
+
+        Schedule inference has already run by the time a library node expands, so a map left at the
+        default schedule is whatever the code around it happens to be -- and on device-resident data
+        at host level that is a host loop over ``GPU_Global`` memory (npbench nbody, where the GPU
+        expansion declines a node carrying no identity and lands here). Inside a kernel the opposite
+        holds: everything below is device code already and a nested device map is not allowed.
+        """
+        default = (dtypes.ScheduleType.Default, dtypes.ScheduleType.Default)
+        if scope.is_devicelevel_gpu(sdfg, state, node):
+            return dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Sequential
+        operands = [state.in_edges(node)[0].data.data, state.out_edges(node)[0].data.data]
+        if any(sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES for name in operands):
+            return dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.Sequential
+        return default
+
+    @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
+        outer_schedule, inner_schedule = ExpandReducePure.map_schedules(node, state, sdfg)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
@@ -182,7 +202,8 @@ class ExpandReducePure(pm.ExpandTransformation):
             ome, omx = nstate.add_map('reduce_output', {
                 oname(i): '0:%s' % symstr(sz)
                 for i, sz in enumerate(outsubset.size())
-            })
+            },
+                                      schedule=outer_schedule)
             outm = dace.Memlet.simple('_out', ','.join([oname(i) for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = dace.Memlet.simple('_in', ','.join(input_subset))
         else:
@@ -192,13 +213,15 @@ class ExpandReducePure(pm.ExpandTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
+        # With no outer map the inner one IS the outermost scope, so it carries that schedule.
         ime, imx = nstate.add_map('reduce_values', {
             iname(i): '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
             for i, axis in enumerate(sorted(axes))
-        })
+        },
+                                  schedule=inner_schedule if ome is not None else outer_schedule)
 
         # Add identity tasklet for reduction
-        t = nstate.add_tasklet('identity', {'__inp'}, {'__out'}, '__out = __inp')
+        t = nstate.add_tasklet('identity', {'__inp': None}, {'__out': None}, '__out = __inp')
 
         # Connect everything
         r = nstate.add_read('_in')

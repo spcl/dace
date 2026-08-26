@@ -44,8 +44,9 @@ partial reductions does not change the result.
 import numpy
 
 import dace
-from dace import library, nodes, symbolic
+from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import sym2cpp
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import Property, EnumProperty
 from dace.transformation.transformation import ExpandTransformation
 import enum
@@ -315,6 +316,22 @@ def _has_init(node: "Scan", chain: int = 0) -> bool:
     return init_connector(chain) in node.in_connectors
 
 
+def seed_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
+    """Descriptor behind chain ``chain``'s wired ``_scan_init``, or None when it carries no seed."""
+    conn = init_connector(chain)
+    edge = next((e for e in state.in_edges(node) if e.dst_conn == conn), None)
+    return None if edge is None else sdfg.arrays[edge.data.data]
+
+
+def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -> str:
+    """The ``init_value`` argument of the cub call for chain ``chain``."""
+    conn = init_connector(chain)
+    desc = seed_desc(node, state, sdfg, chain)
+    if desc is None or desc.storage not in GPU_RESIDENT_STORAGES:
+        return conn
+    return f"::cub::FutureValue<{desc.dtype.base_type.ctype}>({conn})"
+
+
 def _resolve_length(node: "Scan", state: dace.SDFGState, _sdfg: dace.SDFG) -> str:
     """C++ expression for the number of elements ``N`` in the input edge."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
@@ -350,8 +367,8 @@ def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
     else:
         code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
     return nodes.Tasklet(node.name,
-                         inputs={INPUT_CONNECTOR_NAME},
-                         outputs={OUTPUT_CONNECTOR_NAME},
+                         inputs={INPUT_CONNECTOR_NAME: None},
+                         outputs={OUTPUT_CONNECTOR_NAME: None},
                          code=code,
                          language=dace.Language.Python)
 
@@ -575,11 +592,11 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     else:
         code = _multi_chain_parallel_code(node, ctype, n_expr, accs, acc_list, seeds, first, second, scan_kind,
                                           _multi_chain_udr(node.op, dtype, ctype))
-    inputs = {in_connector(c) for c in range(node.chains)}
-    inputs |= {init_connector(c) for c in range(node.chains) if init_connector(c) in node.in_connectors}
+    inputs = {in_connector(c): None for c in range(node.chains)}
+    inputs.update({init_connector(c): None for c in range(node.chains) if init_connector(c) in node.in_connectors})
     return nodes.Tasklet(node.name,
                          inputs=inputs,
-                         outputs={out_connector(c)
+                         outputs={out_connector(c): None
                                   for c in range(node.chains)},
                          code=code,
                          language=dace.Language.CPP)
@@ -630,12 +647,12 @@ def degenerate_affine_tasklet(node: "Scan") -> nodes.Tasklet:
     answer is an expression over two inputs rather than a copy.
     """
     seed = INIT_CONNECTOR_NAME if _has_init(node) else '0'
-    inputs = {INPUT_CONNECTOR_NAME, COEF_CONNECTOR_NAME}
+    inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
-        inputs.add(INIT_CONNECTOR_NAME)
+        inputs[INIT_CONNECTOR_NAME] = None
     return nodes.Tasklet(node.name,
                          inputs=inputs,
-                         outputs={OUTPUT_CONNECTOR_NAME},
+                         outputs={OUTPUT_CONNECTOR_NAME: None},
                          code=f'{OUTPUT_CONNECTOR_NAME} = {COEF_CONNECTOR_NAME} * {seed} + {INPUT_CONNECTOR_NAME}',
                          language=dace.Language.Python)
 
@@ -643,12 +660,12 @@ def degenerate_affine_tasklet(node: "Scan") -> nodes.Tasklet:
 def affine_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, n_expr: str,
                    parallel: bool) -> nodes.Tasklet:
     """Assemble the affine-scan tasklet with its coefficient (and optional init) connectors."""
-    inputs = {INPUT_CONNECTOR_NAME, COEF_CONNECTOR_NAME}
+    inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
-        inputs.add(INIT_CONNECTOR_NAME)
+        inputs[INIT_CONNECTOR_NAME] = None
     return nodes.Tasklet(node.name,
                          inputs=inputs,
-                         outputs={OUTPUT_CONNECTOR_NAME},
+                         outputs={OUTPUT_CONNECTOR_NAME: None},
                          code=affine_scan_body(node, out_desc.dtype.ctype, n_expr, parallel),
                          language=dace.Language.CPP)
 
@@ -750,13 +767,13 @@ class ExpandPure(ExpandTransformation):
             body = single_block_scan_call(node.op, False, n_expr, INIT_CONNECTOR_NAME)
         else:
             body = single_block_scan_call(node.op, False, n_expr, _OP_TO_SEED_CPP[node.op].format(ct=ctype))
-        inputs = {INPUT_CONNECTOR_NAME}
+        inputs = {INPUT_CONNECTOR_NAME: None}
         if _has_init(node):
-            inputs.add(INIT_CONNECTOR_NAME)
+            inputs[INIT_CONNECTOR_NAME] = None
         return nodes.Tasklet(
             node.name,
             inputs=inputs,
-            outputs={OUTPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME: None},
             code=body,
             language=dace.Language.CPP,
         )
@@ -835,13 +852,13 @@ class ExpandCPU(ExpandTransformation):
             call = (f"::dace::scan::inclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
                     f"{OUTPUT_CONNECTOR_NAME}{init});")
-        inputs = {INPUT_CONNECTOR_NAME}
+        inputs = {INPUT_CONNECTOR_NAME: None}
         if _has_init(node):
-            inputs.add(INIT_CONNECTOR_NAME)
+            inputs[INIT_CONNECTOR_NAME] = None
         return nodes.Tasklet(
             node.name,
             inputs=inputs,
-            outputs={OUTPUT_CONNECTOR_NAME},
+            outputs={OUTPUT_CONNECTOR_NAME: None},
             code=call,
             language=dace.Language.CPP,
         )
@@ -910,7 +927,9 @@ class ExpandCUDA(ExpandTransformation):
                 # direct API (CUB >= 2.0 / CUDA 12+); on older CUB it'd need an
                 # ``ExclusiveScan`` + tail-add fallback, which can be added when
                 # supporting CUDA 11 becomes a requirement.
-                args = (f"{in_conn}, {out_conn}, {op_cub}, {init_connector(chain)}, "
+                # A seed the host cannot read is passed as a ``cub::FutureValue``, which cub
+                # dereferences on the device; a host-resident one goes by value as before.
+                args = (f"{in_conn}, {out_conn}, {op_cub}, {seed_arg(node, state, sdfg, chain)}, "
                         f"({n_expr}), __dace_current_stream);")
                 scan_call = f"::cub::DeviceScan::InclusiveScanInit(_sc_scratch, _sc_needed, {args}"
                 query_call = f"::cub::DeviceScan::InclusiveScanInit(nullptr, _sc_needed, {args}"
@@ -923,12 +942,19 @@ class ExpandCUDA(ExpandTransformation):
                           f"void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>("
                           f"_sc_needed, __dace_current_stream);\n"
                           f"{scan_call}\n}}")
-        inputs = {in_connector(c) for c in range(node.chains)}
-        inputs |= {init_connector(c) for c in range(node.chains) if _has_init(node, c)}
+        inputs = {in_connector(c): None for c in range(node.chains)}
+        # A device-resident seed reaches ``FutureValue`` as a POINTER; a scalar connector would be
+        # dereferenced by the host code issuing the launch, which validation rejects.
+        for chain in range(node.chains):
+            if not _has_init(node, chain):
+                continue
+            desc = seed_desc(node, state, sdfg, chain)
+            device = desc is not None and desc.storage in GPU_RESIDENT_STORAGES
+            inputs[init_connector(chain)] = dtypes.pointer(desc.dtype.base_type) if device else None
         return nodes.Tasklet(
             node.name,
             inputs=inputs,
-            outputs={out_connector(c)
+            outputs={out_connector(c): None
                      for c in range(node.chains)},
             code='\n'.join(blocks),
             language=dace.Language.CPP,
@@ -997,8 +1023,8 @@ class ExpandCUDAStrided(ExpandTransformation):
                 f"(long)({n_expr}), (long)({stride_expr}), __dace_current_stream);")
         return nodes.Tasklet(
             node.name,
-            inputs={INPUT_CONNECTOR_NAME},
-            outputs={OUTPUT_CONNECTOR_NAME},
+            inputs={INPUT_CONNECTOR_NAME: None},
+            outputs={OUTPUT_CONNECTOR_NAME: None},
             code=code,
             language=dace.Language.CPP,
         )
@@ -1062,6 +1088,7 @@ class Scan(nodes.LibraryNode):
                       "element count, and the parallel CPU expansion lowers them as list items of ONE "
                       "``reduction(inscan, op: ...)`` clause -- K carry chains, one fork/join, one pass "
                       "over the index space. Unit stride only.")
+
     stride = Property(dtype=object,
                       default=1,
                       allow_none=False,
@@ -1094,10 +1121,10 @@ class Scan(nodes.LibraryNode):
                  **kwargs):
         # ``_scan_coef`` is part of the node's shape, not an optional extra like ``_scan_init``:
         # an affine scan with no coefficients is not a scan of some other kind, it is unwired.
-        conns = {in_connector(c) for c in range(chains)}
+        conns = {in_connector(c): None for c in range(chains)}
         if op is ScanOp.AFFINE:
-            conns |= {coef_connector(c) for c in range(chains)}
-        super().__init__(name, *args, inputs=conns, outputs={out_connector(c) for c in range(chains)}, **kwargs)
+            conns.update({coef_connector(c): None for c in range(chains)})
+        super().__init__(name, *args, inputs=conns, outputs={out_connector(c): None for c in range(chains)}, **kwargs)
         self.op = op
         self.exclusive = exclusive
         self.identity = identity

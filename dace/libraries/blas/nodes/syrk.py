@@ -20,7 +20,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (add_coeff_arrays, add_triangular_tasklet, beta_scale_state,
                                                       blas_inplace, coeff_decl, operand_info, render_scalar,
-                                                      scalar_conn_descs)
+                                                      scalar_conn_descs, gpu_coeff_pointers)
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
@@ -156,14 +156,15 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
         setup = cls.environments[0].handle_setup_code(node)
         handle = f"__dace_{cls.backend}blas_handle"
 
+        scalars = scalar_conn_descs(node, state, sdfg)
+
         def code_fn(ptrs, pa, pb):
+            prologue, alpha, beta = gpu_coeff_pointers(cls, node, dtype, pa, pb, scalars)
             return (f"{setup}"
-                    f"{coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
-                    f"{coeff_decl('__beta', node.beta, dtype, pb)}\n"
-                    f"{cls.set_pointer_mode}({handle}, {cls.pointer_host});\n"
+                    f"{prologue}"
                     f"{func}({handle}, {cls.fill_enum(flip_uplo)}, {cls.op_enum(flip_trans)}, {symstr(n)}, "
-                    f"{symstr(k)}, ({dtype.ctype}*)&__alpha, ({dtype.ctype}*){ptrs['_a']}, {lda}, "
-                    f"({dtype.ctype}*)&__beta, ({dtype.ctype}*){ptrs['_c']}, {ldc});\n")
+                    f"{symstr(k)}, {alpha}, ({dtype.ctype}*){ptrs['_a']}, {lda}, "
+                    f"{beta}, ({dtype.ctype}*){ptrs['_c']}, {ldc});\n")
 
         return blas_inplace(node, state, sdfg, OPERANDS, code_fn)
 
@@ -174,6 +175,7 @@ class ExpandSyrkCuBLAS(ExpandSyrkGPUBLAS):
     backend = "cu"
     set_pointer_mode = "cublasSetPointerMode"
     pointer_host = "CUBLAS_POINTER_MODE_HOST"
+    pointer_device = "CUBLAS_POINTER_MODE_DEVICE"
 
     @classmethod
     def fill_enum(cls, flipped: str) -> str:
@@ -190,6 +192,7 @@ class ExpandSyrkRocBLAS(ExpandSyrkGPUBLAS):
     backend = "roc"
     set_pointer_mode = "rocblas_set_pointer_mode"
     pointer_host = "rocblas_pointer_mode_host"
+    pointer_device = "rocblas_pointer_mode_device"
 
     @classmethod
     def fill_enum(cls, flipped: str) -> str:
@@ -249,14 +252,14 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
         # C is read when a nonzero compile-time beta is added in place, or whenever beta
         # is a runtime input (its value is unknown, so C must be available).
         reads_c = ((beta != 0 and cin) or beta_input)
-        inputs = {"_a"}
+        inputs = {"_a": None}
         if reads_c:
-            inputs.add("_c")
+            inputs["_c"] = None
         if alpha_input:
-            inputs.add("_alpha")
+            inputs["_alpha"] = None
         if beta_input:
-            inputs.add("_beta")
-        super().__init__(name, location=location, inputs=inputs, outputs={"_c"})
+            inputs["_beta"] = None
+        super().__init__(name, location=location, inputs=inputs, outputs={"_c": None})
         self.uplo = uplo
         self.trans = trans
         self.alpha = alpha

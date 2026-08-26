@@ -14,6 +14,7 @@ is a correct reference lowering, and ``MKL`` / ``OpenBLAS`` / ``cuBLAS`` /
 ``rocBLAS`` dispatch to the vendor ``dsymm`` / ``cublasDsymm`` kernels.
 """
 from copy import deepcopy as dc
+from typing import Dict, Optional
 
 import dace.library
 import dace.sdfg.nodes
@@ -24,6 +25,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
 from .. import environments
+from .rank_k_helpers import gpu_coeff_pointers, host_can_read
 
 
 def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -83,7 +85,10 @@ class ExpandSymmPure(ExpandTransformation):
         cond = "__k <= __i" if node.uplo == "L" else "__k >= __i"
         ra = fill.add_read("_a")
         wsym = fill.add_write("_asym")
-        t = fill.add_tasklet("symm_fill", {"__lo", "__up"}, {"__out"}, f"__out = __lo if ({cond}) else __up")
+        t = fill.add_tasklet("symm_fill", {
+            "__lo": None,
+            "__up": None
+        }, {"__out": None}, f"__out = __lo if ({cond}) else __up")
         me, mx = fill.add_map("symm_fill", {"__i": f"0:{symstr(SA)}", "__k": f"0:{symstr(SA)}"})
         fill.add_memlet_path(ra, me, t, dst_conn="__lo", memlet=mm.Memlet("_a[__i, __k]"))
         fill.add_memlet_path(ra, me, t, dst_conn="__up", memlet=mm.Memlet("_a[__k, __i]"))
@@ -198,7 +203,10 @@ def _blas_inplace(node: "Symm", state: SDFGState, sdfg: SDFG, code_fn):
     reads_c = "_c" in node.in_connectors
     scalars = _scalar_conn_descs(node, state, sdfg)
     if not reads_c and not scalars:
-        return dace.sdfg.nodes.Tasklet(node.name, {"_a", "_b"}, {"_c"},
+        return dace.sdfg.nodes.Tasklet(node.name, {
+            "_a": None,
+            "_b": None
+        }, {"_c": None},
                                        code_fn("_a", "_b", "_c", None, None),
                                        language=dtypes.Language.CPP)
     (ad, _, _), (bd, _, _), (cd, _, _) = _symm_operands(node, state, sdfg)
@@ -214,9 +222,18 @@ def _blas_inplace(node: "Symm", state: SDFGState, sdfg: SDFG, code_fn):
     inner = {"_alpha": "__alpha_in", "_beta": "__beta_in"}
     pa = inner["_alpha"] if "_alpha" in scalars else None
     pb = inner["_beta"] if "_beta" in scalars else None
-    in_conns = {"__a", "__b"} | ({"__cin"} if reads_c else set()) | {inner[c] for c in scalars}
+    in_conns: Dict[str, Optional[dtypes.typeclass]] = {"__a": None, "__b": None}
+    if reads_c:
+        in_conns["__cin"] = None
+    # A device-resident coefficient reaches the call as a POINTER: a scalar connector would be
+    # dereferenced by the host code issuing the call, which validation rejects.
+    for conn, desc in scalars.items():
+        in_conns[inner[conn]] = None if host_can_read(desc) else dtypes.pointer(desc.dtype.base_type)
     st = nsdfg.add_state(node.label + "_state")
-    t = st.add_tasklet(node.name, in_conns, {"__c"}, code_fn("__a", "__b", "__c", pa, pb), language=dtypes.Language.CPP)
+    t = st.add_tasklet(node.name,
+                       in_conns, {"__c": None},
+                       code_fn("__a", "__b", "__c", pa, pb),
+                       language=dtypes.Language.CPP)
     st.add_edge(st.add_read("_a"), None, t, "__a", mm.Memlet.from_array("_a", nsdfg.arrays["_a"]))
     st.add_edge(st.add_read("_b"), None, t, "__b", mm.Memlet.from_array("_b", nsdfg.arrays["_b"]))
     if reads_c:
@@ -266,14 +283,16 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
         lda, ldb, ldc = symstr(astrides[0]), symstr(bstrides[0]), symstr(cstrides[0])
         setup = cls.environments[0].handle_setup_code(node)
         handle = f"__dace_{cls.backend}blas_handle"
-        code_fn = lambda a, b, c, pa, pb: (
-            f"{setup}"
-            f"{_coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
-            f"{_coeff_decl('__beta', node.beta, dtype, pb)}\n"
-            f"{cls.set_pointer_mode}({handle}, {cls.pointer_host});\n"
-            f"{func}({handle}, {cls.side_enum(flip_side)}, {cls.fill_enum(flip_uplo)}, {m}, {n}, "
-            f"({dtype.ctype}*)&__alpha, ({dtype.ctype}*){a}, {lda}, ({dtype.ctype}*){b}, {ldb}, "
-            f"({dtype.ctype}*)&__beta, ({dtype.ctype}*){c}, {ldc});\n")
+        scalars = _scalar_conn_descs(node, state, sdfg)
+
+        def code_fn(a, b, c, pa, pb):
+            prologue, alpha, beta = gpu_coeff_pointers(cls, node, dtype, pa, pb, scalars)
+            return (f"{setup}"
+                    f"{prologue}"
+                    f"{func}({handle}, {cls.side_enum(flip_side)}, {cls.fill_enum(flip_uplo)}, {m}, {n}, "
+                    f"{alpha}, ({dtype.ctype}*){a}, {lda}, ({dtype.ctype}*){b}, {ldb}, "
+                    f"{beta}, ({dtype.ctype}*){c}, {ldc});\n")
+
         return _blas_inplace(node, state, sdfg, code_fn)
 
 
@@ -283,6 +302,7 @@ class ExpandSymmCuBLAS(_ExpandSymmGPUBLAS):
     backend = "cu"
     set_pointer_mode = "cublasSetPointerMode"
     pointer_host = "CUBLAS_POINTER_MODE_HOST"
+    pointer_device = "CUBLAS_POINTER_MODE_DEVICE"
 
     @classmethod
     def side_enum(cls, flipped: str) -> str:
@@ -299,6 +319,7 @@ class ExpandSymmRocBLAS(_ExpandSymmGPUBLAS):
     backend = "roc"
     set_pointer_mode = "rocblas_set_pointer_mode"
     pointer_host = "rocblas_pointer_mode_host"
+    pointer_device = "rocblas_pointer_mode_device"
 
     @classmethod
     def side_enum(cls, flipped: str) -> str:
@@ -357,14 +378,14 @@ class Symm(dace.sdfg.nodes.LibraryNode):
         # C is read when a nonzero compile-time beta is added in place, or whenever
         # beta is a runtime input (its value is unknown, so C must be available).
         reads_c = ((beta != 0 and cin) or beta_input)
-        inputs = {"_a", "_b"}
+        inputs = {"_a": None, "_b": None}
         if reads_c:
-            inputs.add("_c")
+            inputs["_c"] = None
         if alpha_input:
-            inputs.add("_alpha")
+            inputs["_alpha"] = None
         if beta_input:
-            inputs.add("_beta")
-        super().__init__(name, location=location, inputs=inputs, outputs={"_c"})
+            inputs["_beta"] = None
+        super().__init__(name, location=location, inputs=inputs, outputs={"_c": None})
         self.side = side
         self.uplo = uplo
         self.alpha = alpha

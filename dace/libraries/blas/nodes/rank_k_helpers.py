@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import dace.library
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, data as dt, dtypes, memlet as mm
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.symbolic import symstr
 
 # Connector names of the runtime coefficient inputs.
@@ -65,6 +66,56 @@ def coeff_decl(var: str, prop, dtype: dtypes.typeclass, scalar: Optional[str]) -
     return f"{dtype.ctype} {var} = {scalar_ctype(prop, dtype)};"
 
 
+def host_can_read(desc: dt.Data) -> bool:
+    """Whether host code may dereference this descriptor's memory.
+
+    ``dtypes.GPU_STORAGES`` is NOT this test: it lists ``GPU_Shared`` alone.
+    """
+    return desc.storage not in GPU_RESIDENT_STORAGES
+
+
+def gpu_coeff_pointers(cls, node, dtype: dtypes.typeclass, pa: Optional[str], pb: Optional[str],
+                       scalars: Dict[str, dt.Data]) -> Tuple[str, str, str]:
+    """Prologue, then the alpha and beta POINTER expressions of the vendor-BLAS call.
+
+    A runtime coefficient the offloader left in device memory is passed as a device pointer under
+    ``POINTER_MODE_DEVICE``, so the host code that issues the call never dereferences device memory.
+    A host-resident one keeps the by-value path. The mode is per call and covers both coefficients,
+    so one device coefficient makes its compile-time partner a device constant too.
+    """
+    from dace.libraries.blas import blas_helpers  # Avoid an import cycle at module load.
+
+    handle = f"__dace_{cls.backend}blas_handle"
+    ctype = dtype.ctype
+    device = {conn for conn, desc in scalars.items() if not host_can_read(desc)}
+    if not device:
+        prologue = (f"{coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
+                    f"{coeff_decl('__beta', node.beta, dtype, pb)}\n"
+                    f"{cls.set_pointer_mode}({handle}, {cls.pointer_host});\n")
+        return prologue, f"({ctype}*)&__alpha", f"({ctype}*)&__beta"
+
+    if len(device) != len(scalars):
+        raise NotImplementedError(f"{type(node).__name__}: one runtime coefficient in device memory and the other on "
+                                  "the host; one call cannot read two pointer modes")
+    _, _, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+    store = f"__state->{cls.backend}blas_handle.Constants()"
+
+    def pointer(name: str, prop, scalar: Optional[str]) -> str:
+        if scalar is not None:
+            if prop != 1:
+                raise NotImplementedError(f"{type(node).__name__}: {name} composes a compile-time {prop} with a "
+                                          "device-resident runtime coefficient; that product has no host to form it")
+            return f"({ctype}*){scalar}"
+        for value, accessor in ((1, "Pone"), (0, "Zero")):
+            if prop == value:
+                return f"({ctype} const*){store}.{runtimetype}{accessor}()"
+        raise NotImplementedError(f"{type(node).__name__}: {name}={prop} has no device constant beside a "
+                                  "device-resident coefficient")
+
+    prologue = f"{cls.set_pointer_mode}({handle}, {cls.pointer_device});\n"
+    return prologue, pointer("alpha", node.alpha, pa), pointer("beta", node.beta, pb)
+
+
 def triangle_range(uplo: str, row: str, n) -> str:
     """The column range of row ``row`` within the ``uplo`` triangle of an ``n x n``
     matrix -- ``0:row+1`` (lower, diagonal included) or ``row:n`` (upper)."""
@@ -90,8 +141,8 @@ def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], 
     if not reads_c and not scalars:
         ptrs = {conn: conn for conn in operands}
         ptrs["_c"] = "_c"
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       set(operands), {"_c"},
+        return dace.sdfg.nodes.Tasklet(node.name, {conn: None
+                                                   for conn in operands}, {"_c": None},
                                        code_fn(ptrs, None, None),
                                        language=dtypes.Language.CPP)
 
@@ -112,12 +163,19 @@ def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], 
     # Inner tasklet connector per operand: ``_a`` -> ``__a``, which never collides with
     # the nested array names (they keep the outer ``_a`` / ``_c`` spelling).
     tconn = {conn: "__" + conn.lstrip("_") for conn in operands}
-    in_conns = set(tconn.values()) | ({"__cin"} if reads_c else set()) | {inner[c] for c in scalars}
+    in_conns: Dict[str, Optional[dtypes.typeclass]] = {name: None for name in tconn.values()}
+    if reads_c:
+        in_conns["__cin"] = None
+    # A device-resident coefficient reaches the call as a POINTER, never as a value: a scalar
+    # connector would be dereferenced by the host code issuing the call, which validation rejects
+    # (and rightly -- it is device memory). A pointer connector is exempt, as it is for the matrices.
+    for conn, desc in scalars.items():
+        in_conns[inner[conn]] = None if host_can_read(desc) else dtypes.pointer(desc.dtype.base_type)
 
     ptrs = dict(tconn)
     ptrs["_c"] = "__c"
     st = nsdfg.add_state(node.label + "_state")
-    t = st.add_tasklet(node.name, in_conns, {"__c"}, code_fn(ptrs, pa, pb), language=dtypes.Language.CPP)
+    t = st.add_tasklet(node.name, in_conns, {"__c": None}, code_fn(ptrs, pa, pb), language=dtypes.Language.CPP)
     for conn in operands:
         st.add_edge(st.add_read(conn), None, t, tconn[conn], mm.Memlet.from_array(conn, nsdfg.arrays[conn]))
     if reads_c:
@@ -164,7 +222,7 @@ def add_triangular_tasklet(state: SDFGState,
         entries.append(red_me)
         exits.insert(0, red_mx)
 
-    tasklet = state.add_tasklet(label, set(inputs), set(outputs), code)
+    tasklet = state.add_tasklet(label, {conn: None for conn in inputs}, {conn: None for conn in outputs}, code)
     for conn, memlet in inputs.items():
         state.add_memlet_path(state.add_read(memlet.data), *entries, tasklet, dst_conn=conn, memlet=dc(memlet))
     if not inputs:

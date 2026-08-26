@@ -19,8 +19,8 @@ Expansions:
 * ``pure`` (CPU default): a CPP tasklet with a sequential scan over the
   flattened input -- correctness-first, no external dependency.
 * ``CUDA`` (GPU): ``cub::DeviceReduce::ArgMax`` / ``ArgMin``, splitting the
-  returned ``KeyValuePair`` into the two scalar outputs (stubbed until the GPU
-  path is exercised; pin ``pure`` meanwhile).
+  returned ``KeyValuePair`` into the two scalar outputs. Unit-stride input only;
+  a strided slice needs an input iterator CUB does not take for free.
 
 Tie-breaking matches the TSVC sequential source ``if a[i] OP best: best = a[i];
 idx = i`` -- a STRICT comparison, so the FIRST occurrence of the extreme value
@@ -151,18 +151,91 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
 
 @library.expansion
 class ExpandArgReduceCUDA(ExpandTransformation):
-    """GPU lowering via ``cub::DeviceReduce::ArgMax`` / ``ArgMin`` (stub)."""
+    """Device lowering: ``cub::DeviceReduce::ArgMax`` / ``ArgMin``, split into the two outputs.
 
+    CUB answers with a ``KeyValuePair<int, T>`` in DEVICE memory, so the wrapper takes the pair and
+    the workspace from one scratch block (the pair first, the block is allocator-aligned) and copies
+    the pair back before the outputs are written -- both are host scalars, as they are in every other
+    expansion. ``cub::ArgMax`` breaks ties toward the LOWER key, which is the first-occurrence rule
+    the sequential source has.
+    """
+
+    # Filled in on first expansion to dodge the sort<->standard import cycle.
     environments = []
 
     @staticmethod
-    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        raise NotImplementedError(
-            f"ArgReduce CUDA expansion (cub::DeviceReduce::{_OP_CUB[node.op]}) is not yet wired up; "
-            "the CUB ArgMax/ArgMin call returns a KeyValuePair<int, T> to split into _out_val / _out_idx. "
-            "CUB ArgMax/ArgMin take a contiguous input pointer; a non-unit-stride slice needs a strided "
-            "input iterator (e.g. cub::CountingInputIterator + a TransformInputIterator computing base+j*stride) "
-            "before the call. Pin the 'pure' expansion (expand_library_nodes(implementation='pure')) for CPU.")
+    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        from dace.codegen.targets.cpp import sym2cpp
+        if not ExpandArgReduceCUDA.environments:
+            from dace.libraries.sort.environments.cub import DetectScratch
+            ExpandArgReduceCUDA.environments = [DetectScratch]
+        node.validate(parent_sdfg, parent_state)
+
+        in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
+        val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
+        idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
+        in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
+        idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+
+        sub = in_edge.data.subset
+        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        if symbolic.equal(step, 1) is not True:
+            raise NotImplementedError(
+                f"ArgReduce CUDA reads a slice of stride {step}; cub::DeviceReduce::{_OP_CUB[node.op]} takes a "
+                "contiguous pointer. Lower this one through 'pure' or 'OpenMP', or wrap the input in a "
+                "cub::TransformInputIterator over a CountingInputIterator first.")
+
+        state_id = parent_state.parent_graph.node_id(parent_state)
+        idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
+        vt, it = in_dtype.ctype, idx_dtype.ctype
+        pair = f'cub::KeyValuePair<int, {vt}>'
+        prototype = (f'DACE_EXPORTED cudaError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, '
+                     f'long long *__ar_idx, int __ar_items, cudaStream_t __ar_stream);')
+
+        parent_sdfg.append_global_code(prototype + '\n')
+        parent_sdfg.append_global_code(
+            f'{prototype}\n'
+            f'cudaError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, long long *__ar_idx, '
+            f'int __ar_items, cudaStream_t __ar_stream) {{\n'
+            f'    size_t _cub_needed = 0;\n'
+            f'    cudaError_t _cub_status;\n'
+            f'    DACE_GPU_CHECK(_cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}(nullptr, _cub_needed, __ar_in, '
+            f'({pair}*)nullptr, __ar_items, __ar_stream));\n'
+            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    size_t _ar_head = ((sizeof({pair}) + 255) / 256) * 256;\n'
+            f'    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_ar_head + _cub_needed, '
+            f'__ar_stream, &_cub_status);\n'
+            f'    if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : '
+            f'cudaErrorMemoryAllocation;\n'
+            f'    {pair} *_ar_dev = ({pair}*)_cub_scratch;\n'
+            f'    DACE_GPU_CHECK(_cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}((char*)_cub_scratch + _ar_head, '
+            f'_cub_needed, __ar_in, _ar_dev, __ar_items, __ar_stream));\n'
+            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    {pair} _ar_host;\n'
+            f'    DACE_GPU_CHECK(_cub_status = cudaMemcpyAsync(&_ar_host, _ar_dev, sizeof({pair}), '
+            f'cudaMemcpyDeviceToHost, __ar_stream));\n'
+            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    DACE_GPU_CHECK(_cub_status = cudaStreamSynchronize(__ar_stream));\n'
+            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    if (__ar_val != nullptr) *__ar_val = _ar_host.value;\n'
+            f'    *__ar_idx = (long long)_ar_host.key;\n'
+            f'    return cudaSuccess;\n'
+            f'}}\n', 'cuda')
+
+        items = sym2cpp(sub.num_elements())
+        val_out = '&__ar_val' if val_edge is not None else 'nullptr'
+        code = ((f'{vt} __ar_val;\n' if val_edge is not None else '') + f'long long __ar_idx;\n'
+                f'DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in, {val_out}, &__ar_idx, (int)({items}), '
+                f'__dace_current_stream));\n' + (f'_out_val = __ar_val;\n' if val_edge is not None else '') +
+                f'_out_idx = ({it})__ar_idx;')
+        return nodes.Tasklet(
+            label=f'{node.label}_cuda',
+            inputs={'_in': dace.pointer(in_dtype)},
+            outputs={c: None
+                     for c in (('_out_val', '_out_idx') if val_edge is not None else ('_out_idx', ))},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 @library.node
@@ -180,6 +253,10 @@ class ArgReduce(nodes.LibraryNode):
         'CUDA': ExpandArgReduceCUDA,
     }
     default_implementation = 'pure'
+
+    #: Both answers are HOST scalars in every expansion, the CUDA one included: CUB leaves its
+    #: ``KeyValuePair`` in device scratch and the wrapper copies it back before writing them.
+    host_connectors = frozenset({'_out_val', '_out_idx'})
 
     op = properties.Property(dtype=str,
                              default='max',

@@ -99,5 +99,49 @@ def test_arg_reduce_tie_breaks_to_first(op):
     assert idx[0] == expected, f"{op}: got {idx[0]}, expected first extreme at {expected}"
 
 
+def gpu_argreduce(op: str) -> dace.SDFG:
+    """The same node with device operands, so the CUDA expansion is the one that applies."""
+    sdfg = _build(op)
+    sdfg.name = f'argreduce_gpu_{op}'
+    # Input on the device, answers on the host: that is what ``host_connectors`` declares, and the
+    # expansion writes both from the host code that issues the launch.
+    sdfg.arrays['a'].storage = dace.StorageType.GPU_Global
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce))
+    node.implementation = 'CUDA'
+    return sdfg
+
+
+@pytest.mark.parametrize('op', ['max', 'min'])
+def test_the_cuda_expansion_calls_cub_and_brings_the_pair_back(op):
+    """CUB answers in DEVICE memory; both outputs are host scalars, so the pair has to be copied."""
+    sdfg = gpu_argreduce(op)
+    sdfg.expand_library_nodes()
+    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
+
+    kind = 'ArgMax' if op == 'max' else 'ArgMin'
+    assert f'cub::DeviceReduce::{kind}' in code, f'the CUDA expansion did not call cub::DeviceReduce::{kind}'
+    assert 'get_scratch<::dace::cub::ReduceTag>' in code, 'the workspace does not come from the scratch pool'
+    assert 'cudaMemcpyDeviceToHost' in code, 'the KeyValuePair is never copied back, so the outputs read device memory'
+    assert ArgReduce.host_connectors == frozenset(
+        {'_out_val',
+         '_out_idx'}), ('both answers are written by host code, so an offloader must be told to leave them there')
+
+
+def test_the_cuda_expansion_refuses_a_strided_slice():
+    """``cub::DeviceReduce`` takes a contiguous pointer; a strided slice needs an input iterator."""
+    sdfg = dace.SDFG('argreduce_gpu_strided')
+    sdfg.add_array('a', [64], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('idx', [1], dace.int64)
+    state = sdfg.add_state()
+    node = ArgReduce('argreduce', op='max')
+    node.implementation = 'CUDA'
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet('a[0:64:2]'))
+    state.add_edge(node, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+
+    with pytest.raises(NotImplementedError, match='contiguous pointer'):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
