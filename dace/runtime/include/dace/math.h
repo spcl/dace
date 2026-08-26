@@ -35,6 +35,11 @@ using std::abs;
 //     return (a > b) ? a : b;
 // }
 
+// A later argument wins only by comparing STRICTLY better, so a tie -- and a
+// comparison that is false because an operand is NaN -- keeps the earlier one.
+// That is what Python's ``max``/``min`` do, and what ``std::max``/``std::min``
+// do; picking the later operand instead would disagree with the program these
+// are compiled from on every NaN and on ``max(0.0, -0.0)``.
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
   return val;
@@ -42,7 +47,7 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(
     const T& a, const Ts&... ts) {
-  return (a < min(ts...)) ? a : min(ts...);
+  return (min(ts...) < a) ? min(ts...) : a;
 }
 
 template <typename T>
@@ -52,7 +57,7 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val) {
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(
     const T& a, const Ts&... ts) {
-  return (a > max(ts...)) ? a : max(ts...);
+  return (a < max(ts...)) ? max(ts...) : a;
 }
 
 template <typename T, typename T2>
@@ -220,32 +225,32 @@ static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
 template <typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
     const dace::float16& a, const dace::float16& b, const Ts&... c) {
-  return (a < b) ? min(a, c...) : min(b, c...);
+  return (b < a) ? min(b, c...) : min(a, c...);
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
     const dace::float16& a, const T& b, const Ts&... c) {
-  return (a < dace::float16(b)) ? min(a, c...) : min(dace::float16(b), c...);
+  return (dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...);
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
     const T& a, const dace::float16& b, const Ts&... c) {
-  return (dace::float16(a) < b) ? min(dace::float16(a), c...) : min(b, c...);
+  return (b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...);
 }
 template <typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
     const dace::float16& a, const dace::float16& b, const Ts&... c) {
-  return (a > b) ? max(a, c...) : max(b, c...);
+  return (a < b) ? max(b, c...) : max(a, c...);
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
     const dace::float16& a, const T& b, const Ts&... c) {
-  return (a > dace::float16(b)) ? max(a, c...) : max(dace::float16(b), c...);
+  return (a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...);
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
     const T& a, const dace::float16& b, const Ts&... c) {
-  return (dace::float16(a) > b) ? max(dace::float16(a), c...) : max(b, c...);
+  return (dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...);
 }
 #endif
 
