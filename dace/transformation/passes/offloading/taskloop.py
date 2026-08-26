@@ -56,16 +56,43 @@ def sdfg_only_launches(sdfg: SDFG) -> bool:
     return found_map
 
 
+def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) -> bool:
+    """An inner map whose extent mentions one of ``entry``'s own parameters.
+
+    Keeping such a map on the host is a loss twice over. Every host iteration then launches a
+    DIFFERENT, mostly smaller kernel, so the nest pays a launch per iteration for work that shrinks
+    as it goes -- measured at 1.12x on polybench cholesky and 1.14x on npbench cholesky2, against a
+    5% floor read off the kernels whose two arms compile the same graph. And the extent has to reach
+    the launch configuration, where an outer parameter is not in scope: correlation's
+    ``symmetrize_col(j: _[i + 1:M])`` emits ``dim3(((M - __i) - 1), 1, 1)`` and nvcc rejects the
+    program outright.
+
+    The ICON shape this rule exists for is unaffected: an ``nblks`` map over ``nproma``/``nlev``
+    bodies has extents that do not mention the block index.
+    """
+    params = OrderedSet(entry.map.params)
+    for node in scope_children.get(entry, ()):
+        if isinstance(node, nodes.MapEntry):
+            if params & OrderedSet(str(s) for s in node.map.range.free_symbols):
+                return True
+            if body_extents_depend_on_entry(node, scope_children):
+                return True
+    return False
+
+
 def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dict, launch_only: bool = True) -> bool:
     """``entry`` launches work rather than doing it, so it belongs on the host.
 
     Enclosing a device-wide library node is a requirement, not a heuristic: a cuBLAS call is issued by
     host code. ``launch_only`` adds the optional reason -- an uncollapsed nest counts, and collapsing
-    it into one kernel is canonicalization's job.
+    it into one kernel is canonicalization's job -- but only for a body whose extents do not depend
+    on this map, see :func:`body_extents_depend_on_entry`.
     """
     if encloses_device_wide_libnode(state, entry, scope_children):
         return True
     if not launch_only:
+        return False
+    if body_extents_depend_on_entry(entry, scope_children):
         return False
 
     launches = False

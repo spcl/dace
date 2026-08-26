@@ -257,6 +257,42 @@ def test_a_map_that_computes_in_its_own_scope_is_not_a_taskloop():
     assert map_schedule(offloaded(sdfg, heuristics=True), 'outer') == dtypes.ScheduleType.GPU_Device
 
 
+def triangular_nest() -> dace.SDFG:
+    """The cholesky shape: an inner map whose extent is written in the OUTER map's parameter."""
+    sdfg = dace.SDFG('triangular_nest')
+    sdfg.add_array('A', [16, 16], dace.float64)
+    sdfg.add_array('B', [16, 16], dace.float64)
+    state = sdfg.add_state('body')
+    read = state.add_read('A')
+    outer_in, outer_out = state.add_map('outer', dict(i='0:16'))
+    inner_in, inner_out = state.add_map('inner', dict(j='0:i + 1'))
+    tasklet = state.add_tasklet('mul', {'inp'}, {'out'}, 'out = inp * 2.0')
+    state.add_memlet_path(read, outer_in, inner_in, tasklet, dst_conn='inp', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(tasklet,
+                          inner_out,
+                          outer_out,
+                          state.add_write('B'),
+                          src_conn='out',
+                          memlet=dace.Memlet('B[i, j]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_map_whose_body_extent_names_it_is_not_a_taskloop():
+    """An inner extent written in the outer parameter disqualifies the outer map.
+
+    Keeping it on the host would launch a different, shrinking kernel per iteration -- measured as a
+    1.12x regression on polybench cholesky and 1.14x on npbench cholesky2, against a 5% floor -- and
+    the extent has to reach a launch configuration where the outer parameter is not in scope, which
+    is how polybench correlation fails to build at all.
+    """
+    sdfg = triangular_nest()
+    state = next(iter(sdfg.states()))
+    outer = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label == 'outer')
+    assert not is_taskloop_map(state, outer, state.scope_children())
+    assert map_schedule(offloaded(sdfg, heuristics=True), 'outer') == dtypes.ScheduleType.GPU_Device
+
+
 def test_a_block_map_over_a_nested_sdfg_launches_its_states_kernels():
     """Interstate edges inside the body are symbol preparation, not computation."""
     sdfg = offloaded(blocked_nest(), heuristics=True)
