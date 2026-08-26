@@ -19,6 +19,7 @@ call, cuBLAS device call, and the pure/naive nested-tasklet expansion).
 import copy
 import ctypes.util
 import re
+import os
 import shutil
 
 import numpy as np
@@ -447,13 +448,17 @@ def test_gemm_cublas_gpu():
         assert copies, f'no device copy of {operand} in {list(sdfg.arrays)}'
         assert any(re.search(r'\b%s\b' % re.escape(c), call) for c in copies), (operand, copies, call)
 
-    # Compile + run bit-exact (requires a GPU device).
+    # Compile + run bit-exact (requires a GPU device). The driver being installed is not the same
+    # as a device being VISIBLE -- a CPU-only run sets CUDA_VISIBLE_DEVICES empty, and then the
+    # build succeeds and the runtime raises on init instead.
     if shutil.which('nvidia-smi') is None:
         pytest.skip('no GPU device (nvidia-smi missing)')
+    if os.environ.get('CUDA_VISIBLE_DEVICES', None) == '':
+        pytest.skip('no GPU device (CUDA_VISIBLE_DEVICES is empty)')
     try:
         _gemm_equiv('cuBLAS', gpu=True)
-    except (CompilationError, CompilerConfigurationError) as e:
-        pytest.skip('cuBLAS build/link unavailable: %s' % e)
+    except (CompilationError, CompilerConfigurationError, RuntimeError) as e:
+        pytest.skip('cuBLAS build/run unavailable: %s' % e)
 
 
 if __name__ == '__main__':
