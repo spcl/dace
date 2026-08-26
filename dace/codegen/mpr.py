@@ -34,6 +34,8 @@ import copy
 import re
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
+from ordered_set import OrderedSet
+
 from dace import data as dt, dtypes, mpr_lowering
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -497,6 +499,88 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     return linkable[0]
 
 
+def written_containers(sdfg: SDFG) -> OrderedSet:
+    """The container names some state WRITES, at any nesting depth.
+
+    An ``AccessNode`` with an incoming edge is a write. Nested SDFGs are walked too: a nested
+    transient that happens to share an outer name is then reported as written, which is the SAFE
+    direction -- it only ever withholds a ``const``, never grants one wrongly.
+
+    :param sdfg: the SDFG to scan.
+    :returns: the written names.
+    """
+    written: OrderedSet = OrderedSet()
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and state.in_degree(node) > 0:
+                written.add(node.data)
+            elif isinstance(node, nodes.NestedSDFG):
+                written |= written_containers(node.sdfg)
+    return written
+
+
+def readonly_entry_arrays(sdfg: SDFG) -> OrderedSet:
+    """The entry point's ARRAY parameters that nothing writes -- the ones whose pointee is const.
+
+    Read off the same SDFG the signature is generated from, so the qualifier and the argument list
+    cannot disagree. Callers that publish a binding for the rendering (the ABI ``const`` flag)
+    should derive it from HERE rather than recomputing it, which is what let a binding say
+    ``const: true`` while the rendered signature said otherwise.
+
+    :param sdfg: the PREPARED SDFG -- the one whose ``arglist()`` is the signature.
+    :returns: the names to qualify.
+    """
+    written = written_containers(sdfg)
+    return OrderedSet(name for name, desc in sdfg.arglist().items()
+                      if isinstance(desc, dt.Array) and name not in written)
+
+
+def entry_parameter_name(param: str) -> str:
+    """The declared name in one entry-signature parameter (``float * __restrict__ a`` -> ``a``)."""
+    return param.strip().split()[-1].lstrip('*')
+
+
+def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
+    """Add ``const`` to the entry point's read-only pointer parameters.
+
+    The signature is built by ``Data.as_arg``, which is shared with every other DaCe backend and
+    has no notion of a read-only parameter, so the qualifier is applied here instead -- the same
+    place the ctype names are re-spelled, and for the same reason. Without it a rendering hands a
+    non-const pointer to a buffer it only reads: every C and C++ linter reports it
+    (cppcheck ``constParameterPointer``), and a published binding that derived ``const`` from the
+    written-set disagreed with the signature it was supposed to describe.
+
+    Adding ``const`` cannot break a caller: a ``T *`` converts to ``const T *`` implicitly in both
+    languages, and the parameter is still passed as one pointer, so the ABI is unchanged.
+
+    :param code: the rendered unit.
+    :param sdfg: the PREPARED SDFG.
+    :param entry: the entry point's name.
+    :returns: the unit with the read-only parameters qualified.
+    """
+    readonly = readonly_entry_arrays(sdfg)
+    if not readonly:
+        return code
+    pattern = re.compile(r'\bvoid\s+%s\s*\(' % re.escape(entry))
+    out, cursor = [], 0
+    for match in pattern.finditer(code):
+        opened = match.end() - 1
+        closed = code.index(')', opened)
+        # The parameter list is split on commas and terminated at the first ``)``, which is exact
+        # for pointers and by-value scalars and wrong for anything nested (a function-pointer
+        # parameter). MPR emits neither today; refuse rather than mangle the signature if it ever
+        # does.
+        if '(' in code[opened + 1:closed]:
+            raise NotImplementedError(f'MPR cannot qualify the entry signature of {entry}: a parameter carries a '
+                                      'nested parameter list, which this rewrite cannot split.')
+        params = [p.strip() for p in code[opened + 1:closed].split(',')]
+        params = [f'const {p}' if entry_parameter_name(p) in readonly else p for p in params]
+        out.append(code[cursor:opened + 1] + ', '.join(params))
+        cursor = closed
+    out.append(code[cursor:])
+    return ''.join(out)
+
+
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
 #: historical behaviour exactly.
 LANGUAGES: Dict[str, mpr_lowering.Dialect] = {
@@ -655,6 +739,11 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
                 body = mpr_lowering.rewrite_ctypes(body, dialect)
+                body = qualify_readonly_pointers(body, prepared, sdfg.name)
+                if dialect is mpr_lowering.Dialect.STANDALONE_C:
+                    # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
+                    # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
+                    body = re.sub(r'\b__restrict__\b', 'restrict', body)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
     return Rendering(code, prepared)

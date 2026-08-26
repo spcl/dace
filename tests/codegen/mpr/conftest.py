@@ -49,7 +49,11 @@ TOOLCHAINS = {
 BASE_FLAGS = ('-O2', '-fopenmp', '-fPIC', '-shared')
 #: Warning flags, kept apart from :data:`BASE_FLAGS` so the numeric gate and the zero-warning gate
 #: fail independently -- a warning must not be reported as "MPR produced wrong numbers".
-WARNING_FLAGS = ('-Wall', '-Wextra')
+#: The conversion flags are in here rather than opt-in per test because an IMPLICIT conversion is
+#: what a self-contained render gets wrong silently: an extent reaching a ``size_t``, an int32
+#: symbol taken by a nested body, a double stored into an ``int64_t``. ``-Wall -Wextra`` diagnoses
+#: none of the three.
+WARNING_FLAGS = ('-Wall', '-Wextra', '-Wconversion', '-Wsign-conversion')
 
 #: Tokens MPR output must not contain, and what each one means when it appears. Checked as plain
 #: substrings/regexes on the emitted text: the compile in an empty directory catches a leaked

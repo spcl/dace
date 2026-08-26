@@ -2517,6 +2517,20 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
 
+    @staticmethod
+    def nsdfg_symbol_argument(symbol: dtypes.typeclass, name: str) -> str:
+        """One nested-SDFG symbol parameter, widened to ``int64_t`` for MPR.
+
+        A loop iterator carries the int32 default symbol type, so a nested body that takes one names
+        it ``int`` while every index and ``_size`` helper MPR emits beside it is ``int64_t`` -- the
+        call then narrows an EXTENT (a dot product's trip count, in cholesky) and truncates past
+        2^31. Only the standalone dialect is widened: main's signatures are not this generator's to
+        change.
+        """
+        if mpr_lowering.standalone() and symbol in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
+            return dtypes.int64.as_arg(name)
+        return symbol.as_arg(name)
+
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
@@ -2552,8 +2566,8 @@ class CPUCodeGen(TargetCodeGenerator):
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
-            f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname in fsyms and aname not in sdfg.constants
+            f'{self.nsdfg_symbol_argument(node.sdfg.symbols[aname], aname)}'
+            for aname in sorted(node.symbol_mapping.keys()) if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'

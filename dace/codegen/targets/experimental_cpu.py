@@ -33,7 +33,7 @@ from dace.codegen.targets.cpu import (CPUCodeGen, aligned_new_value, counter_ini
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG, nodes, type_inference
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 
@@ -198,10 +198,12 @@ def c_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: Optiona
     :param nodedesc: the descriptor, read for the alignment it asks for.
     :returns: the allocation statement.
     """
+    # The count is a SIGNED extent and the size argument is ``size_t``, so the conversion is spelled
+    # out: left implicit it is a ``-Wsign-conversion`` diagnostic on every allocation the render emits.
     if nodedesc is None or not use_aligned_operator_new(nodedesc):
-        return '%s = malloc(sizeof(%s) * (%s));\n' % (alloc_name, ctype, count)
+        return '%s = malloc(sizeof(%s) * (size_t)(%s));\n' % (alloc_name, ctype, count)
     alignment = aligned_new_value(nodedesc)
-    bytes_needed = '((sizeof(%s) * (%s) + %d) / %d) * %d' % (ctype, count, alignment - 1, alignment, alignment)
+    bytes_needed = '((sizeof(%s) * (size_t)(%s) + %d) / %d) * %d' % (ctype, count, alignment - 1, alignment, alignment)
     return '%s = aligned_alloc(%d, %s);\n' % (alloc_name, alignment, bytes_needed)
 
 
@@ -741,6 +743,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 # enclosing scope AND what its statement reads, which is exactly what a fused
                 # declaration needs: `T x = expr;` is only in scope for later readers if this line is
                 # not wrapped in a brace of its own.
+                line = self.explicit_store_conversion(cfg, state_id, node, line)
                 line = self.fuse_pending_decl(node, line)
                 self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
                 callsite_stream.write('%s  // %s\n' % (line, node.label), cfg, state_id, node)
@@ -752,6 +755,83 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
         callsite_stream.write('}', cfg, state_id, node)
+
+    @staticmethod
+    def tasklet_read_types(cfg, state_id: int, node) -> Dict[str, dtypes.typeclass]:
+        """Types for every name a tasklet body may read: its connectors AND its data containers.
+
+        A body does not have to spell its connectors -- ``out[:] = arr * s`` arrives as
+        ``(expr_times_a[0, 0] + c[0])``, naming the DATA. Passing only ``in_connectors`` leaves those
+        names unbound and inference gives up, which reads as "types agree" and silently drops a
+        conversion.
+        """
+        reads = {name: dtype for name, dtype in node.in_connectors.items() if isinstance(dtype, dtypes.typeclass)}
+        state = cfg.state(state_id)
+        arrays = state.sdfg.arrays
+        for edge in state.in_edges(node):
+            data = edge.data.data
+            if data in arrays:
+                reads.setdefault(data, arrays[data].dtype)
+        return reads
+
+    def explicit_store_conversion(self, cfg, state_id: int, node, line: str) -> str:
+        """Spell the conversion when a fused store's expression type is not the connector's.
+
+        A kernel that mixes a float scalar with integer arrays -- ``out[:] = arr * s`` over
+        ``dc.int64`` arrays and a ``dc_float`` scalar -- computes in double and stores into
+        ``int64_t``. The narrowing is real (the frontend chose it), but left implicit it is a
+        ``-Wfloat-conversion`` diagnostic on a render that is otherwise clean.
+
+        This store never reaches :meth:`CPUCodeGen.make_ptr_assignment`: the destination is
+        substituted INTO the tasklet body, so the statement arrives here already assembled. The out
+        connector is the type DaCe means to store, and the body is what produces the value, so the
+        two are compared directly.
+
+        :param cfg: the control-flow graph being emitted, to reach the tasklet's incoming edges.
+        :param state_id: index of the state holding the tasklet.
+        :param node: the tasklet, whose body is one assignment.
+        :param line: the emitted statement.
+        :returns: the statement, with the right-hand side cast when the types differ.
+        """
+        if not mpr_lowering.standalone() or node.language != dtypes.Language.Python:
+            return line
+        if len(node.out_connectors) != 1:
+            return line
+        dst = next(iter(node.out_connectors.values()))
+        if not isinstance(dst, dtypes.typeclass) or isinstance(dst, (dtypes.pointer, dtypes.vector)):
+            return line
+        value = self.assigned_expression(node)
+        if value is None:
+            return line
+        try:
+            src = type_inference.infer_expr_type(value, self.tasklet_read_types(cfg, state_id, node))
+        except Exception:  # inference is best-effort: an unknown call is not a reason to fail codegen
+            return line
+        if src is None or src == dst or isinstance(src, (dtypes.pointer, dtypes.vector)):
+            return line
+        split = re.search(r'(?<![=!<>+\-*/%&|^])=(?!=)', line)
+        if split is None:
+            return line
+        head, tail = line[:split.start()], line[split.end():].strip()
+        if not tail.endswith(';'):
+            return line
+        # C has one cast spelling; C++ has ``-Wold-style-cast``, so the render says which conversion it
+        # means rather than reaching for the one spelling that also reinterprets.
+        value = tail[:-1].strip()
+        if mpr_lowering.standalone_c():
+            return f'{head}= ({dst.ctype})({value});'
+        return f'{head}= static_cast<{dst.ctype}>({value});'
+
+    @staticmethod
+    def assigned_expression(node):
+        """The Python source of the single assignment's right-hand side, or ``None``."""
+        try:
+            body = ast.parse(node.code.as_string).body
+        except (SyntaxError, TypeError, ValueError):
+            return None
+        if len(body) != 1 or not isinstance(body[0], (ast.Assign, ast.AnnAssign)):
+            return None
+        return astutils.unparse(body[0].value) if body[0].value is not None else None
 
     def _single_statement_body(self, node) -> bool:
         """True if ``node`` is a Python tasklet whose body is exactly one assignment (so, once its
