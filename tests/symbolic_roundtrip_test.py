@@ -7,6 +7,7 @@ import sympy
 import dace
 from dace import subsets, symbolic
 from dace.symbolic import pystr_to_symbolic, symstr, arrays, free_symbols_and_functions, bitwise_or
+from dace.frontend.python import astutils
 from dace.frontend.python.newast import _subset_has_indirection
 
 
@@ -83,6 +84,19 @@ def test_head_isinstance_is_backend_independent():
     assert not isinstance(pystr_to_symbolic('a + b'), symbolic.ITE)
     assert not isinstance(pystr_to_symbolic('a'), bitwise_or)
     assert not isinstance(3, symbolic.ITE)
+
+
+def test_an_ite_unparses_without_recursing():
+    # ``astutils.unparse`` prints a sympy expression with sympy's Python code printer, which looks a
+    # printer method up by CLASS NAME: DaCe's ``ITE`` finds sympy's own ``_print_ITE``, whose body
+    # is "rewrite to a Piecewise and print that". DaCe's head does not rewrite, so the printer got
+    # the same expression back and recursed until the stack ended -- a hang-shaped crash on an
+    # interstate condition written as a conditional expression.
+    expr = pystr_to_symbolic('ITE(N > 5, N == 0, N == 1)')
+    assert isinstance(expr, symbolic.ITE)
+    printed = astutils.unparse(expr)
+    assert 'ITE' in printed and 'Piecewise' not in printed
+    assert pystr_to_symbolic(printed) == expr
 
 
 def test_explicit_function_name_preserved():

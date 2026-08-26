@@ -1807,6 +1807,18 @@ class ITE(DaceFunction):
         if c is sympy.false:
             return b
 
+    def _pythoncode(self, printer, **kwargs):
+        """Print verbatim, as every other DaCe head does under ``allow_unknown_functions``.
+
+        Needed only because sympy HAS an ``ITE`` of its own, so its Python code printer finds a
+        ``_print_ITE`` by class name and rewrites it to a ``Piecewise``. This class does not rewrite,
+        so that returns the same expression and the printer recurses until the stack ends. The
+        ``printmethod`` hook is consulted before the by-name lookup, which is what makes this the
+        place to say it. Reached from ``astutils.unparse`` on an interstate condition -- a
+        conditional expression used as an ``if`` test parses to this head.
+        """
+        return 'ITE(%s)' % ', '.join(printer._print(argument) for argument in self.args)
+
 
 # ``merge`` is the legacy spelling of :class:`ITE` (same Python object). New
 # code should prefer ``ITE``; ``merge`` is retained for the existing C++
