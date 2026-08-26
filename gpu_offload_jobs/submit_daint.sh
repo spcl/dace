@@ -26,7 +26,8 @@
 # reason, and the kernels whose two arms compile the same graph are left in deliberately: their
 # ratios are the noise floor every other row has to be read against.
 #
-# Env: PRESET (default paper), TIMELIMIT, ACCOUNT (g34), PARTITION (normal), OUT_DIR, REPEATS.
+# Env: PRESET (default paper), TIMELIMIT, ACCOUNT (g34), PARTITION (normal), OUT_DIR,
+#      REPEATS (default 20 timed invocations per arm).
 
 set -euo pipefail
 
@@ -35,7 +36,9 @@ WHAT="${2:-all}"
 NODES="${3:-1}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 PRESET="${PRESET:-paper}"
-REPEATS="${REPEATS:-15}"
+# 20 timed invocations per arm. The driver discards warm-up calls and reports the BEST of these,
+# so the count buys robustness against the power cap moving mid-arm rather than a tighter average.
+REPEATS="${REPEATS:-20}"
 
 case "$KIND" in
     cpu|gpu|smoke) ;;

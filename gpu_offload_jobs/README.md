@@ -60,12 +60,16 @@ The kernels whose two arms compile the same graph are deliberately left in the t
 cannot be anything but 1, so whatever they read IS the floor. On one RTX 4050 at the `paper` preset
 they came in at 0.99-1.05, and nothing within +-5% of 1 elsewhere in that table is a result.
 
+The submitted jobs time each arm **20 times** (`REPEATS`, and `--repeats` on the driver). The count
+buys robustness against the cap moving part-way through an arm, not a tighter average -- the
+reported number is the best of the 20, so a longer run can only find a less-throttled sample.
+
 Each rank binds `CUDA_VISIBLE_DEVICES` to its own module's H100. Without that binding four ranks
 drive device 0 and time each other; the numbers still come out, they are just not about the compiler.
 
 ## Results as of 2026-08-26
 
-One RTX 4050, `paper` preset, warm-up plus best-of-15, both arms forced. The taskloop rule now
+One RTX 4050, `paper` preset, warm-up plus best-of-15 (the jobs now use 20), both arms forced. The taskloop rule now
 declines a map whose body extent is written in its own parameter, which is what the last two columns
 are about.
 

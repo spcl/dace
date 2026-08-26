@@ -32,7 +32,7 @@ if [ "$KIND" = cpu ]; then
     export CUDA_VISIBLE_DEVICES=
     ARGS+=(--stage codegen)
 else
-    ARGS+=(--repeats "${REPEATS:-15}")
+    ARGS+=(--repeats "${REPEATS:-20}")
 fi
 
 exec python3 -m tests.corpus.measure_gpu_taskloops "${ARGS[@]}"
