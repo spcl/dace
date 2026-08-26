@@ -23,6 +23,16 @@ Run::
     python -m tests.corpus.measure_gpu_taskloops --stage codegen --suites tsvc --shard 1/4
 """
 import os
+import signal
+
+# Slurm's ``slurmstepd`` starts every task with SIGCHLD BLOCKED. The mask survives fork+exec and
+# ``subprocess`` does not reset it, so it reaches cmake, whose KWSys learns its helpers exited by
+# RECEIVING SIGCHLD and otherwise waits in ``select()`` forever -- a configure that looks stuck but
+# is a lost wakeup. This module drives every case as a subprocess, and srun execs it directly, so
+# module scope is where the unblock has to happen; ``pthread_sigmask`` is per-thread and this runs
+# before any pool exists. Mirrors canon_perf_jobs/corpus_perf_job.py, which hit the same thing.
+if hasattr(signal, 'pthread_sigmask'):
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
 
 # Pin the run before DaCe/OpenMP load, as the CPU sweep does.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -225,7 +235,7 @@ def main() -> int:
         ratio = 1.0 if on is off else (on['median'] / off['median'] if off['median'] > 0 else float('nan'))
         note = '' if (off['correct'] and on['correct']) else '  ' + (on.get('error') or off.get('error') or 'WRONG')
         if not note and screened:
-            note = '  identical graph' + ('' if on is off else ', timed anyway')
+            note = '  identical graph' + (', timed anyway' if args.stage == 'full' and on is not off else '')
         rows.append(
             dict(suite=kind,
                  kernel=name,
