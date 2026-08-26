@@ -51,6 +51,9 @@ from tests.corpus import corpus_suite as suite
 
 #: Seconds per (kernel, setting) subprocess: a big CUDA compile is minutes, past this is a hang.
 CASE_TIMEOUT = 1800
+#: Untimed calls before the timed ones: the first invocation pays lazy device init and a cold
+#: instruction cache, and on a power-capped part it also runs at the idle clock.
+WARMUP = 2
 #: Seconds for a screen case. It parses, canonicalizes and emits -- no compiler, no device.
 SCREEN_TIMEOUT = 900
 
@@ -102,11 +105,16 @@ def codegen_one(kind: str, name: str, heuristics: bool, preset: str) -> Dict:
     ``generate_code`` is not reproducible on this branch -- the same finalized SDFG emits one of two
     programs run to run -- so a text digest would report kernels as rewritten at random. It is still
     called, because a kernel the offloading pass leaves unemittable has to fail here.
+
+    ⛔ Order is load-bearing: emitting MUTATES the graph, so the digest has to precede it.
     """
     ctx = suite.make(kind, name, preset=preset)
     sdfg, taskloops = offloaded_sdfg(ctx, heuristics, 'ab')
-    sdfg.generate_code()
+    # Digest BEFORE emitting. ``generate_code`` rewrites the graph it is handed -- it pads every
+    # region boundary with a landing state and resets the CFG list -- and it does so
+    # nondeterministically, so a digest taken afterwards reports kernels as rewritten at random.
     digest = hashlib.sha256(json.dumps(stable_json(sdfg.to_json()), sort_keys=True, default=str).encode())
+    sdfg.generate_code()
     return dict(kind=kind,
                 name=name,
                 heuristics=heuristics,
@@ -123,13 +131,18 @@ def measure_one(kind: str, name: str, heuristics: bool, repeats: int, preset: st
     correct = bool(suite.run_matches(ctx, sdfg))
 
     compiled, kwargs = suite.compiled_call(ctx, sdfg)
+    for _ in range(WARMUP):
+        compiled(**kwargs)
     times = []
     for _ in range(repeats):
         start = time.perf_counter()
         compiled(**kwargs)
         times.append(time.perf_counter() - start)
-    times.sort()
-    return dict(name=name, heuristics=heuristics, correct=correct, taskloops=taskloops, median=times[len(times) // 2])
+    # The BEST run, not the median. This box reports ``SW Power Cap: Active`` with the SM clock at
+    # two thirds of its maximum, and the cap moves during a sweep -- a median tracks whatever the
+    # clock was doing, and the two arms of an A/B are minutes apart, so it charges one arm for the
+    # other's throttling. The minimum is the one estimator the cap can only spoil in one direction.
+    return dict(name=name, heuristics=heuristics, correct=correct, taskloops=taskloops, median=min(times))
 
 
 def run_case(kind: str, name: str, heuristics: bool, repeats: int, preset: str, stage: str = 'full') -> Dict:
@@ -173,6 +186,9 @@ def main() -> int:
     parser.add_argument('--repeats', type=int, default=5, help='timed invocations per case')
     parser.add_argument('--stage', default='full', choices=('full', 'codegen'), help='codegen: screen only, no GPU')
     parser.add_argument('--shard', metavar='I/N', default='0/1', help='only every N-th selected kernel starting at I')
+    parser.add_argument('--no-screen',
+                        action='store_true',
+                        help='time both arms even where the screen says the graph is identical')
     parser.add_argument('--csv', help='write the table here as it goes')
     parser.add_argument('--one', help='internal: measure this one kernel in this process')
     parser.add_argument('--kind', default='np', help='internal: the suite for --one')
@@ -205,11 +221,11 @@ def main() -> int:
         else:
             off = run_case(kind, name, False, args.repeats, args.preset)
             # Byte-identical emitted programs cannot differ in runtime, so one build answers both.
-            on = off if screened else run_case(kind, name, True, args.repeats, args.preset)
+            on = off if (screened and not args.no_screen) else run_case(kind, name, True, args.repeats, args.preset)
         ratio = 1.0 if on is off else (on['median'] / off['median'] if off['median'] > 0 else float('nan'))
         note = '' if (off['correct'] and on['correct']) else '  ' + (on.get('error') or off.get('error') or 'WRONG')
         if not note and screened:
-            note = '  identical codegen'
+            note = '  identical graph' + ('' if on is off else ', timed anyway')
         rows.append(
             dict(suite=kind,
                  kernel=name,
