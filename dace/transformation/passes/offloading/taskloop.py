@@ -52,12 +52,18 @@ def sdfg_only_launches(sdfg: SDFG) -> bool:
     return found_map
 
 
-def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
-    """``entry`` launches work rather than doing it: it encloses a device-wide library node, or all
-    computation under it sits in an inner map or a launching nested SDFG. An uncollapsed perfect nest
-    counts -- collapsing it into one kernel is canonicalization's job."""
+def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dict, launch_only: bool = True) -> bool:
+    """``entry`` launches work rather than doing it, so it belongs on the host.
+
+    Enclosing a device-wide library node is not a heuristic but a requirement: a cuBLAS call is issued
+    by host code, so no map around one can be a kernel. ``launch_only`` adds the second, optional
+    reason -- all computation under it sits in an inner map or a launching nested SDFG. An uncollapsed
+    perfect nest counts there; collapsing it into one kernel is canonicalization's job.
+    """
     if encloses_device_wide_libnode(state, entry, scope_children):
         return True
+    if not launch_only:
+        return False
 
     launches = False
     for node in scope_children.get(entry, ()):
@@ -72,12 +78,12 @@ def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dic
     return launches
 
 
-def taskloop_maps(sdfg: SDFG) -> OrderedSet:
+def taskloop_maps(sdfg: SDFG, launch_only: bool = True) -> OrderedSet:
     found = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
             scope_children = state.scope_children()
             for node in state.nodes():
-                if isinstance(node, nodes.MapEntry) and is_taskloop_map(state, node, scope_children):
+                if isinstance(node, nodes.MapEntry) and is_taskloop_map(state, node, scope_children, launch_only):
                     found.add(node)
     return found

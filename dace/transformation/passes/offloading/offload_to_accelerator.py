@@ -9,8 +9,6 @@ changes rather than around every kernel.
 from copy import deepcopy
 from typing import Any, Set
 
-from ordered_set import OrderedSet
-
 from dace import dtypes, properties, data, Memlet, subsets
 from dace.config import Config
 from dace.sdfg import nodes, SDFG, InterstateEdge
@@ -197,6 +195,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         self.taskloop_heuristics = Config.get_bool('optimizer', 'gpu_taskloop_heuristics')
         self.cache_scopes(sdfg)
+        self.hybrid_overlap: dict = {}
 
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
@@ -351,8 +350,12 @@ class OffloadToAccelerator(ppl.Pass):
 
     ### STEP 1 ###
     def find_taskloops(self, sdfg: SDFG) -> None:
-        """Record which maps only launch work; with the heuristics off, none do."""
-        self.taskloops = taskloop_maps(sdfg) if self.taskloop_heuristics else OrderedSet()
+        """Record which maps belong on the host.
+
+        A map enclosing a device-wide library node is recorded whatever the config says: that call is
+        issued by host code, so a kernel cannot contain it. The launch-only rule is the optional half.
+        """
+        self.taskloops = taskloop_maps(sdfg, launch_only=self.taskloop_heuristics)
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
@@ -729,6 +732,7 @@ class OffloadToAccelerator(ppl.Pass):
         overlap = gpu_set & cpu_set
         if overlap:
             self.hybrid_states.add(state)
+            self.hybrid_overlap[state] = set(overlap)
             gpu_set |= cpu_set
             cpu_set = set()
 

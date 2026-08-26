@@ -9,8 +9,9 @@ Two independent reasons make a map a taskloop, and each gets its own shape here:
 * it encloses a library node that is neither a copy nor a fill, which expands to a device-wide call
   that only host code can issue.
 
-The classification is off unless ``optimizer.gpu_taskloop_heuristics`` says otherwise, so every
-case here asserts the old placement as well: with the knob off the outer map is the kernel.
+The second reason is not optional -- a kernel cannot contain a cuBLAS call, so it applies whatever
+the config says. ``optimizer.gpu_taskloop_heuristics`` gates only the first, and every case here
+asserts the knob-off placement as well.
 """
 import numpy as np
 import pytest
@@ -196,10 +197,11 @@ def test_a_map_around_a_device_wide_library_node_launches_from_the_host():
     assert libnode_schedule(sdfg) == dtypes.ScheduleType.GPU_Device
 
 
-def test_a_map_around_a_library_node_is_the_kernel_without_the_heuristics():
+def test_a_map_around_a_library_node_launches_from_the_host_without_the_heuristics_too():
+    """Not a heuristic: a device-wide call is issued by host code, so no map around one is a kernel."""
     sdfg = offloaded(map_over_reduce(), heuristics=False)
-    assert map_schedule(sdfg, 'rows') == dtypes.ScheduleType.GPU_Device
-    assert libnode_schedule(sdfg) == dtypes.ScheduleType.Sequential
+    assert map_schedule(sdfg, 'rows') == dtypes.ScheduleType.Sequential
+    assert libnode_schedule(sdfg) == dtypes.ScheduleType.GPU_Device
 
 
 def test_the_staged_row_of_a_launched_library_node_is_device_memory():
