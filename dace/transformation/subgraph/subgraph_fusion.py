@@ -11,6 +11,7 @@ from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
 from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
+from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
 
@@ -1266,36 +1267,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        # Dead-store elimination: skip the outer write when a
-                        # downstream consumer chain reaches another AccessNode
-                        # of ``dname`` writing the same outer subset -- the
-                        # intermediate's store is dead and would otherwise
-                        # create an unordered WAW sibling of the fused MapExit.
-                        # See ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
+                        # Skip a store the downstream chain overwrites: emitting it would leave the
+                        # fused MapExit and that chain with two unordered writes to the same slot.
                         outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
                                                         global_map_exit.map.params, global_map_exit.map.range).subset
-                        downstream_dominates = False
-                        for ds in graph.nodes():
-                            if not isinstance(ds, nodes.AccessNode) or ds is onode:
-                                continue
-                            if ds.data != dname or graph.in_degree(ds) == 0:
-                                continue
-                            try:
-                                if not nx.has_path(graph.nx, global_map_exit, ds):
-                                    continue
-                                shortest = nx.shortest_path_length(graph.nx, global_map_exit, ds)
-                            except (nx.NodeNotFound, nx.NetworkXError, nx.NetworkXNoPath):
-                                continue
-                            # A direct MapExit -> AccessNode child is a
-                            # parallel peer, not a dominator; require the
-                            # dominator to sit past a consumer node.
-                            if shortest < 2:
-                                continue
-                            if any(ie.data.subset == outer_subset for ie in graph.in_edges(ds)
-                                   if ie.data.subset is not None):
-                                downstream_dominates = True
-                                break
-                        if not downstream_dominates:
+                        downstream = sdutil.find_downstream_nodes(acc, graph)
+                        superseded = any(
+                            ie.src in downstream and not ie.data.is_empty()
+                            and ie.data.get_dst_subset(ie, graph) is not None
+                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
+                            for ds in graph.data_nodes() if ds.data == dname and graph.out_degree(ds) == 0
+                            for ie in graph.in_edges(ds))
+                        if not superseded:
                             if not onode:
                                 onode = graph.add_access(dname)
                             graph.add_memlet_path(acc,

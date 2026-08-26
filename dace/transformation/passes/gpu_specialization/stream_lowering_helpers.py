@@ -252,7 +252,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, OrderedSet], 
         existing_sinks = list(state.sink_nodes())
 
         sorted_streams = sorted(streams)
-        tasklet = _make_sync_tasklet(state, "gpu_streams_synchronization", sorted_streams)
+        tasklet = make_sync_tasklet(state, "gpu_streams_synchronization", sorted_streams)
         for sink in existing_sinks:
             if isinstance(sink, nodes.AccessNode) and sink.desc(state).dtype == dtypes.gpuStream_t:
                 continue
@@ -274,7 +274,7 @@ def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignme
         stream = assignments.get(node)
         if stream is None:
             raise NotImplementedError("Using the default 'nullptr' gpu stream is not supported yet.")
-        tasklet = _make_sync_tasklet(state, "gpu_stream_synchronization", [stream])
+        tasklet = make_sync_tasklet(state, "gpu_stream_synchronization", [stream])
         for succ in list(state.successors(node)):
             state.add_edge(tasklet, None, succ, None, dependency_edge())
         state.add_edge(node, None, tasklet, None, dependency_edge())
@@ -288,7 +288,7 @@ def _stream_connector_name(stream_id: int) -> str:
     return f"{STREAM_CONNECTOR}_{stream_id}"
 
 
-def _make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
+def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
     """Build a side-effect-only fused-sync tasklet: one ``__stream_<id>``
     in-connector (typed ``gpuStream_t``) per stream id, body chaining one
     ``cudaStreamSynchronize`` per connector. Caller wires each connector to

@@ -8,7 +8,7 @@ WCCs lift into a new predecessor state; CPU suffixes are left trailing.
 
 The "after" lift reuses :func:`dace.transformation.helpers.state_fission` (which only lifts into a
 *predecessor*): lifting the GPU middle out leaves the original state holding just the downstream CPU
-suffix. Genuinely interleaved patterns (``GPU -> CPU -> GPU``, cycles, ``_Kind.MIXED`` interior nodes
+suffix. Genuinely interleaved patterns (``GPU -> CPU -> GPU``, cycles, ``NodeKind.MIXED`` interior nodes
 like a mixed NestedSDFG) are refused and fall through to the naive strategy.
 """
 from typing import Dict, List, Optional, Set, Tuple
@@ -20,14 +20,14 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from ordered_set import OrderedSet
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_node, _fold_kinds, _Kind)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                weakly_connected_node_sets)
 
 
-def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> _Kind:
-    """Fold ``_classify_node`` over ``wcc``'s nodes to get the component-level kind."""
-    return _fold_kinds(_classify_node(n, sdfg, state) for n in wcc)
+def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> NodeKind:
+    """Fold ``classify_node`` over ``wcc``'s nodes to get the component-level kind."""
+    return fold_kinds(classify_node(n, sdfg, state) for n in wcc)
 
 
 def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
@@ -39,10 +39,10 @@ def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
     (AccessNodes / MapExits) attach to the adjacent band and get duplicated at the cut by
     :func:`state_fission`.
     """
-    kinds: Dict[nodes.Node, _Kind] = {n: _classify_node(n, sdfg, state) for n in wcc}
-    if any(k == _Kind.MIXED for k in kinds.values()):
+    kinds: Dict[nodes.Node, NodeKind] = {n: classify_node(n, sdfg, state) for n in wcc}
+    if any(k == NodeKind.MIXED for k in kinds.values()):
         return None
-    if not any(k == _Kind.CPU for k in kinds.values()) or not any(k == _Kind.GPU for k in kinds.values()):
+    if not any(k == NodeKind.CPU for k in kinds.values()) or not any(k == NodeKind.GPU for k in kinds.values()):
         return None
 
     # Roots = WCC nodes with no in-edges within the WCC.
@@ -56,16 +56,16 @@ def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
     bands: List[List] = []  # each entry: [kind, [nodes]]
     for n in order:
         k = kinds[n]
-        if k == _Kind.NEUTRAL:
+        if k == NodeKind.NEUTRAL:
             if bands:
                 bands[-1][1].append(n)
             else:
-                bands.append([_Kind.NEUTRAL, [n]])
+                bands.append([NodeKind.NEUTRAL, [n]])
             continue
         if not bands:
             bands.append([k, [n]])
             continue
-        if bands[-1][0] == _Kind.NEUTRAL:
+        if bands[-1][0] == NodeKind.NEUTRAL:
             bands[-1][0] = k
             bands[-1][1].append(n)
         elif bands[-1][0] == k:
@@ -73,12 +73,12 @@ def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
         else:
             bands.append([k, [n]])
 
-    non_neutral_kinds = [b[0] for b in bands if b[0] != _Kind.NEUTRAL]
-    if non_neutral_kinds == [_Kind.CPU, _Kind.GPU]:
+    non_neutral_kinds = [b[0] for b in bands if b[0] != NodeKind.NEUTRAL]
+    if non_neutral_kinds == [NodeKind.CPU, NodeKind.GPU]:
         return bands[0][1], bands[1][1], []
-    if non_neutral_kinds == [_Kind.GPU, _Kind.CPU]:
+    if non_neutral_kinds == [NodeKind.GPU, NodeKind.CPU]:
         return [], bands[0][1], bands[1][1]
-    if non_neutral_kinds == [_Kind.CPU, _Kind.GPU, _Kind.CPU]:
+    if non_neutral_kinds == [NodeKind.CPU, NodeKind.GPU, NodeKind.CPU]:
         return bands[0][1], bands[1][1], bands[2][1]
     return None
 
@@ -123,9 +123,9 @@ class SplitStateByGPUClass(ppl.Pass):
 
         kinds = [_wcc_kind(wcc, sdfg, state) for wcc in wccs]
 
-        cpu_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.CPU]
-        gpu_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.GPU]
-        mixed_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.MIXED]
+        cpu_wccs = [w for w, k in zip(wccs, kinds) if k == NodeKind.CPU]
+        gpu_wccs = [w for w, k in zip(wccs, kinds) if k == NodeKind.GPU]
+        mixed_wccs = [w for w, k in zip(wccs, kinds) if k == NodeKind.MIXED]
 
         # Every mixed WCC must decompose as [CPU?, GPU, CPU?]; otherwise refuse this state.
         chains: List[Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]] = []

@@ -30,7 +30,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
     is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (_make_sync_tasklet,
+from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (make_sync_tasklet,
                                                                                    _stream_connector_name,
                                                                                    insert_per_node_syncs,
                                                                                    insert_state_end_syncs)
@@ -317,7 +317,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 # Auto single-stream strategy -- state-classified single stream + naive fallback
 
 
-class _Kind(Enum):
+class NodeKind(Enum):
     """Compute kind of a node, state, or interstate edge."""
     NEUTRAL = 0  # memory-only or paired node -- no compute, no influence on class
     GPU = 1  # runs on the GPU
@@ -325,7 +325,7 @@ class _Kind(Enum):
     MIXED = 3  # contains both -- triggers global fallback
 
 
-def _fold_kinds(kinds) -> _Kind:
+def fold_kinds(kinds) -> NodeKind:
     """Collapse an iterable of node kinds into one summary.
 
     ``NEUTRAL`` is dropped; a single non-neutral kind returns itself; two distinct non-neutral
@@ -333,22 +333,22 @@ def _fold_kinds(kinds) -> _Kind:
     """
     has_gpu = has_cpu = mixed = False
     for k in kinds:
-        if k == _Kind.MIXED:
+        if k == NodeKind.MIXED:
             mixed = True
-        elif k == _Kind.GPU:
+        elif k == NodeKind.GPU:
             has_gpu = True
-        elif k == _Kind.CPU:
+        elif k == NodeKind.CPU:
             has_cpu = True
     if mixed or (has_gpu and has_cpu):
-        return _Kind.MIXED
+        return NodeKind.MIXED
     if has_gpu:
-        return _Kind.GPU
+        return NodeKind.GPU
     if has_cpu:
-        return _Kind.CPU
-    return _Kind.NEUTRAL
+        return NodeKind.CPU
+    return NodeKind.NEUTRAL
 
 
-def _classify_node(node, sdfg: SDFG, state: SDFGState) -> _Kind:
+def classify_node(node, sdfg: SDFG, state: SDFGState) -> NodeKind:
     """Classify a top-level dataflow node by where its compute runs.
 
     AccessNodes / MapExits are ``NEUTRAL``; Tasklets / LibraryNodes are ``GPU`` iff device-level.
@@ -356,47 +356,47 @@ def _classify_node(node, sdfg: SDFG, state: SDFGState) -> _Kind:
     otherwise recurse into the scope body / nested SDFG.
     """
     if isinstance(node, (nodes.AccessNode, nodes.MapExit, nodes.ConsumeExit)):
-        return _Kind.NEUTRAL
+        return NodeKind.NEUTRAL
     if isinstance(node, nodes.Tasklet):
         if is_devicelevel_gpu(sdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
-            return _Kind.GPU
-        return _Kind.CPU
+            return NodeKind.GPU
+        return NodeKind.CPU
     if isinstance(node, nodes.LibraryNode):
         if is_gpu_stream_consumer(node, sdfg, state) or is_devicelevel_gpu(sdfg, state, node):
-            return _Kind.GPU
-        return _Kind.CPU
+            return NodeKind.GPU
+        return NodeKind.CPU
     if isinstance(node, (nodes.MapEntry, nodes.ConsumeEntry)):
         # MapEntry carries the schedule on ``.map``; ConsumeEntry on ``.consume``.
         scope_descriptor = node.map if isinstance(node, nodes.MapEntry) else node.consume
         if scope_descriptor.schedule == dtypes.ScheduleType.GPU_Device:
-            return _Kind.GPU
+            return NodeKind.GPU
         # Sequential / CPU schedule: recurse over the scope body.
         body_nodes = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-        return _fold_kinds(_classify_node(child, sdfg, state) for child in body_nodes)
+        return fold_kinds(classify_node(child, sdfg, state) for child in body_nodes)
     if isinstance(node, nodes.NestedSDFG):
         # Already inside a ``GPU_Device`` map: everything within is device-level by
         # inheritance, no need to recurse to confirm.
         if is_inside_gpu_device_kernel(node.sdfg):
-            return _Kind.GPU
+            return NodeKind.GPU
         return _classify_sdfg(node.sdfg)
-    return _Kind.NEUTRAL
+    return NodeKind.NEUTRAL
 
 
-def _classify_state_top_level(state: SDFGState) -> _Kind:
+def classify_state_top_level(state: SDFGState) -> NodeKind:
     """Classify a state by folding its top-level dataflow nodes."""
     sdfg = state.sdfg
-    return _fold_kinds(_classify_node(n, sdfg, state) for n in state.nodes())
+    return fold_kinds(classify_node(n, sdfg, state) for n in state.nodes())
 
 
-def _classify_sdfg(sdfg: SDFG) -> _Kind:
+def _classify_sdfg(sdfg: SDFG) -> NodeKind:
     """Classify an SDFG by folding every top-level block (states + CF region payload)."""
-    kinds: List[_Kind] = []
+    kinds: List[NodeKind] = []
     for state in sdfg.all_states():
-        kinds.append(_classify_state_top_level(state))
+        kinds.append(classify_state_top_level(state))
     # Codeblock meta on regions (loop init/cond/update, branch conditions) only runs on the
     # host and adds no GPU compute; treated as NEUTRAL for MIXED detection so its CPU work can
     # pair with surrounding states.
-    return _fold_kinds(kinds)
+    return fold_kinds(kinds)
 
 
 def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_written: OrderedSet) -> bool:
@@ -416,17 +416,17 @@ def _block_reads_gpu_written(block, gpu_written: OrderedSet) -> bool:
     return bool(set(read_set) & gpu_written)
 
 
-def _classify_root_block(block) -> _Kind:
+def _classify_root_block(block) -> NodeKind:
     """Classify a root-SDFG block (``SDFGState`` or ``AbstractControlFlowRegion``).
 
     States fold over their top-level nodes; CF regions fold recursively over their sub-blocks;
     everything else is ``NEUTRAL``.
     """
     if isinstance(block, SDFGState):
-        return _classify_state_top_level(block)
+        return classify_state_top_level(block)
     if isinstance(block, AbstractControlFlowRegion):
-        return _fold_kinds(_classify_root_block(child) for child in block.nodes())
-    return _Kind.NEUTRAL
+        return fold_kinds(_classify_root_block(child) for child in block.nodes())
+    return NodeKind.NEUTRAL
 
 
 def _collect_gpu_written_arrays(sdfg: SDFG) -> OrderedSet:
@@ -437,7 +437,7 @@ def _collect_gpu_written_arrays(sdfg: SDFG) -> OrderedSet:
     """
     out: OrderedSet[str] = OrderedSet()
     for block in sdfg.nodes():
-        if _classify_root_block(block) != _Kind.GPU:
+        if _classify_root_block(block) != NodeKind.GPU:
             continue
         _, ws = block.read_and_write_sets()
         out |= ws
@@ -453,7 +453,7 @@ def _make_state_end_sync_state(parent_region, gpu_streams_name: str, label_hint:
     """
     label = f"__gpu_sync_after_{label_hint}"
     sync_state = parent_region.add_state(label)
-    tasklet = _make_sync_tasklet(sync_state, "gpu_streams_synchronization", [0])
+    tasklet = make_sync_tasklet(sync_state, "gpu_streams_synchronization", [0])
     access = sync_state.add_access(gpu_streams_name)
     sync_state.add_edge(access, None, tasklet, _stream_connector_name(0), Memlet(f"{gpu_streams_name}[0]"))
     return sync_state
@@ -519,7 +519,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         # Analysis below is per-instance, rebuilt every ``assign_streams`` call (one SDFG per run).
         self._fell_back: bool = False
         self._naive_fallback: Optional['NaiveGPUStreamScheduler'] = None
-        self._state_kinds: Dict[SDFGState, _Kind] = {}
+        self._state_kinds: Dict[SDFGState, NodeKind] = {}
         self._gpu_written: OrderedSet[str] = OrderedSet()
 
     def _should_synchronize_on_exit(self) -> bool:
@@ -535,7 +535,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         # ``SplitStateByGPUClass`` preps for this strategy: it lifts CPU-only WCCs / prefixes out
         # of mixed states so the classifier sees pure states, reducing Naive fallbacks. Local
-        # import breaks the circular dependency (split pass imports ``_classify_node`` / ``_Kind``).
+        # import breaks the circular dependency (split pass imports ``classify_node`` / ``NodeKind``).
         from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import (SplitStateByGPUClass)
         return super().depends_on() | {SplitStateByGPUClass}
 
@@ -563,7 +563,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             for state in nsdfg.states():
                 for node in state.nodes():
                     # NOTE: This does not check "top level" for that the `scope_dict` would need to be inspected.
-                    if _classify_node(node, nsdfg, state) == _Kind.MIXED:
+                    if classify_node(node, nsdfg, state) == NodeKind.MIXED:
                         offenders.append(f"{type(node).__name__} '{node.label}' in state "
                                          f"'{state.label}' (SDFG '{nsdfg.name}')")
 
@@ -579,7 +579,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             return self._naive_fallback.assign_streams(sdfg)
 
         # Cache per-root-block classification + GPU write set for the sync pass. Only root blocks
-        # are classified; NSDFGs fold into their containing state via ``_classify_node``, so sync
+        # are classified; NSDFGs fold into their containing state via ``classify_node``, so sync
         # placement stays at the root level only.
         self._fell_back = False
         self._naive_fallback = None
@@ -648,14 +648,14 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 # src/dst may be any block kind; ``_classify_root_block`` returns the union of a
                 # block's descendant kinds, so a CF region whose payload is GPU (or host) is
                 # classified accordingly.
-                if self._state_kinds.get(src) != _Kind.GPU:
+                if self._state_kinds.get(src) != NodeKind.GPU:
                     continue
                 # GPU -> GPU: splice only when the iedge reads a GPU-written array. GPU -> host:
                 # splice only when the host block consumes GPU output (copy-out / read-back). A
                 # host block reading no GPU-written array needs the sync solely to make
                 # GPU-resident outputs visible at exit, gated by synchronize_on_exit.
-                dst_kind = self._state_kinds.get(dst, _Kind.CPU)
-                if dst_kind == _Kind.GPU:
+                dst_kind = self._state_kinds.get(dst, NodeKind.CPU)
+                if dst_kind == NodeKind.GPU:
                     if not _iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
                         continue
                 else:
@@ -693,7 +693,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             # region). Non-sink GPU states are already covered by the edge-splicing loop; a
             # trailing sync here would be redundant and spawn spurious extra ``__gpu_sync_after_*``
             # blocks after ``*_copyin`` / ``*_copyout`` scaffold states.
-            if self._state_kinds.get(state) != _Kind.GPU:
+            if self._state_kinds.get(state) != NodeKind.GPU:
                 continue
             if state.parent_graph.out_degree(state) > 0:
                 continue
