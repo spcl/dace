@@ -23,6 +23,12 @@ when the destination is narrower or a widening store when it is wider (matching 
 frontend's implicit assignment cast, so the result stays bit-exact with the unvectorized
 reference). Comparison ops keep their ``bool`` output untouched; only their operands are
 unified.
+
+The same guard applies to a ternary blend ``_o = ITE(_c, _t, _e)`` / ``_o = _t if _c else
+_e`` (lowers to ``TileITE``) and the masked write ``_o = IT(_c, _val)`` (lowers to a masked
+``TileStore``): each connector arm is cast to the OUTPUT dtype when it differs, mirroring the
+frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.BinOp`` /
+``ast.Compare``, so they need their own detector rather than reusing the binop one.
 """
 import ast
 from typing import Optional, Tuple
@@ -46,6 +52,63 @@ def _cast_name(dtype: dtypes.typeclass) -> str:
     ``convert_tasklets_to_tile_ops._CAST_OP_NAMES`` validates against.
     """
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
+
+
+def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
+    """If ``tasklet`` is a ternary blend -- the Python ``_o = _t if _c else _e`` form or the
+    ``_o = ITE(_c, _t, _e)`` call form ``SplitTasklets`` emits for a same-write-set if/else --
+    return ``(out_conn, arm_conns)`` where ``arm_conns`` lists the arms that are in-connectors
+    (a Symbol/literal arm has no edge, so nothing to cast). Else ``None``.
+    """
+    if len(tasklet.out_connectors) != 1:
+        return None
+    try:
+        tree = ast.parse(tasklet.code.as_string.strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return None
+    assign = tree.body[0]
+    if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+        return None
+    out_conn = assign.targets[0].id
+    rhs = assign.value
+    if isinstance(rhs, ast.IfExp):
+        arms = [rhs.body, rhs.orelse]
+    elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "ITE" and len(rhs.args) == 3):
+        arms = [rhs.args[1], rhs.args[2]]
+    else:
+        return None
+    in_conns = set(tasklet.in_connectors)
+    arm_conns = [a.id for a in arms if isinstance(a, ast.Name) and a.id in in_conns]
+    return out_conn, arm_conns
+
+
+def masked_write_operand(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str]]:
+    """If ``tasklet`` is the masked write ``_o = IT(_cond, _val)`` (the first-class conditional
+    write ``NormalizeMaskedWriteTasklets`` emits), return ``(out_conn, val_conn)`` when ``_val``
+    is an in-connector; else ``None`` (a constant value arm has no edge to cast).
+    """
+    if len(tasklet.out_connectors) != 1:
+        return None
+    try:
+        tree = ast.parse(tasklet.code.as_string.strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return None
+    assign = tree.body[0]
+    if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+        return None
+    out_conn = assign.targets[0].id
+    rhs = assign.value
+    if not (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "IT"
+            and len(rhs.args) == 2):
+        return None
+    val = rhs.args[1]
+    if not (isinstance(val, ast.Name) and val.id in tasklet.in_connectors):
+        return None
+    return out_conn, val.id
 
 
 def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, bool]]:
@@ -112,36 +175,91 @@ class ResolveMixedDtypeBinops(ppl.Pass):
 
     def _resolve(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
         detected = _binop_operands(tasklet)
+        if detected is not None:
+            out_conn, a_conn, b_conn, is_cmp = detected
+            sdfg = state.sdfg
+            in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
+            out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
+            if a_conn not in in_edges or b_conn not in in_edges or len(out_edges) != 1:
+                return False
+            a_edge, b_edge, out_edge = in_edges[a_conn], in_edges[b_conn], out_edges[0]
+            a_dt = sdfg.arrays[a_edge.data.data].dtype
+            b_dt = sdfg.arrays[b_edge.data.data].dtype
+            out_dt = sdfg.arrays[out_edge.data.data].dtype
+            promoted = dtypes.result_type_of(a_dt, b_dt)
+
+            need_a = a_dt != promoted
+            need_b = b_dt != promoted
+            # Comparison output is bool by definition; an arithmetic output needs a cast
+            # whenever the destination dtype differs from the promoted compute type -- a
+            # downcast (dest narrower) or a widening store (dest wider), both bit-exact with
+            # the frontend's implicit assignment cast.
+            need_out = (not is_cmp) and (out_dt != promoted)
+            if not (need_a or need_b or need_out):
+                return False
+
+            if need_a:
+                self._insert_operand_cast(state, tasklet, a_edge, a_conn, promoted)
+            if need_b:
+                self._insert_operand_cast(state, tasklet, b_edge, b_conn, promoted)
+            if need_out:
+                self._insert_output_cast(state, tasklet, out_edge, out_conn, promoted, out_dt)
+            return True
+        if self.resolve_ite(state, tasklet):
+            return True
+        if self.resolve_masked_write(state, tasklet):
+            return True
+        return self._resolve_assign(state, tasklet)
+
+    def resolve_ite(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """A same-write-set-if/else blend ``_o = ITE(_c, _t, _e)`` / ``_o = _t if _c else _e``
+        lowers to a ``TileITE`` whose ``_t`` / ``_e`` / ``_o`` connectors must share ONE dtype
+        (design 6.2, see ``dace.libraries.tileops.nodes.tile_ite``): the pure/ISA expansions
+        cast a Symbol or broadcast-Scalar arm to the output dtype, but read a per-lane Tile arm
+        RAW, with no cast. An arm whose source differs from the destination dtype must be cast
+        here, before ``ConvertTaskletsToTileOps`` wires it straight into the lib node."""
+        detected = ite_operands(tasklet)
         if detected is None:
-            return self._resolve_assign(state, tasklet)
-        out_conn, a_conn, b_conn, is_cmp = detected
+            return False
+        out_conn, arm_conns = detected
+        if not arm_conns:
+            return False
         sdfg = state.sdfg
         in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
-        if a_conn not in in_edges or b_conn not in in_edges or len(out_edges) != 1:
+        if len(out_edges) != 1:
             return False
-        a_edge, b_edge, out_edge = in_edges[a_conn], in_edges[b_conn], out_edges[0]
-        a_dt = sdfg.arrays[a_edge.data.data].dtype
-        b_dt = sdfg.arrays[b_edge.data.data].dtype
-        out_dt = sdfg.arrays[out_edge.data.data].dtype
-        promoted = dtypes.result_type_of(a_dt, b_dt)
+        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        changed = False
+        for conn in arm_conns:
+            edge = in_edges.get(conn)
+            if edge is None:
+                continue
+            if sdfg.arrays[edge.data.data].dtype != out_dt:
+                self._insert_operand_cast(state, tasklet, edge, conn, out_dt)
+                changed = True
+        return changed
 
-        need_a = a_dt != promoted
-        need_b = b_dt != promoted
-        # Comparison output is bool by definition; an arithmetic output needs a cast
-        # whenever the destination dtype differs from the promoted compute type -- a
-        # downcast (dest narrower) or a widening store (dest wider), both bit-exact with
-        # the frontend's implicit assignment cast.
-        need_out = (not is_cmp) and (out_dt != promoted)
-        if not (need_a or need_b or need_out):
+    def resolve_masked_write(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """A masked write ``_o = IT(_cond, _val)`` lowers to a masked ``TileStore`` that copies
+        ``_val`` straight into the destination (``ConvertTaskletsToTileOps._convert_conditional_write``
+        strips the wrapper and re-dispatches the bare ``_o = _val`` through the plain-assign
+        path, an AN -> AN edge with no cast). Cast ``_val`` to the destination dtype here when
+        it differs, so the store never mixes dtypes."""
+        detected = masked_write_operand(tasklet)
+        if detected is None:
             return False
-
-        if need_a:
-            self._insert_operand_cast(state, tasklet, a_edge, a_conn, promoted)
-        if need_b:
-            self._insert_operand_cast(state, tasklet, b_edge, b_conn, promoted)
-        if need_out:
-            self._insert_output_cast(state, tasklet, out_edge, out_conn, promoted, out_dt)
+        out_conn, val_conn = detected
+        sdfg = state.sdfg
+        in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
+        out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
+        if val_conn not in in_edges or len(out_edges) != 1:
+            return False
+        val_edge = in_edges[val_conn]
+        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        if sdfg.arrays[val_edge.data.data].dtype == out_dt:
+            return False
+        self._insert_operand_cast(state, tasklet, val_edge, val_conn, out_dt)
         return True
 
     def _resolve_assign(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:

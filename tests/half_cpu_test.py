@@ -89,6 +89,54 @@ def test_float16_cpu_random_roundtrip_matches_numpy():
     np.testing.assert_array_equal(out, expected)
 
 
+def math_h_path():
+    return os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'math.h')
+
+
+def scalar_math_sdfg(name, func_name, dtype, size):
+    """A one-map SDFG computing ``dace::math::<func_name>`` elementwise, built directly through
+    the SDFG API (not ``@dace.program``) so the tasklet body names the exact function under test.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('inp', [size], dtype)
+    sdfg.add_array('out', [size], dtype)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('elementwise', {'i': f'0:{size}'}, {'a': dace.Memlet('inp[i]')},
+                             f'b = dace.math.{func_name}(a)', {'b': dace.Memlet('out[i]')},
+                             external_edges=True)
+    return sdfg
+
+
+@pytest.mark.parametrize('func_name, np_func', [('sqrt', np.sqrt), ('exp', np.exp), ('log', np.log)])
+def test_float16_math_dispatches_through_fp32(func_name, np_func):
+    """The CPU-emulated ``dace::half`` has no native ``sqrt``/``exp``/``log`` -- the runtime
+    header must explicitly route it through fp32 (cast in, call the fp32 libm entry, cast back),
+    the same fix ``fma`` already needed for the identical reason (all of ``std::<f>``'s
+    float/double/long double overloads are equally good through one ``operator float()``).
+
+    Structural: the runtime header ships the explicit non-template ``dace::float16`` /
+    ``dace::bfloat16`` overload for this function. Numeric: the compiled CPU kernel over a
+    float16 array agrees with NumPy's own float16 result.
+    """
+    with open(math_h_path()) as fp:
+        header = fp.read()
+    assert f'DACE_MATH_UNARY_LP({func_name}, dace::float16)' in header, \
+        f'no fp32-routed dace::float16 overload for {func_name} in math.h'
+    assert f'DACE_MATH_UNARY_LP({func_name}, dace::bfloat16)' in header, \
+        f'no fp32-routed dace::bfloat16 overload for {func_name} in math.h'
+
+    n = 64
+    sdfg = scalar_math_sdfg(f'half_{func_name}', func_name, dace.float16, n)
+    rng = np.random.default_rng(5)
+    # sqrt/log need positive inputs; exp needs a modest range to stay in float16 bounds.
+    inp = (rng.random(n).astype(np.float32) * 8.0 + 0.5).astype(np.float16)
+    out = np.zeros(n, dtype=np.float16)
+    sdfg.compile()(inp=inp, out=out)
+
+    expected = np_func(inp.astype(np.float64)).astype(np.float16)
+    np.testing.assert_allclose(out.astype(np.float32), expected.astype(np.float32), rtol=1e-2, atol=1e-3)
+
+
 def openmp_reduce_sdfg(name, wcr, identity, size, dtype=dace.float16):
     """A Reduce node pinned to the OpenMP expansion, float16 unless told otherwise.
 

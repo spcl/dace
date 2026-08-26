@@ -860,6 +860,26 @@ DACE_CONSTEXPR DACE_HDFI auto fma(const T& a, const U& b, const V& c) {
 DACE_MATH_FMA_LP(dace::float16)
 DACE_MATH_FMA_LP(dace::bfloat16)
 #undef DACE_MATH_FMA_LP
+
+// 16-bit floats have no libm entry of their own: cast to fp32, call that, cast back -- the same
+// route ``fma`` above needed, rather than leaning on user-defined-conversion ranking between the
+// float/double/long double overloads of ``std::sqrt``/``exp``/``log``.
+#define DACE_MATH_UNARY_LP(NAME, TYPE)         \
+  static DACE_HDFI TYPE NAME(const TYPE& a) {  \
+    return TYPE(std::NAME(float(a)));          \
+  }
+DACE_MATH_UNARY_LP(sqrt, dace::float16)
+DACE_MATH_UNARY_LP(sqrt, dace::bfloat16)
+// ``dace::float16`` IS ``half`` under CUDA, where dace/cuda/halfvec.cuh already declares a native
+// ``exp(half)``: a second, equally viable overload makes every fp16 ``exp`` ambiguous and nvcc
+// rejects the whole translation unit. HIP reaches neither (that group is __CUDACC__-only).
+#ifndef __CUDACC__
+DACE_MATH_UNARY_LP(exp, dace::float16)
+#endif
+DACE_MATH_UNARY_LP(exp, dace::bfloat16)
+DACE_MATH_UNARY_LP(log, dace::float16)
+DACE_MATH_UNARY_LP(log, dace::bfloat16)
+#undef DACE_MATH_UNARY_LP
 }  // namespace math
 
 namespace cmath {
