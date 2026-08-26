@@ -23,11 +23,12 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes import FindFirst
 from dace import mpr
 from dace.codegen.mpr import render as render_sdfg
 
 from tests.codegen.mpr.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
-                                        compile_diagnostics)
+                                        compile_diagnostics, wcr_sdfg)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -119,6 +120,51 @@ def test_wcr_folds_into_an_openmp_reduction():
     out = np.zeros(1)
     run(sdfg, code, {'x': x, 'out': out, 'N': n}, 'mpr_sum')
     assert_matches({'out': np.array([x.sum()])}, {'out': out}, 'mpr_sum')
+
+
+#: Non-conflicting conflict resolutions, with the statement each must render to and its oracle.
+#: ``Sub`` and ``Div`` are not in the table -- no OpenMP clause names them, so they reach MPR as
+#: ``Custom``, which is why one entry per SPELLING is not the same as one entry per reduction type.
+NON_CONFLICTING_WCR = [
+    ('sub', 'lambda p, q: p - q', '*(out + i) = (*(out + i) - (y));', lambda o, x: o - x),
+    ('div', 'lambda p, q: p / q', '*(out + i) = (*(out + i) / (y));', lambda o, x: o / x),
+    ('exchange', 'lambda p, q: q', '*(out + i) = (y);', lambda o, x: x),
+    ('xor', 'lambda p, q: p != q', '*(out + i) = (*(out + i) != (y));', lambda o, x: (o != x).astype(np.float64)),
+    ('custom', 'lambda p, q: p * q + 1.0', '*(out + i) = ((*(out + i) * (y)) + 1.0);', lambda o, x: o * x + 1.0),
+]
+
+
+@pytest.mark.parametrize('label, resolution, statement, oracle', NON_CONFLICTING_WCR)
+def test_non_conflicting_wcr_renders_without_the_reduction_runtime(label, resolution, statement, oracle):
+    """Each resolution becomes a plain assignment, identical in both dialects.
+
+    A conflicting WCR is refused, and a tree-reducible one folds into an ``reduction`` clause
+    (:func:`test_wcr_folds_into_an_openmp_reduction`). This is the third case: no conflict at all,
+    where the runtime would take ``wcr_custom<T>::reduce`` -- ``*ptr = wcr(*ptr, value)``, no
+    critical section. Reproducing that is a plain assignment, so reaching for ``dace::wcr_fixed``
+    or a C++ lambda would be both unnecessary and unrenderable.
+
+    The statement is asserted verbatim because the emitted text IS the product here, and the two
+    dialects are compared against each other: a C++-only spelling (a lambda) would pass a numeric
+    check and still leave the C dialect with nothing to emit.
+    """
+    rendering = render_sdfg(wcr_sdfg(f'mpr_resolve_{label}', resolution))
+    cpp_code = rendering.code
+    c_code = render_sdfg(wcr_sdfg(f'mpr_resolve_{label}', resolution), language='c').code
+    assert statement in cpp_code, f'{label}: expected {statement!r} in the C++ rendering'
+    assert statement in c_code, f'{label}: expected {statement!r} in the C rendering'
+    for leaked in ('wcr_fixed', 'wcr_custom'):
+        assert leaked not in cpp_code and leaked not in c_code, f'{label}: {leaked} leaked into the output'
+
+    rng = np.random.default_rng(0)
+    if label == 'xor':  # a truth value, or the oracle is the constant 1.0 and asserts nothing
+        a, out = rng.integers(0, 2, 32).astype(np.float64), rng.integers(0, 2, 32).astype(np.float64)
+        assert (a == out).any() and (a != out).any(), 'both xor outcomes have to occur in the inputs'
+    else:
+        a, out = rng.random(32) + 0.5, rng.random(32) + 0.5  # away from zero, so the division is conditioned
+    expected = oracle(out.copy(), a)
+    run(rendering.sdfg, cpp_code, {'a': a, 'out': out}, f'mpr_resolve_{label}')
+    assert_matches({'out': expected}, {'out': out}, f'mpr_resolve_{label}')
 
 
 def test_sequential_loop_around_a_parallel_map():
@@ -324,32 +370,45 @@ def test_output_builds_without_warnings():
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
-def test_minmax_matches_the_runtime_on_nan(language):
-    """``max``/``min`` are the RUNTIME's, not ``std::``'s.
+def test_minmax_follows_python_on_nan(language):
+    """``max``/``min`` keep the EARLIER operand when the comparison is false.
 
-    ``std::max(a, b)`` yields ``a`` when the comparison is false and the runtime's yields ``b``, so
-    a NaN operand survives one and not the other. That is not a corner case nobody writes: CloudSC
-    clamps with ``max(x, 0.0)`` on values that can be NaN, and the two spellings disagree on every
-    such point. The oracle is the compiled SDFG, since MPR's contract is stated against it.
+    That is Python's rule, and a ``@dace.program`` is Python, so ``max(x, 0.0)`` keeps a NaN and
+    ``max(0.0, x)`` swallows it -- the two orders answer differently, which is what makes this
+    worth pinning. The runtime and both MPR dialects have to agree on it; Python is the oracle for
+    the runtime, and the compiled SDFG is the oracle for MPR.
     """
 
     @dace.program
-    def clamp_nan(x: dace.float64[4], y: dace.float64[4]):
+    def clamp_nan(x: dace.float64[4], kept: dace.float64[4], swallowed: dace.float64[4]):
         for i in dace.map[0:4]:
-            y[i] = min(max(x[i], 0.0), 1.0)
+            kept[i] = min(max(x[i], 0.0), 1.0)
+            swallowed[i] = max(0.0, x[i])
 
     sdfg = clamp_nan.to_sdfg(simplify=True)
     sdfg.name = 'mpr_minmax_nan_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
 
     x = np.array([np.nan, -1.0, 0.5, 2.0])
-    reference = np.zeros(4)
-    sdfg(x=x.copy(), y=reference)
-    assert not np.isnan(reference[0]), 'the SDFG kept the NaN, so the two lowerings cannot disagree here'
+    expected_kept = np.array([min(max(v, 0.0), 1.0) for v in x])
+    expected_swallowed = np.array([max(0.0, v) for v in x])
+    assert np.isnan(expected_kept[0]) and not np.isnan(expected_swallowed[0]), \
+        'Python stopped distinguishing the two argument orders, so this asserts nothing'
 
-    y = np.zeros(4)
-    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {'x': x, 'y': y})
-    assert np.array_equal(y, reference), 'MPR clamps NaN to %r, the SDFG to %r' % (y[0], reference[0])
+    kept, swallowed = np.zeros(4), np.zeros(4)
+    sdfg(x=x.copy(), kept=kept, swallowed=swallowed)
+    assert np.array_equal(kept, expected_kept,
+                          equal_nan=True), f'the runtime clamps to {kept}, Python to {expected_kept}'
+    assert np.array_equal(swallowed, expected_swallowed, equal_nan=True)
+
+    mpr_kept, mpr_swallowed = np.zeros(4), np.zeros(4)
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'x': x,
+        'kept': mpr_kept,
+        'swallowed': mpr_swallowed
+    })
+    assert np.array_equal(mpr_kept, kept, equal_nan=True), f'MPR clamps to {mpr_kept}, the SDFG to {kept}'
+    assert np.array_equal(mpr_swallowed, swallowed, equal_nan=True)
 
 
 def test_persistent_lifetime_is_demoted_not_left_in_a_state():
@@ -517,3 +576,139 @@ def test_conditional_expression_renders_as_a_ternary(language):
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def find_first_sdfg(name: str, implementation: str):
+    """An SDFG whose only node is the search an early-exit loop lifts to.
+
+    Built from the library node rather than from a ``@dace.program`` with a ``break`` so that the
+    test pins MPR against the node's own contract: which expansion ran, and what its C++ body says.
+    ``EarlyExitToFindIndex`` is what puts this node into a real kernel, and it is tested where it
+    lives.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('out', [1], dace.int64)
+    state = sdfg.add_state()
+    node = FindFirst('ff', predicate='_a[__i] > 0.5', begin=0, end=N)
+    node.implementation = implementation
+    node.add_in_connector('_a', dace.pointer(dace.float64))
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_a', dace.Memlet.from_array('a', sdfg.arrays['a']))
+    state.add_edge(node, '_out_idx', state.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+#: Where the predicate fires, and the answer each position must produce. ``None`` is the no-hit
+#: case, whose answer is the exclusive end -- the one a search that forgot its sentinel gets wrong.
+#: The span is well past a single chunk, so the parallel expansion really does split it.
+FIND_FIRST_SPAN = 100000
+FIND_FIRST_HITS = (0, 1, 517, FIND_FIRST_SPAN - 1, None)
+
+
+def find_first_input(hit):
+    """``(a, expected)`` for a search whose predicate fires at ``hit`` and nowhere else."""
+    a = np.zeros(FIND_FIRST_SPAN)
+    if hit is not None:
+        a[hit] = 1.0
+    return a, FIND_FIRST_SPAN if hit is None else hit
+
+
+@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+def test_find_first_renders_the_cancelling_search(implementation):
+    """A find-first must render as the short-circuiting parallel search, not as a scan of the range.
+
+    ``dace::find_first_index`` lives in ``dace/runtime/include/dace/detect.h``, which MPR cannot
+    include, and the value of the construct is that the range past the answer is never read. So the
+    structure is asserted as well as the numbers: a rendering that walked the whole range would
+    agree on every case below and still not be a find-first.
+    """
+    sdfg = find_first_sdfg('mpr_find_first_%s' % implementation.lower(), implementation)
+    rendering = render_sdfg(sdfg)
+    code = rendering.code
+    assert 'schedule(dynamic, 1)' in code and 'reduction(min : best)' in code, (
+        'the search lost its cancelling parallel form and became a plain scan of the range')
+    assert '#pragma omp simd reduction(min : block)' in code, 'the in-chunk scan is no longer vectorized'
+
+    assert_standalone(code, 'mpr_find_first')
+    library = build_standalone(code, 'mpr_find_first_%s' % implementation.lower())
+    for hit in FIND_FIRST_HITS:
+        a, expected = find_first_input(hit)
+        out = np.zeros(1, dtype=np.int64)
+        call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'N': FIND_FIRST_SPAN})
+        assert out[0] == expected, f'search over a predicate firing at {hit} answered {out[0]}, not {expected}'
+
+
+def stream_sdfg() -> dace.SDFG:
+    """A map writing into a stream, which is the runtime class ``dace::Stream``."""
+    sdfg = dace.SDFG('mpr_stream')
+    sdfg.add_array('a', [32], dace.float64)
+    sdfg.add_stream('s', dace.float64, buffer_size=32, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': '0:32'})
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('s'), src_conn='y', memlet=dace.Memlet('s[0]'))
+    return sdfg
+
+
+def consume_sdfg() -> dace.SDFG:
+    """A consume scope draining a stream, which is the runtime class ``dace::Consume``.
+
+    Wired by hand rather than through ``add_memlet_path`` because the scope's stream arrives on the
+    named ``IN_stream`` connector, which the path helper does not know to bind.
+    """
+    sdfg = dace.SDFG('mpr_consume')
+    sdfg.add_stream('s', dace.float64, buffer_size=32, transient=True)
+    sdfg.add_array('out', [32], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_consume('c', ('p', '2'))
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x + 1.0')
+    state.add_edge(state.add_read('s'), None, entry, 'IN_stream', dace.Memlet('s[0]'))
+    state.add_edge(entry, 'OUT_stream', tasklet, 'x', dace.Memlet('s[0]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('out'), src_conn='y', memlet=dace.Memlet('out[0]'))
+    return sdfg
+
+
+def vector_wcr_sdfg() -> dace.SDFG:
+    """A non-conflicting WCR on a VECTOR element type, which is ``dace::vec<T, N>``."""
+    sdfg = dace.SDFG('mpr_vector_wcr')
+    element = dace.vector(dace.float64, 4)
+    sdfg.add_array('a', [8], element)
+    sdfg.add_array('out', [8], element)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': '0:8'})
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet,
+                          exit_node,
+                          state.add_write('out'),
+                          src_conn='y',
+                          memlet=dace.Memlet(data='out', subset='i', wcr='lambda p, q: p + q'))
+    return sdfg
+
+
+#: The three constructs whose only implementation is a DaCe runtime class, with the phrase each
+#: refusal has to name. They are pinned together because they fail for one reason -- a template
+#: carrying state (a queue, a quiescence counter, a SIMD element) that MPR cannot inline -- and the
+#: point of the test is that each says WHICH construct, rather than failing later on the
+#: self-containment assertion, whose message names ``dace::`` and not the container it came from.
+RUNTIME_ONLY_CONSTRUCTS = [
+    ('stream', stream_sdfg, 'a Stream is the runtime class'),
+    ('consume', consume_sdfg, 'a consume scope is driven'),
+    ('vector_wcr', vector_wcr_sdfg, 'the vector type is a DaCe runtime template'),
+]
+
+
+@pytest.mark.parametrize('label, builder, reason', RUNTIME_ONLY_CONSTRUCTS)
+@pytest.mark.parametrize('language', ('c++', 'c'))
+def test_runtime_only_constructs_are_refused_with_a_reason(label, builder, reason, language):
+    """Refused in BOTH dialects, and refused by name.
+
+    The dialect is parametrized because these are not a C-only gap: neither spelling can hold a
+    lock-free queue, so a C++ rendering that quietly succeeded would be the bug.
+    """
+    sdfg = builder()
+    sdfg.validate()  # the refusal has to be MPR's, not a malformed SDFG the builder wrote
+    with pytest.raises(NotImplementedError, match=re.escape(reason)):
+        mpr(sdfg, language=language)

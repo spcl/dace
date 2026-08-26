@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""MPR: rendering an SDFG as one self-contained C++ translation unit.
+"""MPR: rendering an SDFG as one self-contained translation unit.
 
 ``mpr(sdfg)`` returns C++ that a bare host compiler accepts -- ``g++ -std=c++20 -fopenmp`` with no
-``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. The point is not
-portability for its own sake: it is that the result can be read, diffed and edited on its own, so a
-maximally parallel rendering of a program can be compared against the original the way Pluto's
-output is.
+``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. ``mpr(sdfg,
+language='c')`` returns C23 under the same terms; the two are one semantics in two spellings, held
+together by ``tests/codegen/mpr/test_lowering_table.py``. The point is not portability for its own
+sake: it is that the result can be read, diffed and edited on its own, so a maximally parallel
+rendering of a program can be compared against the original the way Pluto's output is.
 
 Nothing here re-implements code generation. The readable CPU generator
 (``compiler.cpu.implementation = experimental_readable``) already emits the shape MPR wants --
@@ -410,6 +411,34 @@ def refuse_by_value_returns(sdfg: SDFG) -> None:
                                       'plain-pointer spelling in the entry signature.')
 
 
+def refuse_runtime_scopes(sdfg: SDFG) -> None:
+    """Refuse the constructs whose only implementation is a DaCe runtime class.
+
+    A ``Stream`` descriptor is emitted as ``dace::Stream<T>`` and a consume scope drives it through
+    ``dace::Consume``: both are runtime templates carrying a lock-free queue, and neither has a
+    standalone spelling that MPR could inline. Without this check a stream still fails, but as the
+    self-containment assertion on the finished text, which names ``dace::Stream`` rather than the
+    container it came from.
+
+    The consume scope is checked FIRST because one always reads a stream, so the other order would
+    report the stream it happens to drain and never the scope itself.
+
+    :param sdfg: the outermost SDFG.
+    :raises NotImplementedError: naming the consume scope or the stream, and the SDFG holding it.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.ConsumeEntry):
+                raise NotImplementedError(f'MPR cannot render {state.label}/{node.label}: a consume scope is driven '
+                                          'by the runtime class dace::Consume, whose queue and quiescence detection '
+                                          'MPR does not provide. Express the work as a map before rendering.')
+    for subsdfg, name, desc in sdfg.arrays_recursive():
+        if isinstance(desc, dt.Stream):
+            raise NotImplementedError(f'MPR cannot render {subsdfg.name}.{name}: a Stream is the runtime class '
+                                      'dace::Stream, a lock-free queue with no standalone spelling. Rewrite the '
+                                      'producer and consumer around an array before rendering.')
+
+
 def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
@@ -428,13 +457,15 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     :param sdfg: the SDFG to prepare. Call on a COPY -- :func:`mpr` does.
     :param provenance: filled in with the library-node descriptions the rendering will comment
                        with (see :func:`force_pure_expansions`).
-    :raises NotImplementedError: if the SDFG needs a device compiler, or carries a return container
+    :raises NotImplementedError: if the SDFG needs a device compiler, holds a stream or a consume
+                                 scope (:func:`refuse_runtime_scopes`), or carries a return container
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
     """
     device = uses_device_code(sdfg)
     if device:
         raise NotImplementedError('MPR renders one host translation unit, but ' + '; '.join(device) +
                                   '. Render the CPU form of this SDFG instead.')
+    refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
     force_pure_expansions(sdfg, provenance)

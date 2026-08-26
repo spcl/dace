@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """How MPR spells the functions the DaCe runtime headers normally provide.
 
-MPR (maximal parallel rendering) emits C++ that builds against a bare host compiler: no
+MPR (maximal parallel rendering) emits C++ -- or C23, which is the same semantics in a language
+with no templates and no overloading -- that builds against a bare host compiler: no
 ``-I dace/runtime/include``, no ``libdace``. Every function the ordinary code generators reach for
-therefore has to be re-expressed, and there are exactly three ways to do it:
+therefore has to be re-expressed, and there are four ways to do it:
 
 ``STD_RENAMES``
     The C++ standard library has the same function under a different name. A pure rename.
@@ -16,6 +17,13 @@ therefore has to be re-expressed, and there are exactly three ways to do it:
     Neither of the above: the operation needs a real function (it is recursive, generic over
     signedness, or simply too long to inline at every use). MPR emits the definition once, at the
     top of the translation unit, and only for the helpers that translation unit actually calls.
+
+``C_REWRITTEN_IN_NATIVE_CODE``
+    C only, and the rare one: the construct cannot be a callable in C at all, so the CALL SITE is
+    rewritten. The scan identities need the element type, which only the call site spells; the
+    find-first takes a predicate, which is a C++ lambda and in C has to be pasted into the search
+    as a macro argument. Every entry here is a C++ helper whose C answer is a rewrite rather than a
+    definition, which is what lets the anti-rot tests still demand an answer for each one.
 
 This module is deliberately a LEAF: it imports nothing from ``dace``. ``dace.symbolic`` (which
 imports no code generator) and ``dace.codegen.cppunparse`` both consume it, and a shared table is
@@ -272,7 +280,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '}\n'
     'template <typename T, typename... Ts>\n'
     'static constexpr inline typename std::common_type<T, Ts...>::type mpr_max(const T& a, const Ts&... rest) {\n'
-    '    return (a > mpr_max(rest...)) ? a : mpr_max(rest...);\n'
+    '    return (a < mpr_max(rest...)) ? mpr_max(rest...) : a;\n'
     '}',
     'mpr_min':
     'template <typename T>\n'
@@ -281,7 +289,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '}\n'
     'template <typename T, typename... Ts>\n'
     'static constexpr inline typename std::common_type<T, Ts...>::type mpr_min(const T& a, const Ts&... rest) {\n'
-    '    return (a < mpr_min(rest...)) ? a : mpr_min(rest...);\n'
+    '    return (mpr_min(rest...) < a) ? mpr_min(rest...) : a;\n'
     '}',
     'sign':
     'template <typename T>\n'
@@ -370,7 +378,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, min:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = std::min<T>(acc, static_cast<T>(f[i]));\n'
+    '        acc = mpr_min(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan inclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -381,7 +389,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, max:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = std::max<T>(acc, static_cast<T>(f[i]));\n'
+    '        acc = mpr_max(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan inclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -414,7 +422,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, min:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = std::min<T>(acc, static_cast<T>(f[i]));\n'
+    '        acc = mpr_min(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -425,10 +433,84 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, max:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = std::max<T>(acc, static_cast<T>(f[i]));\n'
+    '        acc = mpr_max(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
+    '}',
+    # --- find-first ---------------------------------------------------------------------------
+    # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
+    # short-circuiting parallel search. MPR emits that search rather than unrolling it back into a
+    # sequential scan, for the same reason it emits the inscan form of a prefix sum: the cancelling
+    # parallel shape IS the rendering, and serializing it would answer a different question.
+    'find_first_chunk':
+    '#ifdef _OPENMP\n'
+    '#include <omp.h>\n'
+    '#endif\n'
+    'static inline long long find_first_chunk(long long span, bool parallel) {\n'
+    '    // Grows as sqrt(span): too big a chunk scans past the answer on one thread, too small a\n'
+    '    // one pays dispatch on chunks the answer makes dead. The floor binds below ~64k elements.\n'
+    '    constexpr double chunk_scale = 8.0;\n'
+    '    constexpr long long chunks_per_thread = 4;\n'
+    '    long long chunk = (long long)(chunk_scale * std::sqrt((double)span));\n'
+    '    long long threads = 1;\n'
+    '#ifdef _OPENMP\n'
+    '    if (parallel) threads = (long long)omp_get_max_threads();\n'
+    '#endif\n'
+    '    long long ceiling = span / (chunks_per_thread * threads);\n'
+    '    if (ceiling < 1) ceiling = 1;\n'
+    '    if (chunk > ceiling) chunk = ceiling;\n'
+    '    if (chunk < 1) chunk = 1;\n'
+    '    return chunk;\n'
+    '}',
+    'find_first_index':
+    'template <typename Pred>\n'
+    'static inline long long find_first_index(long long begin, long long end, Pred pred, bool parallel) {\n'
+    '    // The answer is a min-reduction and is exact; the hint is shared and races by design --\n'
+    '    // every value it takes is a real firing index, so a lost update costs pruning, never\n'
+    '    // correctness. Folding the two into one word is exactly that lost-update bug.\n'
+    '    constexpr long long simd_block = 64;\n'
+    '    if (begin >= end) return end;\n'
+    '    const long long span = end - begin;\n'
+    '    const long long chunk = find_first_chunk(span, parallel);\n'
+    '    const long long nchunks = (span + chunk - 1) / chunk;\n'
+    '    long long best = end;\n'
+    '    long long hint = end;\n'
+    '    #pragma omp parallel for schedule(dynamic, 1) if (parallel : parallel) reduction(min : best)\n'
+    '    for (long long c = 0; c < nchunks; ++c) {\n'
+    '        long long seen;\n'
+    '        #pragma omp atomic read\n'
+    '        seen = hint;\n'
+    '        const long long lo = begin + c * chunk;\n'
+    '        if (lo >= seen) continue;\n'
+    '        long long hi = lo + chunk;\n'
+    '        if (hi > end) hi = end;\n'
+    '        if (hi > seen) hi = seen;\n'
+    '        long long found = end;\n'
+    '        for (long long b = lo; b < hi; b += simd_block) {\n'
+    '            long long be = b + simd_block;\n'
+    '            if (be > hi) be = hi;\n'
+    '            long long block = end;\n'
+    '            // A vectorized loop cannot break, so the block is the early-exit granularity.\n'
+    '            #pragma omp simd reduction(min : block)\n'
+    '            for (long long i = b; i < be; ++i) {\n'
+    '                const long long v = pred(i) ? i : end;\n'
+    '                block = v < block ? v : block;\n'
+    '            }\n'
+    '            if (block < end) { found = block; break; }\n'
+    '        }\n'
+    '        if (found < end) {\n'
+    '            if (found < best) best = found;\n'
+    '            long long cur;\n'
+    '            #pragma omp atomic read\n'
+    '            cur = hint;\n'
+    '            if (found < cur) {\n'
+    '                #pragma omp atomic write\n'
+    '                hint = found;\n'
+    '            }\n'
+    '        }\n'
+    '    }\n'
+    '    return best;\n'
     '}',
     'int_ceil':
     'template <typename T, typename U>\n'
@@ -546,10 +628,11 @@ INLINE_DEFINITIONS: Dict[str, str] = {
 
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
 DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
-    'scan_incl_min': ('min_identity', ),
-    'scan_incl_max': ('max_identity', ),
-    'scan_excl_min': ('min_identity', ),
-    'scan_excl_max': ('max_identity', ),
+    'scan_incl_min': ('min_identity', 'mpr_min'),
+    'scan_incl_max': ('max_identity', 'mpr_max'),
+    'scan_excl_min': ('min_identity', 'mpr_min'),
+    'scan_excl_max': ('max_identity', 'mpr_max'),
+    'find_first_index': ('find_first_chunk', ),
     'py_floor': ('int_floor_ni', ),
     'py_mod': ('py_floor', ),
     'floor_mod': ('py_mod', ),
@@ -568,10 +651,10 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'np_modf': ('<type_traits>', ),
 }
 
-#: ``Max``/``Min`` are variadic in the runtime, and NOT ``std::max``/``std::min``: those pick the
-#: FIRST argument when the comparison is false, the runtime's pick the SECOND. The two agree on
-#: ordinary values and disagree on a NaN operand and on signed zero, so MPR emits the runtime's own
-#: definition (see :data:`INLINE_DEFINITIONS`) rather than the standard one.
+#: ``Max``/``Min`` are variadic in the runtime, which ``std::max``/``std::min`` are not: those are
+#: binary or take an ``initializer_list``. The ORDER now matches (a later argument wins only by
+#: comparing strictly better), so the difference is arity and mixed-type promotion, but MPR still
+#: emits the runtime's own definition (see :data:`INLINE_DEFINITIONS`) so the two cannot drift.
 VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'mpr_max', 'min': 'mpr_min'}
 
 #: Headers MPR always includes: the exact-width integer types and the maths every kernel may reach,
@@ -728,8 +811,13 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
 
     Native tasklet bodies never reach the expression printers -- they are emitted verbatim -- so
     this is the only point at which a library expansion's own C++ can be re-spelled. Which is
-    needed for the real cases: the ``Scan`` expansion calls ``::dace::scan::detail::scan_incl_sum``,
-    and MPR emits that function itself rather than serializing the prefix sum into a loop.
+    needed for the real cases: the ``Scan`` expansion calls ``::dace::scan::detail::scan_incl_sum``
+    and the ``FindFirst`` expansion calls ``dace::find_first_index``, and MPR emits both functions
+    itself rather than serializing a prefix sum or a cancelling search into a sequential loop.
+
+    In C the same pass also rewrites the two call shapes C cannot express as a call at all -- the
+    scan identities and the find-first over a lambda predicate (:func:`c_scan_identities`,
+    :func:`c_find_first`) -- before the name table is consulted.
 
     Textual by necessity, and deliberately conservative: only the qualified name is rewritten, only
     when the identifier is one MPR knows, and never with knowledge of the arguments. A
@@ -746,7 +834,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     code = rewrite_ctypes(code, dialect)
 
     if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
-        code = c_scan_identities(code)
+        code = c_find_first(c_scan_identities(code))
 
     def replace(match: 're.Match') -> str:
         name = match.group(1)
@@ -1090,11 +1178,14 @@ C_CTYPE_RENAMES.update({
     'std::complex<double>': 'double _Complex',
 })
 
+#: ``b`` wins only by comparing STRICTLY better, so a tie -- and a comparison false because an
+#: operand is NaN -- keeps ``a``. Same rule as the runtime's ``max``/``min``, which is what these
+#: stand in for.
 _C_MINMAX_DEFINITIONS: Dict[str, str] = {
     name:
-    c_typed_family(name, (('{T}', 'a'), ('{T}', 'b')),
-                   ((C_MINMAX_TYPES, '{T}', 'return (a %s b) ? a : b;' % comparison), ), '(a) + (b)')
-    for name, comparison in (('mpr_max', '>'), ('mpr_min', '<'))
+    c_typed_family(name, (('{T}', 'a'), ('{T}', 'b')), ((C_MINMAX_TYPES, '{T}', 'return (%s) ? b : a;' % condition), ),
+                   '(a) + (b)')
+    for name, condition in (('mpr_max', 'a < b'), ('mpr_min', 'b < a'))
 }
 
 _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
@@ -1264,6 +1355,88 @@ for _kind in ('inclusive', 'exclusive'):
         C_INLINE_DEFINITIONS['scan_%s_%s' % ('incl' if _kind == 'inclusive' else 'excl', _operation)] = _c_scan_family(
             _kind, _operation, _clause, _step)
 
+#: The chunk sizer, identical to the C++ one: it is already a single concrete type, so it needs no
+#: ``_Generic`` dispatch and is a plain function in both dialects.
+C_INLINE_DEFINITIONS['find_first_chunk'] = (
+    '#ifdef _OPENMP\n'
+    '#include <omp.h>\n'
+    '#endif\n'
+    'static inline long long find_first_chunk(long long span, bool parallel) {\n'
+    '    const double chunk_scale = 8.0;\n'
+    '    const long long chunks_per_thread = 4;\n'
+    '    long long chunk = (long long)(chunk_scale * sqrt((double)span));\n'
+    '    long long threads = 1;\n'
+    '    long long ceiling;\n'
+    '#ifdef _OPENMP\n'
+    '    if (parallel) threads = (long long)omp_get_max_threads();\n'
+    '#endif\n'
+    '    ceiling = span / (chunks_per_thread * threads);\n'
+    '    if (ceiling < 1) ceiling = 1;\n'
+    '    if (chunk > ceiling) chunk = ceiling;\n'
+    '    if (chunk < 1) chunk = 1;\n'
+    '    return chunk;\n'
+    '}')
+
+#: The search itself, which is where the two dialects genuinely part. The C++ form takes the
+#: predicate as a lambda; C has none, so the predicate arrives as a macro ARGUMENT and is pasted
+#: into the innermost loop, with the search's own index bound to the name the expansion wrote its
+#: subscripts against (:func:`c_find_first` supplies both). That makes it a statement macro rather
+#: than an expression: the assignment target is the first argument, because a C expression cannot
+#: contain the loop this needs. ``_Pragma`` rather than ``#pragma`` for the same reason -- a
+#: directive cannot be produced by a macro expansion.
+C_INLINE_DEFINITIONS['mpr_find_first'] = '\\\n'.join((
+    '#define mpr_find_first(out, ff_begin, ff_end, ff_index, ff_parallel, ff_pred) ',
+    '    do {',
+    '        const long long mpr_ff_lo = (ff_begin);',
+    '        const long long mpr_ff_end = (ff_end);',
+    '        const bool mpr_ff_par = (ff_parallel);',
+    # The block is the early-exit granularity: a vectorized loop cannot break.
+    '        const long long mpr_ff_simd = 64;',
+    '        long long mpr_ff_best = mpr_ff_end;',
+    '        if (mpr_ff_lo < mpr_ff_end) {',
+    '            const long long mpr_ff_span = mpr_ff_end - mpr_ff_lo;',
+    '            const long long mpr_ff_chunk = find_first_chunk(mpr_ff_span, mpr_ff_par);',
+    '            const long long mpr_ff_chunks = (mpr_ff_span + mpr_ff_chunk - 1) / mpr_ff_chunk;',
+    '            long long mpr_ff_hint = mpr_ff_end;',
+    '            _Pragma("omp parallel for schedule(dynamic, 1) if (parallel : mpr_ff_par) '
+    'reduction(min : mpr_ff_best)")',
+    '            for (long long mpr_ff_c = 0; mpr_ff_c < mpr_ff_chunks; ++mpr_ff_c) {',
+    '                long long mpr_ff_seen, mpr_ff_hi, mpr_ff_found, mpr_ff_b;',
+    '                const long long mpr_ff_from = mpr_ff_lo + mpr_ff_c * mpr_ff_chunk;',
+    '                _Pragma("omp atomic read")',
+    '                mpr_ff_seen = mpr_ff_hint;',
+    '                if (mpr_ff_from >= mpr_ff_seen) continue;',
+    '                mpr_ff_hi = mpr_ff_from + mpr_ff_chunk;',
+    '                if (mpr_ff_hi > mpr_ff_end) mpr_ff_hi = mpr_ff_end;',
+    '                if (mpr_ff_hi > mpr_ff_seen) mpr_ff_hi = mpr_ff_seen;',
+    '                mpr_ff_found = mpr_ff_end;',
+    '                for (mpr_ff_b = mpr_ff_from; mpr_ff_b < mpr_ff_hi; mpr_ff_b += mpr_ff_simd) {',
+    '                    long long mpr_ff_block = mpr_ff_end;',
+    '                    long long mpr_ff_to = mpr_ff_b + mpr_ff_simd;',
+    '                    if (mpr_ff_to > mpr_ff_hi) mpr_ff_to = mpr_ff_hi;',
+    '                    _Pragma("omp simd reduction(min : mpr_ff_block)")',
+    '                    for (long long ff_index = mpr_ff_b; ff_index < mpr_ff_to; ++ff_index) {',
+    '                        const long long mpr_ff_v = (ff_pred) ? ff_index : mpr_ff_end;',
+    '                        mpr_ff_block = mpr_ff_v < mpr_ff_block ? mpr_ff_v : mpr_ff_block;',
+    '                    }',
+    '                    if (mpr_ff_block < mpr_ff_end) { mpr_ff_found = mpr_ff_block; break; }',
+    '                }',
+    '                if (mpr_ff_found < mpr_ff_end) {',
+    '                    long long mpr_ff_cur;',
+    '                    if (mpr_ff_found < mpr_ff_best) mpr_ff_best = mpr_ff_found;',
+    '                    _Pragma("omp atomic read")',
+    '                    mpr_ff_cur = mpr_ff_hint;',
+    '                    if (mpr_ff_found < mpr_ff_cur) {',
+    '                        _Pragma("omp atomic write")',
+    '                        mpr_ff_hint = mpr_ff_found;',
+    '                    }',
+    '                }',
+    '            }',
+    '        }',
+    '        (out) = mpr_ff_best;',
+    '    } while (0)',
+))
+
 #: Definitions each C definition calls -- macros included, since a macro must be ``#define``d before
 #: the function body that expands it is compiled.
 C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
@@ -1283,15 +1456,19 @@ C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'scan_incl_max': ('mpr_max', ),
     'scan_excl_min': ('mpr_min', ),
     'scan_excl_max': ('mpr_max', ),
+    'mpr_find_first': ('find_first_chunk', ),
 }
 
 #: What the C dialect refuses, and why. Empty: every construct MPR reaches has a C spelling.
 C_UNSUPPORTED: Dict[str, str] = {}
 
-#: Helpers C answers with a REWRITE rather than a definition or a refusal -- a third lane, and the
-#: only one, so the anti-rot tests can still insist every C++ helper is accounted for. Both are the
-#: scan's neutral elements, whose call site spells its own type (:func:`c_scan_identities`).
-C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_identity'})
+#: Helpers C answers with a REWRITE of the CALL SITE rather than a definition or a refusal -- a
+#: third lane, and the only one, so the anti-rot tests can still insist every C++ helper is
+#: accounted for. Each is a shape C cannot spell as a callable at all: the scan's neutral elements
+#: need the element type, which only the call site names (:func:`c_scan_identities`), and the
+#: find-first takes a predicate, which in C++ is a lambda and in C has to be pasted into the search
+#: as a macro argument (:func:`c_find_first`).
+C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_identity', 'find_first_index'})
 
 #: Headers MPR's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
@@ -1429,6 +1606,40 @@ def c_scan_identities(code: str) -> str:
         return identities[0] if kind == 'min' else identities[1]
 
     return _C_IDENTITY_CALL.sub(replace, code)
+
+
+#: ``target = dace::find_first_index((begin), (end), [&](long long __i) -> bool { return (pred); },
+#: parallel);`` -- the one statement ``ExpandFindFirstPure`` and ``ExpandFindFirstOpenMP`` write.
+#: Anchored on the whole statement, target included, because the C replacement is a statement macro
+#: and needs somewhere to put the result. The bounds are captured as ONE group and spliced through
+#: unread: the expansion parenthesizes each of them, so they arrive as two macro arguments however
+#: many commas the extents contain. The predicate is parenthesized by the same expansion, which is
+#: what keeps a comma inside it (``mpr_max(a, b) > 0``) from splitting the macro argument.
+_C_FIND_FIRST_CALL = re.compile(
+    r'([^;{}\n]+?)\s*=\s*(?:::)?(?:[A-Za-z_]\w*::)*find_first_index\s*\(\s*'
+    r'(.+?),\s*\[&\]\s*\(\s*long long\s+([A-Za-z_]\w*)\s*\)\s*->\s*bool\s*\{\s*return\s+(.+?)\s*;\s*\}'
+    r'\s*,\s*([A-Za-z_]\w*)\s*\)\s*;', re.S)
+
+
+def c_find_first(code: str) -> str:
+    """Rewrite a ``find_first_index`` call over a C++ lambda into the C statement macro.
+
+    C has no lambda and no way to hand a capturing predicate to a function, so the predicate cannot
+    stay an argument to anything callable -- it has to be pasted into the search's innermost loop,
+    which makes the search a macro. This is the only construct MPR answers by rewriting a call site
+    rather than by naming a helper, so it is deliberately narrow: it matches the exact statement the
+    two CPU expansions write, and anything else is left alone for ``dace.codegen.mpr.verify`` to
+    report as an unlowered ``dace::`` name rather than half-rewritten into something that builds.
+
+    Must run BEFORE the qualified-name rewrite, which would otherwise leave the C++ call shape in
+    place with only its namespace stripped.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the search spelled as C.
+    """
+    return _C_FIND_FIRST_CALL.sub(
+        lambda match: 'mpr_find_first(%s, %s, %s, %s, %s);' %
+        (match.group(1).strip(), match.group(2).strip(), match.group(3), match.group(5), match.group(4).strip()), code)
 
 
 def c_cast_native_code(code: str) -> str:

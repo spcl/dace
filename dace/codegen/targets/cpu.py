@@ -1710,7 +1710,7 @@ class CPUCodeGen(TargetCodeGenerator):
             dtype = dtype.base_type
 
         if mpr_lowering.standalone():
-            return self.standalone_wcr(memlet, redtype, ptr, inname, dtype, bool(atomic))
+            return self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, bool(atomic))
 
         # If there is a type mismatch and more than one element is used, cast
         # pointer (vector->vector WCR). Otherwise, generate vector->scalar
@@ -1738,7 +1738,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
         )
 
-    def standalone_wcr(self, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
+    def standalone_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
         """The MPR spelling of a conflict resolution, or a refusal.
 
         MPR admits exactly the WCR forms that are TREE-reducible: one an enclosing OpenMP map folds
@@ -1749,6 +1749,7 @@ class CPUCodeGen(TargetCodeGenerator):
         of MPR is to show the maximally parallel form of the program, and an atomic accumulation is
         the form that says the parallelization was not resolved.
 
+        :param sdfg: the SDFG owning the memlet, for unparsing a custom resolution.
         :param memlet: the memlet carrying the WCR, for the message.
         :param redtype: the detected reduction type.
         :param ptr: the C++ pointer expression for the target element.
@@ -1768,6 +1769,13 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.vector):
             raise NotImplementedError(f'MPR cannot render the vector WCR on {target}: the vector type is a DaCe '
                                       'runtime template. Scalarize the map before rendering.')
+        # No OpenMP clause spells these two, so they never reach the fold above -- but both are a
+        # plain expression in either dialect, and both match the runtime functor exactly
+        # (``reduction.h``: Logical_Xor is ``a != b``, Exchange is ``b``).
+        if redtype is dtypes.ReductionType.Exchange:
+            return f'*({ptr}) = ({inname})'
+        if redtype is dtypes.ReductionType.Logical_Xor:
+            return f'*({ptr}) = (*({ptr}) != ({inname}))'
         operator = _REDUCTION_TO_OMP_OP.get(redtype)
         if operator in ('+', '*', '&', '|', '^', '&&', '||'):
             return f'*({ptr}) = *({ptr}) {operator} ({inname})'
@@ -1775,6 +1783,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # C has no ``std::min``; MPR emits its own typed pair (see mpr_lowering.C_MINMAX_TYPES).
             spelling = f'mpr_{operator}' if mpr_lowering.standalone_c() else f'std::{operator}'
             return f'*({ptr}) = {spelling}(*({ptr}), {inname})'
+        if redtype is dtypes.ReductionType.Custom:
+            # Not conflicting by here, so the runtime would take ``wcr_custom<T>::reduce``, which is
+            # ``*ptr = wcr(*ptr, value)`` with no critical section. Inlining the body reproduces that
+            # without a lambda, which the C dialect could not spell. ``Sub`` and ``Div`` arrive here
+            # too: no OpenMP clause names them, so they detect as Custom.
+            return f'*({ptr}) = {cpp.unparse_cr_inline(sdfg, memlet.wcr, (f"*({ptr})", f"({inname})"))}'
         raise NotImplementedError(f'MPR has no standalone spelling for the {redtype} write-conflict resolution '
                                   f'on {target}; it is provided by the DaCe reduction runtime.')
 

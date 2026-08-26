@@ -19,13 +19,14 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes import FindFirst
 from dace import mpr, mpr_lowering
 from dace.codegen import mpr as mpr_module
 from dace.codegen.mpr import render as render_sdfg
 from dace.codegen.targets.experimental_cpu import format_index_helper
 
 from tests.codegen.mpr.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
-                                        compile_diagnostics, compile_standalone)
+                                        compile_diagnostics, compile_standalone, wcr_sdfg)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -571,3 +572,85 @@ def test_thread_local_storage_allocates_with_aligned_alloc():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def find_first_sdfg(name: str, implementation: str):
+    """An SDFG whose only node is the search an early-exit loop lifts to.
+
+    Built from the library node rather than from a ``@dace.program`` with a ``break`` so that the
+    test pins MPR against the node's own contract: which expansion ran, and what its C++ body says.
+    ``EarlyExitToFindIndex`` is what puts this node into a real kernel, and it is tested where it
+    lives.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('out', [1], dace.int64)
+    state = sdfg.add_state()
+    node = FindFirst('ff', predicate='_a[__i] > 0.5', begin=0, end=N)
+    node.implementation = implementation
+    node.add_in_connector('_a', dace.pointer(dace.float64))
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_a', dace.Memlet.from_array('a', sdfg.arrays['a']))
+    state.add_edge(node, '_out_idx', state.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+#: Where the predicate fires, and the answer each position must produce. ``None`` is the no-hit
+#: case, whose answer is the exclusive end -- the one a search that forgot its sentinel gets wrong.
+#: The span is well past a single chunk, so the parallel expansion really does split it.
+FIND_FIRST_SPAN = 100000
+FIND_FIRST_HITS = (0, 1, 517, FIND_FIRST_SPAN - 1, None)
+
+
+def find_first_input(hit):
+    """``(a, expected)`` for a search whose predicate fires at ``hit`` and nowhere else."""
+    a = np.zeros(FIND_FIRST_SPAN)
+    if hit is not None:
+        a[hit] = 1.0
+    return a, FIND_FIRST_SPAN if hit is None else hit
+
+
+@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+def test_find_first_becomes_a_statement_macro_in_c(implementation):
+    """C has no lambda, so the predicate is pasted into the search rather than passed to it.
+
+    This is the one construct the C dialect answers by rewriting a CALL SITE, so the C form is
+    asserted directly: no lambda survives, the macro carries the assignment target, and the
+    predicate still reads the index under the name the expansion subscripted with.
+    """
+    sdfg = find_first_sdfg('mpr_c_find_first_%s' % implementation.lower(), implementation)
+    rendering = render_sdfg(sdfg, language='c')
+    code = rendering.code
+    assert '[&]' not in code, 'a C++ lambda survived into the C rendering'
+    assert re.search(r'mpr_find_first\(out\[out_idx\(0\)\], \(0\), \(N\), __i, \w+, \(a\[__i\] > 0.5\)\);',
+                     code), 'the search did not become the C statement macro'
+    assert 'schedule(dynamic, 1)' in code, 'the C search lost its cancelling parallel form'
+
+    assert_standalone(code, 'mpr_c_find_first', language='c')
+    library = build_standalone(code, 'mpr_c_find_first_%s' % implementation.lower(), language='c')
+    for hit in FIND_FIRST_HITS:
+        a, expected = find_first_input(hit)
+        out = np.zeros(1, dtype=np.int64)
+        call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'N': FIND_FIRST_SPAN})
+        assert out[0] == expected, f'search over a predicate firing at {hit} answered {out[0]}, not {expected}'
+
+
+def test_custom_conflict_resolution_needs_no_lambda_in_c():
+    """A custom WCR inlines its body, because C has nothing else to put there.
+
+    The C++ path could have kept the runtime's shape -- unparse the resolution as a lambda and pass
+    it to ``wcr_custom<T>::reduce``. C has neither, so the body is substituted at the AST into the
+    accumulating statement. The C++ spelling in
+    :func:`tests.codegen.mpr.test_emission.test_non_conflicting_wcr_renders_without_the_reduction_runtime`
+    is asserted to be the same text; what is pinned HERE is that nothing lambda-shaped survives into
+    a translation unit a C compiler has to accept, and that the inlined arithmetic still runs.
+    """
+    rendering = render_sdfg(wcr_sdfg('mpr_c_resolve', 'lambda p, q: p * q + 1.0'), language='c')
+    assert '*(out + i) = ((*(out + i) * (y)) + 1.0);' in rendering.code, 'the resolution must be inlined'
+    assert '[] (' not in rendering.code, 'the C++ lambda spelling from unparse_cr must not reach the C dialect'
+
+    rng = np.random.default_rng(0)
+    a, out = rng.random(32) + 0.5, rng.random(32) + 0.5
+    expected = out * a + 1.0
+    run_c(rendering.sdfg, rendering.code, {'a': a, 'out': out}, 'mpr_c_resolve')
+    assert_matches({'out': expected}, {'out': out}, 'mpr_c_resolve')

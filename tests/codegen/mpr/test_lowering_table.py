@@ -340,6 +340,8 @@ NOT_CONSTEXPR = {
     'scan_excl_max': _SCAN_REASON,
     'min_identity': 'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
     'max_identity': 'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
+    'find_first_index': 'runs an OpenMP-parallel cancelling search over a predicate, which has no constant evaluation',
+    'find_first_chunk': 'reads the OpenMP thread count, which only exists at run time',
     'np_modf': 'std::modf takes a pointer out-parameter and is not constexpr before C++23',
     'np_frexp': 'std::frexp takes a pointer out-parameter and is not constexpr before C++23',
     'Modulo': 'divides through std::floor on a double for every instantiation (GCC folds it, clang does not)',
@@ -429,6 +431,8 @@ def test_every_c_definition_is_reachable():
         reachable |= set(dependencies)
     for _, template in mpr_lowering.C_REWRITES.values():
         reachable |= mpr_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
+    reachable |= mpr_lowering.helpers_used(mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C),
+                                           Dialect.STANDALONE_C)
     # The two arity-specific halves of ``heaviside`` are defined inside its own entry, not called
     # from anywhere else; every other name must be reached from outside.
     unreachable = sorted(set(mpr_lowering.C_INLINE_DEFINITIONS) - reachable)
@@ -445,7 +449,7 @@ def test_every_c_definitions_dependencies_are_real():
                 f'{name} does not mention {dependency}')
 
 
-@pytest.mark.parametrize('name', sorted(mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE))
+@pytest.mark.parametrize('name', ['min_identity', 'max_identity'])
 @pytest.mark.parametrize('ctype', sorted(mpr_lowering.C_SCAN_IDENTITIES))
 def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     """The identity has no C function template, so C spells it as the constant for that type.
@@ -457,6 +461,40 @@ def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     expected = mpr_lowering.C_SCAN_IDENTITIES[ctype][0 if name.startswith('min') else 1]
     assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE_C) == expected
     assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
+
+
+#: The statement ``ExpandFindFirstPure`` / ``ExpandFindFirstOpenMP`` write, copied here rather than
+#: imported so that a change to the expansion's spelling breaks this file instead of silently
+#: turning the C rewrite into a no-op -- which would surface only as an unlowered ``dace::`` name in
+#: some kernel that happens to search.
+FIND_FIRST_STATEMENT = ('_out_idx = dace::find_first_index((0), (N), '
+                        '[&](long long __i) -> bool { return (_a[__i] > 0.5); }, false);')
+
+
+def test_c_rewrites_the_find_first_call_into_the_statement_macro():
+    """C keeps the predicate, the index name and the bounds, and moves the target into the macro.
+
+    The predicate cannot survive as an argument to anything callable in C, so the check is that it
+    arrives verbatim and still reads the index under the name the expansion wrote its subscripts
+    against: a rewrite that renamed either would build and then search the wrong elements.
+    """
+    rewritten = mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
+    assert rewritten == 'mpr_find_first(_out_idx, (0), (N), __i, false, (_a[__i] > 0.5));'
+    assert mpr_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'mpr_find_first'}
+    # C++ has the lambda, so it keeps the call and only drops the namespace.
+    assert mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT,
+                                            Dialect.STANDALONE) == FIND_FIRST_STATEMENT.replace('dace::', '')
+
+
+def test_c_leaves_an_unrecognized_find_first_call_for_verify():
+    """A call shape the rewrite does not know stays ``dace::``-qualified rather than half-rewritten.
+
+    The rewrite is textual and matches one statement form. If the expansion ever writes another,
+    the honest outcome is MPR refusing to render -- a partial rewrite would produce C that does not
+    compile, with nothing naming the construct responsible.
+    """
+    unknown = '_out_idx = dace::find_first_index(0, N, some_functor, false);'
+    assert mpr_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
 
 
 def test_c_refuses_a_scan_identity_it_cannot_order():

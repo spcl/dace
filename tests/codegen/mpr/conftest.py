@@ -295,6 +295,34 @@ def assert_matches(reference: Dict[str, np.ndarray], mpr: Dict[str, np.ndarray],
             f'max|diff|={float(np.nanmax(np.abs(expected.astype(np.float64) - got.astype(np.float64)))):.3e}')
 
 
+def wcr_sdfg(name: str, resolution: str, length: int = 32) -> dace.SDFG:
+    """A map whose every iteration resolves into its OWN element through ``resolution``.
+
+    Distinct targets, so the write does not conflict and the WCR reaches the NON-atomic lowering --
+    the only conflict resolution MPR admits. Built directly rather than through ``@dace.program``
+    because the Python frontend has no syntax that yields a non-conflicting custom resolution: an
+    augmented assignment to distinct elements is a plain write, and a shared accumulator conflicts.
+
+    :param name: the SDFG (and entry point) name.
+    :param resolution: the WCR, as a lambda source string.
+    :param length: the map extent and the array size.
+    :returns: the built SDFG, ready to render.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [length], dace.float64)
+    sdfg.add_array('out', [length], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': f'0:{length}'})
+    tasklet = state.add_tasklet('t', {'x': None}, {'y': None}, 'y = x')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet,
+                          exit_node,
+                          state.add_write('out'),
+                          src_conn='y',
+                          memlet=dace.Memlet(data='out', subset='i', wcr=resolution))
+    return sdfg
+
+
 @pytest.fixture(scope='session')
 def cxx() -> str:
     """The resolved host C++ compiler MPR output is built with."""

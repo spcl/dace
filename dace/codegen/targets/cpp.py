@@ -14,7 +14,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
-from typing import IO, TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
+from typing import IO, TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
 from dace import data, mpr_lowering, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -855,6 +855,49 @@ def unparse_cr_split(sdfg, wcr_ast):
         return unparse_cr_split(sdfg, LambdaProperty.from_string(wcr_ast))
     else:
         raise NotImplementedError("INVALID TYPE OF WCR: " + type(wcr_ast).__name__)
+
+
+class WcrOperandSubstitution(ast.NodeTransformer):
+    """Replace a WCR's parameters by the caller's operand text, printed as verbatim identifiers."""
+
+    def __init__(self, mapping: Dict[str, str]):
+        self.mapping = mapping
+
+    def visit_Name(self, node: ast.Name):
+        replacement = self.mapping.get(node.id)
+        return ast.Name(id=replacement, ctx=node.ctx) if replacement is not None else node
+
+
+def unparse_cr_inline(sdfg, wcr_ast, operands: Tuple[str, str]) -> str:
+    """The WCR body as one plain C expression, its parameters replaced by ``operands``.
+
+    :func:`unparse_cr` builds a C++ lambda, which the C dialect cannot spell. Substituting at the
+    AST instead leaves an expression both dialects accept, and reproduces
+    ``wcr_custom<T>::reduce`` (``*ptr = wcr(*ptr, value)``) exactly. Each operand is pasted where
+    its parameter stood, so a body naming a parameter twice loads it twice -- which is what the
+    functor does as well, the operands being a dereference and a local.
+
+    :param sdfg: the SDFG owning the WCR, for struct initializers.
+    :param wcr_ast: the conflict resolution, as a lambda string or AST.
+    :param operands: the C text for the accumulator and the incoming value, already parenthesised.
+    :returns: the substituted body, without a trailing semicolon.
+    :raises NotImplementedError: if the WCR is not a single ``return`` of one expression.
+    """
+    node = wcr_ast
+    if isinstance(node, str):
+        node = LambdaProperty.from_string(node)
+    if isinstance(node, ast.Module):
+        node = node.body[0].value
+    if isinstance(node, ast.Lambda):
+        node = LambdaToFunction().visit(node)
+    if (not isinstance(node, ast.FunctionDef) or len(node.body) != 1 or not isinstance(node.body[0], ast.Return)):
+        raise NotImplementedError('a conflict resolution that is not a single expression has no inline spelling')
+    args = [a.arg for a in node.args.args]
+    if len(args) != len(operands):
+        raise NotImplementedError(f'conflict resolution takes {len(args)} parameters, not {len(operands)}')
+    body = StructInitializer(sdfg).visit(node.body[0].value)
+    body = WcrOperandSubstitution(dict(zip(args, operands))).visit(body)
+    return cppunparse.cppunparse(body, expr_semicolon=False)
 
 
 def unparse_cr(sdfg, wcr_ast, dtype):
