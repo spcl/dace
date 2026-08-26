@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.config import set_temporary
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
@@ -496,7 +497,11 @@ def test_canonicalize_emits_reduction_clause_for_indirect_read_reduction():
     sdfg.validate()
 
     assert not _write_only_scalar_wcr_conns(sdfg), 'WCR still trapped inside a nested SDFG body'
-    code = sdfg.generate_code()[0].clean_code
+    # The clause is emitted only where tree reductions are: always under the generator
+    # canonicalize targets, and under ``legacy`` only behind ``compiler.emit_tree_reductions``
+    # (default off). Name the generator rather than inherit whichever one the box selects.
+    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        code = sdfg.generate_code()[0].clean_code
     assert 'reduce_atomic' not in code
     assert 'reduction(+:' in code.replace(' ', '')
 

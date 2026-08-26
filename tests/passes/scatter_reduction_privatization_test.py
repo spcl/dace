@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.config import set_temporary
 from dace import nodes
 from dace.transformation.passes.privatize_scatter_reduction import (PrivatizeScatterReduction, scatter_wcr_op,
                                                                     SCATTER_REDUCIBLE_OPS)
@@ -55,7 +56,16 @@ def count_histogram(binidx: dace.int64[N]):
 
 
 def _codegen_text(sdfg: dace.SDFG) -> str:
-    return "\n".join(c.code for c in sdfg.generate_code())
+    """Generated C++ for ``sdfg``, pinned to the generator canonicalize targets.
+
+    A WCR accumulator folds into an OpenMP ``reduction(...)`` clause only where tree reductions
+    are emitted: always under ``experimental_readable``, and under ``legacy`` only behind
+    ``compiler.emit_tree_reductions`` (default off, see codegen.common.emits_tree_reductions).
+    Reading the ambient setting would make the assertions below depend on whichever generator the
+    box happens to select, so name the one the claim is about.
+    """
+    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        return "\n".join(c.code for c in sdfg.generate_code())
 
 
 def _unique_build(sdfg: dace.SDFG, tag: str) -> None:

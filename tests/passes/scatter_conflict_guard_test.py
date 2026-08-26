@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.config import set_temporary
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard,
                                                                scatter_index_domain,
@@ -235,7 +236,11 @@ def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():
     and the caller-sized tag array means no ``max(ip)`` sizing sweep either."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     insert_scatter_guard(sdfg, 'ip')
-    code = sdfg.generate_code()[0].clean_code
+    # Every assertion below reads the emitted body, and the two CPU generators spell a native
+    # tasklet's operands differently: ``legacy`` keeps them in connector locals, so the tag array
+    # would appear as ``_owner_out`` and the name checks would pass without testing anything.
+    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        code = sdfg.generate_code()[0].clean_code
 
     body = _function_body(code, f'void __program_{sdfg.name}_internal')
     assert 'new ' not in body, body
