@@ -57,6 +57,35 @@ def test_assert_offloaded_accepts_gpu_global_only():
     assert_offloaded(sdfg)  # must not raise
 
 
+def sequential_sdfg(name='fin_sequential'):
+    """``b = b * 2`` over one loop: no map, no library node, nothing an offload could place."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('B', [32], dace.float64)
+    loop = dace.sdfg.state.LoopRegion('rows', 'i < 32', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('body', is_start_block=True)
+    tasklet = state.add_tasklet('scale', {'inp': None}, {'o': None}, 'o = inp * 2.0')
+    state.add_edge(state.add_read('B'), None, tasklet, 'inp', dace.Memlet('B[i]'))
+    state.add_edge(tasklet, 'o', state.add_write('B'), None, dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_assert_offloaded_accepts_a_graph_with_nothing_to_offload():
+    """A purely sequential graph (npbench crc16) is host code by right, not a missing offload call.
+
+    The guard exists to catch a forgotten :func:`offload_to_gpu`; with neither a map nor a library
+    node anywhere, no offload could have placed anything, so there is nothing it could be about.
+    """
+    sdfg = sequential_sdfg()
+    assert not any(isinstance(node, dace.sdfg.nodes.MapEntry) for node, _ in sdfg.all_nodes_recursive())
+    assert_offloaded(sdfg)  # must not raise
+    # The graph that HAS a map and was never offloaded is still rejected -- the relaxation is about
+    # what could be placed, not about how loudly the guard speaks.
+    with pytest.raises(ValueError, match='offload_to_gpu'):
+        assert_offloaded(elementwise_sdfg('fin_still_rejected'))
+
+
 def test_offload_then_finalize_is_the_supported_order():
     """``offload_to_gpu`` schedules the map on the device, after which finalizing is accepted."""
     sdfg = elementwise_sdfg('fin_offload_ok')
@@ -93,6 +122,7 @@ if __name__ == '__main__':
     test_finalize_does_not_offload()
     test_assert_offloaded_rejects_host_graph()
     test_assert_offloaded_accepts_gpu_global_only()
+    test_assert_offloaded_accepts_a_graph_with_nothing_to_offload()
     test_offload_then_finalize_is_the_supported_order()
     test_cpu_target_unaffected()
     test_passes_can_run_between_canonicalization_and_offload()

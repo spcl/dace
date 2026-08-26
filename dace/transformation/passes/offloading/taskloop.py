@@ -6,12 +6,15 @@ from ordered_set import OrderedSet
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 
-# A nested SDFG is judged by what IT holds, not counted as computation here.
-LAUNCH_ONLY_NODES = (nodes.MapEntry, nodes.MapExit, nodes.AccessNode, nodes.NestedSDFG)
+
+def is_computation(node: nodes.Node) -> bool:
+    """Only these compute: access nodes stage, map scopes and nested SDFGs launch, and interstate
+    edges and control-flow blocks prepare symbols, which is why neither is ever looked at."""
+    return isinstance(node, (nodes.Tasklet, nodes.LibraryNode))
 
 
 def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
-    """Moves or initializes data only; a type test, since nothing carries GPU storage yet."""
+    """Moves or initializes only; a type test, since nothing carries GPU storage yet."""
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
@@ -19,7 +22,7 @@ def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
 
 
 def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
-    """``entry``'s scope holds a library node expanding to a call only host code can issue."""
+    """Its scope holds a library node expanding to a call only host code can issue."""
     for node in scope_children.get(entry, ()):
         if isinstance(node, nodes.LibraryNode) and not is_copy_or_fill_libnode(node):
             return True
@@ -37,28 +40,28 @@ def sdfg_holds_device_wide_libnode(sdfg: SDFG) -> bool:
 
 
 def sdfg_only_launches(sdfg: SDFG) -> bool:
-    """Every state computes only inside maps, and there is at least one. Interstate edges do not count."""
+    """Every state computes only inside maps, and there is at least one; ``states()`` recurses
+    through regions and never yields an interstate edge."""
     found_map = False
     for state in sdfg.states():
         for node in state.scope_children()[None]:
+            if is_computation(node):
+                return False
             if isinstance(node, nodes.MapEntry):
                 found_map = True
             elif isinstance(node, nodes.NestedSDFG):
                 if not sdfg_only_launches(node.sdfg):
                     return False
                 found_map = True
-            elif not isinstance(node, LAUNCH_ONLY_NODES):
-                return False
     return found_map
 
 
 def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dict, launch_only: bool = True) -> bool:
     """``entry`` launches work rather than doing it, so it belongs on the host.
 
-    Enclosing a device-wide library node is not a heuristic but a requirement: a cuBLAS call is issued
-    by host code, so no map around one can be a kernel. ``launch_only`` adds the second, optional
-    reason -- all computation under it sits in an inner map or a launching nested SDFG. An uncollapsed
-    perfect nest counts there; collapsing it into one kernel is canonicalization's job.
+    Enclosing a device-wide library node is a requirement, not a heuristic: a cuBLAS call is issued by
+    host code. ``launch_only`` adds the optional reason -- an uncollapsed nest counts, and collapsing
+    it into one kernel is canonicalization's job.
     """
     if encloses_device_wide_libnode(state, entry, scope_children):
         return True
@@ -67,14 +70,14 @@ def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dic
 
     launches = False
     for node in scope_children.get(entry, ()):
+        if is_computation(node):
+            return False
         if isinstance(node, nodes.MapEntry):
             launches = True
         elif isinstance(node, nodes.NestedSDFG):
             if not sdfg_only_launches(node.sdfg):
                 return False
             launches = True
-        elif not isinstance(node, LAUNCH_ONLY_NODES):
-            return False
     return launches
 
 

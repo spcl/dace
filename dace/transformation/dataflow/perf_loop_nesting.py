@@ -190,6 +190,10 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         for i, j in _cross_child_conflicts(inner_state, child_entries):
             graph.add_nedge(duplicates[i][1], duplicates[j][0], mm.Memlet())
 
+        # Each duplicate is wired only to the outer access nodes its own child reads or writes, so
+        # one that no child uses keeps no edge once the original scope goes -- and an isolated node
+        # is not a valid SDFG (tsvc_2_5 fission_dep_const_offset).
+        outer_touched = {e.src for e in graph.in_edges(pe)} | {e.dst for e in graph.out_edges(px)}
         for ie in list(graph.in_edges(pe)):
             graph.remove_edge(ie)
         for oe in list(graph.out_edges(px)):
@@ -197,6 +201,9 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
         for n in body + [pe, px]:
             if n in graph.nodes():
+                graph.remove_node(n)
+        for n in outer_touched:
+            if n in graph.nodes() and graph.in_degree(n) == 0 and graph.out_degree(n) == 0:
                 graph.remove_node(n)
 
 

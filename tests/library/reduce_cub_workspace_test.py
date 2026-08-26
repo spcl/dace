@@ -78,11 +78,10 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
         r'cudaError_t __dace_reduce_\w+\(',
         code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
     # experimental_readable (the default CPU codegen) inlines the tasklet's _in/_out connectors to
-    # the actual pointers they read/write; legacy keeps the literal connector names in the call.
-    if dace.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
-        call = re.search(r'^.*__dace_reduce_\w+\(gpu_a, b_slice,.*$', code, re.MULTILINE)
-    else:
-        call = re.search(r'^.*__dace_reduce_\w+\(_in, _out,.*$', code, re.MULTILINE)
+    # the actual pointers they read/write; legacy keeps the literal connector names in the call. The
+    # call site is the line that is not a declaration either way, and how the offloading pass spells
+    # its device copy (``gpu_a``, ``a_gpu``) is that pass's business rather than this test's.
+    call = re.search(r'^(?!.*cudaError_t).*__dace_reduce_\w+\(\w+, \w+,.*$', code, re.MULTILINE)
     assert call, 'no call to the reduce helper was emitted'
     assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
 

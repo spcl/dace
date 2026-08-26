@@ -7,10 +7,11 @@ graph, and only then materializes copies -- so a copy is emitted where the locat
 changes rather than around every kernel.
 """
 from copy import deepcopy
-from typing import Any, Set
+from typing import Any, Optional, Set
 
 from dace import dtypes, properties, data, Memlet, subsets
 from dace.config import Config
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes, SDFG, InterstateEdge
 from dace.sdfg.state import (SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock,
                              BreakBlock, ControlFlowBlock, AbstractControlFlowRegion)
@@ -202,7 +203,7 @@ class OffloadToAccelerator(ppl.Pass):
         self.assign_schedules(sdfg)
 
         self.place_and_copy(sdfg)
-        self.offload_taskloop_bodies(sdfg)
+        self.offload_host_level_bodies(sdfg)
 
     def place_and_copy(self, sdfg: SDFG) -> None:
         """Place every array across ONE host level and copy accordingly; taskloop bodies come later."""
@@ -218,11 +219,12 @@ class OffloadToAccelerator(ppl.Pass):
             sdfgIR = self.sdfg_to_IR(sdfg)
 
             # step 3: resolve hybrid states
+            new_maps = set()
             if self.hybrid_states:
-                new_maps = set()
                 for state in self.hybrid_states:
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
 
+            if new_maps:
                 mapfusion_pass = FullMapFusion(
                     strict_dataflow=True,
                     perform_vertical_map_fusion=True,
@@ -273,8 +275,10 @@ class OffloadToAccelerator(ppl.Pass):
                     filter=to_scalars,
                 ).apply_pass(sdfg, {}) or set()
 
-            # rerun IR if anything has changed
-            if rewritten or self.hybrid_states:  # sdfg has been changed
+            # What the wrappers BUILT, not the states that asked: a partition can be legitimately
+            # declined (a lone staging node, or one computing only scalars -- covariance's ``N - 1``),
+            # and a request declined every round is a fixed point, not progress.
+            if rewritten or new_maps:  # sdfg has been changed
                 self.cache_scopes(sdfg)
                 continue  # repeat phases 2 - 4
 
@@ -296,31 +300,87 @@ class OffloadToAccelerator(ppl.Pass):
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
 
-    def offload_taskloop_bodies(self, sdfg: SDFG) -> None:
-        """Place again inside every nested SDFG a taskloop launches: the body is its own host level.
+    def offload_host_level_bodies(self, sdfg: SDFG) -> None:
+        """Place again inside every nested SDFG that is still host code: each body is its own level.
 
         Its connector-bound descriptors already carry this level's storage, so the body seeds from
         that and copies only what its own control flow needs. Schedules were assigned tree-wide.
-        """
-        if not self.taskloop_heuristics:
-            return
 
+        Two kinds of body qualify, and both fail the same way when skipped -- their interstate edges
+        read device arrays from host code. A taskloop body, whatever the config says, because
+        ``find_taskloops`` records a map enclosing a device-wide library node unconditionally
+        (npbench spmv's ``start = A_indptr[i]``); and one sitting at a state's own top level, which
+        no map encloses at all (npbench scattering_self_energies' ``neigh_idx``). The level's own
+        analysis only asks such a body where it wants its bound arrays -- it never places within it.
+        """
         # Copy insertion added states; the cached scopes predate them.
         self.cache_scopes(sdfg)
         for state in sdfg.states():
-            for entry in self.cached_scope_children[state].get(None, ()):
-                if not isinstance(entry, nodes.MapEntry) or entry not in self.taskloops:
-                    continue
-                for node in self.host_level_nested_sdfgs(state, entry):
-                    self.inherit_binding_storage(sdfg, state, node)
-                    body = type(self)()
-                    body.taskloop_heuristics = True
-                    body.taskloops = self.taskloops
-                    body.cache_scopes(node.sdfg)
-                    body.place_and_copy(node.sdfg)
-                    body.offload_taskloop_bodies(node.sdfg)
+            for node in self.host_level_nested_sdfgs(state, None):
+                self.stage_device_scalar_bindings(sdfg, state, node)
+                self.inherit_binding_storage(sdfg, state, node)
+                body = type(self)()
+                body.taskloop_heuristics = self.taskloop_heuristics
+                body.taskloops = self.taskloops
+                # The body places its own level, so it needs the state ``apply_pass`` seeds.
+                body.hybrid_overlap = {}
+                body.cache_scopes(node.sdfg)
+                body.place_and_copy(node.sdfg)
+                body.offload_host_level_bodies(node.sdfg)
 
-    def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry):
+    def stage_device_scalar_bindings(self, sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
+        """Rebind a SCALAR input bound to device memory onto a host copy of that one element.
+
+        A scalar connector reaches the body by reference, so a host node reading it dereferences the
+        outer array's memory -- npbench azimint_hist passes ``radius[i]`` into a body that subtracts
+        it on the host. Placement cannot fix this: it works on arrays, and this pass asserts that no
+        scalar ever enters its sets. Staging the element is what gives the host something to read.
+
+        Only inputs, and only when the body reads the value outside a kernel: a scalar the body uses
+        on the device alone is already where it belongs.
+        """
+        for edge in state.in_edges(nsdfg_node):
+            if edge.data is None or edge.data.is_empty() or edge.dst_conn is None:
+                continue
+            body = nsdfg_node.sdfg
+            if edge.dst_conn not in body.arrays or not self._is_scalar(edge.dst_conn, body):
+                continue
+            if sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES:
+                continue
+            if not self.read_outside_a_kernel(body, edge.dst_conn):
+                continue
+            desc = body.arrays[edge.dst_conn]
+            host_name, _ = sdfg.add_scalar(f"{edge.dst_conn}_host",
+                                           desc.dtype,
+                                           transient=True,
+                                           storage=dtypes.StorageType.Default,
+                                           find_new_name=True)
+            staged = state.add_access(host_name)
+            # Reuse the edge's own source: a second access node for the same data would leave the
+            # original isolated once this edge goes, which is not a valid SDFG.
+            source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(edge.data.data)
+            state.remove_edge(edge)
+            state.add_edge(source, edge.src_conn, staged, None, deepcopy(edge.data))
+            state.add_edge(staged, None, nsdfg_node, edge.dst_conn,
+                           Memlet.from_array(host_name, sdfg.arrays[host_name]))
+
+    def read_outside_a_kernel(self, sdfg: SDFG, name: str) -> bool:
+        """True if ``name`` is read anywhere in ``sdfg`` that a device schedule does not cover."""
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                scopes = state.scope_dict()
+                for node in state.data_nodes():
+                    if node.data != name or state.out_degree(node) == 0:
+                        continue
+                    scope = scopes[node]
+                    if scope is None or scope.map.schedule not in dtypes.GPU_SCHEDULES:
+                        return True
+            for edge in nested.all_interstate_edges():
+                if name in edge.data.used_arrays(nested.arrays):
+                    return True
+        return False
+
+    def host_level_nested_sdfgs(self, state: SDFGState, entry: Optional[nodes.MapEntry]):
         """Nested SDFGs under ``entry`` reached through taskloops only -- one below a kernel is device code."""
         for node in self.cached_scope_children[state].get(entry, ()):
             if isinstance(node, nodes.NestedSDFG):
@@ -376,8 +436,9 @@ class OffloadToAccelerator(ppl.Pass):
                                       dtypes.ScheduleType.GPU_Device if host_level else dtypes.ScheduleType.Sequential)
 
                 elif isinstance(node, nodes.NestedSDFG):
-                    # A host level only under a taskloop; otherwise its maps stay sequential.
-                    self.assign_schedules(node.sdfg, host_level and self.taskloop_heuristics)
+                    # A nested SDFG at a host level is a host level of its own. Under a kernel
+                    # ``host_level`` is already False, so no extra gate belongs here.
+                    self.assign_schedules(node.sdfg, host_level)
 
         for state in sdfg.states():
             walk(state, None, host_level)
@@ -516,6 +577,58 @@ class OffloadToAccelerator(ppl.Pass):
 
         return set()
 
+    def host_preferred_arrays(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> set[str]:
+        """Single-element INPUTS of a device library node, which are cheaper to leave on the host.
+
+        A vendor call reads a coefficient or a seed through a host pointer just as happily as a
+        device one, so moving one element to the device buys nothing and costs a transfer before the
+        launch. This is a preference, not a pin: a value some kernel already writes on the device
+        stays there and the expansion takes the device-pointer path instead. Outputs are excluded --
+        the call writes those on the device.
+        """
+        preferred: set[str] = set()
+        for edge in state.in_edges(node):
+            if edge.dst_conn is None or edge.data is None or edge.data.is_empty():
+                continue
+            name = edge.data.data
+            # Length-1 ARRAYS only: a scalar is never placed at all (the pass asserts as much), so
+            # naming one here would put it in a set that must not hold it -- tsvc_2_5
+            # ext_break_capture's ``__ff_KFIND``.
+            if name in sdfg.arrays and self._is_length1_array(name, sdfg):
+                preferred.add(name)
+        return preferred
+
+    def host_pinned_arrays_in_state(self, sdfg: SDFG, state: SDFGState) -> set[str]:
+        """Every host-pinned array of the library nodes at this state's own level.
+
+        Only that level: a node under a kernel is device code, and a pin there would name memory
+        the host cannot reach anyway.
+        """
+        pinned: set[str] = set()
+        for node in self.cached_scope_children[state].get(None, ()):
+            if isinstance(node, nodes.LibraryNode):
+                pinned |= self.host_pinned_arrays(sdfg, state, node)
+        return pinned
+
+    def host_pinned_arrays(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> set[str]:
+        """Arrays this library node reaches through a connector it declares HOST-resident.
+
+        A node whose expansion is a device call can still read part of its interface on the host --
+        cuBLAS takes alpha and beta through a host pointer, ``ScatterConflictCheck`` reads its flag
+        there -- and says so through ``LibraryNode.host_connectors``. Placing one of those on the
+        device gives the expansion a device pointer to dereference in host code.
+        """
+        if not node.host_connectors:
+            return set()
+        pinned: set[str] = set()
+        for edge in state.in_edges(node):
+            if edge.dst_conn in node.host_connectors:
+                pinned |= self.get_arrays_used_by_edge(sdfg, state, edge, False)
+        for edge in state.out_edges(node):
+            if edge.src_conn in node.host_connectors:
+                pinned |= self.get_arrays_used_by_edge(sdfg, state, edge, True)
+        return pinned
+
     def get_arrays_used_by_node(self, sdfg, state, node):
         arrays: set[str] = set()
 
@@ -625,8 +738,12 @@ class OffloadToAccelerator(ppl.Pass):
                 elif isinstance(node, nodes.LibraryNode):
                     # Launched from the host, reading device memory: the schedule around it says nothing.
                     on_gpu = is_gpu or self.has_GPU_schedule(node)
+                    # A host pin is about a HOST-issued call taking a value by value; inside a kernel
+                    # the expansion is device code and there is no host to read it from.
+                    host_side = set() if is_gpu else (self.host_pinned_arrays(sdfg, state, node)
+                                                      | self.host_preferred_arrays(sdfg, state, node))
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
-                        _add_data(name, gpu_set, cpu_set, on_gpu, host_level)
+                        _add_data(name, gpu_set, cpu_set, on_gpu and name not in host_side, host_level)
 
                 elif isinstance(node, nodes.NestedSDFG):
                     if is_gpu:
@@ -688,7 +805,8 @@ class OffloadToAccelerator(ppl.Pass):
         gpu_set: set[str] = set()
         cpu_set: set[str] = set()
 
-        top_level_nodes = state.scope_children()[None]
+        # The analysis phase never mutates, so the scope map cached for this round is the current one.
+        top_level_nodes = self.cached_scope_children[state][None]
         for node in top_level_nodes:
 
             g, c = set(), set()
@@ -702,8 +820,10 @@ class OffloadToAccelerator(ppl.Pass):
 
             # library nodes are usually GPU, can be CPU
             elif isinstance(node, nodes.LibraryNode):
+                host_side = (self.host_pinned_arrays(sdfg, state, node) | self.host_preferred_arrays(sdfg, state, node))
                 if self.has_GPU_schedule(node):
-                    g = self.get_arrays_used_by_node(sdfg, state, node)
+                    g = self.get_arrays_used_by_node(sdfg, state, node) - host_side
+                    c = host_side
                 else:
                     c = self.get_arrays_used_by_node(sdfg, state, node)
 
@@ -728,13 +848,20 @@ class OffloadToAccelerator(ppl.Pass):
             gpu_set |= g
             cpu_set |= c
 
+        # A name a host-issued call reads BY VALUE cannot be moved, whatever the state around it
+        # does -- ``cub::DeviceScan``'s seed (tsvc_2_5 fission_dep_then_indep).
+        pinned = self.host_pinned_arrays_in_state(sdfg, state)
+        if pinned:
+            cpu_set |= gpu_set & pinned
+            gpu_set -= pinned
+
         # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU
         overlap = gpu_set & cpu_set
         if overlap:
             self.hybrid_states.add(state)
             self.hybrid_overlap[state] = set(overlap)
-            gpu_set |= cpu_set
-            cpu_set = set()
+            gpu_set |= cpu_set - pinned
+            cpu_set &= pinned
 
         return gpu_set, cpu_set
 
@@ -810,7 +937,7 @@ class OffloadToAccelerator(ppl.Pass):
     ### STEP 3: Intermediate Representation ###
     def is_array_stored_on_GPU(self, sdfg, array_name):
         storage = sdfg.arrays[array_name].storage
-        if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
+        if storage in GPU_RESIDENT_STORAGES:
             return True
         elif storage in {
                 dtypes.StorageType.Default, dtypes.StorageType.Register, dtypes.StorageType.CPU_Heap,
@@ -1175,8 +1302,19 @@ class OffloadToAccelerator(ppl.Pass):
 
     def eval_IR(self, sdfg, IR: OffloadingIRNode):
         # modifies SDFG in place & inserts all necessary copies
+        # Filled after the renaming below, where a host-side write takes the host name.
+        written: set[str] = set()
+
         def insert_copies(node, next, node_block, next_block):
-            gpu_copies = node.cpu_set & next.gpu_set
+            # Copying BACK to the device is about host-side modifications. A name whose host copy is
+            # never written already matches on the device, and when it is a nested SDFG's input
+            # connector the copy is not merely wasted -- it writes a container the body may only read
+            # (npbench scattering_self_energies' ``neigh_idx``).
+            gpu_copies = {
+                name
+                for name in node.cpu_set & next.gpu_set
+                if not self.is_array_stored_on_GPU(sdfg, name) or self._get_host_name(name) in written
+            }
             if gpu_copies:
                 self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
 
@@ -1227,6 +1365,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         self._correct_transient_storage_locations(sdfg, IR)
         self._insert_copy_names(sdfg, IR)
+        written |= self.written_arrays(sdfg)
         self.__traverse_IR(IR, eval)
 
     ### Step 4: Copy Insertion ###
@@ -1456,17 +1595,27 @@ class OffloadToAccelerator(ppl.Pass):
 
         return new_label, new_param
 
-    def _subgraphs_after_removing_partition_nodes(self, state: SDFGState,
-                                                  partition_nodes: set) -> list[set[nodes.Node]]:
+    def _subgraphs_after_removing_partition_nodes(self,
+                                                  state: SDFGState,
+                                                  partition_nodes: set,
+                                                  scope_entry=None,
+                                                  scope_children=None) -> list[set[nodes.Node]]:
         """
         Returns connected components (as sets of nodes) after removing partition_nodes
-        from a SINGLE SDFG state graph.
+        from ONE SCOPE of a SINGLE SDFG state graph.
 
-        Connectivity is treated as undirected (uses both in/out edges).
+        ``scope_entry`` is the map whose body is partitioned, or None for the state's top level, and
+        ``scope_children`` the caller's already-computed scope map -- recomputing one walks the whole
+        state. Connectivity is treated as undirected (uses both in/out edges) but never leaves the
+        scope: an edge out of it lands on the enclosing entry or exit, a boundary and not a member.
         """
         visited = set()
         components = []
-        remaining_nodes = [n for n in state.scope_children()[None] if n not in partition_nodes]  # top level nodes only
+        if scope_children is None:
+            scope_children = state.scope_children()
+        members = scope_children[scope_entry]
+        scope_nodes = set(members)
+        remaining_nodes = [n for n in members if n not in partition_nodes]
 
         for start in remaining_nodes:
             if start in visited:
@@ -1482,7 +1631,7 @@ class OffloadToAccelerator(ppl.Pass):
 
                 neighbors = {e.dst for e in state.out_edges(u)} | {e.src for e in state.in_edges(u)}
                 for v in neighbors:
-                    if v in partition_nodes or v in visited:
+                    if v in partition_nodes or v in visited or v not in scope_nodes:
                         continue
                     visited.add(v)
                     queue.append(v)
@@ -1595,23 +1744,46 @@ class OffloadToAccelerator(ppl.Pass):
             if access.data and self._is_scalar(access.data, sdfg):
                 sdfg.arrays[access.data].storage = dtypes.StorageType.GPU_Global
 
-    def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState):
-        # top level GPU nodes partition the graph
+    def host_level_scopes(self, state: SDFGState, scope_children: dict) -> list:
+        """Every scope of ``state`` that runs as host code: the top level, and each taskloop body.
 
-        lib_nodes = {
-            node
-            for node in state.scope_children()[None]
-            if isinstance(node, (nodes.LibraryNode)) and self.has_GPU_schedule(node)
-        }
-        map_entries = {
-            node
-            for node in state.scope_children()[None]
-            if isinstance(node, (nodes.MapEntry)) and self.has_GPU_schedule(node)
-        }
+        A taskloop is host code by construction, so free computation left in its body is host code
+        too -- and a device-wide library node beside it does not change that. Descend through
+        taskloops only: a scope under a kernel is device code and has no free computation to lift.
+        """
+        found = [None]
+        for entry in found:  # grows as taskloops are met; a taskloop under a kernel is never reached
+            for node in scope_children[entry]:
+                if isinstance(node, nodes.MapEntry) and node in self.taskloops:
+                    found.append(node)
+        return found
+
+    def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState):
+        # Wrapping never adds or removes a taskloop, so the scope list is read once here.
+        scopes = self.host_level_scopes(state, state.scope_children())
+        new_maps = set()
+        for scope_entry in scopes:
+            new_maps |= self.wrap_free_computation(sdfg, state, scope_entry)
+        return new_maps
+
+    def wrap_free_computation(self, sdfg: SDFG, state: SDFGState, scope_entry=None):
+        """Lift what is left of ONE host scope into kernels: GPU nodes partition it, the rest is wrapped.
+
+        A library node forces its parent onto the host, so a scope can hold a device-wide call and
+        real computation side by side. That computation is not host work -- it is a kernel nobody
+        wrapped yet, so a size-1 map around it makes it one.
+        """
+        scope_children = state.scope_children()
+        members = scope_children[scope_entry]
+        lib_nodes = {node for node in members if isinstance(node, (nodes.LibraryNode)) and self.has_GPU_schedule(node)}
+        map_entries = {node for node in members if isinstance(node, (nodes.MapEntry)) and self.has_GPU_schedule(node)}
         map_exits = {state.exit_node(node) for node in map_entries}
         partition_nodes = lib_nodes | map_entries | map_exits
+        if scope_entry is not None:
+            # The scope's own exit is its boundary, and scope_children lists it beside the body.
+            partition_nodes.add(state.exit_node(scope_entry))
 
-        partitions = self._subgraphs_after_removing_partition_nodes(state, partition_nodes)
+        partitions = self._subgraphs_after_removing_partition_nodes(state, partition_nodes, scope_entry, scope_children)
         new_maps = set()
 
         # each partition is wrapped into a map

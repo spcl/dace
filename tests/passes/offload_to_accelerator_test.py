@@ -23,6 +23,7 @@ from dace import dtypes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from tests.corpus.tsvc import tsvc
 
@@ -222,6 +223,39 @@ def test_a_find_first_answer_stays_on_the_host():
             assert storage != dtypes.StorageType.GPU_Global, (
                 f'{edge.data.data} carries the search answer but lives in {storage}; the expansion '
                 'writes it from host code')
+
+
+def scan_with_a_scalar_seed() -> dace.SDFG:
+    """A device ``Scan`` whose seed is a ``Scalar`` -- the single-element input the host-preferred
+    rule is about."""
+    sdfg = dace.SDFG('scan_with_a_scalar_seed')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('B', [256], dace.float64)
+    sdfg.add_scalar('seed', dace.float64)
+    state = sdfg.add_state()
+    node = Scan('scan', op=ScanOp.SUM)
+    node.add_in_connector('_scan_in')
+    node.add_in_connector('_scan_init')
+    node.add_out_connector('_scan_out')
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, '_scan_in', dace.Memlet('A[0:256]'))
+    state.add_edge(state.add_read('seed'), None, node, '_scan_init', dace.Memlet('seed[0]'))
+    state.add_edge(node, '_scan_out', state.add_write('B'), None, dace.Memlet('B[0:256]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scalar_operand_never_enters_the_placement_sets():
+    """The pass places ARRAYS; it asserts that no scalar ever reaches its cpu/gpu sets.
+
+    The host-preferred rule -- single-element inputs of a device library node are cheaper left on
+    the host -- must respect that: a ``Scalar`` operand needs no entry, because nothing places it.
+    Naming one trips the pass's own invariant instead (tsvc_2_5 ext_break_capture's ``__ff_KFIND``).
+    """
+    sdfg = scan_with_a_scalar_seed()
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)  # the assertion fires inside
+    sdfg.validate()
 
 
 def test_a_pinned_host_map_falls_back_to_the_old_transformation():

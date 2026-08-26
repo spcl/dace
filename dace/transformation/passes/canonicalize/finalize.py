@@ -21,9 +21,10 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 """
 import os
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import infer_types, nodes
+from dace.sdfg.state import SDFGState
 from dace.libraries.blas.environments import openblas
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage,
                                                     libnode_is_sequential, make_transients_persistent,
@@ -35,6 +36,7 @@ from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_s
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.dataflow import OTFMapFusion
+from dace.transformation import helpers as xfh
 
 #: Map the canonicalize target string to the codegen device type.
 _TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
@@ -95,6 +97,19 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     return prio
 
 
+def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
+
+    Reuses the walk :func:`~dace.transformation.auto.auto_optimize.libnode_is_sequential` relies on:
+    it crosses every nested-SDFG boundary out to the root, so a node several nsdfg levels under a
+    kernel is still seen to be in one. A node whose only enclosing scopes are host loops and
+    ``Sequential`` taskloops is host code, and free to issue a device library call.
+    """
+    return any(
+        isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES
+        for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state))
+
+
 def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = _SMALL_MATMUL_DIM):
     """Select library-node implementations for the canonicalize perf tail.
 
@@ -110,6 +125,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
     does a node with no ``'rowwise'`` expansion.
     """
     set_fast_implementations(sdfg, device, blocklist=['MKL'], find_fast_library_fn=canonicalize_fast_library_priority)
+    gpu_priority = canonicalize_fast_library_priority(device) if device == dtypes.DeviceType.GPU else []
     for node, state in sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.LibraryNode):
             continue
@@ -143,8 +159,31 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # device-level scan that ``set_fast_implementations`` correctly left ``pure`` was clobbered
         # to an uncompilable in-kernel ``cub::DeviceScan``.
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
-            node.implementation = 'pure' if sequential else ('CUDA' if 'CUDA' in impls else node.implementation)
+            # ``cub::DeviceScan`` is one contiguous scan, so a strided scan has its own expansion and
+            # ``ExpandCUDA`` refuses the case outright rather than walk past a residue boundary
+            # (tsvc_2_5 ext_floordiv_offset_m). Pick by stride instead of handing it the refusal.
+            device_impl = 'CUDA' if symbolic.equal(node.stride, 1) else 'CUDA_strided'
+            node.implementation = ('pure' if sequential else
+                                   (device_impl if device_impl in impls else node.implementation))
             continue
+        # ``set_fast_implementations`` leaves every ``Sequential`` GPU node ``pure``, reading
+        # Sequential as "inside a kernel", where only device code may be emitted. A host loop and a
+        # taskloop body are Sequential too, and there the pure expansion is HOST code over
+        # ``GPU_Global`` operands -- polybench trisolv's Dot, npbench stockham_fft's Gemm and
+        # TensorTranspose. Host code is where a device library call belongs, so decide by SCOPE.
+        # A node with no device expansion falls through and keeps what it had.
+        if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential \
+                and not libnode_is_device_code(node, state, sdfg):
+            fast = next((impl for impl in gpu_priority if impl in impls), None)
+            if fast is not None:
+                node.implementation = fast
+                continue
+        # That same rule pins a node to ``pure`` without checking that the node HAS one:
+        # ``CopyLibraryNode`` does not, and expansion then raises ``Unknown implementation``
+        # (polybench durbin). Its own default is the lowering that reads the schedule.
+        if node.implementation == 'pure' and 'pure' not in impls:
+            node.implementation = type(node).default_implementation
+
         if 'pure' not in impls:
             continue
         # Only the row-wise (ikj) expansion: a vectorizable row update with a sequential K
@@ -276,16 +315,24 @@ def assert_offloaded(sdfg: SDFG) -> None:
     :func:`offload_to_gpu` sets both, while a caller-supplied recipe may schedule kernels without
     moving every non-transient (or vice versa for an all-library graph with no maps of its own).
 
+    A graph with neither a map nor a library node anywhere is the one case this cannot be about: no
+    offload could have placed anything, so the target has nothing to run (npbench crc16 is a purely
+    sequential loop nest). Host code is then the right answer, not a missing call.
+
     :param sdfg: The SDFG to check, including nested SDFGs.
     :raises ValueError: If no ``GPU_Device`` map and no ``GPU_Global`` array is present.
     """
+    offloadable = False
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
             return
+        offloadable = offloadable or isinstance(node, (nodes.MapEntry, nodes.LibraryNode))
     for nested in sdfg.all_sdfgs_recursive():
         for desc in nested.arrays.values():
             if desc.storage == dtypes.StorageType.GPU_Global:
                 return
+    if not offloadable:
+        return
     raise ValueError(f"finalize_for_target(sdfg, 'gpu') needs an already-offloaded SDFG, but '{sdfg.name}' has no "
                      "GPU_Device map and no GPU_Global array. Offload is a separate step so passes can run between "
                      "canonicalization and the device move: call offload_to_gpu(sdfg), or your own offload recipe, "

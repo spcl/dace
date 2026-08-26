@@ -18,7 +18,9 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.sdfg import nodes
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg import infer_types, nodes
+from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator
 from dace.transformation.passes.offloading.taskloop import is_taskloop_map, taskloop_maps
 
 #: The ICON blocking triple the taskloop shape is named after.
@@ -313,3 +315,212 @@ def test_a_launched_block_body_computes_what_the_kernel_computes(heuristics):
     B = np.zeros((NBLKS, NPROMA, NLEV))
     sdfg(A=A, B=B)
     assert np.allclose(B, blocked_nest_reference(A))
+
+
+def region_with_an_ordering_edge() -> tuple:
+    """A region whose BOUNDARY an empty memlet crosses -- the edge the wrapper has to rewire.
+
+    ``first`` stays outside the wrapped region and orders ``second``, which goes in, so the wrapper
+    must route that edge through the new map entry.
+    """
+    sdfg = dace.SDFG('ordering_edge')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    state = sdfg.add_state('body')
+    read, write = state.add_read('A'), state.add_write('B')
+    first = state.add_tasklet('first', {'inp'}, {'out'}, 'out = inp + 1.0')
+    second = state.add_tasklet('second', {'inp'}, {'out'}, 'out = inp * 2.0')
+    state.add_edge(read, None, first, 'inp', dace.Memlet('A[0]'))
+    state.add_edge(first, 'out', write, None, dace.Memlet('B[0]'))
+    state.add_edge(read, None, second, 'inp', dace.Memlet('A[1]'))
+    state.add_edge(second, 'out', write, None, dace.Memlet('B[1]'))
+    # The ordering edge: it carries no data, only the guarantee that ``first`` happens before.
+    state.add_nedge(first, second, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state, {second}
+
+
+def test_the_wrapper_leaves_an_ordering_edge_without_a_connector():
+    """An empty memlet ORDERS. Given a connector it becomes a data edge with no data behind it, and
+    connector type inference then trips over the ``None`` descriptor (npbench cholesky2)."""
+    sdfg, state, region = region_with_an_ordering_edge()
+    OffloadToAccelerator()._wrap_region_in_size1_map(state, set(region))
+
+    empty = [edge for edge in state.edges() if edge.data is not None and edge.data.is_empty()]
+    assert empty, 'the ordering edge was dropped, not rewired'
+    offenders = [(str(edge.src), edge.src_conn, str(edge.dst), edge.dst_conn) for edge in empty
+                 if edge.src_conn is not None or edge.dst_conn is not None]
+    assert not offenders, f"ordering edges given a connector: {offenders}"
+
+    wrapper = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and 'size1_wrap' in n.map.label)
+    assert any(edge.dst is wrapper for edge in empty), 'the ordering edge no longer reaches the wrapper'
+    from dace.sdfg import infer_types
+    infer_types.infer_connector_types(sdfg)
+    sdfg.validate()
+
+
+def rows_over_a_libnode_body() -> tuple:
+    """The npbench spmv shape: a row map whose body reads an array on an INTERSTATE EDGE.
+
+    The ``Reduce`` inside the body makes the row map a taskloop whatever the config says (a
+    device-wide call is issued by host code), so the body is host code -- and its edge assignment
+    ``stop = bounds[1]`` is host code reading an array the outer level put on the device.
+    """
+    inner = dace.SDFG('row_body')
+    inner.add_array('a', [16], dace.float64)
+    inner.add_array('res', [1], dace.float64)
+    inner.add_array('bounds', [2], dace.int64)
+    inner.add_symbol('stop', dace.int64)
+    pick = inner.add_state('pick', is_start_block=True)
+    compute = inner.add_state('compute')
+    inner.add_edge(pick, compute, dace.InterstateEdge(assignments=dict(stop='bounds[1]')))
+    reduce_node = compute.add_reduce('lambda a, b: a + b', None, 0.0)
+    compute.add_edge(compute.add_read('a'), None, reduce_node, None, dace.Memlet('a[0:stop]'))
+    compute.add_edge(reduce_node, None, compute.add_write('res'), None, dace.Memlet('res[0]'))
+
+    sdfg = dace.SDFG('rows_over_a_libnode_body')
+    sdfg.add_array('A', [8, 16], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_array('bounds', [2], dace.int64)
+    state = sdfg.add_state('rows')
+    entry, exit_node = state.add_map('rows', dict(i='0:8'))
+    nested = state.add_nested_sdfg(inner, dict(a=None, bounds=None), dict(res=None))
+    state.add_memlet_path(state.add_read('A'), entry, nested, dst_conn='a', memlet=dace.Memlet('A[i, 0:16]'))
+    state.add_memlet_path(state.add_read('bounds'), entry, nested, dst_conn='bounds', memlet=dace.Memlet('bounds[0:2]'))
+    state.add_memlet_path(nested, exit_node, state.add_write('B'), src_conn='res', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg, nested
+
+
+def interstate_read_storages(sdfg: dace.SDFG) -> dict:
+    """Storage of every array an interstate edge of ``sdfg`` reads -- all of it host code."""
+    found = {}
+    for edge in sdfg.all_interstate_edges():
+        for name in edge.data.used_arrays(sdfg.arrays):
+            found[name] = sdfg.arrays[name].storage
+    return found
+
+
+def unmapped_body_over_a_kernel() -> tuple:
+    """The npbench scattering_self_energies shape: a nested SDFG no map encloses.
+
+    Its own state runs a kernel over ``a``, and its interstate edge reads ``bounds`` -- host code at
+    a level the outer analysis only queries for where the body wants its arrays, never places within.
+    """
+    inner = dace.SDFG('plain_body')
+    inner.add_array('a', [16], dace.float64)
+    inner.add_array('res', [16], dace.float64)
+    inner.add_array('bounds', [2], dace.int64)
+    inner.add_symbol('stop', dace.int64)
+    pick = inner.add_state('pick', is_start_block=True)
+    compute = inner.add_state('compute')
+    inner.add_edge(pick, compute, dace.InterstateEdge(assignments=dict(stop='bounds[1]')))
+    # The kernel reads ``bounds`` too, so the body's array analysis wants it on the device while
+    # the edge above needs it on the host -- the split that only placing within the body resolves.
+    compute.add_mapped_tasklet('scale', {'j': '0:16'}, {
+        'inp': dace.Memlet('a[j]'),
+        'lim': dace.Memlet('bounds[0]')
+    },
+                               'o = inp * stop + lim', {'o': dace.Memlet('res[j]')},
+                               external_edges=True)
+
+    sdfg = dace.SDFG('unmapped_body_over_a_kernel')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('bounds', [2], dace.int64)
+    state = sdfg.add_state('body')
+    nested = state.add_nested_sdfg(inner, dict(a=None, bounds=None), dict(res=None))
+    state.add_edge(state.add_read('A'), None, nested, 'a', dace.Memlet('A[0:16]'))
+    state.add_edge(state.add_read('bounds'), None, nested, 'bounds', dace.Memlet('bounds[0:2]'))
+    state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    sdfg.validate()
+    return sdfg, nested
+
+
+def body_taking_one_element_by_scalar() -> tuple:
+    """The npbench azimint_hist shape: a body whose SCALAR input is one element of a device array."""
+    inner = dace.SDFG('scalar_body')
+    inner.add_scalar('lim', dace.float64)
+    inner.add_array('a', [16], dace.float64)
+    inner.add_array('res', [16], dace.float64)
+    state = inner.add_state('sub')
+    # Host code: a tasklet nobody encloses, so it dereferences ``lim`` where it lies.
+    tasklet = state.add_tasklet('sub', {'l': None, 'inp': None}, {'o': None}, 'o = inp - l')
+    state.add_edge(state.add_read('lim'), None, tasklet, 'l', dace.Memlet('lim[0]'))
+    state.add_edge(state.add_read('a'), None, tasklet, 'inp', dace.Memlet('a[0]'))
+    state.add_edge(tasklet, 'o', state.add_write('res'), None, dace.Memlet('res[0]'))
+
+    sdfg = dace.SDFG('body_taking_one_element_by_scalar')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('C', [16], dace.float64)
+    kernel = sdfg.add_state('kernel')
+    kernel.add_mapped_tasklet('double', {'i': '0:16'}, {'inp': dace.Memlet('A[i]')},
+                              'o = inp * 2.0', {'o': dace.Memlet('C[i]')},
+                              external_edges=True)
+    state = sdfg.add_state_after(kernel, 'body')
+    nested = state.add_nested_sdfg(inner, dict(lim=None, a=None), dict(res=None))
+    state.add_edge(state.add_read('A'), None, nested, 'lim', dace.Memlet('A[3]'))
+    state.add_edge(state.add_read('C'), None, nested, 'a', dace.Memlet('C[0:16]'))
+    state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    sdfg.validate()
+    return sdfg, nested
+
+
+@pytest.mark.parametrize('heuristics', [False, True])
+def test_a_scalar_bound_to_device_memory_is_staged_on_the_host(heuristics):
+    """A scalar connector reaches the body BY REFERENCE, so host code there reads the outer array.
+
+    Placement cannot see it -- it works on arrays, and this pass asserts no scalar ever enters its
+    sets -- so the element itself is copied to a host scalar and the connector rebound onto it.
+    """
+    sdfg, nested = body_taking_one_element_by_scalar()
+    offloaded(sdfg, heuristics=heuristics)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    on_device = {
+        name: desc.storage
+        for name, desc in nested.sdfg.arrays.items()
+        if isinstance(desc, dace.data.Scalar) and desc.storage in GPU_RESIDENT_STORAGES
+    }
+    assert not on_device, f'the body dereferences device memory through a scalar: {on_device}'
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('heuristics', [False, True])
+def test_an_unmapped_body_reads_its_interstate_arrays_on_the_host(heuristics):
+    """Every nested SDFG still on the host is its own level, not only the ones a taskloop launches."""
+    sdfg, nested = unmapped_body_over_a_kernel()
+    offloaded(sdfg, heuristics=heuristics)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    on_device = {
+        name: storage
+        for name, storage in interstate_read_storages(nested.sdfg).items() if storage in GPU_RESIDENT_STORAGES
+    }
+    assert not on_device, f"the body's interstate edge reads device memory from host code: {on_device}"
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('heuristics', [False, True])
+def test_a_taskloop_body_reads_its_interstate_arrays_on_the_host(heuristics):
+    """A taskloop exists whatever the config says, so its body must be placed whatever it says too.
+
+    Left unplaced, the body keeps reading the outer level's device array from host code, which is
+    an invalid SDFG (npbench spmv's ``start = A_indptr[i]``).
+    """
+    sdfg, nested = rows_over_a_libnode_body()
+    offloaded(sdfg, heuristics=heuristics)
+    # The step of the real pipeline that makes the omission visible: it propagates the outer
+    # binding's storage into the body's own descriptors, so a body nobody placed ends up reading
+    # device memory under a host schedule.
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    assert map_schedule(sdfg, 'rows') is dtypes.ScheduleType.Sequential
+    # ``dtypes.GPU_STORAGES`` lists ``GPU_Shared`` alone, so it would pass this vacuously.
+    on_device = {
+        name: storage
+        for name, storage in interstate_read_storages(nested.sdfg).items() if storage in GPU_RESIDENT_STORAGES
+    }
+    assert not on_device, f"the body's interstate edge reads device memory from host code: {on_device}"
+    sdfg.validate()
