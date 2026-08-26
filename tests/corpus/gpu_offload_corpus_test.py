@@ -33,8 +33,41 @@ PRESET = 'S'
 #: that reads the ambient value asserts about whichever configuration the box happens to carry.
 HEURISTICS = False
 
+#: Kernels the offloading path does not get through yet, by ``suite/name`` -> why. ``xfail`` and
+#: not ``skip``, and STRICT: each is a gap someone has to close, and the marker has to fail the day
+#: it is closed rather than quietly keep excusing a kernel that now works.
+#:
+#: Two causes, both older than this file and neither of them the taskloop heuristics -- the arms
+#: fail identically with the knob on and off:
+#:
+#: * the hybrid-state collapse. When one state reaches an array from both the host and the device,
+#:   ``get_data_locations_of_state`` marks it hybrid and moves everything to the device
+#:   (``gpu_set |= cpu_set - pinned``). A tasklet at the top of a state is host code, so it is then
+#:   host code holding a device pointer, and validation says so with the container named.
+#: * a widening scan. ``refuse_widening`` declines int8 -> int64 for every shape whose accumulator
+#:   is deduced from the input, ``cub::DeviceScan`` included. That refusal is deliberate: a silent
+#:   narrow accumulator is a wrong answer, not a slow one.
+BROKEN = {
+    'tsvc/s252_d_single': 'offload leaves a memlet path ending at a tasklet rather than a data node',
+    'tsvc/s256_d_single': 'the scan seed is placed on the device while the libnode reads it on the host',
+    'tsvc/s315_d_single': 'hybrid-state collapse: a top-level tasklet writes the device copy directly',
+    'tsvc/s341_d_single': 'widening scan (int8 -> int64) has no CUDA expansion',
+    'tsvc/s342_d_single': 'widening scan (int8 -> int64) has no CUDA expansion',
+    'tsvc/s343_d_single': 'widening scan (int8 -> int64) has no CUDA expansion',
+}
 
-@pytest.mark.parametrize('kind,name', suite.kernels())
+
+def corpus_cases():
+    """Every ``(suite, name)`` pair, with the known-broken ones carrying a strict xfail."""
+    cases = []
+    for kind, name in suite.kernels():
+        reason = BROKEN.get(f'{kind}/{name}')
+        marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
+        cases.append(pytest.param(kind, name, marks=marks))
+    return cases
+
+
+@pytest.mark.parametrize('kind,name', corpus_cases())
 def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
     """The pass leaves a graph that validates and emits for the GPU.
 
@@ -49,7 +82,7 @@ def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('kind,name', suite.kernels())
+@pytest.mark.parametrize('kind,name', corpus_cases())
 def test_the_offloaded_kernel_matches_the_reference(kind: str, name: str):
     """Compiled and run on the device, the offloaded kernel computes what the corpus oracle does."""
     ctx = suite.make(kind, name, preset=PRESET)

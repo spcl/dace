@@ -429,7 +429,8 @@ def test_gemm_cublas_gpu():
 
     _set_impl(EXPERIMENTAL)
     try:
-        code = _join_code(_build_gemm(EXPERIMENTAL, 'cuBLAS', 'mm_cub_codegen', gpu=True).generate_code())
+        sdfg = _build_gemm(EXPERIMENTAL, 'cuBLAS', 'mm_cub_codegen', gpu=True)
+        code = _join_code(sdfg.generate_code())
     except (CompilationError, CompilerConfigurationError) as e:
         pytest.skip('cuBLAS codegen unavailable: %s' % e)
     match = re.search(r'cublas\w*[Gg]emm\w*\([^;]*\);', code, re.DOTALL)
@@ -438,7 +439,13 @@ def test_gemm_cublas_gpu():
     assert '_idx(' not in call, 'pointer connector wrongly turned into single-element index: %s' % call
     for conn in ('_a', '_b', '_c'):
         assert not re.search(r'\b%s\b' % conn, call), 'connector %s not inlined into base pointer: %s' % (conn, call)
-    assert 'gpu_A' in call and 'gpu_B' in call and 'gpu_C' in call, call
+    # The two offloaders spell a device copy differently -- OffloadToAccelerator names it ``A_gpu``,
+    # the older GPUTransformSDFG named it ``gpu_A`` -- and this assertion is about the connector
+    # being inlined to a base pointer, not about which one ran. Read the names off the SDFG.
+    for operand in ('A', 'B', 'C'):
+        copies = [n for n in sdfg.arrays if n != operand and n.replace('_gpu', '').replace('gpu_', '') == operand]
+        assert copies, f'no device copy of {operand} in {list(sdfg.arrays)}'
+        assert any(re.search(r'\b%s\b' % re.escape(c), call) for c in copies), (operand, copies, call)
 
     # Compile + run bit-exact (requires a GPU device).
     if shutil.which('nvidia-smi') is None:

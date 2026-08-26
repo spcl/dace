@@ -5,7 +5,7 @@ from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 from dace import graphlib as nx
 from dace import symbolic
 import sympy as sp
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
 from ordered_set import OrderedSet
@@ -112,7 +112,7 @@ def negate_condition(expr: sp.Basic) -> Optional[sp.Basic]:
         return None  # not a form sympy can negate; dropping the guard stays conservative
 
 
-def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, OrderedSet]:
     """
     Finds the dominance frontier for a CFG while ignoring any back edges.
 
@@ -124,12 +124,12 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
 
-    dom_frontiers = {block: set() for block in cfg.nodes()}
+    dom_frontiers = {block: OrderedSet() for block in cfg.nodes()}
     for u in idom:
         if len(cfg.nx.pred[u]) >= 2:
             for v in cfg.nx.pred[u]:
                 if v in idom:
-                    df_candidates = set()
+                    df_candidates = OrderedSet()
                     while v != idom[u]:
                         if v == u:
                             df_candidates = None
@@ -166,9 +166,8 @@ def block_immediate_dominators(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock,
     return idom
 
 
-def all_dominators(
-        cfg: ControlFlowRegion,
-        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def all_dominators(cfg: ControlFlowRegion,
+                   idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, OrderedSet]:
     """ Returns a mapping between each control flow block and all its dominators. """
     idom = idom or block_immediate_dominators(cfg)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
@@ -180,21 +179,21 @@ def all_dominators(
     tc = nx.transitive_closure_dag(g)
     # Seeded with every block, not just the start one: a root is dominated by nothing, and an
     # unreachable block is a root, so both need an entry the transitive closure will never supply.
-    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {block: set() for block in cfg.nodes()}
+    alldoms: Dict[ControlFlowBlock, OrderedSet] = {block: OrderedSet() for block in cfg.nodes()}
     for node in tc:
-        alldoms[node] = set(dst for _, dst in tc.out_edges(node))
+        alldoms[node] = OrderedSet(dst for _, dst in tc.out_edges(node))
 
     return alldoms
 
 
 def all_postdominators(cfg: ControlFlowRegion,
                        ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, OrderedSet]:
     """ Returns a mapping between each control flow block and all its postdominators. """
     remove_sink = False
     if sink is None:
         remove_sink = True
-        sinks = set()
+        sinks = OrderedSet()
         for block in cfg.nodes():
             if cfg.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
                 sinks.add(block)
@@ -213,9 +212,9 @@ def all_postdominators(cfg: ControlFlowRegion,
             continue
         g.add_edge(node, pdom)
     tc = nx.transitive_closure_dag(g)
-    all_postdoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
+    all_postdoms: Dict[ControlFlowBlock, OrderedSet] = defaultdict(OrderedSet)
     for node in tc:
-        all_postdoms[node] = set(dst for _, dst in tc.out_edges(node))
+        all_postdoms[node] = OrderedSet(dst for _, dst in tc.out_edges(node))
 
     if remove_sink:
         cfg.remove_node(sink)
@@ -224,8 +223,8 @@ def all_postdominators(cfg: ControlFlowRegion,
 
 
 def find_sese_region(
-    graph: ControlFlowRegion, target_nodes: Set[ControlFlowBlock]
-) -> Tuple[Set[ControlFlowBlock], Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
+        graph: ControlFlowRegion,
+        target_nodes: OrderedSet) -> Tuple[OrderedSet, Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
     """
     Find the smallest SESE region containing the target nodes.
 
@@ -240,9 +239,9 @@ def find_sese_region(
     :raises ValueError: If no start node or end nodes are found and none are provided.
     """
     if not target_nodes:
-        return set(), None, None
+        return OrderedSet(), None, None
 
-    sinks = set()
+    sinks = OrderedSet()
     for block in graph.nodes():
         if graph.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
             sinks.add(block)
@@ -266,7 +265,7 @@ def find_sese_region(
             common_dominators &= dominators[node]
 
     if not common_dominators:
-        return set(), None, None
+        return OrderedSet(), None, None
 
     # The entry is the dominator closest to the target nodes
     entry_node = None
@@ -298,7 +297,7 @@ def find_sese_region(
             common_post_dominators &= post_dominators[node]
 
     if not common_post_dominators:
-        return set(), entry_node, None
+        return OrderedSet(), entry_node, None
 
     # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
     # anymore.
@@ -326,22 +325,20 @@ def find_sese_region(
     if entry_node is None or exit_node is None:
         return target_nodes.copy(), entry_node, exit_node
 
-    # The region includes all nodes on paths from entry to exit
-    # that are reachable from entry and can reach exit
-    region_nodes = set()
-
-    # Add all nodes reachable from entry that can also reach exit
-    reachable_from_entry = set()
+    # The region includes all nodes on paths from entry to exit that are reachable from entry and
+    # can reach exit. ``nx.descendants`` answers with a plain set, whose iteration order follows
+    # allocation addresses; the caller REMOVES these nodes from the graph and codegen structures
+    # what is left, so that order reaches the emitted program. Rank both by the graph's own block
+    # order, which is insertion order, before intersecting.
+    reachable = OrderedSet()
     if entry_node in graph:
-        reachable_from_entry = set(nx.descendants(graph.nx, entry_node)) | {entry_node}
+        descendants = nx.descendants(graph.nx, entry_node)
+        reachable = OrderedSet(b for b in graph.nodes() if b is entry_node or b in descendants)
 
-    can_reach_exit = set()
-    # Find all nodes that can reach the exit
-    reverse_graph = graph.nx.reverse()
-    can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
+    backwards = nx.descendants(graph.nx.reverse(), exit_node)
+    can_reach_exit = OrderedSet(b for b in graph.nodes() if b is exit_node or b in backwards)
 
-    # Region is intersection of reachable from entry and can reach exit
-    region_nodes = reachable_from_entry & can_reach_exit
+    region_nodes = reachable & can_reach_exit
 
     # Remove the dummy sink
     graph.remove_node(sink)
@@ -355,7 +352,7 @@ def find_sese_region(
 
 def back_edges(cfg: ControlFlowRegion,
                idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-               alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> List[gr.Edge[InterstateEdge]]:
+               alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> List[gr.Edge[InterstateEdge]]:
     """ Returns a list of back-edges in a control flow graph. """
     alldoms = alldoms or all_dominators(cfg, idom)
     return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
@@ -364,7 +361,7 @@ def back_edges(cfg: ControlFlowRegion,
 def branch_merges(
         cfg: ControlFlowRegion,
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-        alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+        alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     alldoms = alldoms or all_dominators(cfg, idom)
 
     # Annotate branches
@@ -391,9 +388,9 @@ def branch_merges(
                 continue
 
         # Try to obtain common DF to find merge state
-        common_frontier = set()
-        descendants_blacklist = set()
-        disjoint_edges = set()
+        common_frontier = OrderedSet()
+        descendants_blacklist = OrderedSet()
+        disjoint_edges = OrderedSet()
         for oedge in oedges:
             branch_descendants = OrderedSet(cfg.dfs_edges(oedge.dst))
             branch_descendants.add(oedge.dst)
@@ -410,7 +407,7 @@ def branch_merges(
                     disjoint_edges.add(oedge)
                     continue
                 else:
-                    frontier = {oedge.dst}
+                    frontier = OrderedSet((oedge.dst, ))
             common_frontier |= frontier
             descendants_blacklist.update(branch_descendants)
         if len(common_frontier) == 1:
@@ -532,7 +529,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
 
     # Get dominators
     parents: Dict[ControlFlowBlock, ControlFlowBlock] = {}
-    step_up: Set[ControlFlowBlock] = set()
+    step_up: OrderedSet = OrderedSet()
     for block in cfg.nodes():
         curdom = idom[block]
         if curdom == block:
@@ -569,7 +566,7 @@ def _blockorder_topological_sort(
         ptree: Dict[ControlFlowBlock, ControlFlowBlock],
         branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
         stop: ControlFlowBlock = None,
-        visited: Set[ControlFlowBlock] = None,
+        visited: Optional[OrderedSet] = None,
         loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None) -> Iterator[ControlFlowBlock]:
     """
     Helper function for ``blockorder_topological_sort``.
@@ -586,7 +583,7 @@ def _blockorder_topological_sort(
     loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
     # Traverse blocks in custom order
-    visited = visited or set()
+    visited = visited if visited is not None else OrderedSet()
     stack = [start]
     while stack:
         node = stack.pop()
