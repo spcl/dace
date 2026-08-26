@@ -944,7 +944,7 @@ class MapEntry(EntryNode):
 
             free_symbols |= e.data.used_symbols(all_symbols, e)
 
-        # Update with the symbols needed by the map
+        # The map's own ranges name symbols too, and nothing else in the scope has to mention them.
         free_symbols |= self.free_symbols
 
         # Do not consider SDFG constants as symbols
