@@ -33,6 +33,8 @@ frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.Bin
 import ast
 from typing import Optional, Tuple
 
+from ordered_set import OrderedSet
+
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
@@ -79,7 +81,7 @@ def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
         arms = [rhs.args[1], rhs.args[2]]
     else:
         return None
-    in_conns = set(tasklet.in_connectors)
+    in_conns = OrderedSet(tasklet.in_connectors)
     arm_conns = [a.id for a in arms if isinstance(a, ast.Name) and a.id in in_conns]
     return out_conn, arm_conns
 
@@ -138,7 +140,7 @@ def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, boo
     if not (isinstance(left, ast.Name) and isinstance(right, ast.Name)):
         return None
     a_conn, b_conn = left.id, right.id
-    in_conns = set(tasklet.in_connectors)
+    in_conns = OrderedSet(tasklet.in_connectors)
     if a_conn not in in_conns or b_conn not in in_conns or a_conn == b_conn:
         return None
     return out_conn, a_conn, b_conn, is_cmp

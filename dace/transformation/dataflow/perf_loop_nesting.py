@@ -193,7 +193,8 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         # Each duplicate is wired only to the outer access nodes its own child reads or writes, so
         # one that no child uses keeps no edge once the original scope goes -- and an isolated node
         # is not a valid SDFG (tsvc_2_5 fission_dep_const_offset).
-        outer_touched = {e.src for e in graph.in_edges(pe)} | {e.dst for e in graph.out_edges(px)}
+        outer_touched: OrderedSet[nodes.Node] = OrderedSet(e.src for e in graph.in_edges(pe))
+        outer_touched.update(e.dst for e in graph.out_edges(px))
         for ie in list(graph.in_edges(pe)):
             graph.remove_edge(ie)
         for oe in list(graph.out_edges(px)):
