@@ -173,3 +173,36 @@ def test_small_transient_is_demoted_to_registers_instead():
 
     assert sdfg.arrays['buf'].storage == dace.dtypes.StorageType.Register
     assert tuple(sdfg.arrays['buf'].shape) == (8, ), 'a demoted array keeps its own shape'
+
+
+def test_lifted_transient_is_renamed_around_a_colliding_descriptor():
+    """An unrelated outer descriptor already holds the name, so the lifted one takes a fresh one."""
+    inner = dace.SDFG('inner')
+    inner.add_array('a_out', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_transient('buf', [1024], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('i', is_start_block=True)
+    buf = inner_state.add_access('buf')
+    produce = inner_state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    inner_state.add_edge(produce, 'o', buf, None, dace.Memlet('buf[0]'))
+    consume = inner_state.add_tasklet('consume', {'b'}, {'o'}, 'o = b')
+    inner_state.add_edge(buf, None, consume, 'b', dace.Memlet('buf[0]'))
+    inner_state.add_edge(consume, 'o', inner_state.add_write('a_out'), None, dace.Memlet('a_out[0]'))
+
+    sdfg = dace.SDFG('collide')
+    sdfg.add_array('A', [128], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array('buf', [4], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('kernel', dict(i='0:128'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a_out': None})
+    state.add_edge(me, None, nsdfg, None, dace.Memlet())
+    state.add_memlet_path(nsdfg, mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[i]'))
+    sdfg.validate()
+
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == 1
+
+    # The pre-existing descriptor is untouched; the lifted one lives beside it under a new name.
+    assert tuple(sdfg.arrays['buf'].shape) == (4, ), 'the colliding outer descriptor was overwritten'
+    lifted = [name for name, desc in sdfg.arrays.items() if name != 'buf' and tuple(desc.shape) == (128, 1024)]
+    assert len(lifted) == 1, sorted(sdfg.arrays)
+    assert sdfg.arrays[lifted[0]].transient
+    sdfg.validate()
