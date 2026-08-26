@@ -19,11 +19,16 @@ Data generation **follows the dwarf-p-cloudsc reference dataset**
 (``config-files/input.h5`` of the upstream ECMWF dwarf): the YDCST/YDTHF/YRECLDP
 physical constants in :data:`CLOUDSC_CONSTANTS` are the exact values from that
 file, and every input array is filled with random values inside the ``[min,
-max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`). The dwarf's problem
-size (``klev = 137``, ``klon = 100``) and ``ncldtop = 15`` are used so the
-vertical microphysics loop runs over a realistic depth. We do **not** load
+max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`). The grid is SMALLER
+than the dwarf's (``klev = klon = 32`` against its ``137`` by ``100``) to keep a
+compiled run short; ``ncldtop = 15`` is the dwarf's own, so the vertical
+microphysics loop still runs over a realistic depth. We do **not** load
 ``input.h5`` at runtime -- the harness is self-contained and only mirrors its
 values -- so it stays runnable without the external dataset.
+
+Every array is built ROW-MAJOR, matching the SDFG descriptors. See
+:func:`generate_cloudsc_inputs` for what column-major memory does here, and
+``cloudsc_input_data_test.py`` for the assertion that holds the line.
 
 Filling thresholds and latent heats with the real constants (rather than
 uniform ``[0, 1)`` noise) keeps the kernel out of its degenerate branch regimes,
@@ -331,6 +336,39 @@ def _instantiate_dim(dim) -> int:
     return int(sympy.sympify(dim).subs(CLOUDSC_SYMBOLS))
 
 
+def pressure_profile(name: str, dims: List[int]) -> np.ndarray:
+    """A monotone hydrostatic pressure profile for ``pap`` / ``paph``.
+
+    Pressure at half levels has to INCREASE from the model top to the surface, because the kernel
+    takes the layer thickness as a difference of consecutive ones (``zdp = paph[jk+1] - paph[jk]``,
+    cloudsc.py:489) and divides by it. Drawing each element uniformly, as every other input is
+    drawn, makes that difference negative on about half the levels; ``zdtgdp`` then goes negative,
+    the ``sign`` factor in the precipitation-evaporation divisor flips, and ``zbeta1**0.5777``
+    takes a fractional power of a negative number -- a NaN, out of physically impossible input.
+
+    So these two are built rather than sampled: half levels stretch from the model top to a
+    per-column surface pressure, and full levels sit at the midpoint of the half levels bracketing
+    them, which is the arrangement the dwarf's own data has. Values stay inside
+    :data:`CLOUDSC_INPUT_RANGES`. Deterministic -- the profile carries no information a random
+    draw would add.
+
+    :param name: ``'pap'`` (full levels) or ``'paph'`` (half levels).
+    :param dims: the instantiated shape, levels first.
+    :returns: the filled array, in the row-major order every input uses.
+    """
+    nlev = dims[0] - 1 if name == 'paph' else dims[0]
+    columns = int(np.prod(dims[1:])) if len(dims) > 1 else 1
+    top, surface = 1.0, CLOUDSC_INPUT_RANGES['paph'][1]
+
+    # Stretched so the layers thin towards the top, as a hybrid-sigma coordinate does, and a small
+    # per-column spread in surface pressure so the columns are not identical.
+    sigma = (np.arange(nlev + 1) / nlev)**1.5
+    spread = 1.0 - 0.03 * (np.arange(columns) / max(columns - 1, 1))
+    half = top + np.outer(sigma, spread * surface - top)
+    levels = half if name == 'paph' else 0.5 * (half[:-1] + half[1:])
+    return np.array(levels.reshape(dims), dtype=np.float64, order='C')
+
+
 def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[np.ndarray, int, float]]:
     """Generate a physically-realistic CloudSC input set for ``sdfg``.
 
@@ -340,6 +378,15 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     (kernel outputs / unknown arrays zeroed), integer arrays uniform within
     :data:`CLOUDSC_INT_RANGES`, and the named index scalars / shape symbols from
     :data:`CLOUDSC_SYMBOLS`. Length-1 arrays are passed as scalars.
+
+    Every array is built ROW-MAJOR. The kernel is a port of a Fortran dwarf, so
+    column-major is the tempting choice, but DaCe describes these arrays with
+    row-major strides (``pt`` is ``(klon, 1)``) and hands the buffer to the
+    compiled function as a bare pointer -- nothing transposes and nothing
+    complains. Column-major memory is therefore read as its own transpose: the
+    level index walks columns, the vertical profiles that ``pressure_profile``
+    builds are destroyed, and the microphysics runs away to ``5e9`` and to NaN
+    on physically impossible input.
 
     :param sdfg: The CloudSC SDFG whose non-transient arrays are filled.
     :param seed: Seed for the random number generator (reproducible runs).
@@ -358,22 +405,24 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
             arrays[name] = np.full(dims,
                                    int(value) if is_int else value,
                                    dtype=np.int32 if is_int else np.float64,
-                                   order='F')
+                                   order='C')
         elif is_int:
             if name in CLOUDSC_SYMBOLS:
-                data = np.zeros(dims, order='F').astype(np.int32)
+                data = np.zeros(dims, order='C').astype(np.int32)
                 data.flat[0] = CLOUDSC_SYMBOLS[name]
                 arrays[name] = data
             else:
                 lo, hi = CLOUDSC_INT_RANGES.get(name, (1, 1))
-                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order='F')
+                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order='C')
+        elif name in ('pap', 'paph'):
+            arrays[name] = pressure_profile(name, dims)
         else:
             value_range: Optional[Tuple[float, float]] = CLOUDSC_INPUT_RANGES.get(name)
             if value_range is None:
-                arrays[name] = np.zeros(dims, order='F')  # kernel output / no reference range
+                arrays[name] = np.zeros(dims, order='C')  # kernel output / no reference range
             else:
                 lo, hi = value_range
-                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='F')
+                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='C')
 
     inputs: Dict[str, Union[np.ndarray, int, float]] = {
         name: (data.flat[0] if data.size == 1 else data)

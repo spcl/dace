@@ -90,32 +90,16 @@ def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
     return arguments
 
 
-def c_contiguous(values: Dict[str, Any]) -> Dict[str, Any]:
-    """``values`` with every array copied into C order.
-
-    The CloudSC generator builds its arrays ``order='F'``, so a multidimensional one is not
-    C-contiguous. Both sides here read the buffer through a raw pointer with the descriptor's
-    row-major strides, so an F-ordered buffer is not an error -- but ``call_standalone`` refuses it,
-    and rightly: making it contiguous at the call would copy, and the kernel's writes would land in
-    the copy. Converting ONCE here, before either side runs, keeps the two runs on identical bytes
-    and leaves the buffers writable through the pointer.
-
-    :param values: the generated input set.
-    :returns: the same mapping with C-ordered arrays.
-    """
-    return {
-        name: (np.ascontiguousarray(value) if isinstance(value, np.ndarray) else value)
-        for name, value in values.items()
-    }
-
-
 @pytest.mark.integration
 def test_cloudsc_renders_standalone_and_reproduces_the_sdfg():
     """Render CloudSC, build it with no include path, and compare every output array."""
     reference = build_cloudsc_sdfg(simplify=False)
     make_sequential(reference)
 
-    reference_values = c_contiguous(generate_cloudsc_inputs(reference, seed=0))
+    # Row-major already, and asserted to be by ``cloudsc_input_data_test.py``: both sides read the
+    # buffer through a raw pointer with the descriptor's strides, and ``call_standalone`` refuses
+    # anything else rather than copying, which would send the kernel's writes into the copy.
+    reference_values = generate_cloudsc_inputs(reference, seed=0)
     pristine = copy.deepcopy(reference_values)
     with ieee_build():
         reference(**reference_values)
