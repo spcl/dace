@@ -14,8 +14,8 @@ import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeT
@@ -250,7 +250,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 return None
             return "host-level Tasklet that isn't a recognized GPU runtime call"
         if isinstance(node, nodes.LibraryNode):
-            if isinstance(node, (CopyLibraryNode, MemsetLibraryNode)):
+            if isinstance(node, (CopyLibraryNode, FillLibraryNode)):
                 return None
             if node.schedule == dtypes.ScheduleType.GPU_Device:
                 return None

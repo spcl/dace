@@ -21,7 +21,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -133,7 +133,7 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
     """Declare the per-thread register partial and identity-init it, and mark the accumulator
     ``covered`` so :meth:`CPUCodeGen.write_and_resolve_expr` redirects its per-thread WCR writes into
     the partial instead of emitting an atomic. Emit the returned C before the bounds guard so
-    out-of-range threads still carry the identity into the barrier fold. Caveman: make partial, mark it.
+    out-of-range threads still carry the identity into the barrier fold.
     """
     covered[red['data']] = {
         'partial': red['partial'],
@@ -150,8 +150,7 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     """For each of the ``m`` reduced elements, ``cub::BlockReduce`` over each thread's register partial,
     then one ``reduce_atomic`` from thread 0 into that accumulator element; then un-cover it. Emit the
     returned C after the bounds guard closes so every thread reaches the barrier-using cub call; the
-    ``__syncthreads`` between iterations lets the single shared ``TempStorage`` be reused. Caveman: fold
-    block, one atomic.
+    ``__syncthreads`` between iterations lets the single shared ``TempStorage`` be reused.
     """
     covered.pop(red['data'], None)
     functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
@@ -1265,7 +1264,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
-                    continue
+                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
+                        str(edge.src), str(edge.dst)))
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -1528,12 +1528,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
+        else:
+            raise TypeError("Unknown variable type: {}".format(var_type))
 
-        # Set Defined Type for GPU Stream connectors
-        # Shadowing for stream variable needs to be allowed
-        if memlet_type == 'gpuStream_t':
-            var_type = DefinedType.GPUStream
+        # A GPU stream handle is rebound per kernel launch, so its connector shadows by design.
+        if desc.dtype == dtypes.gpuStream_t:
             defined = DefinedType.GPUStream
+            allow_shadowing = True
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -1842,57 +1843,34 @@ class CPUCodeGen(TargetCodeGenerator):
 
     @staticmethod
     def _mutated_descriptors(nsdfg: SDFG) -> Set[str]:
-        """Names of descriptors in ``nsdfg`` that may be mutated -- the set that must *not* be
-        ``const``-qualified as a device-function argument.
+        """Descriptor names in ``nsdfg`` that may be mutated, i.e. must not become ``const`` arguments.
 
-        Beyond data written directly, this propagates non-const *up* a ``View`` chain: a write
-        through a view is recorded by :func:`read_and_write_sets` against the *view's* name, so the
-        underlying parent it aliases would otherwise look read-only. A written view exposes its
-        parent through a non-const pointer, which is the C++ rule made explicit -- a non-const view
-        of const data is illegal, while a const (read-only) view of non-const data is fine, so only
-        *written* views taint their parent. Propagation runs to a fixpoint to cover view-of-view.
+        ``read_and_write_sets`` records a write through a ``View`` against the view's own name, so a
+        write-direction view additionally taints the parent it aliases.
+
+        :param nsdfg: The nested SDFG to scan.
+        :return: The set of descriptor names that are written.
         """
         mutated: Set[str] = set()
-        # Underlying (parent) descriptor of each *write-direction* view -- the data it aliases and
-        # writes through. A view's direction is read off its view edge exactly as ``allocate_view``
-        # does (``is_write = view_edge.src is view_node``); a read-direction view never writes its
-        # parent and so does not taint it. Note: ``read_and_write_sets`` counts the view-*linking*
-        # edge as a write to the view itself, so the view's own name being in the write set is not a
-        # reliable signal -- the edge direction is.
-        write_view_parent: Dict[str, str] = {}
+        view_parents: Set[str] = set()
         for nstate in nsdfg.states():
             mutated |= nstate.read_and_write_sets()[1]
             for vn in nstate.nodes():
                 if not (isinstance(vn, nodes.AccessNode) and isinstance(nsdfg.arrays[vn.data], data.View)):
                     continue
+                # Direction is read off the view edge, as allocate_view does.
                 view_edge = sdutils.get_view_edge(nstate, vn)
                 if view_edge is None or view_edge.src is not vn:
-                    continue  # read-direction view (or no view edge) -> does not write its parent
-                parent = view_edge.dst
-                if isinstance(parent, nodes.AccessNode):
-                    write_view_parent[vn.data] = parent.data
-
-        # A write-direction view writes its parent through a non-const pointer, so the parent is
-        # mutated. Propagate to a fixpoint so a view-of-view write chain taints the deepest parent.
-        changed = True
-        while changed:
-            changed = False
-            for parent in write_view_parent.values():
-                if parent not in mutated:
-                    mutated.add(parent)
-                    changed = True
-        return mutated
+                    continue
+                if isinstance(view_edge.dst, nodes.AccessNode):
+                    view_parents.add(view_edge.dst.data)
+        return mutated | view_parents
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        # An input array argument is ``const``-qualifiable only if the callee never mutates its
-        # data. ``read_and_write_sets`` records a write against the *written access node's* name,
-        # so a write through a ``View`` registers against the view -- not the underlying array.
-        # ``_mutated_descriptors`` therefore propagates non-const *up* a view chain (a written
-        # view exposes its parent through a non-const pointer), mirroring the C++ rule that a
-        # non-const view of const data is illegal while a const view of non-const data is fine.
+        # An input array argument is const-qualifiable only if the callee never mutates its data.
         written_inside = self._mutated_descriptors(node.sdfg)
 
         memlet_references = []

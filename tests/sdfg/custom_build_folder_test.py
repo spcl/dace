@@ -219,3 +219,5 @@ def test_process_cache_token_contains_pid():
     assert int(uniquifier) > 0
 
 
+if __name__ == '__main__':
+    print("Must be called using `pytest`.")

@@ -1561,19 +1561,10 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     Checks if the given node is enclosed within a Map whose schedule type
     matches any in the ``schedules`` set.
 
-    Parameters
-    ----------
-    state : SDFGState
-        The State where the node resides
-    node : nodes.Node
-        The node to check.
-    schedules : set[dtypes.ScheduleType]
-        A set of schedule types to match (e.g., {dtypes.ScheduleType.GPU_Device}).
-
-    Returns
-    ----------
-    bool
-        True if the node is enclosed by a Map with a schedule type in ``schedules``, False otherwise.
+    :param state: The state where the node resides.
+    :param node: The node to check.
+    :param schedules: Schedule types to match, e.g. ``{dtypes.ScheduleType.GPU_Device}``.
+    :return: True if the node is enclosed by a Map with a schedule type in ``schedules``.
     """
     current = node
 

@@ -222,17 +222,11 @@ def is_cuda_codegen_in_device(framecode) -> bool:
     from dace.codegen.targets.cuda import CUDACodeGen
     from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
 
-    cuda_impl = Config.get('compiler', 'cuda', 'implementation')
-    if cuda_impl == 'legacy':
-        cudaClass = CUDACodeGen
-    elif cuda_impl == 'experimental':
-        cudaClass = ExperimentalCUDACodeGen
-
     if framecode is None:
         cuda_codegen_in_device = False
     else:
         for codegen in framecode.targets:
-            if isinstance(codegen, cudaClass):
+            if isinstance(codegen, (CUDACodeGen, ExperimentalCUDACodeGen)):
                 cuda_codegen_in_device = codegen._in_device_code
                 break
         else:
@@ -277,10 +271,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
     elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
           and framecode.where_allocated[(sdfg, name)] is not sdfg
           and desc.storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)):
-        # Array allocated for another SDFG, use unambiguous name. Skipped for
-        # GPU_Shared (kernel-scoped) and Register (thread-scoped) -- those can't
-        # collide across NSDFG boundaries because their scope is the kernel /
-        # thread, not the translation unit.
+        # Array allocated for another SDFG, use unambiguous name. GPU_Shared and Register are
+        # kernel- resp. thread-scoped, so they cannot collide across NSDFG boundaries.
         return f'__{sdfg.cfg_id}_{name}'
 
     return name
@@ -348,14 +340,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 ref = '*'
                 typedef = make_const(typedef)
             elif is_write is False and const_read_only_array:
-                # Read-only array reference -> pointer-to-const, mirroring the read-only
-                # scalar branch above (a device function that only reads its array input
-                # should take ``const T*``). Gated on ``const_read_only_array`` because it
-                # requires an *authoritative* read-only signal: the caller must pass
-                # ``is_write=True`` whenever the underlying data is written anywhere in the
-                # callee. The view-allocation path cannot promise that -- its ``is_write`` is
-                # the access *direction* at one node, not "never written" -- so it leaves the
-                # flag off.
+                # Read-only array reference -> pointer-to-const. Gated on the flag because it
+                # needs an authoritative "never written in the callee" signal, which the
+                # view-allocation path (``is_write`` = access direction at one node) cannot give.
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -840,12 +827,9 @@ def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     # as much as one that reads it. Same rule as the stream-retention walk in ``cuda.py``.
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if (((isinstance(path[0].src, nodes.AccessNode)
-              and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global))
-                or ((isinstance(path[-1].dst, nodes.AccessNode)
-                     and path[-1].dst.desc(sdfg).storage is dtypes.StorageType.GPU_Global))):
-            return True
-
+        for endpoint in (path[0].src, path[-1].dst):
+            if isinstance(endpoint, nodes.AccessNode) and endpoint.desc(sdfg).storage is dtypes.StorageType.GPU_Global:
+                return True
     return False
 
 
@@ -882,21 +866,14 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         cuda_impl = Config.get("compiler", "cuda", "implementation")
         host_node_on_gpu_memory = (not is_devicelevel_gpu(sdfg, state_dfg, node)
                                    and connected_to_gpu_memory(node, state_dfg, sdfg))
-        # Experimental codegen path: every stream-using Tasklet carries a
-        # ``gpuStream_t``-typed in-connector. Bind the legacy
-        # ``__dace_current_stream`` symbol to that connector value so any
-        # Tasklet body that still names the symbol (e.g. an already-lowered
-        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without the
-        # legacy ``_cuda_stream`` back-channel.
+        # Experimental codegen carries the stream in a ``gpuStream_t`` in-connector; bind the
+        # legacy ``__dace_current_stream`` symbol to it for bodies that still name it.
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
         body_str = node.code.as_string
         if (host_node_on_gpu_memory and gpu_stream_conn is not None and '__dace_current_stream' in body_str):
-            if gpu_stream_conn == '__dace_current_stream':
-                # The connector already exposes the symbol; skip the self-referential
-                # rebind that would redeclare it.
-                pass
-            else:
+            # A connector already named ``__dace_current_stream`` needs no rebind.
+            if gpu_stream_conn != '__dace_current_stream':
                 callsite_stream.write(f'{common.get_gpu_backend()}Stream_t __dace_current_stream = {gpu_stream_conn};',
                                       cfg, state_id, node)
         elif host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
@@ -916,13 +893,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                     node,
                 )
         elif host_node_on_gpu_memory and cuda_impl == 'legacy':
-            # Legacy with max_concurrent_streams<0 short-circuits
-            # _compute_cudastreams (cuda.py:819-821) so no ``_cuda_stream``
-            # is set, yet library code (e.g. the cuBLAS env's
-            # ``cublasSetStream(_, __dace_current_stream)``) still references
-            # the variable. Emit a nullptr fallback so that compiles.
-            # Experimental codegen never reaches this branch: its tasklets carry
-            # a ``gpuStream_t`` connector and take the connector-rebind branch above.
+            # Legacy with max_concurrent_streams<0 assigns no ``_cuda_stream``, yet library code
+            # (e.g. the cuBLAS env) still names ``__dace_current_stream``; emit a nullptr fallback.
             callsite_stream.write(
                 '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
                 cfg,
@@ -970,11 +942,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
-            # Resolve the active CUDA codegen class based on configuration.
-            # ``synchronize_streams`` is a legacy-codegen helper, so it only
-            # runs when the legacy implementation is selected.
-            cuda_impl = Config.get('compiler', 'cuda', 'implementation')
-            if cuda_impl != 'legacy':
+            # ``synchronize_streams`` is a legacy-codegen helper.
+            if Config.get('compiler', 'cuda', 'implementation') != 'legacy':
                 return
             from dace.codegen.targets import cuda  # Avoid import loop
             try:
@@ -1407,15 +1376,11 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                            callsite_stream: CodeIOStream):
-    # Recover the SDFGState from ``dfg`` directly. With explicit control flow
-    # ``cfg.nodes()[state_id]`` may be a nested region (e.g. ``LoopRegion``)
-    # whose direct child is another region rather than the enclosing state.
+    # With explicit control flow ``cfg.nodes()[state_id]`` may be a nested region, not the state.
     state_dfg: SDFGState = dfg.graph if not isinstance(dfg, SDFGState) else dfg
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
-    # Resolve the (cfg, state_id) pair to whichever region directly owns the
-    # state, so ``callsite_stream.write`` -> ``cfg.state(state_id)`` lands on
-    # an SDFGState.
+    # Resolve (cfg, state_id) onto the region that directly owns the state.
     enclosing_cfg = state_dfg.parent_graph
     enclosing_state_id = enclosing_cfg.node_id(state_dfg)
     for e in state_dfg.in_edges(node):
@@ -1429,7 +1394,8 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
             )
 
 
-def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
+# TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
+def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen, stream_expr=None):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if stream_expr is not None:

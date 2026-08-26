@@ -51,7 +51,7 @@ LAUNCHER_RANK_VARS = (
     'SLURM_PROCID',  # srun with no MPI
 )
 
-# Identifies this process for the 'unique' cache mode; the timestamp separates processes with a recycled pid.
+# Identifies this process for the 'unique' cache mode; the timestamp separates a recycled pid.
 PROCESS_CACHE_TOKEN = f'{os.getpid()}_{time.time_ns()}'
 
 if TYPE_CHECKING:
@@ -180,9 +180,9 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
         md5_hash = md5(str(sdfg.to_json()).encode('utf-8')).hexdigest()
         return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
     elif cache_config == 'unique':
-        # Base name on location in memory, so no caching is possible between
+        # Base the name on this process, so no caching is possible between
         # processes or subsequent invocations
-        md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+        md5_hash = md5(PROCESS_CACHE_TOKEN.encode('utf-8')).hexdigest()
         return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
     elif cache_config == 'name':
         # Overwrites previous invocations, and can clash with other programs

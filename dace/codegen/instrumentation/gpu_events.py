@@ -179,21 +179,12 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
           and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For
           other node types, no reliable stream assignment is available.
 
-        Parameters
-        ----------
-        state : SDFGState
-            The state containing the node.
-        node : dace.sdfg.nodes.Node
-            The node for which to query the GPU stream.
-
-        Returns
-        -------
-        int
-            The assigned GPU stream ID, or ``-1`` if none could be determined.
+        :param state: The state containing the node.
+        :param node: The node for which to query the GPU stream.
+        :return: The assigned GPU stream ID, or ``-1`` if none could be determined.
         """
         if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
-            stream = getattr(node, '_cuda_stream', -1)
-            return stream
+            return getattr(node, '_cuda_stream', -1)  # Legacy codegen attaches this dynamically
 
         def _stream_from_in_edges(target: nodes.Node) -> int:
             for in_edge in state.in_edges(target):

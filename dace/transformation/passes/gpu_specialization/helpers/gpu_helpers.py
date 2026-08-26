@@ -111,13 +111,13 @@ _GPU_COPY_STORAGES = frozenset(
 
 
 def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """``CopyLibraryNode`` / ``MemsetLibraryNode`` whose storage involves GPU memory."""
-    from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
-    from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+    """``CopyLibraryNode`` / ``FillLibraryNode`` whose storage involves GPU memory."""
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
         return (node.src_storage(state) in _GPU_COPY_STORAGES or node.dst_storage(state) in _GPU_COPY_STORAGES)
-    if isinstance(node, MemsetLibraryNode):
+    if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
             if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
                 return True

@@ -5,7 +5,7 @@ import pytest
 
 import dace
 from dace.codegen import common
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR, has_stream_connector,

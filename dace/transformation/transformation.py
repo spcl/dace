@@ -725,21 +725,10 @@ class ExpandTransformation(PatternTransformation):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
 
-            # Carry over any in/out connectors from the original library node
-            # that the expansion didn't already declare (e.g. dynamic-range
-            # passthrough connectors injected by upstream passes). Without this
-            # the redirected edges point at nonexistent connectors after
-            # ``change_edge_*`` swaps the endpoint, and validation rejects
-            # them. We preserve the expansion's own connector types, so any
-            # name collision keeps the expansion's typing.
-            #
-            # Only carry over connectors that are still actively used: an
-            # expansion may rename incoming/outgoing edges in-place (e.g.
-            # ``SpecializeMatMul`` rewrites the ``_a``/``_b`` MatMul connectors
-            # to ``_x``/``_y`` on the matching Dot edges). The original
-            # connector names then have no edges referencing them and must
-            # not be re-added to the expansion node -- doing so would leave
-            # them dangling and trip ``InvalidSDFGNodeError``.
+            # Carry over connectors the expansion did not declare itself (e.g. passthrough
+            # connectors injected by upstream passes), otherwise the redirected edges point at
+            # nonexistent connectors. Only those that still have edges: an expansion may rename
+            # edges in-place, leaving the original names dangling.
             in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
             out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
             for conn_name, conn_type in node.in_connectors.items():
