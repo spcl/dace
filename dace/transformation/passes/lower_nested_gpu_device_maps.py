@@ -84,9 +84,15 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                                                  full_data=True)
         inner = nsdfg_node.sdfg
 
-        # ``nest_state_subgraph`` reads the map's params off the scope symbol table, which goes
-        # stale against the in-place ``map.params`` / ``map.range`` mutation below. Thread them
-        # explicitly, else validation fires ``Missing symbols on nested SDFG``.
+        # Everything the map scope could name has to be bound on the node, not merely declared on
+        # the nested SDFG: the enclosing scope's symbols, plus the map's own params, which the scope
+        # symbol table misses because it goes stale against the in-place ``map.params`` mutation.
+        for sym, sym_type in state.symbols_defined_at(map_entry).items():
+            if sym not in inner.symbols:
+                inner.add_symbol(sym, sym_type)
+            if sym not in nsdfg_node.symbol_mapping:
+                nsdfg_node.symbol_mapping[sym] = sym
+
         for param in map_entry.map.params:
             if param not in inner.symbols:
                 inner.add_symbol(param, symbolic.DEFAULT_SYMBOL_TYPE)
@@ -115,8 +121,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         :param map_entry: Entry of the scope to remove.
         :param map_exit: Matching exit.
         """
+        enclosing = state.entry_node(map_entry)
         for edge in state.out_edges(map_entry):
             if edge.data.is_empty():
+                # An ordering edge carries no data, so it cannot be rerouted along a memlet path;
+                # re-anchor it on the enclosing scope instead of dropping it.
+                if enclosing is not None:
+                    state.add_edge(enclosing, None, edge.dst, None, dace.Memlet())
                 continue
             path = state.memlet_path(edge)
             outer = path[path.index(edge) - 1]

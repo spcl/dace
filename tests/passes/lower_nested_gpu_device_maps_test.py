@@ -252,3 +252,57 @@ def test_unit_step_bound_check_stays_a_plain_interval():
     conditions = _guard_conditions(sdfg)
     assert len(conditions) == 1, conditions
     assert '%' not in conditions[0], conditions[0]
+
+
+def _kernel_with_a_directly_nested_gpu_map() -> dace.SDFG:
+    """Inner ``GPU_Device`` map sitting straight in the kernel's scope, with no NestedSDFG between.
+
+    The two maps are joined only by empty memlets, which carry ordering rather than data.
+    """
+    sdfg = dace.SDFG('direct')
+    sdfg.add_array('A', [16, 32], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('outer', dict(__k='0:16'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    inner_me, inner_mx = state.add_map('inner', dict(__j='0:32'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet('w', {}, {'_v': dace.float64}, '_v = 1.0')
+    state.add_memlet_path(outer_me, inner_me, tasklet, memlet=dace.Memlet())
+    state.add_memlet_path(tasklet,
+                          inner_mx,
+                          outer_mx,
+                          state.add_write('A'),
+                          src_conn='_v',
+                          memlet=dace.Memlet('A[__k, __j]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_directly_nested_gpu_map_lowers_without_detaching_its_body():
+    """The ordering edge into the inner scope must be re-anchored, not dropped with the map."""
+    sdfg = _kernel_with_a_directly_nested_gpu_map()
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    top, inner = _count_gpu_device_maps(sdfg)
+    assert (top, inner) == (1, 0), (top, inner)
+    kernel = next(n for state in sdfg.states() for n in state.nodes()
+                  if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+    assert set(kernel.map.params) == {'__k', '__j'}, kernel.map.params
+    # The body's nested SDFG stays attached to the kernel, or the scope traversal cannot place it.
+    body = next(n for state in sdfg.states() for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    state = sdfg.states()[0]
+    assert state.in_degree(body) > 0, 'the guarded body was detached from the kernel scope'
+    sdfg.validate()
+
+
+def test_enclosing_kernel_symbol_is_bound_on_the_guarded_body():
+    """A body may name the outer kernel's parameter, so the nested SDFG node must bind it."""
+    sdfg = _build_outer_with_two_sibling_inner_gpu_kernels()
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    guarded = [
+        node for sub in sdfg.all_sdfgs_recursive() for state in sub.states() for node in state.nodes()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.label.startswith('if_of_nested_')
+    ]
+    assert guarded, 'no guarded body was produced'
+    for node in guarded:
+        assert '__k' in node.symbol_mapping, (node.label, sorted(node.symbol_mapping))
+    sdfg.validate()
