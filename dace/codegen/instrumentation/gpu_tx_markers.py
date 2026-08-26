@@ -155,23 +155,28 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(local_stream)
 
+    def _is_marked(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
+        """Node-level marker, or a host-side ``copy_*`` tasklet of an instrumented state.
+
+        A CopyLibraryNode expansion emits its ``cudaMemcpyAsync`` as a plain Tasklet that carries no
+        ``instrument`` of its own and never reaches ``on_copy_begin``.
+        """
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            return False  # Don't instrument device code
+        if isinstance(node, nodes.CodeNode) and node.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return True
+        return (state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS and isinstance(node, nodes.Tasklet)
+                and node.label.startswith('copy_'))
+
     def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            # Don't instrument device code
-            return
-        self.print_range_push(node.label, sdfg, outer_stream)
+        if self._is_marked(sdfg, state, node):
+            self.print_range_push(node.label, sdfg, outer_stream)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
                     outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            # Don't instrument device code
-            return
-        self.print_range_pop(outer_stream)
+        if self._is_marked(sdfg, state, node):
+            self.print_range_pop(outer_stream)
 
     def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
                        outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
@@ -189,34 +194,6 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         if is_devicelevel_gpu_kernel(sdfg, state, entry_node):
             # Don't instrument device code
-            return
-        self.print_range_pop(outer_stream)
-
-    def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
-                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        # Bracket host-side cudaMemcpyAsync tasklets emitted by expanded
-        # CopyLibraryNode instances. These tasklets bypass the legacy
-        # _emit_copy() path that fires on_copy_begin, so without an explicit
-        # hook here the experimental codegen ends up with no ``copy_*`` ranges.
-        if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if not isinstance(node, nodes.Tasklet):
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            return
-        if not node.label.startswith('copy_'):
-            return
-        self.print_range_push(node.label, sdfg, outer_stream)
-
-    def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
-                    outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if not isinstance(node, nodes.Tasklet):
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            return
-        if not node.label.startswith('copy_'):
             return
         self.print_range_pop(outer_stream)
 

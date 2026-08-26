@@ -6,7 +6,9 @@ Strategies (:class:`GPUStreamSchedulingStrategy` subclasses) own the policy
 across strategies and live here. No policy lives here.
 """
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
+
+from ordered_set import OrderedSet
 
 import dace
 from dace import SDFG, SDFGState, dtypes
@@ -59,10 +61,10 @@ def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: 
     _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
 
 
-def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> Set[SDFG]:
+def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> OrderedSet:
     """Nested SDFGs that need the GPU stream array (host-side stream-bound
     calls); device-code NestedSDFGs are skipped."""
-    requiring = set()
+    requiring = OrderedSet()
     for child_sdfg in sdfg.all_sdfgs_recursive():
         if child_sdfg is sdfg:
             continue
@@ -219,7 +221,7 @@ def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
 # Sync-tasklet emission.
 
 
-def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
+def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, OrderedSet], assignments: Dict[Node, int]):
     """Emit one fused ``cudaStreamSynchronize`` tasklet at the end of each
     state, syncing every stream the state must wait on.
 
@@ -294,8 +296,8 @@ def _make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet
     sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({_stream_connector_name(sid)}));" for sid in stream_ids]
     sync_code = "\n".join(sync_lines)
     tasklet = state.add_tasklet(name=name,
-                                inputs=set(),
-                                outputs=set(),
+                                inputs={},
+                                outputs={},
                                 code=sync_code,
                                 language=dtypes.Language.CPP,
                                 side_effects=True)

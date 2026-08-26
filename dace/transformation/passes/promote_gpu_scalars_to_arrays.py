@@ -12,7 +12,10 @@ left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
 from typing import Any, Dict, Optional
 
+from ordered_set import OrderedSet
+
 from dace import data, dtypes, properties
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
@@ -82,6 +85,10 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                                              "host never observes the value, so it can live in registers / "
                                              "per-thread stack. Disable to promote every kernel-output scalar.")
 
+    def __init__(self, non_transient_only: bool = True):
+        super().__init__()
+        self.non_transient_only = non_transient_only
+
     def depends_on(self):
         return {InferDefaultSchedulesAndStorages}
 
@@ -118,7 +125,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
             return False
 
         # Rule 1: GPU storage is incompatible with Scalar.
-        if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        if desc.storage in GPU_RESIDENT_STORAGES:
             return True
 
         # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
@@ -139,7 +146,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         # the kernel write needs real device memory; rule 1 keeps the
         # pre-existing GPU storage.
         target_storage = scalar_desc.storage
-        if target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        if target_storage not in GPU_RESIDENT_STORAGES:
             target_storage = dtypes.StorageType.GPU_Global
 
         array_desc = data.Array(
@@ -180,7 +187,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
             if not isinstance(node, nodes.NestedSDFG):
                 continue
 
-            handled_inner_names: set[str] = set()  # If data is referenced as input and output.
+            handled_inner_names: set[str] = OrderedSet()  # If data is referenced as input and output.
             for iedge in state.in_edges(node):
                 if iedge.data.is_empty():
                     continue

@@ -36,7 +36,7 @@ def _build_split_scope_transient_sdfg():
     z_in = write_tmp.add_read('Z')
     tmp_w = write_tmp.add_write('tmp')
     me, mx = write_tmp.add_map('mul_map', dict(i='0:length'), schedule=dace.ScheduleType.GPU_Device)
-    t = write_tmp.add_tasklet('mul', {'a'}, {'b'}, 'b = a * a')
+    t = write_tmp.add_tasklet('mul', {'a': None}, {'b': None}, 'b = a * a')
     write_tmp.add_memlet_path(z_in, me, t, dst_conn='a', memlet=dace.Memlet('Z[i]'))
     write_tmp.add_memlet_path(t, mx, tmp_w, src_conn='b', memlet=dace.Memlet('tmp[i]'))
 
@@ -45,7 +45,7 @@ def _build_split_scope_transient_sdfg():
     c_in = read_tmp.add_read('C')
     o_w = read_tmp.add_write('out')
     me2, mx2 = read_tmp.add_map('add_map', dict(i='0:length'), schedule=dace.ScheduleType.GPU_Device)
-    t2 = read_tmp.add_tasklet('add', {'a', 'c'}, {'b'}, 'b = a + c')
+    t2 = read_tmp.add_tasklet('add', {'a': None, 'c': None}, {'b': None}, 'b = a + c')
     read_tmp.add_memlet_path(tmp_r, me2, t2, dst_conn='a', memlet=dace.Memlet('tmp[i]'))
     read_tmp.add_memlet_path(c_in, me2, t2, dst_conn='c', memlet=dace.Memlet('C[i]'))
     read_tmp.add_memlet_path(t2, mx2, o_w, src_conn='b', memlet=dace.Memlet('out[i]'))

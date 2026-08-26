@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
+import itertools
 import dace
 import sympy
 from dace.sdfg import infer_types
@@ -180,12 +181,9 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
 
 def _map_touches_gpu_global(state, mapentry: nodes.MapEntry, sdfg: SDFG) -> bool:
-    """True iff the scope rooted at ``mapentry`` reads or writes a
-    ``GPU_Global`` array through any of its boundary memlet paths.
-    Used by ``tile_wcrs`` to decide whether a small map is safe to
-    demote to ``Sequential`` (host) scheduling."""
+    """Whether the scope rooted at ``mapentry`` reads or writes a ``GPU_Global`` array."""
     mapexit = state.exit_node(mapentry)
-    for boundary_edge in list(state.in_edges(mapentry)) + list(state.out_edges(mapexit)):
+    for boundary_edge in itertools.chain(state.in_edges(mapentry), state.out_edges(mapexit)):
         for path_edge in state.memlet_path(boundary_edge):
             for endpoint in (path_edge.src, path_edge.dst):
                 if isinstance(endpoint, nodes.AccessNode):
@@ -290,16 +288,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         # NOTE: The test "(x < y) == True" below is crafted for SymPy
         # to be "definitely True"
         if all((s < tile_size) == True for s in mapentry.map.range.size()):
-            # If smaller than tile size, don't transform and instead
-            # make map sequential -- but only when the data the map
-            # touches is host-accessible. A Sequential schedule emits a
-            # host loop; if any neighbouring AccessNode is GPU_Global
-            # the loop would read/write device memory, which the
-            # validator rightly rejects.
+            # If smaller than tile size, don't transform and instead make map sequential -- but a
+            # Sequential schedule emits a host loop, which cannot touch GPU_Global data.
             if _map_touches_gpu_global(graph, mapentry, sdfg):
                 if debugprint:
-                    print(f'Keeping map "{mapentry}" device-scheduled '
-                          f'(smaller than tile size but touches GPU_Global data)')
+                    print(f'Keeping map "{mapentry}" device-scheduled (touches GPU_Global data)')
                 continue
             if debugprint:
                 print(f'Making map "{mapentry}" sequential due to being smaller than tile size')

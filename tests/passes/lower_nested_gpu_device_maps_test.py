@@ -61,7 +61,7 @@ def _build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:
                                 src_conn='_b',
                                 memlet=dace.Memlet('b_out[__j, __i]'))
 
-    nsdfg = state.add_nested_sdfg(inner, set(), {'a_in', 'b_out'}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, set(), {'a_in': None, 'b_out': None}, symbol_mapping={'__k': '__k'})
     a_write = state.add_write('A')
     b_write = state.add_write('B')
     state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
@@ -134,14 +134,14 @@ def _build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
     c_read = inner_state.add_read('c_io')
     c_mid = inner_state.add_access('c_io')  # internal inout node (non-transient)
     c_write = inner_state.add_write('c_io')
-    t1 = inner_state.add_tasklet('bump', {'i'}, {'o'}, 'o = i + 1.0')
-    t2 = inner_state.add_tasklet('bump2', {'i'}, {'o'}, 'o = i + 2.0')
+    t1 = inner_state.add_tasklet('bump', {'i': None}, {'o': None}, 'o = i + 1.0')
+    t2 = inner_state.add_tasklet('bump2', {'i': None}, {'o': None}, 'o = i + 2.0')
     inner_state.add_memlet_path(c_read, me, t1, dst_conn='i', memlet=dace.Memlet('c_io[__j]'))
     inner_state.add_edge(t1, 'o', c_mid, None, dace.Memlet('c_io[__j]'))
     inner_state.add_edge(c_mid, None, t2, 'i', dace.Memlet('c_io[__j]'))
     inner_state.add_memlet_path(t2, mx, c_write, src_conn='o', memlet=dace.Memlet('c_io[__j]'))
 
-    nsdfg = state.add_nested_sdfg(inner, {'c_io'}, {'c_io'}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, {'c_io': None}, {'c_io': None}, symbol_mapping={'__k': '__k'})
     c_outer_read = state.add_read('C')
     c_outer_write = state.add_write('C')
     state.add_memlet_path(c_outer_read, outer_me, nsdfg, dst_conn='c_io', memlet=dace.Memlet('C[__k, 0:J]'))

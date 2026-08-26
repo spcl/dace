@@ -132,13 +132,15 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         for component in weakly_connected_node_sets(state):
             if not self._requires_gpu_stream(state, component):
                 continue
-            # Idempotency: if any node already has a stream id (prior run or deserialised
-            # state), the component is settled. Skip without touching the next-stream counter
-            # so independent components stay on independent streams.
+            # Idempotency: if any node already carries a stream id (prior run or deserialised
+            # state), the component is settled. The counter still advances past it so a later
+            # fresh component does not land on the same stream.
             preassigned = next((n.gpu_stream_id for n in component if n.gpu_stream_id is not None), None)
             if preassigned is not None:
                 for node in component:
                     assignments[node] = preassigned
+                if not in_nested_sdfg:
+                    gpu_stream = self._next_stream(max(gpu_stream, preassigned))
                 continue
             assigned_before = len(assignments)
             for node in component:
@@ -177,9 +179,9 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
         insert_per_node_syncs(sdfg, per_node, assignments)
 
     def _classify_sync_points(
-            self, sdfg: SDFG, assignments: Dict[nodes.Node,
-                                                int]) -> Tuple[Dict[SDFGState, Set[int]], Dict[nodes.Node, SDFGState]]:
-        state_end: Dict[SDFGState, Set[int]] = {}
+            self, sdfg: SDFG,
+            assignments: Dict[nodes.Node, int]) -> Tuple[Dict[SDFGState, OrderedSet], Dict[nodes.Node, SDFGState]]:
+        state_end: Dict[SDFGState, OrderedSet] = {}
         per_node: Dict[nodes.Node, SDFGState] = {}
         for edge, parent in sdfg.all_edges_recursive():
             if not isinstance(parent, SDFGState):
@@ -191,21 +193,21 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             # First-match per-edge sync classification; the order of these branches is the contract.
             if _is_gpu_global_access(src, parent) and _is_non_gpu_accessible(dst, parent) and not in_kernel:
                 # GPU AccessNode -> host AccessNode: the host must wait on the GPU stream.
-                state_end.setdefault(parent, set()).add(assignments[dst])
+                state_end.setdefault(parent, OrderedSet()).add(assignments[dst])
                 if not is_sink:
                     per_node[dst] = parent
             elif _is_non_gpu_accessible(src, parent) and _is_gpu_global_access(dst, parent) and not in_kernel:
                 # host AccessNode -> GPU AccessNode: the GPU must see the host write.
-                state_end.setdefault(parent, set()).add(assignments[dst])
+                state_end.setdefault(parent, OrderedSet()).add(assignments[dst])
             elif _is_gpu_device_exit(src) and _is_gpu_global_access(dst, parent):
                 # Kernel exit -> GPU AccessNode: sync the kernel's own stream.
-                state_end.setdefault(parent, set()).add(assignments[dst if is_sink else src])
+                state_end.setdefault(parent, OrderedSet()).add(assignments[dst if is_sink else src])
             elif is_gpu_copy_or_memset_libnode(src, parent.sdfg, parent) and STREAM_CONNECTOR in src.in_connectors:
                 # Stream-bound copy/memset libnode: state-end sync on its assigned stream.
-                state_end.setdefault(parent, set()).add(assignments[src])
+                state_end.setdefault(parent, OrderedSet()).add(assignments[src])
             elif is_already_lowered_gpu_runtime_call(src):
                 # Already-lowered GPU runtime tasklet (cudaMemcpyAsync etc.): state-end sync on its stream.
-                state_end.setdefault(parent, set()).add(assignments[src])
+                state_end.setdefault(parent, OrderedSet()).add(assignments[src])
         return {s: ids for s, ids in state_end.items() if ids}, per_node
 
 
@@ -273,12 +275,12 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             for state in nsdfg.states():
                 if self._state_has_host_boundary_copy(state, nsdfg):
                     host_copy_states.add(state)
-        state_end: Dict[SDFGState, Set[int]] = {s: {0} for s in host_copy_states}
+        state_end: Dict[SDFGState, OrderedSet] = {s: OrderedSet([0]) for s in host_copy_states}
 
         # Trailing sync on every program-sink state not already covered.
         for sink in sdfg.sink_nodes():
             if isinstance(sink, SDFGState) and sink not in state_end:
-                state_end[sink] = {0}
+                state_end[sink] = OrderedSet([0])
 
         insert_state_end_syncs(sdfg, state_end, assignments)
 
@@ -398,7 +400,7 @@ def _classify_sdfg(sdfg: SDFG) -> _Kind:
     return _fold_kinds(kinds)
 
 
-def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_written: Set[str]) -> bool:
+def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_written: OrderedSet) -> bool:
     """True iff this interstate edge's condition/assignment reads a GPU-written array.
 
     Such an edge's host-side eval depends on GPU output and needs a sync before it fires.
@@ -408,7 +410,7 @@ def _iedge_reads_gpu_array(edge_data: 'dace.InterstateEdge', sdfg: SDFG, gpu_wri
     return bool(edge_data.read_symbols() & sdfg.arrays.keys() & gpu_written)
 
 
-def _block_reads_gpu_written(block, gpu_written: Set[str]) -> bool:
+def _block_reads_gpu_written(block, gpu_written: OrderedSet) -> bool:
     """Whether ``block`` (state or control-flow region) reads any GPU-written array -- i.e. it is a
     host consumer of GPU output (a copy-out / read-back) that must wait for the producing kernels."""
     read_set, _ = block.read_and_write_sets()
@@ -428,7 +430,7 @@ def _classify_root_block(block) -> _Kind:
     return _Kind.NEUTRAL
 
 
-def _collect_gpu_written_arrays(sdfg: SDFG) -> Set[str]:
+def _collect_gpu_written_arrays(sdfg: SDFG) -> OrderedSet:
     """Root-SDFG array names that a GPU-classified root block writes.
 
     Every root block exposes ``read_and_write_sets()``, so we don't traverse interiors. The

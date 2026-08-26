@@ -14,18 +14,13 @@ re-inferred as scalar references.
 from typing import Any, Dict, Optional, Set
 
 from dace import data, dtypes, properties
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (innermost_enclosing_map,
                                                                                is_inside_gpu_device_kernel,
                                                                                written_by_gpu_map_exit)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-
-# Length-1 arrays in these storages are addressable global memory or
-# cross-thread shared memory -- demoting them to a register scalar would be
-# wrong, so they are always kept as arrays (mirrors ``PromoteGPUScalarsToArrays``
-# forcing kernel outputs to ``GPU_Global``).
-_KEEP_STORAGES = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
 
 
 def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
@@ -120,7 +115,8 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
         """Whether ``name`` is a kernel-internal single value masquerading as a length-1 array."""
         if not (isinstance(desc, data.Array) and tuple(desc.shape) == (1, )):
             return False
-        if desc.storage in _KEEP_STORAGES:
+        # A GPU-resident length-1 array is addressable memory; a register scalar would be wrong.
+        if desc.storage in GPU_RESIDENT_STORAGES:
             return False
         # Kernel outputs must stay arrays -- they cross the GPU_Device boundary.
         if written_by_gpu_map_exit(sdfg, name):

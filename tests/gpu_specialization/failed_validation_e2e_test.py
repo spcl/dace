@@ -53,7 +53,7 @@ def _add_metrics_timer_block(sdfg: dace.SDFG, label: str, *, start: bool) -> Con
         tasklet = state.add_tasklet(
             'gt_start_timer',
             {},
-            {'time'},
+            {'time': None},
             ('cudaDeviceSynchronize();\n'
              'auto now = std::chrono::high_resolution_clock::now();\n'
              'time = std::chrono::duration_cast<std::chrono::nanoseconds>(\n'
@@ -66,8 +66,8 @@ def _add_metrics_timer_block(sdfg: dace.SDFG, label: str, *, start: bool) -> Con
     else:
         tasklet = state.add_tasklet(
             'gt_stop_timer',
-            {'time_start'},
-            {'time_total'},
+            {'time_start': None},
+            {'time_total': None},
             ('cudaDeviceSynchronize();\n'
              'auto now = std::chrono::high_resolution_clock::now();\n'
              'auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(\n'
@@ -110,7 +110,7 @@ def _build_failed_validation_shape() -> dace.SDFG:
     # alongside a GPU_Device map whose body contains a NestedSDFG.
     stmt_0 = sdfg.add_state('stmt_0')
 
-    deref = stmt_0.add_tasklet('tlet_1_deref', {}, {'out'}, 'out = 1.0;', language=dace.Language.CPP)
+    deref = stmt_0.add_tasklet('tlet_1_deref', {}, {'out': None}, 'out = 1.0;', language=dace.Language.CPP)
     deref.out_connectors = {'out': dace.float64}
     stmt_0.add_edge(deref, 'out', stmt_0.add_write('S_M_0'), None, dace.Memlet('S_M_0[0]'))
 
@@ -146,7 +146,7 @@ def _build_failed_validation_shape() -> dace.SDFG:
     rt = reduce_state.add_tasklet('reduce_add', {'_a': dace.float64}, {'_b': dace.float64}, '_b = _a + 1.0')
     reduce_state.add_edge(reduce_state.add_read('a_in'), None, rt, '_a', dace.Memlet('a_in[0]'))
     reduce_state.add_edge(rt, '_b', reduce_state.add_write('b_out'), None, dace.Memlet('b_out[0]'))
-    nsdfg = stmt_0.add_nested_sdfg(inner, {'a_in'}, {'b_out'}, {})
+    nsdfg = stmt_0.add_nested_sdfg(inner, {'a_in': None}, {'b_out': None}, {})
     lane_mid_acc = stmt_0.add_access('lane_mid')
 
     # Stage 4 (in-map Tasklet, AFTER the NSDFG) -- finalize.

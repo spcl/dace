@@ -19,6 +19,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
+from ordered_set import OrderedSet
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_node, _fold_kinds, _Kind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                weakly_connected_node_sets)
@@ -135,7 +136,7 @@ class SplitStateByGPUClass(ppl.Pass):
             chains.append(bands)
 
         # "Lift to before" set: pure-CPU WCCs + chain prefixes.
-        before_nodes: Set[nodes.Node] = set()
+        before_nodes: OrderedSet[nodes.Node] = OrderedSet()
         for wcc in cpu_wccs:
             before_nodes.update(wcc)
         for prefix, _middle, _suffix in chains:
@@ -159,7 +160,7 @@ class SplitStateByGPUClass(ppl.Pass):
         # Second fission: when a chain has a CPU suffix, lift the GPU work (pure-GPU WCCs + each
         # chain's GPU middle) out so the suffix is left behind as the trailing state.
         if has_suffix:
-            gpu_to_lift: Set[nodes.Node] = set()
+            gpu_to_lift: OrderedSet[nodes.Node] = OrderedSet()
             for wcc in gpu_wccs:
                 gpu_to_lift.update(wcc)
             for _prefix, middle, _suffix in chains:

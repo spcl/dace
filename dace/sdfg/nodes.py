@@ -40,8 +40,8 @@ class Node(object):
     gpu_stream_id = Property(dtype=int,
                              default=None,
                              allow_none=True,
-                             desc="GPU stream assignment from the experimental-codegen stream "
-                             "scheduler. None when unassigned. Persisted across save/load.")
+                             desc="GPU stream this node is scheduled on. Only meaningful for the nodes that "
+                             "can run on a GPU -- a MapEntry, a Tasklet or a LibraryNode. None when unassigned.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type

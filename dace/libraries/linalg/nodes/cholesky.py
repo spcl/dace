@@ -143,20 +143,18 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         }, **kwargs)
         self.lower = lower
 
-    def expand(self, state, sdfg=None, *args, **kwargs):
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
         # Storage-aware auto-pick: the alphabetical default picks OpenBLAS for a GPU-resident
         # matrix, which then writes GPU-storage ``_info`` from a CPU library and fails validation.
-        actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
+        state = state_or_impl if isinstance(state_or_sdfg, dace.SDFG) else state_or_sdfg
         if self.implementation is None:
             in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
             if in_edges:
                 outer = state.memlet_path(in_edges[0])[0].src
-                if isinstance(outer, dace.sdfg.nodes.AccessNode):
-                    if actual_sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global:
-                        self.implementation = 'cuSolverDn'
-        if sdfg is not None:
-            return super().expand(state, sdfg, *args, **kwargs)
-        return super().expand(state, *args, **kwargs)
+                if (isinstance(outer, dace.sdfg.nodes.AccessNode)
+                        and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global):
+                    self.implementation = 'cuSolverDn'
+        return super().expand(state_or_sdfg, state_or_impl, **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -106,7 +106,7 @@ def test_is_inside_gpu_device_kernel_false_for_sibling_consumer():
     # Kernel scope writing into G.
     g_in = state.add_access('G')
     me, mx = state.add_map('k', dict(i='0:16'), schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet('w', set(), {'g'}, 'g = 1.0f;', language=dtypes.Language.CPP)
+    tasklet = state.add_tasklet('w', set(), {'g': None}, 'g = 1.0f;', language=dtypes.Language.CPP)
     state.add_edge(me, None, tasklet, None, Memlet())
     mx.add_in_connector('IN_G')
     mx.add_out_connector('OUT_G')
@@ -116,7 +116,7 @@ def test_is_inside_gpu_device_kernel_false_for_sibling_consumer():
     # Sibling NSDFG that reads G.
     inner = _trivial_inner_sdfg('sibling_inner')
     inner.add_array('g_in', [16], dace.float32, storage=dtypes.StorageType.GPU_Global)
-    nsdfg_node = state.add_nested_sdfg(inner, {'g_in'}, set())
+    nsdfg_node = state.add_nested_sdfg(inner, {'g_in': None}, set())
     state.add_edge(g_in, None, nsdfg_node, 'g_in', Memlet('G[0:16]'))
 
     assert is_inside_gpu_device_kernel(inner) is False

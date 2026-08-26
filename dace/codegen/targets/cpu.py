@@ -27,6 +27,22 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
+def _use_aligned_operator_new(desc: data.Data) -> bool:
+    """Whether heap arrays are allocated with aligned ``operator new``.
+
+    The function considers the selected C++ standard and the `alignment` property
+    of the data descriptor.
+    """
+    try:
+        if int(Config.get('compiler', 'cpp_standard')) < 17:
+            return False  # Aligned `new` not supported by the standard.
+        if desc.alignment >= 0:
+            return True  # Alignment requested either default (0) or concrete value
+        return False
+    except ValueError:
+        return False
+
+
 def gpu_block_reduction_write_slot(subset, base, length):
     """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
 
@@ -672,7 +688,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             aligned = ''
-            if nodedesc.alignment >= 0:
+            if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
                 aligned = f'(std::align_val_t({align_value}))'
             allocation_stream.write(f"{alloc_name} = new {aligned} {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}];\n",
@@ -734,7 +750,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Allocate in each OpenMP thread
             aligned = ''
-            if nodedesc.alignment >= 0:
+            if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
                 aligned = f'(std::align_val_t({align_value}))'
 
@@ -792,7 +808,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Memory from the aligned operator new[] must be released by the aligned operator
                 # delete[]. The direct operator call skips destructors and relies on the new-expression
                 # emitting no array cookie - both only hold for trivially destructible element types.
-                if nodedesc.alignment >= 0:
+                if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
                     callsite_stream.write(
                         f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
@@ -806,7 +822,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
                 # Aligned pairing + trivial-destructibility guard as above.
-                if nodedesc.alignment >= 0:
+                if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
                     delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
                                    f"\"aligned heap deallocation skips destructors\"); "

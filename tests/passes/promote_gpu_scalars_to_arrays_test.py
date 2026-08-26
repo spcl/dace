@@ -19,10 +19,7 @@ from dace.transformation.pass_pipeline import Pipeline
 def _run(sdfg, **pass_kwargs):
     """Run the prerequisite + the promote pass."""
     Pipeline([InferDefaultSchedulesAndStorages()]).apply_pass(sdfg, {})
-    p = PromoteGPUScalarsToArrays()
-    for k, v in pass_kwargs.items():
-        setattr(p, k, v)
-    return p.apply_pass(sdfg, {})
+    return PromoteGPUScalarsToArrays(**pass_kwargs).apply_pass(sdfg, {})
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +57,13 @@ def _build_issue_2393_sdfg():
 
     a, b, c, d = (state.add_access(n) for n in 'abcd')
     me, mx = state.add_map('map', ndrange={'__i': '0:10'}, schedule=dtypes.ScheduleType.GPU_Device)
-    nsdfg = state.add_nested_sdfg(sdfg=nested, inputs={'__arg1', '__arg2', '__cond'}, outputs={'__output'})
+    nsdfg = state.add_nested_sdfg(sdfg=nested,
+                                  inputs={
+                                      '__arg1': None,
+                                      '__arg2': None,
+                                      '__cond': None
+                                  },
+                                  outputs={'__output': None})
     state.add_memlet_path(a, me, nsdfg, dst_conn='__arg1', memlet=Memlet(data='a', subset='__i'))
     state.add_memlet_path(b, me, nsdfg, dst_conn='__arg2', memlet=Memlet(data='b', subset='__i'))
     state.add_memlet_path(c, me, nsdfg, dst_conn='__cond', memlet=Memlet(data='c', subset='__i'))
@@ -133,7 +136,7 @@ def test_nested_sdfg_rename_via_connector():
     outer.add_scalar('X_outer', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     outer.add_scalar('Y_outer', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     ostate = outer.add_state()
-    nsdfg = ostate.add_nested_sdfg(sdfg=inner, inputs={'X_inner'}, outputs={'Y_inner'})
+    nsdfg = ostate.add_nested_sdfg(sdfg=inner, inputs={'X_inner': None}, outputs={'Y_inner': None})
     ostate.add_edge(ostate.add_access('X_outer'), None, nsdfg, 'X_inner', Memlet(data='X_outer', subset='0'))
     ostate.add_edge(nsdfg, 'Y_inner', ostate.add_access('Y_outer'), None, Memlet(data='Y_outer', subset='0'))
 
@@ -232,7 +235,7 @@ def _build_kernel_output_sdfg(transient_inside: bool, kernel_output_visible: boo
     sdfg.add_scalar('local_s', dtype=dace.float64, transient=transient_inside, storage=dtypes.StorageType.Default)
     state = sdfg.add_state()
     me, mx = state.add_map('m', ndrange={'i': '0:10'}, schedule=dtypes.ScheduleType.GPU_Device)
-    t = state.add_tasklet('w', {'a'}, {'b'}, 'b = a + 1.0')
+    t = state.add_tasklet('w', {'a': None}, {'b': None}, 'b = a + 1.0')
     a = state.add_access('A')
     ls = state.add_access('local_s')
     state.add_memlet_path(a, me, t, dst_conn='a', memlet=Memlet(data='A', subset='i'))

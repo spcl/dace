@@ -103,23 +103,17 @@ def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
     return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
 
-# Storages that mark a copy/memset library node as "GPU-relevant" (its expansion emits a
-# cudaMemcpy / cudaMemset). Hoisted to module scope because it is consulted per node visited
-# and rebuilding the set on every call shows up in profiles.
-_GPU_COPY_STORAGES = frozenset(
-    {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned})
-
-
 def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     """``CopyLibraryNode`` / ``FillLibraryNode`` whose storage involves GPU memory."""
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state) in _GPU_COPY_STORAGES or node.dst_storage(state) in _GPU_COPY_STORAGES)
+        return (node.src_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+                or node.dst_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
     if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
-            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
+            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES:
                 return True
     return False
 

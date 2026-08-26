@@ -79,18 +79,19 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
-GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
+# Schedules the experimental CUDA code generator emits.
+EXPERIMENTAL_GPU_SCHEDULES = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_Warp,
 ]
 
+# Storages a GPU kernel can address. Register is deliberately absent: outside a kernel it is a CPU
+# stack array. A list, like GPU_SCHEDULES above, because the codegen dispatchers register per list.
 GPU_KERNEL_ACCESSIBLE_STORAGES = [
     StorageType.GPU_Global,
     StorageType.GPU_Shared,
     StorageType.CPU_Pinned,
-    # Register is not added because register outside a kernel
-    # is a CPU stack array, and this will not work
 ]
 
 # A subset of CPU schedule types

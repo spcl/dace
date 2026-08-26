@@ -17,7 +17,7 @@ def _kernel_with_nested_threadblock(user_block_size, tb_extent: int) -> tuple:
     dev_me, dev_mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
     dev_me.map.gpu_block_size = list(user_block_size)
     tb_me, tb_mx = state.add_map('tb', dict(j=f'0:{tb_extent}'), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
-    t = state.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    t = state.add_tasklet('w', {}, {'o': None}, 'o = 1.0')
     a = state.add_write('A')
 
     tb_mx.add_scope_connectors('A')

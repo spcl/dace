@@ -35,7 +35,7 @@ def _device_function_code(inner: dace.SDFG, in_conns, out_conns, wirings, impl='
             declared[oname] = oshape
     state = sdfg.add_state('main')
     entry, exit_ = state.add_map('kmap', dict(i='0:16'), schedule=GPU_DEVICE)
-    nsdfg = state.add_nested_sdfg(inner, set(in_conns), set(out_conns))
+    nsdfg = state.add_nested_sdfg(inner, dict.fromkeys(in_conns), dict.fromkeys(out_conns))
     for conn, oname, _oshape, sub, is_input in wirings:
         access = state.add_access(oname)
         if is_input:
@@ -157,7 +157,7 @@ def _inner_with_view(name: str, write_through_view: bool) -> dace.SDFG:
     g.add_view('av', (8, ), dace.float64)
     s = g.add_state('s')
     a, b, av = s.add_access('a'), s.add_access('b'), s.add_access('av')
-    t = s.add_tasklet('cp', {'x'}, {'y'}, 'y = x')
+    t = s.add_tasklet('cp', {'x': None}, {'y': None}, 'y = x')
     if not write_through_view:
         s.add_edge(a, None, av, None, dace.Memlet('a[0:8]'))  # read view: a -> av
         s.add_edge(av, None, t, 'x', dace.Memlet('av[0]'))

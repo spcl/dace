@@ -29,7 +29,7 @@ def add_block_kernel(sdfg: dace.SDFG, label: str, src: str, dst: str, code: str)
                                             schedule=dtypes.ScheduleType.Sequential)
     kernel_entry, kernel_exit = state.add_map(f'{label}_kernel', {'jk': '0:klev'},
                                               schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet(f'{label}_compute', {'inp'}, {'out'}, code)
+    tasklet = state.add_tasklet(f'{label}_compute', {'inp': None}, {'out': None}, code)
     state.add_memlet_path(state.add_read(src),
                           block_entry,
                           kernel_entry,

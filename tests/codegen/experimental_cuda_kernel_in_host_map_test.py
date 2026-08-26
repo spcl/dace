@@ -22,7 +22,7 @@ def build_kernel_in_host_map_sdfg() -> dace.SDFG:
     state = sdfg.add_state()
     outer_entry, outer_exit = state.add_map('blocks', {'ibl': '0:N'}, schedule=dtypes.ScheduleType.Sequential)
     kernel_entry, kernel_exit = state.add_map('kernel', {'jk': '0:K'}, schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet('scale', {'inp'}, {'out'}, 'out = inp * 2.0')
+    tasklet = state.add_tasklet('scale', {'inp': None}, {'out': None}, 'out = inp * 2.0')
 
     state.add_memlet_path(state.add_read('a'),
                           outer_entry,

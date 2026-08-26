@@ -7,6 +7,7 @@ import warnings
 from dace import SDFG, Memlet, dtypes, symbol
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.subsets import Range
 
 
@@ -173,12 +174,14 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
 
         # In code, assert that we allocate _and_ deallocate on the heap
         code = program_objects[0].clean_code
-        # A non-negative alignment emits the aligned new/delete forms.
-        assert a_desc.alignment == array_a_alignment
-        assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
-        assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, ("A is deallocated from "
-                                                                                          "the heap.")
-        assert "delete[] A;" not in code, "A is not deallocated by the unaligned form."
+        # Consult the active cpp_standard: C++ >= 17 emits the aligned
+        # new/delete forms, earlier standards the plain ones.
+        if _use_aligned_operator_new(a_desc):
+            assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
+            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, "A is deallocated from the heap."
+        else:
+            assert "A = new double" in code, "A is allocated on the heap."
+            assert "delete[] A" in code, "A is deallocated from the heap."
 
 
 def test_at_multiplies_the_coordinate_by_the_array_stride():

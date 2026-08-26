@@ -78,11 +78,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self.has_pool = False
 
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
-        self._dispatcher.register_map_dispatcher(dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN, self)
+        self._dispatcher.register_map_dispatcher(dtypes.EXPERIMENTAL_GPU_SCHEDULES, self)
         self._dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
-        gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
+        gpu_storage = dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
         self._dispatcher.register_array_dispatcher(gpu_storage, self)
         self._dispatcher.register_array_dispatcher(dtypes.StorageType.CPU_Pinned, self)
         for storage in gpu_storage:
@@ -513,7 +513,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         node encountered while already emitting device code.
         """
         schedule = node.schedule if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) else None
-        if schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+        if schedule in dtypes.EXPERIMENTAL_GPU_SCHEDULES:
             return True
         if self._in_device_code:
             return True
@@ -572,7 +572,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
         elif type(node) is nodes.Tasklet and self._in_device_code:
             self._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node) is nodes.MapExit and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+        elif type(node) is nodes.MapExit and node.schedule in dtypes.EXPERIMENTAL_GPU_SCHEDULES:
             # A GPU MapExit is closed by the kernel's scope manager; suppress the CPU fallback.
             return
         else:

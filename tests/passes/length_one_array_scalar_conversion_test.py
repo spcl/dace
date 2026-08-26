@@ -34,7 +34,7 @@ def _io_sdfg() -> dace.SDFG:
     sdfg.add_array("beta", [1], dace.float64, transient=False)
     st = sdfg.add_state("main")
     ra, wb = st.add_read("alpha"), st.add_write("beta")
-    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a * 2.0")
+    t = st.add_tasklet("t", {"a": None}, {"b": None}, "b = a * 2.0")
     st.add_edge(ra, None, t, "a", dace.Memlet("alpha[0]"))
     st.add_edge(t, "b", wb, None, dace.Memlet("beta[0]"))
     return sdfg
@@ -158,7 +158,7 @@ def test_preserve_abi_stages_a_signature_scalar_into_a_length_one_array():
     sdfg.add_scalar("alpha", dace.float64, transient=False)
     sdfg.add_array("beta", [1], dace.float64, transient=False)
     st = sdfg.add_state("main")
-    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a * 3.0")
+    t = st.add_tasklet("t", {"a": None}, {"b": None}, "b = a * 3.0")
     st.add_edge(st.add_read("alpha"), None, t, "a", dace.Memlet("alpha[0]"))
     st.add_edge(t, "b", st.add_write("beta"), None, dace.Memlet("beta[0]"))
 
@@ -192,7 +192,7 @@ def test_stage_read_only_input_gets_copyin_not_copyout():
     ri = st.add_read("inp")
     wo = st.add_write("out")
     me, mx = st.add_map("m", dict(i="0:4"))
-    t = st.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    t = st.add_tasklet("t", {"a": None}, {"o": None}, "o = a")
     st.add_memlet_path(ri, me, t, dst_conn="a", memlet=dace.Memlet("inp[0]"))
     st.add_memlet_path(t, mx, wo, src_conn="o", memlet=dace.Memlet("out[i]"))
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
@@ -413,11 +413,11 @@ def test_arrayize_rewrites_interstate_edge_assignment():
     sdfg.add_symbol('a', dace.float64)
 
     s0 = sdfg.add_state('s0', is_start_block=True)
-    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    t = s0.add_tasklet('w', {}, {'o': None}, 'o = 3.0')
     s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
     s1 = sdfg.add_state('s1')
     sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={'a': 'arr'}))
-    t2 = s1.add_tasklet('r', {}, {'o'}, 'o = a')
+    t2 = s1.add_tasklet('r', {}, {'o': None}, 'o = a')
     s1.add_edge(t2, 'o', s1.add_write('out'), None, dace.Memlet('out[0]'))
 
     ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
@@ -441,7 +441,7 @@ def test_arrayize_rewrites_conditional_guard_after_branch_removal():
     sdfg.add_scalar('arr', dace.float64, transient=True)
     sdfg.add_array('out', [1], dace.float64)
     s0 = sdfg.add_state('s0', is_start_block=True)
-    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    t = s0.add_tasklet('w', {}, {'o': None}, 'o = 3.0')
     s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
 
     cond = ConditionalBlock('cb')
@@ -452,7 +452,7 @@ def test_arrayize_rewrites_conditional_guard_after_branch_removal():
     cond.add_branch(CodeBlock('arr > 0'), keep)
     cond.add_branch(CodeBlock('arr < 0'), drop)
     bs = keep.add_state('bs', is_start_block=True)
-    t2 = bs.add_tasklet('r', {}, {'o'}, 'o = 1.0')
+    t2 = bs.add_tasklet('r', {}, {'o': None}, 'o = 1.0')
     bs.add_edge(t2, 'o', bs.add_write('out'), None, dace.Memlet('out[0]'))
     cond.remove_branch(drop)
 

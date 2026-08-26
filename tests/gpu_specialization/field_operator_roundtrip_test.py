@@ -85,7 +85,7 @@ def _attach_metrics_blocks(sdfg: dace.SDFG) -> None:
     entry_body = ControlFlowRegion('metrics_entry_body', sdfg=sdfg)
     entry_state = entry_body.add_state('metrics_entry_collect', is_start_block=True)
     entry_region.add_branch(CodeBlock('metrics_level >= 10'), entry_body)
-    t_in = entry_state.add_tasklet('gt_start_timer', set(), {'out'}, 'out = 0')
+    t_in = entry_state.add_tasklet('gt_start_timer', set(), {'out': None}, 'out = 0')
     t_in_an = entry_state.add_access('gt_start_time')
     entry_state.add_edge(t_in, 'out', t_in_an, None, Memlet(data='gt_start_time', subset='0'))
 
@@ -95,7 +95,7 @@ def _attach_metrics_blocks(sdfg: dace.SDFG) -> None:
     exit_body = ControlFlowRegion('metrics_exit_body', sdfg=sdfg)
     exit_state = exit_body.add_state('metrics_exit_collect', is_start_block=True)
     exit_region.add_branch(CodeBlock('metrics_level >= 10'), exit_body)
-    t_out = exit_state.add_tasklet('gt_stop_timer', {'start'}, {'out'}, 'out = start - start')
+    t_out = exit_state.add_tasklet('gt_stop_timer', {'start': None}, {'out': None}, 'out = start - start')
     t_out_an = exit_state.add_access('gt_start_time')
     t_out_dst = exit_state.add_access('gt_compute_time')
     exit_state.add_edge(t_out_an, None, t_out, 'start', Memlet(data='gt_start_time', subset='0'))
