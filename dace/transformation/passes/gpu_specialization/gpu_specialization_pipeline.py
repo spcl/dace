@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU specialization pipelines.
-
-:class:`GPUCodegenPreprocessPipeline` is the codegen target's one-shot
-codegen-preparation pipeline; :class:`GPUStreamPipeline` runs just the stream
-scheduler + wirer on a post-expansion SDFG. Both act on the root SDFG only.
+"""GPU specialization pipelines, both acting on the root SDFG only:
+:class:`GPUCodegenPreprocessPipeline` prepares an SDFG for the experimental codegen, and
+:class:`GPUStreamPipeline` runs just the stream scheduler and wirer on a post-expansion SDFG.
 """
 from typing import Optional
 
@@ -17,21 +15,15 @@ from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaul
 
 
 class GPUStreamPipeline(Pipeline):
-    """Post-expansion GPU stream lowering: scheduling -> wiring.
+    """Post-expansion GPU stream lowering: scheduling, then wiring.
 
-    Pass ``scheduling_strategy=<instance>`` to override the default
-    :class:`NaiveGPUStreamScheduler`. Expects a post-expansion SDFG (libnodes
-    flattened via ``sdfg.expand_library_nodes(recursive=True)``).
-
-    Scheduling is idempotent (gpu_stream_id persisted per node) and wiring is
-    single-shot (gated by :func:`is_stream_wiring_applied`), so each pass owns its
-    own re-entry semantics and no pipeline-level guard is needed.
+    Expects libnodes already flattened via ``sdfg.expand_library_nodes(recursive=True)``. Each pass
+    owns its re-entry semantics -- scheduling is idempotent, wiring is single-shot -- so the pipeline
+    needs no guard of its own.
     """
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
         if scheduling_strategy is None:
-            # Codegen owns synchronize_on_exit and hands it to the strategy (which falls
-            # back to the same config when given None).
             scheduling_strategy = AutoSingleStreamGPUScheduler(
                 synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         elif not isinstance(scheduling_strategy, GPUStreamSchedulingStrategy):
@@ -42,11 +34,8 @@ class GPUStreamPipeline(Pipeline):
 
 
 class GPUCodegenPreprocessPipeline(Pipeline):
-    """One-shot GPU-codegen preparation.
-
-    Declarative ordering of every transformation that brings an SDFG to a state the experimental
-    CUDA codegen can emit. See the constructor for the non-obvious sequencing constraints.
-    """
+    """One-shot GPU-codegen preparation: every transformation that brings an SDFG to a state the
+    experimental CUDA codegen can emit. The constructor documents the sequencing constraints."""
 
     def __init__(self):
         # Local imports: avoid circular import in ``dace.transformation`` package init.
@@ -59,20 +48,14 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars)
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
-        # Order constraints (why each pass sits where it does):
-        #   * ``NestedGPUDeviceMapLowering`` first: flattens nested ``GPU_Device`` maps into one
-        #     kernel; every downstream pass assumes one-level kernels.
-        #   * scheduler after ``ExpandLibraryNodes``: it walks real kernel/runtime-call nodes and
-        #     would miss opaque libnodes.
-        #   * ``AddThreadBlockMaps`` after the transient hoist in ``InsertExplicitGPUGlobalMemoryCopies``:
-        #     tiling first leaks the inner-map outer-loop symbol into host-side ``cudaMalloc`` sizes.
-        #   * ``DemoteKernelInternalArraysToScalars`` after structure is final and before
-        #     ``ReinferConnectorTypes``: it scalarizes length-1 arrays and resets connectors, which
-        #     re-inference then re-derives as scalar references.
-        #   * ``ReinferConnectorTypes`` last: earlier passes mutate NestedSDFG-connector descriptors,
-        #     so connector types must be re-derived for correct codegen signatures.
-        # Scheduling writes ``Node.gpu_stream_id``; wiring reads it and lays down the
-        # ``gpu_streams`` array + connector + sync wiring.
+        # Order constraints:
+        #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
+        #   * scheduler after ExpandLibraryNodes -- it would miss opaque libnodes.
+        #   * AddThreadBlockMaps after the transient hoist in InsertExplicitGPUGlobalMemoryCopies --
+        #     tiling first leaks the inner-map outer-loop symbol into host-side cudaMalloc sizes.
+        #   * DemoteKernelInternalArraysToScalars before ReinferConnectorTypes -- it resets the
+        #     connectors that re-inference then re-derives as scalar references.
+        #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
         strategy = AutoSingleStreamGPUScheduler(
             synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         super().__init__([

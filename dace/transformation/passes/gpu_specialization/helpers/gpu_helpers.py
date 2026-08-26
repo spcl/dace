@@ -1,17 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared utilities for the GPU-specialization passes: canonical stream names,
-node/connector predicates (single source of truth so passes don't reimplement
-scope walks), and the stream-wiring idempotency signal."""
+"""Shared utilities for the GPU-specialization passes: stream names, node and connector
+predicates, and the stream-wiring idempotency signal."""
 from typing import List, Optional, Set
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
-# Stream in-connector name, imported from the libnode layer so producers and
-# the scheduler cannot drift. Named after the legacy ambient-stream symbol so
-# the same expanded IR is valid under both the legacy codegen (which declares
-# it) and the experimental codegen (whose type-based prelude binds it).
+# Imported from the libnode layer so producers and the scheduler cannot drift. Named after the
+# legacy ambient-stream symbol, so the expanded IR is valid under either codegen.
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
 
@@ -26,12 +23,7 @@ def dependency_edge():
 
 
 def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
-    """``True`` iff ``name`` is written across a GPU-scheduled map's ``MapExit`` -- i.e. a kernel output.
-
-    Single source of truth for the "is a kernel output" test: ``PromoteGPUScalarsToArrays`` uses it to
-    promote a scalar, and ``DemoteKernelInternalArraysToScalars`` uses it (negated) to leave genuine
-    kernel outputs alone.
-    """
+    """Whether ``name`` is written across a GPU-scheduled map's ``MapExit``, i.e. is a kernel output."""
     for state in sdfg.states():
         for node in state.nodes():
             if not (isinstance(node, nodes.AccessNode) and node.data == name):
@@ -47,18 +39,15 @@ def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
 
 
 def is_stream_wiring_applied(sdfg: SDFG) -> bool:
-    """True iff stream-wiring already produced the ``gpu_streams`` array. Only the *wiring* step is
-    single-shot; scheduling is persisted per node via ``Node.gpu_stream_id`` and survives
-    serialisation. Used by :class:`GPUStreamWiring` to skip re-wiring.
-    """
+    """Whether wiring already produced the ``gpu_streams`` array. Only wiring is single-shot;
+    scheduling persists per node in ``Node.gpu_stream_id``."""
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
-    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` that enclose ``node`` (empty when none).
+    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` enclosing ``node``.
 
-    Invalidates the state's ``scope_dict`` cache first: earlier pipeline passes can mutate topology
-    in ways that leave the cache stale.
+    The ``scope_dict`` cache is invalidated first: earlier passes may have left it stale.
     """
     state._clear_scopedict_cache()
     sdict = state.scope_dict()
@@ -80,11 +69,7 @@ def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
 
 
 def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
-    """True iff ``sub_sdfg`` is (transitively) the body of a GPU_Device map.
-
-    Walks ``parent_nsdfg_node`` / ``parent_sdfg`` directly, so the result is robust against stale
-    ``scope_dict`` caches.
-    """
+    """Whether ``sub_sdfg`` is, transitively, the body of a GPU_Device map."""
     cur = sub_sdfg
     while cur.parent_nsdfg_node is not None:
         if innermost_enclosing_map(cur.parent, cur.parent_nsdfg_node, dtypes.ScheduleType.GPU_Device) is not None:
@@ -94,11 +79,7 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
 
 
 def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
-    """Weakly-connected components of ``graph``'s dataflow, as node sets.
-
-    Single source of truth for the WCC partition used by both the stream scheduler and the
-    state-splitter, via ``OrderedDiGraph.nx`` (tracks DaCe's graph internals rather than
-    re-deriving connectivity)."""
+    """Weakly-connected components of ``graph``'s dataflow, as node sets."""
     import networkx as nx
     return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
@@ -124,24 +105,16 @@ def is_gpu_kernel_launcher(node) -> bool:
 
 
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes that *take* a GPU stream: kernel ``MapEntry``, GPU Copy/Memset libnode, or a
-    lowered runtime-call Tasklet.
-
-    AccessNodes are excluded (memory references, not stream consumers); use
-    :func:`is_gpu_relevant_node` for the broader "involves GPU work" question.
-    """
+    """Nodes that *take* a GPU stream: a kernel ``MapEntry``, a GPU Copy/Fill libnode, or a lowered
+    runtime-call Tasklet. AccessNodes are memory references, not consumers."""
     return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_memset_libnode(node, sdfg, state)
             or is_already_lowered_gpu_runtime_call(node))
 
 
 def is_already_lowered_gpu_runtime_call(node) -> bool:
-    """True for a Tasklet that issues a stream-bound GPU runtime call.
-
-    Detected either by a ``gpuStream_t`` in-connector (cuBLAS / cuSolver expansions that wire one)
-    or by a :data:`STREAM_CONNECTOR` reference in the body (Copy/Memset libnode expansions, which
-    carry no connector and rely on the scheduler binding it post-expansion). Pipeline-emitted sync
-    tasklets are excluded -- they are not consumers in the WCC sense.
-    """
+    """A Tasklet issuing a stream-bound GPU runtime call, detected by a ``gpuStream_t``
+    in-connector or a :data:`STREAM_CONNECTOR` reference in its body. Pipeline sync tasklets are
+    excluded -- they are not consumers in the WCC sense."""
     if not isinstance(node, nodes.Tasklet):
         return False
     if is_pipeline_sync_tasklet(node):
@@ -155,18 +128,13 @@ SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronizatio
 
 
 def is_pipeline_sync_tasklet(node) -> bool:
-    """True iff ``node`` is a sync tasklet emitted by the stream pipeline (identified by its canonical
-    label). Excluded from consumer re-detection despite its ``gpuStream_t`` connector.
-    """
+    """A sync tasklet emitted by the stream pipeline, identified by its canonical label."""
     return isinstance(node, nodes.Tasklet) and node.label in SYNC_TASKLET_LABELS
 
 
 def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes implying the enclosing component/SDFG involves GPU work.
-
-    The union of stream consumers and AccessNodes for ``GPU_Global`` arrays. Only stream consumers
-    get a stream connector wired; AccessNodes have none to bind.
-    """
+    """Nodes implying the enclosing component involves GPU work: the stream consumers plus the
+    AccessNodes of ``GPU_Global`` arrays."""
     if is_gpu_stream_consumer(node, sdfg, state):
         return True
     if isinstance(node, nodes.AccessNode):
@@ -175,29 +143,19 @@ def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def has_stream_connector(node) -> bool:
-    """True if ``node`` carries any in-connector typed ``gpuStream_t``.
-
-    Type-based, so it accepts whatever name the libnode expansion chose.
-    """
+    """Whether ``node`` carries an in-connector typed ``gpuStream_t``, whatever its name."""
     return any(t is not None and t == dtypes.gpuStream_t for t in node.in_connectors.values())
 
 
 def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
-    """Add a GPU-stream input connector with the right dtype.
-
-    ``single_stream=True`` types it as a scalar ``gpuStream_t`` (consumer takes one stream value);
-    ``False`` types it as ``pointer(gpuStream_t)`` (consumer receives the full ``gpu_streams`` array
-    and indexes it by id).
-    """
+    """Add a GPU-stream input connector: a scalar ``gpuStream_t`` under ``single_stream``, else a
+    pointer to the whole ``gpu_streams`` array, which the consumer indexes by id."""
     dtype = dtypes.gpuStream_t if single_stream else dtypes.pointer(dtypes.gpuStream_t)
     node.add_in_connector(conn_name, dtype)
 
 
 def find_inner_gpu_consumers(sdfg: SDFG):
-    """Yield ``(node, sdfg, state)`` for every GPU stream consumer reachable inside ``sdfg``, recursing
-    into nested SDFGs. Used by the stream-wiring passes to enumerate kernels and library nodes that
-    need a stream bound.
-    """
+    """Yield ``(node, sdfg, state)`` for every GPU stream consumer in ``sdfg`` and its nested SDFGs."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for node in state.nodes():

@@ -1,15 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``DemoteKernelInternalArraysToScalars`` -- the inverse of
-:class:`~dace.transformation.passes.promote_gpu_scalars_to_arrays.PromoteGPUScalarsToArrays`.
+"""``DemoteKernelInternalArraysToScalars``, the inverse of ``PromoteGPUScalarsToArrays``.
 
-That pass widens scalars crossing a GPU kernel's output boundary into length-1
-``Array``s (outputs must live in addressable global memory). This pass enforces
-the symmetric half of the invariant: a value living entirely inside the kernel
-stays a ``Scalar``, so codegen emits ``double`` / ``double&`` instead of a
-needless ``double*`` indirection. The scalarization is delegated to
-:class:`~dace.transformation.passes.length_one_array_scalar_conversion.ConvertLengthOneArraysToScalars`;
-afterward the stale pointer-typed ``NestedSDFG`` connectors are reset and
-re-inferred as scalar references.
+That pass widens a scalar crossing a kernel's output boundary into a length-1 ``Array``; this one
+keeps a value living entirely inside the kernel a ``Scalar``, so codegen emits ``double`` rather
+than a needless ``double*``. Scalarization is delegated to ``ConvertLengthOneArraysToScalars``,
+after which the stale pointer-typed ``NestedSDFG`` connectors are reset and re-inferred.
 """
 from typing import Any, Dict, Optional, Set
 
@@ -24,11 +19,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import Conver
 
 
 def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
-    """The GPU-relevant schedule of ``node`` if it carries one, else ``None``.
-
-    Only maps and library nodes expose a schedule; tasklets and nested SDFGs yield ``None``
-    (accessing ``.schedule`` on a ``NestedSDFG`` raises ``AttributeError``).
-    """
+    """The schedule of ``node``, or ``None``: only maps and library nodes carry one."""
     if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
         return node.map.schedule
     if isinstance(node, nodes.LibraryNode):
@@ -37,20 +28,12 @@ def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
 
 
 def _accessed_by_unscalarizable_node(sdfg: SDFG, name: str) -> bool:
-    """``True`` iff an access node for ``name`` is adjacent to a node whose generated code we cannot
-    rewrite to scalar access -- demoting the length-1 buffer would break codegen (``float buf; buf[0]``).
+    """Whether an access node for ``name`` neighbours a node whose emitted code cannot be rewritten
+    to scalar access, so demoting the length-1 buffer would produce ``float buf; buf[0]``.
 
-    Blocking neighbours:
-
-    * a :class:`~dace.sdfg.nodes.LibraryNode` -- emits its own indexing (e.g. an unexpanded cub
-      block ``Reduce``);
-    * a non-Python tasklet -- e.g. the expanded cub block reduce whose C++ body is raw text
-      (``buf[0] = cub::BlockReduce...``) the scalar-conversion never sees; since ``ExpandLibraryNodes``
-      runs before this pass, this predicate is what actually fires for the block-reduction case;
-    * a GPU-scheduled map / library node -- a thread-block collective, i.e. a multi-thread buffer.
-
-    Python tasklets and sequential nested SDFGs (device functions) are safe: their boundary length-1
-    buffers scalarize cleanly via memlet / connector rewrite.
+    Blocking: a LibraryNode (emits its own indexing), a non-Python tasklet (raw C++ body the
+    conversion never sees -- the case that actually fires for the expanded cub block reduce), and a
+    GPU-scheduled map or library node (a thread-block collective, i.e. a multi-thread buffer).
     """
     for state in sdfg.states():
         for node in state.nodes():

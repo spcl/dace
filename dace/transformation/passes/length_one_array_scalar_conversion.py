@@ -1,38 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Passes that move data between length-1 ``Array`` and ``Scalar`` form.
 
-``ConvertLengthOneArraysToScalars`` rewrites every length-1 ``Array`` (shape ``(1,)``) to a true
-``Scalar`` and drops the now-redundant ``[0]`` accessors from interstate-edge assignments,
-conditional-block guards, loop-region conditions and memlet subsets.
-``ConvertScalarsToLengthOneArrays`` is the inverse (``Scalar`` -> length-1 ``Array``).
+``ConvertLengthOneArraysToScalars`` rewrites every length-1 ``Array`` to a ``Scalar`` and drops the
+now-redundant ``[0]`` accessors from interstate-edge assignments, guards, loop conditions and memlet
+subsets. ``ConvertScalarsToLengthOneArrays`` is the inverse.
 
-Transient descriptors are rewritten IN PLACE (same name): a transient is SDFG-internal, so turning it
-into the other form changes nothing a caller sees.
-
-A NON-transient descriptor is part of the SDFG signature -- rewriting it in place would change the
-caller's contract (the caller passes a 1-element numpy buffer for an ``Array`` but a by-value scalar
-for a ``Scalar``, and a by-value scalar cannot receive a written-back result). ``preserve_abi`` is how
-such a descriptor is converted anyway WITHOUT touching that contract: it is never rewritten, only
-STAGED through copy states, so the SDFG signature is byte-identical after the pass while the body
-computes on the other form. Set ``preserve_abi`` to opt in; left clear, non-transients are skipped
-entirely and only transients convert.
-
-Staging one non-transient means:
-
-* the signature descriptor ``alpha`` (a length-1 ``Array``) is KEPT,
-* a fresh transient ``Scalar`` ``scal_alpha`` is introduced and every body reference to ``alpha`` is
-  repointed to it,
-* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (only if ``alpha`` is read),
-* a copy-OUT ``alpha[0] = scal_alpha`` is appended in a new sink state (only if ``alpha`` is written).
-
-The whole SDFG body then computes on the plain scalar while the signature is unchanged. The inverse
-pass stages a non-transient ``Scalar`` into a length-1 ``Array`` the same way. The fresh descriptor is
-always allocated with ``find_new_name`` so repeated forward/inverse application never collides on a
-name it created earlier.
-
-The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-generation cleanup:
-``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
-``Array`` needs a 1-element numpy buffer.
+A transient is SDFG-internal, so it is rewritten in place under the same name. A non-transient is
+part of the signature -- a caller passes a 1-element buffer for an ``Array`` but a by-value scalar
+for a ``Scalar`` -- so it is converted only under ``preserve_abi``, and then by STAGING rather than
+rewriting: the signature descriptor ``alpha`` is kept, a fresh transient ``scal_alpha`` takes over
+every body reference, and a copy-in ``scal_alpha = alpha[0]`` / copy-out ``alpha[0] = scal_alpha``
+bracket the SDFG where ``alpha`` is read / written. The signature is byte-identical afterwards. The
+staged descriptor uses ``find_new_name``, so repeated forward/inverse application never collides.
 """
 import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
