@@ -1,16 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
-from typing import Dict, FrozenSet, Set, Tuple, List
+from typing import Any, Dict, FrozenSet, Optional, Set, Tuple, List
 import copy
 import functools
+import warnings
 
 import sympy
 
 import dace
-from dace import SDFG, SDFGState, dtypes, data as dt
-from dace.sdfg import nodes
-from dace.properties import make_properties
+from dace import SDFG, SDFGState, dtypes, data as dt, symbolic
+from dace.sdfg import is_devicelevel_gpu, nodes
+from dace.properties import Property, make_properties
 from dace.transformation import transformation, helpers
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Pass
 from dace.subsets import Range
 from dace.sdfg.graph import MultiConnectorEdge
@@ -40,6 +42,34 @@ def _tile_extent(max_elem, min_elem):
     return max_elem + 1 - min_elem
 
 
+def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
+    """True if ``desc`` is safe and worth demoting to per-thread ``Register``.
+
+    Every shape dimension must be a concrete positive integer -- a symbol would leak into a
+    host-side ``cudaMalloc`` and cannot size a per-thread array -- and the element count must
+    stay within ``max_elements``. Anything larger is hoisted instead.
+    """
+    total = 1
+    for dim in desc.shape:
+        if symbolic.issymbolic(dim):
+            return False
+        try:
+            dim = int(dim)
+        except (TypeError, ValueError):
+            return False  # e.g. sympy.oo: not symbolic, but not a finite integer either
+        if dim <= 0:
+            return False
+        total *= dim
+    return total <= max_elements
+
+
+def has_wcr_incoming(sdfg: SDFG, data_name: str) -> bool:
+    """True if any memlet writes ``data_name`` with a WCR. Demoting such an array to a
+    per-thread ``Register`` would silently break the accumulation."""
+    return any(e.data.wcr is not None and e.data.data == data_name for nsdfg in sdfg.all_sdfgs_recursive()
+               for state in nsdfg.states() for e in state.edges())
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class MoveArrayOutOfKernel(Pass):
@@ -51,12 +81,102 @@ class MoveArrayOutOfKernel(Pass):
     and discouraged.
     """
 
-    def __init__(self):
-        """Initialize the node-to-state cache (populated in :meth:`apply_pass`)."""
+    register_demotion_max_elements = Property(
+        dtype=int,
+        default=64,
+        desc="Max ``prod(shape)`` for a literal-shape kernel-internal transient to be demoted "
+        "from GPU_Global to per-thread Register storage. Larger transients are hoisted.",
+    )
+
+    def __init__(self, register_demotion_max_elements: int = 64):
+        """Initialize the node-to-state cache (populated in :meth:`move_array`)."""
+        super().__init__()
+        self.register_demotion_max_elements = register_demotion_max_elements
         self._node_to_state_cache: Dict[nodes.Node, SDFGState] = dict()
 
-    # Entry point
-    def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Demote or hoist every transient ``GPU_Global`` array defined inside a kernel.
+
+        :returns: Number of arrays handled, or ``None`` if there were none.
+        """
+        handled = 0
+        for data_name, desc, kernel_entry in self.kernel_internal_gpu_global_transients(sdfg):
+            if (is_register_demotable(desc, self.register_demotion_max_elements)
+                    and not has_wcr_incoming(sdfg, data_name)):
+                desc.storage = dtypes.StorageType.Register
+            else:
+                warnings.warn(f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel "
+                              f"{kernel_entry}. GPU_Global memory cannot be allocated within GPU kernels; the array "
+                              f"will be lifted outside the kernel as a non-transient GPU_Global array.")
+                MoveArrayOutOfKernel().move_array(sdfg, kernel_entry, data_name)
+            handled += 1
+        self.fail_on_in_kernel_global_global(sdfg)
+        return handled or None
+
+    @staticmethod
+    def kernel_internal_gpu_global_transients(sdfg: SDFG) -> OrderedSet:
+        """Transient ``GPU_Global`` arrays that only ever appear inside a ``GPU_Device`` map.
+
+        A ``(name, desc)`` pair that also appears outside a kernel is left alone: the inner
+        access is then a pass-through of an array the host already owns.
+        """
+        inside, outside = OrderedSet(), OrderedSet()
+        for node, parent in sdfg.all_nodes_recursive():
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            desc = node.desc(parent)
+            if not (isinstance(desc, dt.Array) and desc.transient and desc.storage is dtypes.StorageType.GPU_Global):
+                continue
+
+            kernel_entry = None
+            parent_map_info = helpers.get_parent_map(state=parent, node=node)
+            while parent_map_info is not None:
+                map_entry, map_state = parent_map_info
+                if isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule is dtypes.ScheduleType.GPU_Device:
+                    kernel_entry = map_entry
+                    break
+                parent_map_info = helpers.get_parent_map(map_state, map_entry)
+
+            if kernel_entry is None:
+                outside.add((node.data, desc))
+            else:
+                inside.add((node.data, desc, kernel_entry))
+
+        return OrderedSet([(name, desc, entry) for name, desc, entry in inside if (name, desc) not in outside])
+
+    @staticmethod
+    def fail_on_in_kernel_global_global(sdfg: SDFG) -> None:
+        """Raise if a transient ``GPU_Global`` copy survives inside a kernel scope: the codegen
+        has no host-side allocator there. Non-transient through-flows are connector-bound and fine."""
+        offenders: List[str] = []
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for edge in state.edges():
+                    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+                        continue
+                    if edge.data.is_empty() or edge.data.wcr is not None:
+                        continue
+                    src_desc, dst_desc = nsdfg.arrays[edge.src.data], nsdfg.arrays[edge.dst.data]
+                    if not (src_desc.storage is dtypes.StorageType.GPU_Global
+                            and dst_desc.storage is dtypes.StorageType.GPU_Global):
+                        continue
+                    if not (src_desc.transient or dst_desc.transient):
+                        continue
+                    if not (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst)):
+                        continue
+                    offenders.append(f"  - {edge.src.data} -> {edge.dst.data} in state "
+                                     f"'{state.label}' (SDFG '{nsdfg.name}')")
+        if offenders:
+            raise ValueError("Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" +
+                             "\n".join(offenders))
+
+    def move_array(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
         """Move a transient ``GPU_Global`` array out of a ``GPU_Device`` map.
 
         :param array_name: Transient array to move; all same-named arrays are lifted.

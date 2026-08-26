@@ -96,7 +96,7 @@ def test_extended():
 
     copy_libnodes = [n for n in state.nodes() if type(n).__name__ == 'CopyLibraryNode']
     assert copy_libnodes, ("Expected at least one CopyLibraryNode after gpu_transformations + "
-                           "InsertExplicitGPUGlobalMemoryCopies.")
+                           "MoveArrayOutOfKernel / InsertExplicitCopies.")
     from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import STREAM_CONNECTOR
     for cn in copy_libnodes:
         assert STREAM_CONNECTOR in cn.in_connectors, (

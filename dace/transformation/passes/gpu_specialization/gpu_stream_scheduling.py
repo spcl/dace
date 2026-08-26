@@ -29,8 +29,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
     is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
     is_stream_wiring_applied, weakly_connected_node_sets)
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-    InsertExplicitGPUGlobalMemoryCopies)
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (_make_sync_tasklet,
                                                                                    _stream_connector_name,
                                                                                    insert_per_node_syncs,
@@ -46,7 +45,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         # Without the implicit-copy lift, GPU transfers are invisible to the strategy.
-        return {InsertExplicitGPUGlobalMemoryCopies}
+        return {InsertExplicitCopies}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes

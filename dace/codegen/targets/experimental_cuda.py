@@ -451,7 +451,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                 Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         # All CPU<->GPU and GPU<->GPU AccessNode->AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
-        # ``InsertExplicitGPUGlobalMemoryCopies`` during ``preprocess()`` and
+        # ``InsertExplicitCopies`` during ``preprocess()`` and
         # lowered through their expansions. Anything reaching this dispatch
         # is a register / scope-local CPU copy -- delegate to CPU codegen.
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)

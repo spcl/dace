@@ -16,8 +16,7 @@ from dace.memlet import Memlet
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (dependency_edge, innermost_enclosing_map)
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-    InsertExplicitGPUGlobalMemoryCopies)
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 
 @properties.make_properties
@@ -31,7 +30,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         # Must run first: it lifts AccessNode->AccessNode Shared edges into
         # ``CopyLibraryNode``s. Without it, Shared transients used only on a
         # copy edge never surface as ``transient=True`` descriptors.
-        return {InsertExplicitGPUGlobalMemoryCopies}
+        return {InsertExplicitCopies}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors

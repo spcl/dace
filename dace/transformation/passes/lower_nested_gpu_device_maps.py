@@ -33,21 +33,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         return modified & (ppl.Modifies.Nodes)
 
     def _rm_map(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
+        """Delete a map scope and its contents. ``remove_node`` drops the incident edges."""
         map_exit = state.exit_node(map_entry)
-        map_inner_nodes = {n for n in state.all_nodes_between(map_entry, map_exit)}
-        map_inner_edges = state.all_edges(*map_inner_nodes)
-        for e in map_inner_edges:
-            state.remove_edge(e)
-        for n in map_inner_nodes:
-            state.remove_node(n)
-
-        for e in state.in_edges(map_entry):
-            state.remove_edge(e)
-        for e in state.out_edges(map_exit):
-            state.remove_edge(e)
-
-        state.remove_node(map_entry)
-        state.remove_node(map_exit)
+        state.remove_nodes_from([*state.all_nodes_between(map_entry, map_exit), map_entry, map_exit])
 
     def _move_map_to_if(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         map_exit = state.exit_node(map_entry)

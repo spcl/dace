@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end pins that ``InsertExplicitGPUGlobalMemoryCopies`` does not demote a WCR (atomic
+"""End-to-end pins that ``MoveArrayOutOfKernel`` does not demote a WCR (atomic
 accumulator) array to ``Register`` -- doing so would lose atomic semantics and produce wrong totals."""
 import numpy as np
 import pytest

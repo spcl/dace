@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared utilities for the GPU-specialization passes: stream names, node and connector
 predicates, and the stream-wiring idempotency signal."""
-from typing import List, Optional, Set
+from typing import List, Optional
+
+from ordered_set import OrderedSet
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -78,10 +80,16 @@ def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
     return False
 
 
-def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
-    """Weakly-connected components of ``graph``'s dataflow, as node sets."""
+def weakly_connected_node_sets(graph) -> List[OrderedSet]:
+    """Weakly-connected components of ``graph``'s dataflow, in state node order.
+
+    ``networkx`` yields plain sets in hash order, so both the components and their contents are
+    re-sorted by node insertion index -- callers schedule off this and must not vary per run.
+    """
     import networkx as nx
-    return [set(c) for c in nx.weakly_connected_components(graph.nx)]
+    order = {node: index for index, node in enumerate(graph.nodes())}
+    components = [sorted(c, key=order.__getitem__) for c in nx.weakly_connected_components(graph.nx)]
+    return [OrderedSet(c) for c in sorted(components, key=lambda c: order[c[0]])]
 
 
 def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:

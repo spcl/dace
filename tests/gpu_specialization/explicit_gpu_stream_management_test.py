@@ -11,7 +11,8 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name)
 
@@ -213,7 +214,7 @@ def test_three_kernels_dependent_and_independent():
         sdfg.apply_gpu_transformations()
         sdfg.apply_transformations_repeated(StateFusionExtended)
         # Step 1: materialize explicit GPU memory copies so we can inspect the SDFG at that point.
-        Pipeline([InsertExplicitGPUGlobalMemoryCopies()]).apply_pass(sdfg, {})
+        Pipeline([MoveArrayOutOfKernel(), InsertExplicitCopies()]).apply_pass(sdfg, {})
 
         # Step 2: run the remaining stream-specialization passes.
         strategy = NaiveGPUStreamScheduler()

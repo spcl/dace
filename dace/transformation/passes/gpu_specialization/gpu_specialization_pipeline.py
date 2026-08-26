@@ -42,8 +42,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (AddThreadBlockMaps,
                                                                                              ExpandLibraryNodes,
                                                                                              ReinferConnectorTypes)
-        from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
-            InsertExplicitGPUGlobalMemoryCopies)
+        from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars)
@@ -51,8 +51,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
         #   * scheduler after ExpandLibraryNodes -- it would miss opaque libnodes.
-        #   * AddThreadBlockMaps after the transient hoist in InsertExplicitGPUGlobalMemoryCopies --
-        #     tiling first leaks the inner-map outer-loop symbol into host-side cudaMalloc sizes.
+        #   * AddThreadBlockMaps after the MoveArrayOutOfKernel hoist -- tiling first leaks the
+        #     inner-map outer-loop symbol into host-side cudaMalloc sizes.
         #   * DemoteKernelInternalArraysToScalars before ReinferConnectorTypes -- it resets the
         #     connectors that re-inference then re-derives as scalar references.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
@@ -62,7 +62,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             InferDefaultSchedulesAndStorages(),
             NestedGPUDeviceMapLowering(),
             PromoteGPUScalarsToArrays(),
-            InsertExplicitGPUGlobalMemoryCopies(),
+            MoveArrayOutOfKernel(),
+            InsertExplicitCopies(),
             ExpandLibraryNodes(),
             strategy,
             GPUStreamWiring(strategy),
