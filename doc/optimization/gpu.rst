@@ -202,6 +202,19 @@ The distribution moves the second dimension of the grid to ``blockIdx.z``, which
 whose third grid dimension is not 1, as well as to kernels using a persistent grid, a dynamic thread-block map, or
 nested device maps. Such kernels keep their original grid, and a warning naming the kernel is issued.
 
+The setting describes the GPU, and applies to every kernel that can use it. A single kernel can be excluded from the
+distribution by setting the :attr:`~dace.sdfg.nodes.Map.allow_chiplet_threadblock_distribution` attribute of its map
+to ``False``, in which case its grid is left untouched and no warning is issued for it:
+
+.. code-block:: python
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.label == 'my_kernel':
+            node.map.allow_chiplet_threadblock_distribution = False
+
+Conversely, when a map allows the distribution but ``compiler.cuda.chiplet_number`` is left at 1 while targeting HIP,
+a warning naming the kernel points out that the number of chiplets has not been configured.
+
 Optimizing GPU SDFGs
 --------------------
 

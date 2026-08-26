@@ -415,12 +415,15 @@ required:
 
                     chiplet_number:
                         type: int
-                        title: Number of GPU chiplets to distribute thread-blocks over
+                        title: Number of chiplets of the target GPU
                         description: >
-                            Number of chiplets (XCDs) the thread-blocks of a kernel are distributed over. The
+                            Number of chiplets (XCDs) of the GPU the code is generated for. Set to 6 on MI300A.
+                            The thread-blocks of every kernel are then distributed over that many chiplets: the
                             first dimension of the grid is split into as many contiguous chunks as there are
                             chiplets, relying on the round-robin thread-block scheduling of multi-chiplet AMD
-                            GPUs. Set to 6 on MI300A. A value of 1 disables the distribution.
+                            GPUs. A value of 1 disables the distribution. Individual kernels can be excluded
+                            from it by setting the `allow_chiplet_threadblock_distribution` property of their
+                            map to False.
                         default: 1
 
                     dynamic_map_block_size:
