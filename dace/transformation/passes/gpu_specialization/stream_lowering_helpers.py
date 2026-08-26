@@ -31,6 +31,8 @@ def allocate_stream_array(sdfg: SDFG, num_streams: int):
     name = get_gpu_stream_array_name()
     if name not in sdfg.arrays:
         _add_stream_array(sdfg, name, num_streams, transient=True)
+    elif sdfg.arrays[name].dtype is not dace.dtypes.gpuStream_t:
+        raise NameError(f'Data descriptor name "{name}" is reserved for GPU stream scheduling.')
 
     for child_sdfg in _find_child_sdfgs_requiring_gpu_stream(sdfg):
         if name in child_sdfg.arrays:
@@ -43,7 +45,7 @@ def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, 
                            shape=(num_streams, ),
                            transient=transient,
                            storage=dace.dtypes.StorageType.Register)
-    target_sdfg.add_datadesc(stream_name, desc, _internal_use=True)
+    target_sdfg.add_datadesc(stream_name, desc)
 
 
 def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):

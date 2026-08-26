@@ -1,36 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``SDFG.add_datadesc`` rejects user additions of ``SDFG.RESERVED_NAMES`` (e.g. ``gpu_streams``),
-while ``_internal_use=True`` bypasses the guard for the pipeline itself."""
+"""The GPU stream pipeline refuses to reuse a user array that squats on its reserved name."""
 import pytest
 
 import dace
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
+from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import allocate_stream_array
 
 
-def test_user_add_array_with_reserved_name_raises():
-    """``SDFG.add_array`` with a reserved name raises ``NameError``."""
-    sdfg = dace.SDFG('reserved_user')
-    with pytest.raises(NameError, match='reserved'):
-        sdfg.add_array('gpu_streams', [4], dace.int64)
+def test_reserved_name_collision_rejected():
+    sdfg = dace.SDFG('reserved_name_collision')
+    sdfg.add_array(get_gpu_stream_array_name(), [4], dace.float64)
+    with pytest.raises(NameError):
+        allocate_stream_array(sdfg, 4)
 
 
-def test_user_add_datadesc_with_reserved_name_raises():
-    """``SDFG.add_datadesc`` with a reserved name raises ``NameError``."""
-    sdfg = dace.SDFG('reserved_datadesc')
-    desc = dace.data.Array(dtype=dace.int64, shape=(4, ))
-    with pytest.raises(NameError, match='reserved'):
-        sdfg.add_datadesc('gpu_streams', desc)
-
-
-def test_internal_use_bypasses_reservation():
-    """``add_datadesc`` with ``_internal_use=True`` accepts a reserved name."""
-    sdfg = dace.SDFG('reserved_internal')
-    desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t, shape=(4, ))
-    name = sdfg.add_datadesc('gpu_streams', desc, _internal_use=True)
-    assert name == 'gpu_streams'
-    assert 'gpu_streams' in sdfg.arrays
+def test_stream_array_allocated_once():
+    sdfg = dace.SDFG('stream_array_allocated_once')
+    allocate_stream_array(sdfg, 4)
+    allocate_stream_array(sdfg, 4)
+    assert sdfg.arrays[get_gpu_stream_array_name()].dtype is dace.dtypes.gpuStream_t
 
 
 if __name__ == '__main__':
-    test_user_add_array_with_reserved_name_raises()
-    test_user_add_datadesc_with_reserved_name_raises()
-    test_internal_use_bypasses_reservation()
+    test_reserved_name_collision_rejected()
+    test_stream_array_allocated_once()

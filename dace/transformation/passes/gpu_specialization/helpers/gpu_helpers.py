@@ -84,7 +84,7 @@ def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
     return [set(c) for c in nx.weakly_connected_components(graph.nx)]
 
 
-def is_gpu_copy_or_memset_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
+def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     """``CopyLibraryNode`` / ``FillLibraryNode`` whose storage involves GPU memory."""
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.libraries.standard.nodes.fill import FillLibraryNode
@@ -107,7 +107,7 @@ def is_gpu_kernel_launcher(node) -> bool:
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
     """Nodes that *take* a GPU stream: a kernel ``MapEntry``, a GPU Copy/Fill libnode, or a lowered
     runtime-call Tasklet. AccessNodes are memory references, not consumers."""
-    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_memset_libnode(node, sdfg, state)
+    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_fill_libnode(node, sdfg, state)
             or is_already_lowered_gpu_runtime_call(node))
 
 

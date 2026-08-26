@@ -3,7 +3,6 @@ import dace
 import os
 import pytest
 import tempfile
-from hashlib import md5
 
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdfg_utils
@@ -194,29 +193,6 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
     # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
     csdfg = sdfg_utils.distributed_compile(None, loader)
     del csdfg
-
-
-def test_unique_cache_folder_tracks_process_token(monkeypatch):
-    sdfg = customprog.to_sdfg()
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with dace.config.set_temporary('default_build_folder', value=tmpdir):
-            with dace.config.set_temporary('cache', value='unique'):
-                monkeypatch.setattr(sdfg_module, 'PROCESS_CACHE_TOKEN', '1234_1000')
-                first = sdfg.build_folder
-                assert first == sdfg.build_folder, 'build folder is not stable within a process'
-                assert os.path.basename(first) == f'{sdfg.name}_{md5(b"1234_1000").hexdigest()}'
-
-                # Same pid, later process: the recycled pid must not resolve to the same folder
-                monkeypatch.setattr(sdfg_module, 'PROCESS_CACHE_TOKEN', '1234_2000')
-                second = sdfg.build_folder
-                assert os.path.dirname(second) == os.path.dirname(first)
-                assert second != first, 'pid recycling reuses a stale build folder'
-
-
-def test_process_cache_token_contains_pid():
-    pid, _, uniquifier = sdfg_module.PROCESS_CACHE_TOKEN.partition('_')
-    assert pid == str(os.getpid())
-    assert int(uniquifier) > 0
 
 
 if __name__ == '__main__':

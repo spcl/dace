@@ -336,14 +336,14 @@ def test_single_copy_library_node():
     assert state.out_degree(syncs[0]) == 0
 
 
-def test_single_memset_library_node():
+def test_single_fill_library_node():
     """Single FillLibraryNode over a GPU buffer in one state."""
-    sdfg = dace.SDFG("single_memset_node")
+    sdfg = dace.SDFG("single_fill_node")
     sdfg.add_array("B", [128], dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state("memset_state")
+    state = sdfg.add_state("fill_state")
 
     b = state.add_access("B")
-    ms = FillLibraryNode(name="memset_B")
+    ms = FillLibraryNode(name="fill_B")
     state.add_node(ms)
     state.add_edge(ms, FillLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
