@@ -9,8 +9,10 @@ from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
+from ordered_set import OrderedSet
 from sympy import floor
 from typing import Dict, List, Set, Tuple
+import warnings
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
@@ -623,20 +625,16 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if self.simplify:
             sdfg.simplify()
 
-        # When the ExperimentalCUDACodeGen is selected, handle in-kernel transient
-        # GPU_Global arrays here for backwards compatibility. Imports are local: this
-        # block only runs under the experimental codegen, and importing the pass at
-        # module scope would create a transformation <-> pass import cycle.
-        from dace.config import Config
-        if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+        # Under the experimental codegen, lift in-kernel transient GPU_Global arrays out of the
+        # kernel for backwards compatibility.
+        from dace.config import Config  # Avoid import loop
+        if Config.get('compiler', 'cuda', 'implementation') != 'experimental':
             return
 
-        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-        import warnings
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel  # Avoid import loop
 
-        # Detect transient GPU_Global arrays inside GPU_Device-scheduled maps
-        transients_in_kernels: Set[Tuple[str, data.Array, nodes.MapEntry]] = set()
-        transient_outside_kernels: Set[Tuple[str, data.Array]] = set()
+        transients_in_kernels: OrderedSet[Tuple[str, data.Array, nodes.MapEntry]] = OrderedSet()
+        transient_outside_kernels: OrderedSet[Tuple[str, data.Array]] = OrderedSet()
 
         for node, parent in sdfg.all_nodes_recursive():
             # Consider only transient GPU_Global arrays.
@@ -666,14 +664,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             else:
                 transient_outside_kernels.add((node.data, desc))
 
-        # Skip transients that are used outside of GPU kernels, unless a separate, strictly kernel-local
-        # transient with the same name exists inside a kernel. In such cases, 'MoveArrayOutOfKernel' is
-        # still applied to the local one, and naming conflicts are handled automatically.
-        transient_defined_inside_kernel: Set[Tuple[str, nodes.MapEntry]] = set()
+        # Skip transients that are also used outside a kernel; a strictly kernel-local one of the same
+        # name is still lifted, and naming conflicts are resolved by the pass.
+        transient_defined_inside_kernel: OrderedSet[Tuple[str, nodes.MapEntry]] = OrderedSet()
         for data_name, array_desc, kernel_entry in transients_in_kernels:
-            if (data_name, array_desc) in transient_outside_kernels:
-                continue
-            else:
+            if (data_name, array_desc) not in transient_outside_kernels:
                 transient_defined_inside_kernel.add((data_name, kernel_entry))
 
         # Apply the pass and warn the user of its use

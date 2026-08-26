@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 import warnings
-from typing import Dict, Set, Tuple
+from typing import Dict, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from ordered_set import OrderedSet
 
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
@@ -134,7 +135,7 @@ class DefaultSharedMemorySync(ppl.Pass):
                 break
 
         # Writes inside the scope, plus nested SDFGs to analyze below.
-        nested_sdfgs: Set[NestedSDFG] = set()
+        nested_sdfgs: OrderedSet[NestedSDFG] = OrderedSet()
 
         for node in state.all_nodes_between(map_entry, map_exit):
             if not writes_to_shared_memory and is_shared_memory_write(node, state):
@@ -222,8 +223,8 @@ class DefaultSharedMemorySync(ppl.Pass):
         for node, state in nodes.items():
 
             sync_tasklet = state.add_tasklet(name="sync_threads",
-                                             inputs=set(),
-                                             outputs=set(),
+                                             inputs=OrderedSet(),
+                                             outputs=OrderedSet(),
                                              code="__syncthreads();\n",
                                              language=dtypes.Language.CPP)
 

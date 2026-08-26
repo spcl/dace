@@ -2038,8 +2038,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                             dynsmem_size += numel
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-        # A kernel reachable from a stream-unaware GPU callback is pinned to the null stream.
-        cudastream = common.gpu_stream_expr(scope_entry._cuda_stream) if max_streams >= 0 else 'nullptr'
+        if max_streams >= 0:
+            cudastream = common.gpu_stream_expr(scope_entry._cuda_stream)
+        else:
+            cudastream = 'nullptr'
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):

@@ -112,7 +112,6 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
-@lru_cache()
 def get_gpu_backend() -> str:
     """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.
 
@@ -129,8 +128,7 @@ def get_gpu_backend() -> str:
 
 @lru_cache(maxsize=None, typed=True)
 def _probing_for_gpu_backend() -> str:
-    # Probe the system for the GPU backend. Called by ``get_gpu_backend()`` when
-    # the backend is unset, not directly; the cached result never changes.
+    # Probed once; the result never changes within a process.
     def _try_execute(cmd: str) -> bool:
         process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
         errcode = process.wait()
@@ -176,9 +174,6 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
 
 @lru_cache(maxsize=None, typed=True)
 def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
-    # Locate a GPU backend's runtime. Called indirectly by ``get_gpu_runtime()``,
-    # not directly.
-
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
         if os.name == 'nt' and not libpath:  # Windows-based search

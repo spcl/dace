@@ -10,6 +10,8 @@ import warnings
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
+from ordered_set import OrderedSet
+
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.config import Config
@@ -266,7 +268,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         run in submit order; only CPU/GPU-boundary edges make the host
         wait on the stream.
         """
-        host_copy_states: Set[SDFGState] = set()
+        host_copy_states: OrderedSet[SDFGState] = OrderedSet()
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 if self._state_has_host_boundary_copy(state, nsdfg):
@@ -432,7 +434,7 @@ def _collect_gpu_written_arrays(sdfg: SDFG) -> Set[str]:
     Every root block exposes ``read_and_write_sets()``, so we don't traverse interiors. The
     write sets of GPU blocks are exactly the arrays downstream iedge reads must wait on.
     """
-    out: Set[str] = set()
+    out: OrderedSet[str] = OrderedSet()
     for block in sdfg.nodes():
         if _classify_root_block(block) != _Kind.GPU:
             continue
@@ -517,7 +519,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         self._fell_back: bool = False
         self._naive_fallback: Optional['NaiveGPUStreamScheduler'] = None
         self._state_kinds: Dict[SDFGState, _Kind] = {}
-        self._gpu_written: Set[str] = set()
+        self._gpu_written: OrderedSet[str] = OrderedSet()
 
     def _should_synchronize_on_exit(self) -> bool:
         """Whether to keep the SDFG-exit ``cudaStreamSynchronize`` for GPU-resident outputs.
@@ -545,7 +547,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             self._fell_back = False
             self._naive_fallback = None
             self._state_kinds = {}
-            self._gpu_written = set()
+            self._gpu_written = OrderedSet()
             return {
                 n: n.gpu_stream_id
                 for nsdfg in sdfg.all_sdfgs_recursive()

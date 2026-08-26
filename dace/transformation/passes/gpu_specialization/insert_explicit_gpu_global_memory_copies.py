@@ -14,6 +14,7 @@ from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+from ordered_set import OrderedSet
 
 
 def _is_register_demotable(desc, max_elements: int) -> bool:
@@ -97,8 +98,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         """Run ``MoveArrayOutOfKernel`` for every transient ``GPU_Global`` array
         defined inside a ``GPU_Device`` map, so the hoist always precedes copy
         lifting regardless of how the SDFG was produced."""
-        transients_in_kernels = set()
-        transients_outside = set()
+        transients_in_kernels = OrderedSet()
+        transients_outside = OrderedSet()
 
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.AccessNode):
@@ -125,7 +126,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
 
         # Only hoist transients defined *solely* inside the kernel -- if the same
         # (name, desc) pair also appears outside, leave the inner one alone.
-        to_hoist = set()
+        to_hoist = OrderedSet()
         for data_name, desc, kernel_entry in transients_in_kernels:
             if (data_name, desc) in transients_outside:
                 continue

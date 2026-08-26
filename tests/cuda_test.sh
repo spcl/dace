@@ -158,11 +158,7 @@ runoptargs() {
 runall() {
     echo "Running $PYTHON_BINARY"
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
-    # filter.py uses ``dace.data.Stream`` (a streaming-data descriptor),
-    # which the experimental CUDA codegen does not allocate yet — it
-    # raises ``NotImplementedError("allocate_stream not implemented in
-    # ExperimentalCUDACodeGen")``. Skip under experimental until that
-    # path is ported from the legacy codegen.
+    # filter.py uses dace.data.Stream, which ExperimentalCUDACodeGen cannot allocate yet.
     if [ "${DACE_compiler_cuda_implementation:-legacy}" != "experimental" ]; then
         runopt samples/explicit/filter.py $1 'GPUTransformSDFG$0'
     else

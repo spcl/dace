@@ -9,6 +9,7 @@ from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.transformation import helpers, pass_pipeline as ppl
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
+from ordered_set import OrderedSet
 
 
 class InferGPUGridAndBlockSize(ppl.Pass):
@@ -37,7 +38,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         kernel_maps: Set[Tuple[
             nodes.MapEntry,
             SDFGState,
-        ]] = set()
+        ]] = OrderedSet()
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and node.schedule == dtypes.ScheduleType.GPU_Device:
                 kernel_maps.add((node, state))

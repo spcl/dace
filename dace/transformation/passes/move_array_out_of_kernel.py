@@ -16,6 +16,7 @@ from dace.subsets import Range
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.symbolic import symbol
+from ordered_set import OrderedSet
 
 # The GPU map hierarchy this pass hoists through: a GPU_Device kernel and the GPU_ThreadBlock
 # maps tiled inside it. Deliberately NOT ``dtypes.GPU_SCHEDULES``, which also includes the
@@ -319,7 +320,7 @@ class MoveArrayOutOfKernel(Pass):
         # yields the same edge set the old per-path enumeration flattened, but linearly instead
         # of enumerating every complete path (exponential in fan-in/out). The incoming/outgoing
         # flag distinguishes the dst-subset vs src-subset rewrite on a direct edge to/from the node.
-        visited: Set[MultiConnectorEdge[Memlet]] = set()
+        visited: OrderedSet[MultiConnectorEdge[Memlet]] = OrderedSet()
         for access_node in access_nodes:
             state = self._node_to_state_cache[access_node]
             incoming = [(edge, True) for edge in state.edge_bfs(access_node, reverse=True)]
@@ -421,7 +422,7 @@ class MoveArrayOutOfKernel(Pass):
 
         :param map_entry_chain: GPU MapEntry nodes whose symbols are relevant.
         """
-        all_symbols = set()
+        all_symbols = OrderedSet()
         for next_map in map_entry_chain:
             if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
                 continue
@@ -457,8 +458,8 @@ class MoveArrayOutOfKernel(Pass):
 
         last_sdfg: SDFG = self._node_to_state_cache[map_entry].sdfg
 
-        result: Set[Tuple[dt.Array, SDFG, Set[SDFG], Set[nodes.AccessNode]]] = set()
-        visited_sdfgs: Set[SDFG] = set()
+        result: OrderedSet[Tuple[dt.Array, SDFG, Set[SDFG], Set[nodes.AccessNode]]] = OrderedSet()
+        visited_sdfgs: OrderedSet[SDFG] = OrderedSet()
 
         for access_node, state, sdfg in access_nodes_info:
 
@@ -471,8 +472,8 @@ class MoveArrayOutOfKernel(Pass):
 
             # Collect all SDFGs and access nodes referring to the same array,
             # determined by whether the array name is passed via connectors.
-            sdfg_set: Set[SDFG] = set()
-            access_nodes_set: Set[nodes.AccessNode] = set()
+            sdfg_set: OrderedSet[SDFG] = OrderedSet()
+            access_nodes_set: OrderedSet[nodes.AccessNode] = OrderedSet()
             access_nodes_set.add(access_node)
 
             # Get all parent SDFGs and the outermost sdfg where defined
@@ -531,7 +532,7 @@ class MoveArrayOutOfKernel(Pass):
             no rename is needed, else a fresh suggestion.
         """
         map_parent_sdfg = self._node_to_state_cache[map_entry].sdfg
-        taken_names = set()
+        taken_names = OrderedSet()
 
         for sdfg in map_parent_sdfg.all_sdfgs_recursive():
 
@@ -627,7 +628,7 @@ class MoveArrayOutOfKernel(Pass):
         """
         state = self._node_to_state_cache[node]
 
-        visited = set()
+        visited = OrderedSet()
         queue = [node]
         while queue:
             current = queue.pop(0)

@@ -1,7 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Set
-
 import copy
 import sympy
 
@@ -12,6 +10,7 @@ from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
+from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -176,8 +175,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
             # Descend one NSDFG level at a time until the next level of map candidates is found.
             def collect_map_candidates_and_new_nsdfg(all_nsdfgs):
-                new_all_nsdfgs = set()
-                next_level_map_candidates = set()
+                new_all_nsdfgs = OrderedSet()
+                next_level_map_candidates = OrderedSet()
                 for nsdfg in all_nsdfgs:
                     for state in nsdfg.sdfg.all_states():
                         for node in state.nodes():
@@ -208,7 +207,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     def _apply(self, sdfg: SDFG) -> int:
         num_applied = 0
         for state in sdfg.all_states():
-            parentless_device_maps: Set[dace.nodes.MapEntry] = set()
+            parentless_device_maps: OrderedSet[dace.nodes.MapEntry] = OrderedSet()
             for node in state.nodes():
                 if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                         and state.scope_dict()[node] is None):
@@ -289,7 +288,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     def _assert_no_nested_gpu_device_maps(self, sdfg: SDFG):
         for state in sdfg.all_states():
-            parentless_device_maps = set()
+            parentless_device_maps = OrderedSet()
             for node in state.nodes():
                 if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                         and state.scope_dict()[node] is None):
