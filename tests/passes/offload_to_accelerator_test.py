@@ -258,6 +258,46 @@ def test_a_scalar_operand_never_enters_the_placement_sets():
     sdfg.validate()
 
 
+def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
+    """A device map over ``A``, then a state whose HOST tasklet writes ``A[0]``.
+
+    The interstate edge between them reads ``C``, which is what makes the pass build an edge node
+    for the second state -- and an edge node carries the same block object as the state node that
+    follows it.
+    """
+    sdfg = dace.SDFG('host_tasklet_behind_an_interstate_read')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('C', [256], dace.int64)
+    first = sdfg.add_state('device_work')
+    first.add_mapped_tasklet('scale', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
+                             'out = inp * 2.0', {'out': dace.Memlet('A[i]')},
+                             external_edges=True)
+    second = sdfg.add_state('host_work')
+    tasklet = second.add_tasklet('bump', {'inp'}, {'out'}, 'out = inp + 1.0')
+    second.add_edge(second.add_read('A'), None, tasklet, 'inp', dace.Memlet('A[0]'))
+    second.add_edge(tasklet, 'out', second.add_write('A'), None, dace.Memlet('A[0]'))
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'C[0]'}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
+    """An edge node decides about the interstate edges REACHING a block, not about the block.
+
+    It holds the same block object as the state node behind it, so letting its decision fall
+    through to the block renamed dataflow the state node had already placed on the host -- tsvc
+    ``s315``, where a host tasklet writing ``a`` came out writing ``a_gpu``.
+    """
+    sdfg = host_tasklet_behind_an_interstate_read()
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    host_state = next(state for state in sdfg.states() if state.label == 'host_work')
+    written = {edge.data.data for edge in host_state.edges() if not edge.data.is_empty()}
+    assert not [name for name in written if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global
+                ], (f'host tasklet left holding a device container: {written}')
+
+
 def test_a_pinned_host_map_falls_back_to_the_old_transformation():
     """``host_maps`` / ``host_data`` name what must STAY on the host. The new pass derives that
     rather than accepting it, so a caller that pins anything gets the old transformation even with
@@ -280,3 +320,4 @@ if __name__ == '__main__':
     test_a_host_pinned_library_node_is_left_to_the_old_transformation()
     test_a_find_first_answer_stays_on_the_host()
     test_a_pinned_host_map_falls_back_to_the_old_transformation()
+    test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
