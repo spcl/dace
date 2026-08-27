@@ -152,18 +152,18 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # override below, which only means to catch GEMMs.
         if device == dtypes.DeviceType.CPU and apply_cpu_library_parallelism(node, state, sdfg):
             continue
-        # GPU ``Scan``: a top-level parallel scan -> host-launched ``cub::DeviceScan``; a sequential
-        # (device-level, or map-/loop-nested) scan MUST stay ``pure`` -- ``ExpandCUDA`` emits a
-        # HOST-side ``cub::DeviceScan`` call that cannot be issued from inside a kernel (and it
-        # rejects stride>1). Guarding on ``sequential`` mirrors the CPU rule; without it a
-        # device-level scan that ``set_fast_implementations`` correctly left ``pure`` was clobbered
-        # to an uncompilable in-kernel ``cub::DeviceScan``.
+        # GPU ``Scan``: a scan INSIDE a kernel must stay ``pure`` -- ``ExpandCUDA`` emits a HOST-side
+        # ``cub::DeviceScan`` call, which device code cannot issue. Everything else is host code and
+        # takes the device expansion, a host loop around it included: there the ``pure`` lowering is
+        # a host loop indexing ``GPU_Global`` operands, which is not slow but wrong (tsvc s256, an
+        # affine scan under the outer loop). Decide by SCOPE, as the generic rule below does; the
+        # schedule says ``Sequential`` for a host loop and a kernel alike.
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
             # ``cub::DeviceScan`` is one contiguous scan, so a strided scan has its own expansion and
             # ``ExpandCUDA`` refuses the case outright rather than walk past a residue boundary
             # (tsvc_2_5 ext_floordiv_offset_m). Pick by stride instead of handing it the refusal.
             device_impl = 'CUDA' if symbolic.equal(node.stride, 1) else 'CUDA_strided'
-            node.implementation = ('pure' if sequential else
+            node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
                                    (device_impl if device_impl in impls else node.implementation))
             continue
         # ``set_fast_implementations`` leaves every ``Sequential`` GPU node ``pure``, reading

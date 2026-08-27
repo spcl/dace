@@ -298,9 +298,9 @@ def refuse_affine_shape(node: "Scan", shape: str) -> None:
 
     The affine carry is a PAIR, so every place the scalar plumbing names a single accumulator has
     to be redesigned rather than reused: an ``inscan`` reduction needs a built-in or declared
-    identifier for the pair, a residue-class split needs one pair per class, and ``cub`` needs the
-    struct plus its functor. None of that is hard, none of it is here, and a silent fallback to a
-    scalar op would compute a different function. Refuse.
+    identifier for the pair, and a residue-class split needs one pair per class. The unit-stride
+    CUDA path has its pair and its functor (``dace/cuda/scan_affine.cuh``); the shapes still listed
+    here do not, and a silent fallback to a scalar op would compute a different function. Refuse.
     """
     if node.op is ScanOp.AFFINE:
         raise NotImplementedError(f"Scan {node.label}: ``op=AFFINE`` is not supported with {shape}.")
@@ -330,6 +330,13 @@ def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -
     if desc is None or desc.storage not in GPU_RESIDENT_STORAGES:
         return conn
     return f"::cub::FutureValue<{desc.dtype.base_type.ctype}>({conn})"
+
+
+def coef_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int = 0):
+    """Descriptor behind chain ``chain``'s ``_scan_coef``; affine scans always wire one."""
+    conn = coef_connector(chain)
+    edge = next(e for e in state.in_edges(node) if e.dst_conn == conn)
+    return sdfg.arrays[edge.data.data]
 
 
 def _resolve_length(node: "Scan", state: dace.SDFGState, _sdfg: dace.SDFG) -> str:
@@ -866,6 +873,56 @@ class ExpandCPU(ExpandTransformation):
         )
 
 
+def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
+    """The first-order linear recurrence on the device, as a call into ``dace::cuda_scan``.
+
+    The header's monoid is affine-map composition, so the recurrence is a plain cub prefix scan
+    over the maps -- see :file:`dace/runtime/include/dace/cuda/scan_affine.cuh` for why the seed is
+    folded into element 0 rather than handed to cub as an init value. Only the shape
+    :func:`refuse_unsupported_affine_flags` admits arrives here: one chain, unit stride, inclusive.
+
+    The seed reaches the wrapper twice over, as a pointer and as a value, and exactly one of the
+    two is live: a device-resident seed must not be dereferenced by the host code issuing the
+    launch, and a host-readable one has no device address to hand over.
+    """
+    coef = coef_desc(node, state, sdfg)
+    in_desc = sdfg.arrays[next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.data]
+    e_ctype = out_desc.dtype.base_type.ctype
+    c_ctype = coef.dtype.base_type.ctype
+    d_ctype = in_desc.dtype.base_type.ctype
+
+    seed = seed_desc(node, state, sdfg, 0) if _has_init(node) else None
+    on_device = seed is not None and seed.storage in GPU_RESIDENT_STORAGES
+    s_ctype = seed.dtype.base_type.ctype if seed is not None else e_ctype
+    seed_ptr = init_connector(0) if on_device else f'static_cast<const {s_ctype}*>(nullptr)'
+    live_seed_value = seed is not None and not on_device
+    seed_val = f'static_cast<{e_ctype}>({init_connector(0)})' if live_seed_value else f'static_cast<{e_ctype}>(0)'
+
+    state_id = state.parent_graph.node_id(state)
+    wrapper = f'__dace_scan_affine_{sdfg.name}_{state_id}_{state.node_id(node)}'
+    params = (f'const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, '
+              f'{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, cudaStream_t __sc_stream')
+    prototype = f'DACE_EXPORTED cudaError_t {wrapper}({params});'
+    sdfg.append_global_code(prototype + '\n')
+    sdfg.append_global_code(
+        f'{prototype}\n'
+        f'cudaError_t {wrapper}({params}) {{\n'
+        f'    return ::dace::cuda_scan::inclusive_affine<{e_ctype}, {c_ctype}, {d_ctype}, {s_ctype}>(\n'
+        f'        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n'
+        f'}}\n', 'cuda')
+
+    inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
+    if _has_init(node):
+        inputs[init_connector(0)] = dtypes.pointer(seed.dtype.base_type) if on_device else None
+    code = (f'DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, '
+            f'{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), __dace_current_stream));')
+    return nodes.Tasklet(node.name,
+                         inputs=inputs,
+                         outputs={OUTPUT_CONNECTOR_NAME: None},
+                         code=code,
+                         language=dace.Language.CPP)
+
+
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
     """``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory.
@@ -889,11 +946,11 @@ class ExpandCUDA(ExpandTransformation):
             from dace.libraries.sort.environments.cub import ScanScratch
             ExpandCUDA.environments = [ScanScratch]
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
-        # ``cub::DeviceScan::InclusiveScan`` takes an arbitrary functor over an arbitrary element
-        # type, so the affine carry would fit -- as a device-side pair struct plus its compose
-        # functor, neither of which exists yet. Until they do, refuse: falling through would run
-        # the recurrence's DELTA array through a plain sum scan and return a different function.
-        refuse_affine_shape(node, 'the CUDA expansion')
+        if node.op is ScanOp.AFFINE:
+            refuse_unsupported_affine_flags(node)
+            if _is_length_one(node, state):
+                return degenerate_affine_tasklet(node)
+            return affine_cuda_tasklet(node, state, sdfg, out_desc)
         # A widening scan is safe here exactly where the accumulator's type is pinned by an argument
         # this expansion controls. ``ExclusiveScan`` deduces ``AccumT`` from the init value, so
         # seeding at the OUTPUT type accumulates there. An inclusive scan has no such argument -- it

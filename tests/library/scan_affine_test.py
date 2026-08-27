@@ -229,6 +229,68 @@ def test_affine_scan_refuses_shapes_without_a_lowering():
             sdfg.expand_library_nodes()
 
 
+def build_affine_cuda_sdfg(seed_on_device: bool) -> dace.SDFG:
+    """The affine scan over device-global buffers, with the seed on whichever side is asked for.
+
+    The seed's side is the branch that matters: the wrapper takes it as a pointer and as a value and
+    uses exactly one, because host code issuing the launch must not dereference a device address.
+    """
+    from dace import dtypes
+
+    sdfg = dace.SDFG(f'affine_scan_cuda_{int(seed_on_device)}')
+    for name in ('coef', 'delta', 'out'):
+        sdfg.add_array(name, [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    seed_storage = dtypes.StorageType.GPU_Global if seed_on_device else dtypes.StorageType.Default
+    sdfg.add_array('seed', [1], dace.float64, storage=seed_storage)
+    state = sdfg.add_state()
+
+    node = Scan('affine', op=ScanOp.AFFINE)
+    node.implementation = 'CUDA'
+    node.schedule = dtypes.ScheduleType.GPU_Device
+    node.add_in_connector(INIT_CONNECTOR_NAME)
+    state.add_node(node)
+    state.add_edge(state.add_read('delta'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('delta[0:N]'))
+    state.add_edge(state.add_read('coef'), None, node, COEF_CONNECTOR_NAME, dace.Memlet('coef[0:N]'))
+    state.add_edge(state.add_read('seed'), None, node, INIT_CONNECTOR_NAME, dace.Memlet('seed[0]'))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0:N]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_the_cuda_affine_call_is_emitted_into_the_cuda_unit():
+    """``cub/cub.cuh`` is a CUDA header, so the host translation unit cannot hold the call.
+
+    The host tasklet gets a wrapper call and the wrapper's body goes to the CUDA unit -- the shape
+    ``ExpandFindFirstCUDA`` established. Asserted on the emitted text because the text IS what the
+    host compiler has to parse.
+    """
+    sdfg = build_affine_cuda_sdfg(seed_on_device=False)
+    sdfg.expand_library_nodes()
+    tasklet = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
+    assert 'inclusive_affine' not in tasklet.code.as_string, 'the device call reached the host tasklet'
+    assert '__dace_scan_affine_' in tasklet.code.as_string
+    assert 'inclusive_affine' in sdfg.global_code['cuda'].as_string
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('seed_on_device', [False, True])
+@pytest.mark.parametrize('n', [17, 4096])
+def test_the_cuda_affine_scan_computes_the_recurrence(seed_on_device, n):
+    """Both seed shapes reproduce the sequential recurrence the CPU lowering computes."""
+    import cupy as cp
+
+    sdfg = build_affine_cuda_sdfg(seed_on_device)
+    coef, delta, seed = contracting_inputs(n)
+    want = affine_reference(coef, delta, seed[0])
+    out = cp.zeros(n, dtype=np.float64)
+    sdfg(coef=cp.asarray(coef),
+         delta=cp.asarray(delta),
+         out=out,
+         seed=cp.asarray(seed) if seed_on_device else seed,
+         N=n)
+    assert np.allclose(cp.asnumpy(out), want, rtol=1e-12, atol=1e-12)
+
+
 if __name__ == '__main__':
     test_affine_scan_matches_sequential_recurrence('CPU', 40001)
     test_affine_scan_without_init_enters_at_zero()
@@ -237,4 +299,5 @@ if __name__ == '__main__':
     test_affine_node_wires_the_coefficient_connector()
     test_affine_scan_refuses_a_coefficient_of_the_wrong_length()
     test_affine_scan_refuses_shapes_without_a_lowering()
+    test_the_cuda_affine_call_is_emitted_into_the_cuda_unit()
     print('ok')
