@@ -23,11 +23,9 @@ def _run(sdfg, **pass_kwargs):
     return p.apply_pass(sdfg, {})
 
 
-# ---------------------------------------------------------------------------
 # Issue #2393: where(c, a, b) lowers to Map -> NSDFG -> ConditionalBlock(c).
 # After scalar promotion, the ConditionalBlock condition must read ``__cond[0]``
 # rather than ``__cond`` (else it always evaluates the pointer non-null).
-# ---------------------------------------------------------------------------
 def _build_issue_2393_sdfg():
     nested = dace.SDFG('nested')
     nested.add_scalar('__cond', dtype=dace.bool_, transient=False, storage=dtypes.StorageType.GPU_Global)
@@ -75,9 +73,7 @@ def test_issue_2393_conditional_block_pattern():
     assert cond_codeblock.as_string == '__cond[0]', cond_codeblock.as_string
 
 
-# ---------------------------------------------------------------------------
 # LoopRegion's three CodeBlocks (init / update / condition) all need rewriting.
-# ---------------------------------------------------------------------------
 def test_loop_region_init_update_condition_rewrite():
     sdfg = dace.SDFG('lr')
     sdfg.add_scalar('cnt', dtype=dace.int64, transient=False, storage=dtypes.StorageType.GPU_Global)
@@ -97,9 +93,7 @@ def test_loop_region_init_update_condition_rewrite():
     assert 'cnt[0]' in loop.update_statement.as_string, loop.update_statement.as_string
 
 
-# ---------------------------------------------------------------------------
 # Interstate edge: BOTH assignment values AND condition reference promoted name.
-# ---------------------------------------------------------------------------
 def test_interstate_edge_condition_and_assignment_rewrite():
     sdfg = dace.SDFG('ise')
     sdfg.add_symbol('s', dace.int64)
@@ -116,10 +110,8 @@ def test_interstate_edge_condition_and_assignment_rewrite():
     assert 'X[0]' in ie.assignments['s'], ie.assignments['s']
 
 
-# ---------------------------------------------------------------------------
 # NestedSDFG with a different inner name than outer; promotion must recurse
 # via the connector mapping, not by matching the name verbatim.
-# ---------------------------------------------------------------------------
 def test_nested_sdfg_rename_via_connector():
     inner = dace.SDFG('inner')
     inner.add_scalar('X_inner', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
@@ -142,13 +134,11 @@ def test_nested_sdfg_rename_via_connector():
     assert isinstance(inner.arrays['Y_inner'], data.Array)
 
 
-# ---------------------------------------------------------------------------
 # Memlet preservation: a copy memlet with explicit src/dst subsets stays intact
 # (the bug PR #2394 documents in fix 2 is the dropped ``other_subset``).
 # The pass intentionally does NOT touch memlets -- a ``Scalar`` access always
 # carries subset ``[0]``, identical to a length-1 array's, so the rewrite is
 # semantically a no-op. These tests pin that invariant from three angles.
-# ---------------------------------------------------------------------------
 def test_memlet_other_subset_preserved_x_as_data():
     """Promoted scalar X is the ``data`` side of a copy memlet; other_subset on Y survives."""
     sdfg = dace.SDFG('m_xdata')
@@ -217,11 +207,9 @@ def test_memlet_dynamic_and_wcr_preserved():
     assert str(new_edge.data.other_subset) == '2'
 
 
-# ---------------------------------------------------------------------------
 # Rule 2 variant: a transient scalar written and read entirely inside a GPU
 # kernel should NOT be promoted (it's a register/local). A non-transient
 # kernel-output scalar SHOULD be promoted.
-# ---------------------------------------------------------------------------
 def _build_kernel_output_sdfg(transient_inside: bool, kernel_output_visible: bool):
     sdfg = dace.SDFG('rule2')
     sdfg.add_array('A', shape=(10, ), dtype=dace.float64, storage=dtypes.StorageType.GPU_Global)
@@ -262,10 +250,8 @@ def test_rule2_transient_purely_internal_not_promoted(non_transient_only: bool):
         assert isinstance(sdfg.arrays['local_s'], data.Scalar)
 
 
-# ---------------------------------------------------------------------------
 # Audit: NSDFG.symbol_mapping value referencing the promoted scalar by name
 # (bare identifier) must be rewritten to ``name[0]``.
-# ---------------------------------------------------------------------------
 def test_symbol_mapping_value_rewrite():
     inner = dace.SDFG('inner')
     inner.add_symbol('s_inner', dace.int64)
@@ -280,14 +266,12 @@ def test_symbol_mapping_value_rewrite():
         nsdfg.symbol_mapping['s_inner']
 
 
-# ---------------------------------------------------------------------------
 # NestedSDFG connector residency. An outer ``Scalar`` ``h`` that is one end of a
 # direct device<->host copy is re-declared as ``h_in`` on a NestedSDFG
 # connector. The two ends of a connector name the SAME buffer, so whatever the
 # pass decides for the outer descriptor the inner one must match -- a promotion
 # that moves only one end to ``GPU_Global`` hands the NestedSDFG a device
 # pointer for a host buffer.
-# ---------------------------------------------------------------------------
 def _build_copy_endpoint_nsdfg(host_storage: dtypes.StorageType, device_to_host: bool):
     """Outer scalar ``h`` (storage ``host_storage``) copied to/from GPU scalar ``d``, then fed to a
     NestedSDFG whose connector re-declares it as the ``Scalar`` ``h_in``."""

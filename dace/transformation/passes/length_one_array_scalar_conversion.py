@@ -455,8 +455,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 staged.append((arr_name, scal_name, is_read, is_written))
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
-        # length-1 subset to the scalar element. AccessNodes carry the data name; memlets carry it
-        # plus a subset; interstate/condition/loop code carry it textually.
+        # length-1 subset to the scalar element.
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
@@ -595,7 +594,6 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 rename[name] = arr_name
                 staged.append((name, arr_name, is_read, is_written))
 
-        # Re-point every body reference of a rewritten scalar at element 0 of its length-1 array.
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
