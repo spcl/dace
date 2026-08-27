@@ -1078,18 +1078,26 @@ class CPPUnparser:
         "Sub": "-",
         "Mult": "*",
         "Div": "/",
-        "Mod": "%",
         "LShift": "<<",
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
         "BitAnd": "&"
     }
-    #: ``py_floor``, not ``ifloor(a / b)``: with integer operands ``a / b`` is the integer division
-    #: that has ALREADY truncated toward zero, and flooring an integer is a no-op -- ``-32 // 7``
-    #: came out ``-4`` where Python says ``-5``. ``py_floor`` dispatches on the operand type, so the
-    #: integer path gets the correction term and the floating one keeps ``floor(a / b)``.
-    funcops = {"FloorDiv": (",", "py_floor"), "MatMult": (",", "dace::gemm")}
+    #: ``//`` and ``%`` are PYTHON's, which is numpy's: the quotient rounds toward negative infinity
+    #: and the remainder therefore takes the DIVISOR's sign. C rounds toward zero and gives the
+    #: remainder the dividend's sign, so neither operator can be written infix.
+    #:
+    #: ``ifloor(a / b)`` was the old spelling of ``//`` and was wrong on integers, where ``a / b``
+    #: has already truncated and flooring an integer changes nothing (``-32 // 7`` -> ``-4``, Python
+    #: says ``-5``). A bare ``%`` was wrong on integers the same way (``-32 % 7`` -> ``-4``, Python
+    #: says ``3``) and did not compile at all on floats, where C has no ``%``. ``py_floor`` and
+    #: ``py_mod`` dispatch on the operand type and answer for every one of them.
+    funcops = {
+        "FloorDiv": (",", "py_floor"),
+        "Mod": (",", "py_mod"),
+        "MatMult": (",", "dace::gemm"),
+    }
 
     #: Arithmetic ops folded over two complex literal operands (see _BinOp).
     binop_lambda = {
