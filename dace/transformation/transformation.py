@@ -725,10 +725,9 @@ class ExpandTransformation(PatternTransformation):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
 
-            # Carry over connectors the expansion did not declare itself (e.g. passthrough
-            # connectors injected by upstream passes), otherwise the redirected edges point at
-            # nonexistent connectors. Only those that still have edges: an expansion may rename
-            # edges in-place, leaving the original names dangling.
+            # Carry over connectors the expansion did not declare (e.g. passthrough connectors
+            # injected by upstream passes), else the redirected edges point at nonexistent ones.
+            # Only connectors that still have edges: an expansion may rename edges in place.
             in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
             out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
             for conn_name, conn_type in node.in_connectors.items():
