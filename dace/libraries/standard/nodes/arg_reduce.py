@@ -197,10 +197,13 @@ class ExpandArgReduceCUDA(ExpandTransformation):
             f'{prototype}\n'
             f'cudaError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, long long *__ar_idx, '
             f'int __ar_items, cudaStream_t __ar_stream) {{\n'
+            # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a
+            # free function in the CUDA unit does not have. Every call's status is returned to the
+            # host tasklet instead, and the ``DACE_GPU_CHECK`` around the call there reports it.
             f'    size_t _cub_needed = 0;\n'
             f'    cudaError_t _cub_status;\n'
-            f'    DACE_GPU_CHECK(_cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}(nullptr, _cub_needed, __ar_in, '
-            f'({pair}*)nullptr, __ar_items, __ar_stream));\n'
+            f'    _cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}(nullptr, _cub_needed, __ar_in, '
+            f'({pair}*)nullptr, __ar_items, __ar_stream);\n'
             f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
             f'    size_t _ar_head = ((sizeof({pair}) + 255) / 256) * 256;\n'
             f'    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_ar_head + _cub_needed, '
@@ -208,19 +211,20 @@ class ExpandArgReduceCUDA(ExpandTransformation):
             f'    if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : '
             f'cudaErrorMemoryAllocation;\n'
             f'    {pair} *_ar_dev = ({pair}*)_cub_scratch;\n'
-            f'    DACE_GPU_CHECK(_cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}((char*)_cub_scratch + _ar_head, '
-            f'_cub_needed, __ar_in, _ar_dev, __ar_items, __ar_stream));\n'
+            f'    _cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}((char*)_cub_scratch + _ar_head, '
+            f'_cub_needed, __ar_in, _ar_dev, __ar_items, __ar_stream);\n'
             f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
             f'    {pair} _ar_host;\n'
-            f'    DACE_GPU_CHECK(_cub_status = cudaMemcpyAsync(&_ar_host, _ar_dev, sizeof({pair}), '
-            f'cudaMemcpyDeviceToHost, __ar_stream));\n'
+            f'    _cub_status = cudaMemcpyAsync(&_ar_host, _ar_dev, sizeof({pair}), '
+            f'cudaMemcpyDeviceToHost, __ar_stream);\n'
             f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
-            f'    DACE_GPU_CHECK(_cub_status = cudaStreamSynchronize(__ar_stream));\n'
+            f'    _cub_status = cudaStreamSynchronize(__ar_stream);\n'
             f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
             f'    if (__ar_val != nullptr) *__ar_val = _ar_host.value;\n'
             f'    *__ar_idx = (long long)_ar_host.key;\n'
             f'    return cudaSuccess;\n'
-            f'}}\n', 'cuda')
+            f'}}\n',
+            'cuda')
 
         items = sym2cpp(sub.num_elements())
         val_out = '&__ar_val' if val_edge is not None else 'nullptr'
