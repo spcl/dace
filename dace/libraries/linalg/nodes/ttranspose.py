@@ -2,7 +2,8 @@
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 import dace
 import multiprocessing
-from dace import library, nodes, properties
+from dace import dtypes, library, nodes, properties
+from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from numbers import Number
@@ -207,6 +208,53 @@ class ExpandCuTensor(ExpandTransformation):
         return tasklet
 
 
+@library.expansion
+class ExpandTensorTransposeCUDA(ExpandTransformation):
+    """A rank-2 permutation IS a matrix transpose, so lower it with our own tiled kernel.
+
+    ``cuTENSOR`` stays the right answer for a genuine tensor permutation, but for ``axes == [1, 0]``
+    it is a general contraction engine doing a job one coalesced pass can do. Anything that is not a
+    plain rank-2 swap with unit scaling falls through to ``cuTENSOR``'s expansion.
+    """
+
+    environments = [TiledTranspose]
+
+    @staticmethod
+    def expansion(node, state, sdfg, **kwargs):
+        from dace.codegen.targets.cpp import sym2cpp
+        inp_tensor, out_tensor = node.validate(sdfg, state)
+        plain_swap = (list(node.axes) == [1, 0] and len(inp_tensor.shape) == 2 and node.alpha == 1 and node.beta == 0)
+        if not plain_swap:
+            # ``ExpandTransformation.apply`` attaches THIS class's ``environments`` to whatever is
+            # returned, so a delegation has to carry the delegate's -- otherwise cuTENSOR's expansion
+            # is emitted without its library and the unit fails to link.
+            ExpandTensorTransposeCUDA.environments = list(ExpandCuTensor.environments)
+            return ExpandCuTensor.expansion(node, state, sdfg, **kwargs)
+        ExpandTensorTransposeCUDA.environments = [TiledTranspose]
+
+        rows, cols = inp_tensor.shape
+        state_id = state.parent_graph.node_id(state)
+        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        ctype = inp_tensor.dtype.base_type.ctype
+        prototype = (f'DACE_EXPORTED cudaError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
+                     f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, cudaStream_t __tr_stream);')
+        sdfg.append_global_code(prototype + '\n')
+        # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a free
+        # function in the CUDA unit does not have. The status is returned and checked at the call.
+        sdfg.append_global_code(
+            f'{prototype}\n'
+            f'cudaError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, int __tr_rows, '
+            f'int __tr_cols, int __tr_ldin, int __tr_ldout, cudaStream_t __tr_stream) {{\n'
+            f'    return ::dace::cuda_transpose::transpose<{ctype}>(__tr_in, __tr_out, __tr_rows, __tr_cols, '
+            f'__tr_ldin, __tr_ldout, __tr_stream);\n'
+            f'}}\n', 'cuda')
+
+        code = (f'DACE_GPU_CHECK(__dace_ttranspose_{idstr}(_inp_tensor, _out_tensor, (int)({sym2cpp(rows)}), '
+                f'(int)({sym2cpp(cols)}), (int)({sym2cpp(inp_tensor.strides[0])}), '
+                f'(int)({sym2cpp(out_tensor.strides[0])}), __dace_current_stream));')
+        return nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+
+
 @library.node
 class TensorTranspose(nodes.LibraryNode):
     """ Implements out-of-place tensor transpositions. """
@@ -215,6 +263,7 @@ class TensorTranspose(nodes.LibraryNode):
         "pure": ExpandPure,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
+        "CUDA": ExpandTensorTransposeCUDA,
     }
     default_implementation = 'pure'
 

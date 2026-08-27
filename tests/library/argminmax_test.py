@@ -9,9 +9,11 @@ Covers:
 * 0-based vs 1-based output via ``one_based``
 """
 import numpy as np
+import pytest
 
 import dace
 from dace.libraries.standard.nodes import ArgMin, ArgMax
+from dace.libraries.standard.nodes.reduce import Reduce
 
 
 def _build_whole(node_cls, in_shape, dtype, *, one_based=True, back=False):
@@ -142,3 +144,28 @@ if __name__ == '__main__':
     test_argmax_2d_dim1()
     test_argmin_2d_dim2()
     print('ArgMin / ArgMax library node tests PASS')
+
+
+@pytest.mark.parametrize('cls', [ArgMin, ArgMax])
+def test_both_reduction_passes_go_through_reduce_nodes(cls):
+    """Neither pass may accumulate through a WCR.
+
+    A WCR into one accumulator is a global atomic per element on a GPU, all of them contending for
+    the same address -- and this node does it TWICE, once for the winning value and once for its
+    index. ``Reduce`` nodes own their per-target lowering instead and reach CUB's ``DeviceReduce``.
+    """
+    sdfg = dace.SDFG(f'{cls.__name__}_lowering')
+    sdfg.add_array('x', [256], dace.float64)
+    sdfg.add_array('idx', [1], dace.int64)
+    state = sdfg.add_state()
+    node = cls('argminmax')
+    state.add_node(node)
+    state.add_edge(state.add_read('x'), None, node, '_x', dace.Memlet.from_array('x', sdfg.arrays['x']))
+    state.add_edge(node, '_idx', state.add_write('idx'), None, dace.Memlet.from_array('idx', sdfg.arrays['idx']))
+    # One level only: the Reduce nodes are what this asserts about.
+    sdfg.expand_library_nodes(recursive=False)
+
+    reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert len(reduces) == 2, f'expected a Reduce for the value and one for the index, got {reduces}'
+    wcr = [e.data for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr is not None]
+    assert not wcr, f'the expansion still accumulates through a WCR: {wcr}'

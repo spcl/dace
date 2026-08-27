@@ -35,6 +35,7 @@ from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_s
     SequentializeNestedDeviceScopes)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.libraries.standard.nodes.scan import Scan
+from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation import helpers as xfh
 
@@ -77,8 +78,15 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     * CPU: ``OpenBLAS`` (if installed), ``HPTT`` (tensor transpose, if ``HPTT_ROOT`` is set),
       ``TTGT`` (tensor contraction via transpose+GEMM, no external dependency), ``OpenMP`` (``Reduce``),
       ``CPU`` (OpenMP-5 ``Scan``, radix ``IntegerSort``, ``ska_sort`` ``ScatterConflictCheck``).
-    * GPU: ``cuBLAS``, ``cuSolverDn``, ``cuTENSOR``, ``GPUAuto``, ``CUB``, ``CUDA`` (``cub::DeviceScan``
-      / device sort).
+    * GPU: ``cuBLAS``, ``cuSolverDn``, ``GPUAuto``, ``cuTENSOR``, ``CUB``, ``CUDA`` (``cub::DeviceScan``
+      / device sort / ``DeviceReduce::ArgMax`` / the bounding-box ``Symmetrize``).
+
+    Both lists are the SAME ORDER as ``auto_optimize``'s :func:`~dace.transformation.auto.
+    auto_optimize.find_fast_library`, deliberately and for the reason stated there: the two pipelines
+    are compared column against column, so a node that lowers to a tuned expansion under one and to
+    the serial ``pure`` loop under the other measures the priority list rather than the pipeline.
+    ``CUDA`` is appended to BOTH, because it is the key every CUB-backed node this tree adds
+    registers under.
 
     Only impls whose environment is available on this host are listed, so forcing a pick never selects
     an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``rowwise`` override in
@@ -86,7 +94,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     """
     if device == dtypes.DeviceType.GPU:
         # GPU perf runs where these are present; each node's own environment gates the actual build.
-        return ['cuBLAS', 'cuSolverDn', 'cuTENSOR', 'GPUAuto', 'CUB', 'CUDA']
+        return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA']
     prio = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')
@@ -165,6 +173,22 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             device_impl = 'CUDA' if symbolic.equal(node.stride, 1) else 'CUDA_strided'
             node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
                                    (device_impl if device_impl in impls else node.implementation))
+            continue
+        # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
+        # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
+        # of it, which is the right order: measured on an RTX 4050 at 8192x8192 float64, cuBLAS
+        # ``geam`` transposes at 169 GB/s against our kernel's 150 and the pure map's 140 -- geam is
+        # essentially at copy bandwidth. Ours is the fallback that matters when the vendor library is
+        # absent (this box has a cuTENSOR that does not link), where it beats ``pure``.
+        # GPU ``Symmetrize``: the ``pure`` expansion walks the triangle as nested maps, whose inner
+        # extent depends on the row. That cannot be a thread-block dimension, so ``pure`` pins the
+        # column axis Sequential and leaves one thread per ROW. At host level the node becomes a
+        # kernel of its own and the bounding-box expansion is the right lowering -- both axes
+        # parallel, constant extents. Inside a kernel there is no launch to configure and the
+        # triangular walk is the cheaper one, so keep ``pure`` there.
+        if isinstance(node, Symmetrize) and device == dtypes.DeviceType.GPU:
+            node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
+                                   ('CUDA' if 'CUDA' in impls else node.implementation))
             continue
         # ``set_fast_implementations`` leaves every ``Sequential`` GPU node ``pure``, reading
         # Sequential as "inside a kernel", where only device code may be emitted. A host loop and a

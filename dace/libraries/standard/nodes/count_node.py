@@ -108,7 +108,6 @@ class ExpandPure(ExpandTransformation):
         # is a copy; simplification will fuse it with the reduction
         # source when no cross-storage boundary intervenes.
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         sdfg.add_array(mask_name, mask_shape, mask.dtype, mask.storage, strides=mask.strides)
         sdfg.add_transient("_mask_int", mask_shape, dace.int32, storage=mask.storage)

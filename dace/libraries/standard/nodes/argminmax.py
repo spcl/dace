@@ -28,8 +28,11 @@ outer iterators are the dim-reduced output coordinates.
 Future backends (not yet implemented; ``pure`` is the only registered
 implementation):
 
-* ``CUB``: ``cub::DeviceReduce::ArgMax`` / ``cub::DeviceReduce::ArgMin``
-  return a ``cub::KeyValuePair<int, T>``.  Sequential schedule on GPU.
+* ``CUB`` one-pass: ``cub::DeviceReduce::ArgMax`` / ``ArgMin`` return a
+  ``cub::KeyValuePair<int, T>``, which would collapse the two reduction
+  passes below into one.  Both passes already go through ``Reduce``
+  nodes, so each of them reaches CUB's ``DeviceReduce`` on its own; a
+  dedicated expansion would only save the second pass.
 * ``OpenMP``: a user-defined reduction
   (``#pragma omp declare reduction``) over a ``pair<val, idx>`` struct
   with a custom combiner.  Lets the OpenMP 5.0 runtime own the parallel
@@ -45,6 +48,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -118,10 +122,14 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
         if not per_slice_shape:
             per_slice_shape = [1]
         sdfg.add_array("_idx", per_slice_shape, idx_dtype)
-    sdfg.add_transient("__best_val", per_slice_shape, dtype)
-    sdfg.add_transient("__best_idx", per_slice_shape, idx_dtype)
+    # Every intermediate takes the INPUT's storage rather than the default. A transient left at
+    # ``Default`` under a GPU-scheduled expansion resolves to ``GPU_Shared``, and
+    # ``ExpandReduceGPUAuto`` refuses anything but ``GPU_Global``: it falls back to the pure
+    # expansion, which is a WCR map -- the per-element atomic the Reduce nodes exist to avoid.
+    sdfg.add_transient("__best_val", per_slice_shape, dtype, storage=desc_x.storage)
+    sdfg.add_transient("__best_idx", per_slice_shape, idx_dtype, storage=desc_x.storage)
 
-    val_identity = str(dtypes.max_value(dtype)) if func == "min" else str(dtypes.min_value(dtype))
+    val_identity_value = dtypes.max_value(dtype) if func == "min" else dtypes.min_value(dtype)
     # Sentinel for the idx reduction: ``num_elements`` is larger than any
     # valid flat idx, so a final WCR=min gives "no match" -> num_elements
     # which the extract step ignores.  For ``back=True`` we want the LAST
@@ -135,87 +143,62 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 
     one_offset = 1 if node.one_based else 0
 
-    # ---- state 1: init __best_val to identity ----
-    init_val = sdfg.add_state(node.label + "_init_val")
-    if flat:
-        init_val.add_mapped_tasklet(
-            name="init_best_val",
-            map_ranges={"__t": "0:1"},
-            inputs={},
-            code=f"__out = {val_identity}",
-            outputs={"__out": dace.Memlet("__best_val[0]")},
-            external_edges=True,
-        )
-    else:
-        rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
-        out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
-        init_val.add_mapped_tasklet(
-            name="init_best_val",
-            map_ranges=rng,
-            inputs={},
-            code=f"__out = {val_identity}",
-            outputs={"__out": dace.Memlet(f"__best_val[{out_subs}]")},
-            external_edges=True,
-        )
-
-    # ---- state 2: reduce __best_val ----
-    reduce_val = sdfg.add_state_after(init_val, node.label + "_reduce_val")
+    # ---- state 1: reduce __best_val ----
+    #
+    # A ``Reduce`` node, not a WCR on a map over ``_x``. A WCR into one accumulator emits a global
+    # atomic per element on a GPU, every one of them contending for the same address; the node owns
+    # its per-target lowering and reaches CUB's ``DeviceReduce`` on CUDA. It also carries the
+    # identity, so the separate seeding state this used to need is gone.
+    axes = None if flat else [dim_zero]
     map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
     x_subs = ", ".join([f"__i{d}" for d in range(rank)])
     bv_subs = "0" if flat else ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
-    reduce_val.add_mapped_tasklet(
-        name="reduce_best_val",
-        map_ranges=map_rng,
-        inputs={"__in": dace.Memlet(f"_x[{x_subs}]")},
-        code="__out = __in",
-        outputs={"__out": dace.Memlet(f"__best_val[{bv_subs}]", wcr=f"lambda a, b: {func}(a, b)")},
-        external_edges=True,
-    )
+    reduce_val = sdfg.add_state(node.label + "_reduce_val", is_start_block=True)
+    val_red = Reduce(name=node.label + "_val_reduce",
+                     wcr=f"lambda a, b: {func}(a, b)",
+                     axes=axes,
+                     identity=val_identity_value)
+    reduce_val.add_node(val_red)
+    reduce_val.add_edge(reduce_val.add_read("_x"), None, val_red, "_in_data",
+                        dace.Memlet.from_array("_x", sdfg.arrays["_x"]))
+    reduce_val.add_edge(val_red, "_out", reduce_val.add_access("__best_val"), None,
+                        dace.Memlet.from_array("__best_val", sdfg.arrays["__best_val"]))
 
-    # ---- state 3: init __best_idx to sentinel ----
-    init_idx = sdfg.add_state_after(reduce_val, node.label + "_init_idx")
-    if flat:
-        init_idx.add_mapped_tasklet(
-            name="init_best_idx",
-            map_ranges={"__t": "0:1"},
-            inputs={},
-            code=f"__out = {idx_sentinel}",
-            outputs={"__out": dace.Memlet("__best_idx[0]")},
-            external_edges=True,
-        )
-    else:
-        rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
-        out_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
-        init_idx.add_mapped_tasklet(
-            name="init_best_idx",
-            map_ranges=rng,
-            inputs={},
-            code=f"__out = {idx_sentinel}",
-            outputs={"__out": dace.Memlet(f"__best_idx[{out_subs}]")},
-            external_edges=True,
-        )
-
-    # ---- state 4: reduce __best_idx (filtered min/max over flat indices) ----
-    reduce_idx = sdfg.add_state_after(init_idx, node.label + "_reduce_idx")
-    if flat:
-        flat_idx = _flat_index_expr(rank, shape)
-    else:
-        flat_idx = f"__i{dim_zero}"
+    # ---- state 2: candidate index per element ----
+    #
+    # Elementwise, so it parallelizes anywhere: each element emits its own flat index if it matches
+    # the winning value and the sentinel otherwise. Materializing the candidates is what lets the
+    # pick below be a ``Reduce`` node rather than a second WCR accumulator.
+    candidates = sdfg.add_state_after(reduce_val, node.label + "_candidates")
+    sdfg.add_transient("__idx_candidates", shape, idx_dtype, storage=desc_x.storage)
+    flat_idx = _flat_index_expr(rank, shape) if flat else f"__i{dim_zero}"
     # Single-statement Python tasklet: emit the flat index for matches,
     # the sentinel otherwise.  Conditional expression in a tasklet body
     # transpiles cleanly via astutils.
     code = f"__out = ({flat_idx}) if (__in == __bv) else {idx_sentinel}"
-    reduce_idx.add_mapped_tasklet(
-        name="reduce_best_idx",
+    candidates.add_mapped_tasklet(
+        name="candidate_idx",
         map_ranges=map_rng,
         inputs={
             "__in": dace.Memlet(f"_x[{x_subs}]"),
             "__bv": dace.Memlet(f"__best_val[{bv_subs}]"),
         },
         code=code,
-        outputs={"__out": dace.Memlet(f"__best_idx[{bv_subs}]", wcr=f"lambda a, b: {idx_wcr_op}(a, b)")},
+        outputs={"__out": dace.Memlet(f"__idx_candidates[{x_subs}]")},
         external_edges=True,
     )
+
+    # ---- state 3: pick the first (or last) matching index ----
+    reduce_idx = sdfg.add_state_after(candidates, node.label + "_reduce_idx")
+    idx_red = Reduce(name=node.label + "_idx_reduce",
+                     wcr=f"lambda a, b: {idx_wcr_op}(a, b)",
+                     axes=axes,
+                     identity=idx_sentinel)
+    reduce_idx.add_node(idx_red)
+    reduce_idx.add_edge(reduce_idx.add_read("__idx_candidates"), None, idx_red, "_in_data",
+                        dace.Memlet.from_array("__idx_candidates", sdfg.arrays["__idx_candidates"]))
+    reduce_idx.add_edge(idx_red, "_out", reduce_idx.add_access("__best_idx"), None,
+                        dace.Memlet.from_array("__best_idx", sdfg.arrays["__best_idx"]))
 
     # ---- state 5: extract / decode ----
     extract = sdfg.add_state_after(reduce_idx, node.label + "_extract")

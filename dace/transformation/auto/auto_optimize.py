@@ -370,7 +370,13 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             backend = 'none'
 
         if backend == 'cuda':
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'pure']
+            # ``CUDA`` for the same reason the CPU branch below carries everything past the vendor
+            # BLAS: it is the key the CUB-backed nodes register under (``Scan``'s ``cub::DeviceScan``,
+            # ``IntegerSort``'s ``DeviceRadixSort``, ``ArgReduce``'s ``DeviceReduce::ArgMax``,
+            # ``FindFirst``, ``ScatterConflictCheck``, ``Symmetrize``'s parallel bounding box). Without
+            # it every one of them fell through to the serial ``pure`` loop here while canonicalize
+            # took the device form, so the GPU column compared library selection, not pipelines.
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:

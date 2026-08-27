@@ -5,10 +5,16 @@ Fortran ``NORM2(X [, DIM])`` returns ``sqrt(sum(X**2))``.  Without
 ``DIM`` the result is a scalar over the whole array; with ``DIM``
 the reduction is along one axis and the result is rank-(R-1).
 
-Pure expansion: a single reduction map accumulates the sum of squares
-via WCR (parallel-safe), and a trailing tasklet writes ``sqrt`` of the
-accumulator into the user-facing scalar / per-slice output.  DaCe's
-scheduler picks OpenMP / GPU on the Map based on storage.
+Pure expansion: an elementwise square, a ``Reduce`` node that sums it,
+and a trailing tasklet writing ``sqrt`` of the accumulator into the
+user-facing scalar / per-slice output.
+
+The sum is a ``Reduce`` node rather than a WCR on the square map, which
+is what makes it fast on a GPU: a WCR into one accumulator emits one
+global ``atomicAdd`` per element, all to the same address, while
+``Reduce`` picks a real parallel reduction per target (``CUB``'s
+``DeviceReduce`` on CUDA).  Same shape as ``count_node`` and ``allany``,
+which reduce through a node for the same reason.
 """
 import dace
 import dace.library
@@ -16,6 +22,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -43,47 +50,40 @@ class ExpandNorm2Pure(ExpandTransformation):
             if not out_shape:
                 out_shape = [1]
             sdfg.add_array("_out", out_shape, dtype)
-        sdfg.add_transient("_sumsq", out_shape, dtype)
+        # The intermediates take the INPUT's storage rather than the default. A transient left at
+        # ``Default`` under a GPU-scheduled expansion resolves to ``GPU_Shared``, and
+        # ``ExpandReduceGPUAuto`` refuses anything but ``GPU_Global`` -- it falls back to the pure
+        # expansion, which is a WCR map, i.e. exactly the per-element atomic this node moved off.
+        sdfg.add_transient("_sumsq", out_shape, dtype, storage=desc_x.storage)
 
-        # Seed the accumulator with zero.
-        init_state = sdfg.add_state(node.label + "_init")
-        if dim_zero is None:
-            init_state.add_mapped_tasklet(
-                name="_norm2_init",
-                map_ranges={"__i0": "0:1"},
-                inputs={},
-                code="__init = 0",
-                outputs={"__init": dace.Memlet("_sumsq[0]")},
-                external_edges=True,
-            )
-        else:
-            init_rng = {f"__o{d}": f"0:{shape[d]}" for d in range(rank) if d != dim_zero}
-            init_subs = ", ".join([f"__o{d}" for d in range(rank) if d != dim_zero])
-            init_state.add_mapped_tasklet(
-                name="_norm2_init",
-                map_ranges=init_rng,
-                inputs={},
-                code="__init = 0",
-                outputs={"__init": dace.Memlet(f"_sumsq[{init_subs}]")},
-                external_edges=True,
-            )
+        sdfg.add_transient("_squares", shape, dtype, storage=desc_x.storage)
 
-        # Reduce: ``sumsq += x[i]**2``.
-        reduce_state = sdfg.add_state_after(init_state, node.label + "_sumsq")
+        # Square every element. Elementwise, so it parallelizes on any target.
+        square_state = sdfg.add_state(node.label + "_square", is_start_block=True)
         map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
         x_subs = ", ".join([f"__i{d}" for d in range(rank)])
-        if dim_zero is None:
-            out_pair_subs = "0"
-        else:
-            out_pair_subs = ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
-        reduce_state.add_mapped_tasklet(
-            name="_norm2_sumsq",
+        square_state.add_mapped_tasklet(
+            name="_norm2_square",
             map_ranges=map_rng,
             inputs={"__in": dace.Memlet(f"_x[{x_subs}]")},
             code="__out = __in * __in",
-            outputs={"__out": dace.Memlet(f"_sumsq[{out_pair_subs}]", wcr="lambda a, b: a + b")},
+            outputs={"__out": dace.Memlet(f"_squares[{x_subs}]")},
             external_edges=True,
         )
+
+        # Sum them through a Reduce NODE, which owns the per-target lowering (CUB's DeviceReduce on
+        # CUDA). A WCR on the square map would instead emit one global atomic per element, every one
+        # of them contending for the same accumulator.
+        reduce_state = sdfg.add_state_after(square_state, node.label + "_sumsq")
+        red = Reduce(name=node.label + "_sumsq_node",
+                     wcr="lambda a, b: a + b",
+                     axes=None if dim_zero is None else [dim_zero],
+                     identity=0)
+        reduce_state.add_node(red)
+        reduce_state.add_edge(reduce_state.add_read("_squares"), None, red, "_in_data",
+                              mm.Memlet.from_array("_squares", sdfg.arrays["_squares"]))
+        reduce_state.add_edge(red, "_out", reduce_state.add_access("_sumsq"), None,
+                              mm.Memlet.from_array("_sumsq", sdfg.arrays["_sumsq"]))
 
         # Finalize: ``out = sqrt(sumsq)``.
         final_state = sdfg.add_state_after(reduce_state, node.label + "_sqrt")

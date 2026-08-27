@@ -213,9 +213,16 @@ def add_triangular_tasklet(state: SDFGState,
     data-dependent inner bound (``0:__i + 1``) never lands on a collapsed parallel
     map. Every memlet is deep-copied per edge: DaCe rejects two edges sharing one
     subset instance.
+
+    The column map is pinned Sequential for the same reason one level further on: its extent
+    depends on ``__i``, and the default schedule under a GPU kernel is ``GPU_ThreadBlock``, whose
+    extent is the launch's block dimension -- host code, which cannot read a map parameter. A block
+    dimension also has to be uniform across the grid, and a triangular row length is not. The row
+    map keeps the parallelism and is tiled into grid+block as usual.
     """
     row_me, row_mx = state.add_map(label + "_row", {"__i": f"0:{symstr(n)}"})
-    col_me, col_mx = state.add_map(label + "_col", {"__j": triangle_range(uplo, "__i", n)})
+    col_me, col_mx = state.add_map(label + "_col", {"__j": triangle_range(uplo, "__i", n)},
+                                   schedule=dtypes.ScheduleType.Sequential)
     entries, exits = [row_me, col_me], [col_mx, row_mx]
     if extra_map is not None:
         red_me, red_mx = state.add_map(label + "_" + extra_map[0].lstrip("_"), {extra_map[0]: extra_map[1]})

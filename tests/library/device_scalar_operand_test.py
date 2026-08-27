@@ -59,10 +59,17 @@ def scan_with_seed(storage: dtypes.StorageType) -> tuple:
 
 
 def expanded_code(sdfg: dace.SDFG) -> str:
-    """Every CPP tasklet body the expansion produced, concatenated."""
+    """Every CPP body the expansion produced -- tasklets AND global code, concatenated.
+
+    The cub call does not live in the tasklet: the scan expansion emits it as a CUDA unit through
+    ``append_global_code(..., 'cuda')`` and leaves the tasklet holding only the call to it. Reading
+    tasklets alone would make every assertion here pass or fail for the wrong reason.
+    """
     sdfg.expand_library_nodes()
-    return '\n'.join(node.code.as_string for node, _ in sdfg.all_nodes_recursive()
-                     if isinstance(node, dace.sdfg.nodes.Tasklet))
+    parts = [node.code.as_string for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.sdfg.nodes.Tasklet)]
+    for nested in sdfg.all_sdfgs_recursive():
+        parts.extend(block.as_string for block in nested.global_code.values())
+    return '\n'.join(parts)
 
 
 def test_a_host_coefficient_is_read_by_value():
