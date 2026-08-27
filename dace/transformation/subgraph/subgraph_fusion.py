@@ -1267,8 +1267,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        # Skip a store the downstream chain overwrites: emitting it would leave the
-                        # fused MapExit and that chain with two unordered writes to the same slot.
+                        # Skip a store the downstream chain overwrites: it would leave the fused
+                        # MapExit and that chain writing the same slot unordered.
                         outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
                                                         global_map_exit.map.params, global_map_exit.map.range).subset
                         downstream = sdutil.find_downstream_nodes(acc, graph)
