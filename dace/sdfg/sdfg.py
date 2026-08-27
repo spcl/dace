@@ -1524,10 +1524,9 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # A used array needs its stride/shape/offset symbols in the free set, but a merely-declared
-        # one must not leak its shape symbol into the signature (issue #2382). Expand the extent
-        # symbols of the arrays ``read_and_write_sets`` reports as used -- which includes those
-        # referenced only by a code-block guard -- and no others.
+        # A used array needs its stride/shape/offset symbols in the free set; a merely-declared one
+        # must not leak its shape symbol into the signature (issue #2382). ``read_and_write_sets``
+        # counts an array referenced only by a code-block guard as used.
         res_free, res_defined, res_before = result
         if with_contents:
             read_set, write_set = self.read_and_write_sets()
