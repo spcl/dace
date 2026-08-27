@@ -7,6 +7,7 @@ import warnings
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 N = 512
@@ -57,12 +58,20 @@ def _generate(program, chiplets=None, allow_distribution=None):
         dace.config.Config.set('compiler', 'cuda', 'backend', value='hip')
         if chiplets is not None:
             dace.config.Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
-        sdfg = program.to_sdfg()
-        if allow_distribution is not None:
-            for node, _ in sdfg.all_nodes_recursive():
-                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device:
-                    node.map.allow_chiplet_threadblock_distribution = allow_distribution
-        return sdfg.generate_code()[1].code
+
+        # `get_gpu_backend` caches its result for the whole process, so the backend set above only
+        # reaches the code generator if that cache is cleared first. It is cleared again afterwards,
+        # so that these tests do not force "hip" onto whatever runs next in the same process.
+        common.get_gpu_backend.cache_clear()
+        try:
+            sdfg = program.to_sdfg()
+            if allow_distribution is not None:
+                for node, _ in sdfg.all_nodes_recursive():
+                    if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device:
+                        node.map.allow_chiplet_threadblock_distribution = allow_distribution
+            return sdfg.generate_code()[1].code
+        finally:
+            common.get_gpu_backend.cache_clear()
 
 
 def test_chiplet_distribution():
