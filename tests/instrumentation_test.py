@@ -13,6 +13,9 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 N = dace.symbol('N')
 
+# State struct field that carries the instrumentation report
+REPORT_DECL = 'dace::perf::Report report;'
+
 
 @dace.program
 def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
@@ -77,6 +80,15 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         range_pop = re.search(r'(nvtx|roctx)RangePop\b', code)
         assert range_pop is not None
 
+        # GPU_TX_MARKERS never writes to the report, so it must not be declared nor used when it is
+        # the only instrumentation in use. Both save sites are checked, as they are guarded by the
+        # `instrumentation.report_each_invocation` configuration entry.
+        for each_invocation in (True, False):
+            with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=each_invocation):
+                code = sdfg.generate_code()[0].clean_code
+            assert REPORT_DECL not in code
+            assert re.search(r'__state->report\b', code) is None
+
 
 def test_timer():
     onetest(dace.InstrumentationType.Timer)
@@ -98,9 +110,35 @@ def test_gpu_tx_markers():
     onetest(dace.InstrumentationType.GPU_TX_MARKERS)
 
 
+@pytest.mark.gpu
+def test_gpu_tx_markers_with_timer():
+    """ The report is still needed when another instrumentation type is used next to GPU_TX_MARKERS. """
+    sdfg: dace.SDFG = slowmm.to_sdfg()
+    sdfg.name = 'instrumentation_test_GPU_TX_MARKERS_with_timer'
+    sdfg.simplify()
+
+    # Mark the map with GPU_TX_MARKERS and the state containing it with a timer
+    sdfg.instrument = dace.InstrumentationType.GPU_TX_MARKERS
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and node.map.label == 'mult':
+            node.map.instrument = dace.InstrumentationType.GPU_TX_MARKERS
+            state.instrument = dace.InstrumentationType.Timer
+
+    sdfg.apply_transformations(GPUTransformSDFG)
+
+    # Both providers are in use, so the ranges are emitted and the report is kept at either save site
+    for each_invocation in (True, False):
+        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=each_invocation):
+            code = sdfg.generate_code()[0].clean_code
+        assert re.search(r'(nvtx|roctx)RangePush\(', code) is not None
+        assert REPORT_DECL in code
+        assert re.search(r'__state->report\b', code) is not None
+
+
 if __name__ == '__main__':
     test_timer()
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_gpu_events()
         test_gpu_tx_markers()
+        test_gpu_tx_markers_with_timer()
