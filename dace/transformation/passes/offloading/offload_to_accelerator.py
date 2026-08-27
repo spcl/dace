@@ -168,6 +168,17 @@ class OffloadToAccelerator(ppl.Pass):
 
     CATEGORY: str = 'Offload To Accelerator'
 
+    taskloop_overrides = properties.DictProperty(
+        key_type=str,
+        value_type=bool,
+        default={},
+        desc='Map label -> whether that map is a taskloop, deciding it outright. Final in both '
+        'directions and consulted before any heuristic: a caller naming a map has looked at the '
+        'kernel, and the rules have not. Maps left unnamed are classified as usual.')
+
+    def __init__(self, taskloop_overrides: dict[str, bool] | None = None):
+        self.taskloop_overrides = dict(taskloop_overrides) if taskloop_overrides else {}
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
@@ -425,7 +436,7 @@ class OffloadToAccelerator(ppl.Pass):
         A map enclosing a device-wide library node is recorded whatever the config says: that call is
         issued by host code, so a kernel cannot contain it. The launch-only rule is the optional half.
         """
-        self.taskloops = taskloop_maps(sdfg, launch_only=self.taskloop_heuristics)
+        self.taskloops = taskloop_maps(sdfg, launch_only=self.taskloop_heuristics, overrides=self.taskloop_overrides)
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
@@ -1241,7 +1252,11 @@ class OffloadToAccelerator(ppl.Pass):
 
         self.__traverse_IR(IR, propagate)
 
-    def _insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock, rename_dict: dict):
+    def _insert_copy_names_in_block(self,
+                                    sdfg: SDFG,
+                                    block: ControlFlowBlock,
+                                    rename_dict: dict,
+                                    interstate_only: bool = False):
         if block is None:
             return
 
@@ -1256,6 +1271,14 @@ class OffloadToAccelerator(ppl.Pass):
                 for name in relevant_edge_arrays:
                     if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global:
                         edge.data.replace(name, self._get_host_name(name))
+
+        # An EDGE node stands for the interstate edges REACHING ``block``, and it holds the same block
+        # object as the state node that follows it. Its decision is about what those edges read, so
+        # letting it fall through here would apply it a second time to dataflow the state node has
+        # already decided about -- tsvc s315, where a host tasklet writing ``a`` came out writing
+        # ``a_gpu``.
+        if interstate_only:
+            return
 
         if isinstance(block, SDFGState):
             self._insert_copy_names_in_state(block, rename_dict)
@@ -1297,7 +1320,7 @@ class OffloadToAccelerator(ppl.Pass):
                         name].storage == dtypes.StorageType.GPU_Global:  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._insert_copy_names_in_block(sdfg, node.block, rename_dict)
+            self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
 
         self.__traverse_IR(IR, _insert_copy_names_in_node)
 

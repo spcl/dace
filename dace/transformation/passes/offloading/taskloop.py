@@ -1,10 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps that only LAUNCH work stay on the host; their bodies become the kernels.
 ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps."""
+from typing import Dict, Optional
+
 from ordered_set import OrderedSet
 
+from dace import symbolic
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
+from dace.subsets import Range
 
 
 def is_computation(node: nodes.Node) -> bool:
@@ -80,14 +84,88 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) ->
     return False
 
 
-def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dict, launch_only: bool = True) -> bool:
+#: What an extent nobody has pinned is worth when two of them are compared. The comparison below only
+#: needs to know which side has MORE iterations, and at compile time ``nproma`` and ``nblks`` are both
+#: just names -- so every unpinned symbol is given the same value and the shapes decide. A concrete
+#: extent keeps its own value, which is the case that matters: a literal ``[0:4]`` inner map really is
+#: four iterations, and must not be mistaken for a full-sized axis.
+NOMINAL_EXTENT = 1024
+
+
+def nominal_volume(subset: Range) -> Optional[int]:
+    """Iterations in ``subset`` with every unpinned symbol set to :data:`NOMINAL_EXTENT`.
+
+    ``None`` when the count does not survive substitution -- a data-dependent bound, say. The caller
+    treats that as "no opinion" rather than guessing at a number.
+    """
+    count = subset.num_elements()
+    try:
+        resolved = symbolic.evaluate(count, {symbol: NOMINAL_EXTENT for symbol in count.free_symbols})
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+    return int(resolved) if float(resolved).is_integer() and resolved > 0 else None
+
+
+def nest_volume(entry: nodes.MapEntry, scope_children: dict) -> Optional[int]:
+    """Threads a kernel rooted at ``entry`` would have: its own iterations times its deepest nest.
+
+    Nested maps under one kernel are collapsed into the launch, so their extents multiply. Sibling
+    nests are launched one after another, so the widest of them is what the kernel has to fill.
+    """
+    own = nominal_volume(entry.map.range)
+    if own is None:
+        return None
+    inner = [
+        nest_volume(node, scope_children) for node in scope_children.get(entry, ()) if isinstance(node, nodes.MapEntry)
+    ]
+    if any(volume is None for volume in inner):
+        return None
+    return own * max(inner, default=1)
+
+
+def body_has_more_threads(entry: nodes.MapEntry, scope_children: dict) -> bool:
+    """Does moving the kernel INSIDE ``entry`` launch more threads than leaving it outside?
+
+    The two lowerings differ in exactly one way. Left alone, ``entry`` IS the kernel and everything
+    under it is sequential, so the launch is as wide as ``entry``'s own iteration space. Made a
+    taskloop, ``entry`` runs on the host and each of its bodies becomes a kernel of its own, so the
+    launch is as wide as the widest body nest. More iterations in the kernel is more threads, which
+    is what a GPU wants, so the taskloop is worth it when the body is the wider of the two.
+
+    Unresolvable either side means no opinion, and the caller keeps the structural answer: the
+    extent-dependence gate has already removed the shapes that were actively harmful.
+    """
+    outside = nominal_volume(entry.map.range)
+    if outside is None:
+        return True
+    inside = [
+        nest_volume(node, scope_children) for node in scope_children.get(entry, ()) if isinstance(node, nodes.MapEntry)
+    ]
+    if not inside or any(volume is None for volume in inside):
+        return True
+    return max(inside) >= outside
+
+
+def is_taskloop_map(state: SDFGState,
+                    entry: nodes.MapEntry,
+                    scope_children: dict,
+                    launch_only: bool = True,
+                    overrides: Optional[Dict[str, bool]] = None) -> bool:
     """``entry`` launches work rather than doing it, so it belongs on the host.
+
+    ``overrides`` is the caller's answer for a map, by label, and it is final in BOTH directions: a
+    name mapped to ``True`` is a taskloop whatever the rules below say, and one mapped to ``False``
+    never is. Nothing else consults the heuristics, because a caller who names a map has looked at
+    the kernel and the rules have not.
 
     Enclosing a device-wide library node is a requirement, not a heuristic: a cuBLAS call is issued by
     host code. ``launch_only`` adds the optional reason -- an uncollapsed nest counts, and collapsing
-    it into one kernel is canonicalization's job -- but only for a body whose extents do not depend
-    on this map, see :func:`body_extents_depend_on_entry`.
+    it into one kernel is canonicalization's job -- for a body whose extents do not depend on this map
+    (:func:`body_extents_depend_on_entry`) and which is the wider of the two lowerings
+    (:func:`body_has_more_threads`).
     """
+    if overrides and entry.map.label in overrides:
+        return bool(overrides[entry.map.label])
     if encloses_device_wide_libnode(state, entry, scope_children):
         return True
     if not launch_only:
@@ -105,15 +183,16 @@ def is_taskloop_map(state: SDFGState, entry: nodes.MapEntry, scope_children: dic
             if not sdfg_only_launches(node.sdfg):
                 return False
             launches = True
-    return launches
+    return launches and body_has_more_threads(entry, scope_children)
 
 
-def taskloop_maps(sdfg: SDFG, launch_only: bool = True) -> OrderedSet:
+def taskloop_maps(sdfg: SDFG, launch_only: bool = True, overrides: Optional[Dict[str, bool]] = None) -> OrderedSet:
     found = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
             scope_children = state.scope_children()
             for node in state.nodes():
-                if isinstance(node, nodes.MapEntry) and is_taskloop_map(state, node, scope_children, launch_only):
+                if isinstance(node, nodes.MapEntry) and is_taskloop_map(state, node, scope_children, launch_only,
+                                                                        overrides):
                     found.add(node)
     return found

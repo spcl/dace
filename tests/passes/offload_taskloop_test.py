@@ -560,3 +560,100 @@ def test_a_taskloop_body_reads_its_interstate_arrays_on_the_host(heuristics):
     }
     assert not on_device, f"the body's interstate edge reads device memory from host code: {on_device}"
     sdfg.validate()
+
+
+def wide_outer_narrow_body() -> dace.SDFG:
+    """A large ``i`` map whose body is a small one -- the shape the volume rule declines.
+
+    Made a taskloop this launches 4096 kernels of 8 threads each. Left alone it is one kernel of
+    4096, which is what a GPU can actually fill, so the rule has to prefer the second.
+    """
+    sdfg = dace.SDFG('wide_outer_narrow_body')
+    sdfg.add_array('A', [4096, 8], dace.float64)
+    state = sdfg.add_state('body')
+    outer_in, outer_out = state.add_map('outer', dict(i='0:4096'))
+    inner_in, inner_out = state.add_map('inner', dict(j='0:8'))
+    read, write = state.add_access('A'), state.add_access('A')
+    tasklet = state.add_tasklet('scale', {'a'}, {'b'}, 'b = a * 2.0')
+    state.add_memlet_path(read, outer_in, inner_in, tasklet, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(tasklet, inner_out, outer_out, write, src_conn='b', memlet=dace.Memlet('A[i, j]'))
+    return sdfg
+
+
+def symbolic_blocked_nest() -> dace.SDFG:
+    """ICON's shape with every extent left as a symbol: ``nblks`` outside, ``nproma`` x ``nlev`` in.
+
+    Nothing pins the three at compile time, so the rule has only their shapes to go on -- one axis
+    against two. That is what "assume every unpinned symbol is worth the same" is for.
+    """
+    sdfg = dace.SDFG('symbolic_blocked_nest')
+    for name in ('nblks', 'nproma', 'nlev'):
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array('A', [dace.symbol('nblks'), dace.symbol('nproma'), dace.symbol('nlev')], dace.float64)
+    state = sdfg.add_state('body')
+    outer_in, outer_out = state.add_map('blocks', dict(b='0:nblks'))
+    inner_in, inner_out = state.add_map('columns', dict(p='0:nproma', k='0:nlev'))
+    read, write = state.add_access('A'), state.add_access('A')
+    tasklet = state.add_tasklet('scale', {'a'}, {'c'}, 'c = a * 2.0')
+    state.add_memlet_path(read, outer_in, inner_in, tasklet, dst_conn='a', memlet=dace.Memlet('A[b, p, k]'))
+    state.add_memlet_path(tasklet, inner_out, outer_out, write, src_conn='c', memlet=dace.Memlet('A[b, p, k]'))
+    return sdfg
+
+
+def outer_entry(sdfg: dace.SDFG, label: str) -> nodes.MapEntry:
+    """The map entry with this label, and the state it lives in."""
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry) and node.map.label == label:
+                return node
+    raise AssertionError(f'no map labelled {label}')
+
+
+def classify(sdfg: dace.SDFG, label: str, overrides=None) -> bool:
+    """Would ``label`` be a taskloop, with the heuristics on?"""
+    state = next(s for s in sdfg.states() if any(
+        isinstance(n, nodes.MapEntry) and n.map.label == label for n in s.nodes()))
+    return is_taskloop_map(state, outer_entry(sdfg, label), state.scope_children(), True, overrides)
+
+
+def test_a_map_wider_than_its_body_keeps_the_kernel_to_itself():
+    """4096 outside against 8 inside: the wider launch wins and the map is not a taskloop."""
+    assert not classify(wide_outer_narrow_body(), 'outer')
+
+
+def test_a_map_narrower_than_its_body_hands_the_kernel_down():
+    """16 outside against 16 x 16 inside: the body is wider, so the map launches rather than computes."""
+    sdfg = uncollapsed_nest()
+    assert classify(sdfg, 'outer')
+
+
+def test_unpinned_extents_are_compared_by_shape_alone():
+    """``nblks`` against ``nproma * nlev``: one symbolic axis against two, so the body is wider.
+
+    No extent is known here. Giving every unpinned symbol the same value is what lets the rule
+    answer at all, and it answers on the only thing that is actually visible -- the nesting.
+    """
+    assert classify(symbolic_blocked_nest(), 'blocks')
+
+
+def test_a_named_map_is_taskloop_or_not_whatever_the_rules_say():
+    """``taskloop_overrides`` decides outright, in both directions."""
+    wide = wide_outer_narrow_body()
+    assert not classify(wide, 'outer')
+    assert classify(wide, 'outer', {'outer': True}), 'an override could not force a taskloop on'
+
+    narrow = uncollapsed_nest()
+    assert classify(narrow, 'outer')
+    assert not classify(narrow, 'outer', {'outer': False}), 'an override could not force a taskloop off'
+
+
+def test_an_override_reaches_the_pass_through_its_property():
+    """The dict handed to ``OffloadToAccelerator`` is what ``find_taskloops`` classifies with."""
+    sdfg = wide_outer_narrow_body()
+    entry = outer_entry(sdfg, 'outer')
+    with dace.config.set_temporary('optimizer', 'gpu_taskloop_heuristics', value=True):
+        offloader = OffloadToAccelerator(taskloop_overrides={'outer': True})
+        offloader.cache_scopes(sdfg)
+        offloader.taskloop_heuristics = True
+        offloader.find_taskloops(sdfg)
+    assert entry in offloader.taskloops, 'the pass ignored the override it was constructed with'
