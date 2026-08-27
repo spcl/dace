@@ -79,14 +79,16 @@ WARMUP = 2
 SCREEN_TIMEOUT = 900
 
 
-def canon_gpu(heuristics: bool) -> Callable[[dace.SDFG, List[str]], None]:
+def canon_gpu(heuristics: bool, canon_knobs: Dict[str, Any] = {}) -> Callable[[dace.SDFG, List[str]], None]:
     """The canonicalize-then-offload GPU pipeline at one setting of the taskloop knob.
 
+    ``canon_knobs`` overrides ``canonicalize``'s per-target defaults, which is how a knob whose GPU
+    default was picked on reasoning rather than on numbers gets an arm of its own.
     ``apply_gpu_storage`` is deliberately NOT called -- see the module docstring.
     """
 
     def apply(sdfg: dace.SDFG, taskloops: List[str]) -> None:
-        canonicalize(sdfg, validate=False, validate_all=False, target='gpu')
+        canonicalize(sdfg, validate=False, validate_all=False, target='gpu', **canon_knobs)
         with dace.config.set_temporary('optimizer', 'gpu_taskloop_heuristics', value=heuristics), \
                 dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=-1):
             recompute_fuse_for_gpu(sdfg)
@@ -118,6 +120,16 @@ ARMS: Dict[str, Callable[[dace.SDFG, List[str]], None]] = {
     'autoopt': autoopt_gpu,
     'canon': canon_gpu(False),
     'canon+taskloop': canon_gpu(True),
+    # ``interchange_carry_with_map`` relocates a scan's carry INTO the per-column Map, making the
+    # scan sequential-per-thread. The GPU default is off, i.e. the scan stays a parallel Scan; this
+    # arm is the sequential alternative that default is a bet against.
+    'canon-seqscan': canon_gpu(False, {'interchange_carry_with_map': True}),
+    # ``break_anti_dependence`` buys a read-ahead WAR loop's parallelism with a transient and a
+    # copy. On a GPU the copy is device bandwidth, so the trade is not the CPU's.
+    'canon-noantidep': canon_gpu(False, {'break_anti_dependence': False}),
+    # Same pipeline as ``canon``, under a second name: A/B-ing it against ``canon`` measures the
+    # harness's own noise floor, which is what every other ratio here has to clear to mean anything.
+    'canon-null': canon_gpu(False),
 }
 
 
