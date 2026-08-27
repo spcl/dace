@@ -34,6 +34,10 @@ set -euo pipefail
 KIND="${1:-}"
 WHAT="${2:-all}"
 NODES="${3:-1}"
+# Whatever follows the three positionals goes straight to the driver, so picking a different pair
+# of arms (--arms autoopt,canon) is a flag rather than an edit to any script in this folder.
+[ $# -gt 0 ] && shift $(( $# < 3 ? $# : 3 ))
+PASSTHROUGH=("$@")
 HERE=$(cd "$(dirname "$0")" && pwd)
 PRESET="${PRESET:-paper}"
 # 20 timed invocations per arm. The driver discards warm-up calls and reports the BEST of these,
@@ -43,7 +47,7 @@ REPEATS="${REPEATS:-20}"
 case "$KIND" in
     cpu|gpu|smoke) ;;
     *)
-        echo "usage: $(basename "$0") <smoke|cpu|gpu> [poly|np|tsvc|tsvc25|all] [NODES]" >&2
+        echo "usage: $(basename "$0") <smoke|cpu|gpu> [poly|np|tsvc|tsvc25|all] [NODES] [driver flags]" >&2
         echo "  cpu    -- offload, validate and emit every kernel; no device needed" >&2
         echo "  gpu    -- compile, verify against the reference, time both knob settings" >&2
         echo "  smoke  -- one corpus at preset S on the debug partition; run this first" >&2
@@ -93,7 +97,7 @@ submit_one() {
         --output="$out/dace-offload-${kind}-${suite}-%j.out" \
         --error="$out/dace-offload-${kind}-${suite}-%j.out" \
         "$HERE/submit_gpu_offload.sh" --out "$out" --stage "$stage" --preset "$PRESET" \
-        --suites "$suite" "${extra[@]}"
+        --suites "$suite" "${extra[@]}" "${PASSTHROUGH[@]}"
 }
 
 SUITES=("$WHAT")
@@ -104,7 +108,7 @@ if [ "$KIND" = smoke ]; then
     # writes a csv -- everything that fails in the first minute of a real job.
     PARTITION=debug TIMELIMIT=00:25:00 OUT_DIR="$HERE/results_smoke" PRESET=S REPEATS=3 \
         bash -c "$(printf '%q ' "$HERE/submit_gpu_offload.sh" --out "$HERE/results_smoke" \
-            --stage full --preset S --suites poly --repeats 3)"
+            --stage full --preset S --suites poly --repeats 3 "${PASSTHROUGH[@]}")"
 else
     for suite in "${SUITES[@]}"; do
         echo "=== submitting $KIND/$suite (${NODES} node(s) x 4 ranks x 1 GPU)"

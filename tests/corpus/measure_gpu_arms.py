@@ -1,26 +1,36 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A/B ``optimizer.gpu_taskloop_heuristics`` over polybench, npbench and tsvc on the GPU.
+"""A/B two GPU pipelines over polybench, npbench, tsvc and tsvc_2_5, checked against the references.
 
-Every kernel goes down the canon-GPU path twice, knob off and on, checked against its reference.
-Each case runs in its OWN subprocess -- DaCe's parse state is process-global, and a CUDA compile
+An *arm* is a named GPU pipeline (``ARMS`` below): ``autoopt`` is DaCe's established
+``auto_optimize``, ``canon`` is the canonicalize-then-offload path, and ``canon+taskloop`` is that
+path with ``optimizer.gpu_taskloop_heuristics`` on. Any two of them can be compared, so the
+canon-vs-autoopt question and the taskloop-knob question are the same job with a different
+``--arms``, not two harnesses that drift apart.
+
+Neither arm moves the signature to the device (``use_gpu_storage`` stays off, and the canon arms
+skip ``apply_gpu_storage``): the corpus hands out numpy arrays, and a device-side signature puts the
+copies the pipeline places inside the measurement.
+
+Every kernel runs in its OWN subprocess -- DaCe's parse state is process-global, and a CUDA compile
 that dies takes the process with it. Rows stream as they land, so a sweep that is killed halfway
 still leaves what it measured.
 
-The two arms are SCREENED before they are timed: each is offloaded and emitted (seconds, no compiler,
-no device) and the two finalized graphs compared. The knob is inert on most of the corpus, and where
-the graph handed to codegen is identical so is its runtime -- so those kernels are compiled and timed
-once and the ratio reported as exactly 1. Only a kernel the knob actually rewrites pays for two CUDA
-builds. That is what makes a 281-kernel sweep finish: the screen costs seconds, a build costs
-minutes.
+The arms are SCREENED before they are timed: each is offloaded and emitted (seconds, no compiler,
+no device) and the two finalized graphs compared. Where the graph handed to codegen is identical so
+is its runtime -- so those kernels are compiled and timed once and the ratio reported as exactly 1.
+Only a kernel the arms actually disagree on pays for two CUDA builds. That is what makes a
+281-kernel sweep finish: the screen costs seconds, a build costs minutes. Expect it to fire often on
+``canon`` vs ``canon+taskloop`` (the knob is inert on most of the corpus) and almost never on
+``canon`` vs ``autoopt``.
 
 ``--stage codegen`` stops after the screen. It needs no GPU at all, which is also the only way to
 cover the offloading pass on a device-less runner.
 
 Run::
 
-    python -m tests.corpus.measure_gpu_taskloops --preset paper --csv out.csv
-    python -m tests.corpus.measure_gpu_taskloops --suites poly --only gemm,doitgen
-    python -m tests.corpus.measure_gpu_taskloops --stage codegen --suites tsvc --shard 1/4
+    python -m tests.corpus.measure_gpu_arms --arms autoopt,canon --preset paper --csv out.csv
+    python -m tests.corpus.measure_gpu_arms --arms canon,canon+taskloop --suites poly --only gemm
+    python -m tests.corpus.measure_gpu_arms --stage codegen --suites tsvc --shard 1/4
 """
 import os
 import signal
@@ -49,12 +59,13 @@ import json
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import (finalize_for_target, recompute_fuse_for_gpu,
                                                               select_gpu_device_block_size)
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
 
 from tests.corpus import corpus_suite as suite
@@ -68,28 +79,60 @@ WARMUP = 2
 SCREEN_TIMEOUT = 900
 
 
-def offloaded_sdfg(ctx: Dict, heuristics: bool, tag: str) -> Tuple[dace.SDFG, List[str]]:
-    """The kernel canonicalized, offloaded and finalized for the GPU at one setting of the knob.
+def canon_gpu(heuristics: bool) -> Callable[[dace.SDFG, List[str]], None]:
+    """The canonicalize-then-offload GPU pipeline at one setting of the taskloop knob.
+
+    ``apply_gpu_storage`` is deliberately NOT called -- see the module docstring.
+    """
+
+    def apply(sdfg: dace.SDFG, taskloops: List[str]) -> None:
+        canonicalize(sdfg, validate=False, validate_all=False, target='gpu')
+        with dace.config.set_temporary('optimizer', 'gpu_taskloop_heuristics', value=heuristics), \
+                dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=-1):
+            recompute_fuse_for_gpu(sdfg)
+            # Only with the knob on does a candidate actually STAY on the host, so only then is
+            # there a column to report. Asking the classifier with ``launch_only=False`` returns
+            # every candidate it can see, which is not what this arm does with them.
+            if heuristics:
+                taskloops.extend(entry.map.label for entry in taskloop_maps(sdfg, launch_only=True))
+            sdfg.apply_gpu_transformations()
+            select_gpu_device_block_size(sdfg)
+        finalize_for_target(sdfg, 'gpu', validate=False)
+
+    return apply
+
+
+def autoopt_gpu(sdfg: dace.SDFG, taskloops: List[str]) -> None:
+    """DaCe's established pipeline, the arm every new one has to beat.
+
+    ``use_gpu_storage`` defaults off, which is what keeps the signature on the host and the arm
+    comparable with the canon arms. No taskloop column: the classifier is not part of this pipeline,
+    so reporting one would credit it for maps it never saw.
+    """
+    auto_optimize(sdfg, dace.DeviceType.GPU)
+
+
+#: The named GPU pipelines ``--arms`` selects from. An arm costs one entry here and nothing else:
+#: the screen, the timing path, the correctness gate and the CSV are all keyed by label.
+ARMS: Dict[str, Callable[[dace.SDFG, List[str]], None]] = {
+    'autoopt': autoopt_gpu,
+    'canon': canon_gpu(False),
+    'canon+taskloop': canon_gpu(True),
+}
+
+
+def offloaded_sdfg(ctx: Dict, arm: str, tag: str) -> Tuple[dace.SDFG, List[str]]:
+    """The kernel taken through ``arm``'s GPU pipeline, plus the maps its taskloop classifier kept.
 
     ``tag`` uniquifies the SDFG name, hence the build folder. The screen hands both arms the SAME
     tag on purpose: the name reaches the emitted text, so differing tags would make every kernel
     look rewritten.
     """
     taskloops: List[str] = []
+    pipeline = ARMS[arm]
 
     def transform(sdfg: dace.SDFG) -> None:
-        canonicalize(sdfg, validate=False, validate_all=False, target='gpu')
-        # ``offload_to_gpu`` minus ``apply_gpu_storage``: the corpus hands out numpy arrays, and a
-        # host-side signature puts the copies the pass places inside the measurement.
-        with dace.config.set_temporary('optimizer', 'gpu_taskloop_heuristics', value=heuristics), \
-                dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=-1):
-            recompute_fuse_for_gpu(sdfg)
-            # ``launch_only`` IS the knob: without it the classifier reports every candidate, so a
-            # column built from the bare call is identical in both arms and says nothing.
-            taskloops.extend(entry.map.label for entry in taskloop_maps(sdfg, launch_only=heuristics))
-            sdfg.apply_gpu_transformations()
-            select_gpu_device_block_size(sdfg)
-        finalize_for_target(sdfg, 'gpu', validate=False)
+        pipeline(sdfg, taskloops)
 
     return suite.build(ctx, transform, tag), taskloops
 
@@ -108,7 +151,7 @@ def stable_json(node: Any) -> Any:
     return node
 
 
-def codegen_one(kind: str, name: str, heuristics: bool, preset: str) -> Dict:
+def codegen_one(kind: str, name: str, arm: str, preset: str) -> Dict:
     """Offload one kernel at one setting and digest the graph; no compiler and no device involved.
 
     The digest is taken from the SDFG, not from the emitted text, even though the text is what runs.
@@ -119,7 +162,7 @@ def codegen_one(kind: str, name: str, heuristics: bool, preset: str) -> Dict:
     ⛔ Order is load-bearing: emitting MUTATES the graph, so the digest has to precede it.
     """
     ctx = suite.make(kind, name, preset=preset)
-    sdfg, taskloops = offloaded_sdfg(ctx, heuristics, 'ab')
+    sdfg, taskloops = offloaded_sdfg(ctx, arm, 'ab')
     # Digest BEFORE emitting. ``generate_code`` rewrites the graph it is handed -- it pads every
     # region boundary with a landing state and resets the CFG list -- and it does so
     # nondeterministically, so a digest taken afterwards reports kernels as rewritten at random.
@@ -127,17 +170,17 @@ def codegen_one(kind: str, name: str, heuristics: bool, preset: str) -> Dict:
     sdfg.generate_code()
     return dict(kind=kind,
                 name=name,
-                heuristics=heuristics,
+                arm=arm,
                 correct=True,
                 taskloops=taskloops,
                 median=float('nan'),
                 digest=digest.hexdigest())
 
 
-def measure_one(kind: str, name: str, heuristics: bool, repeats: int, preset: str) -> Dict:
+def measure_one(kind: str, name: str, arm: str, repeats: int, preset: str) -> Dict:
     """Correctness + median time for one kernel at one setting; runs in its own process."""
     ctx = suite.make(kind, name, preset=preset)
-    sdfg, taskloops = offloaded_sdfg(ctx, heuristics, f"taskloop_{int(heuristics)}")
+    sdfg, taskloops = offloaded_sdfg(ctx, arm, arm.replace('+', '_'))
     correct = bool(suite.run_matches(ctx, sdfg))
 
     compiled, kwargs = suite.compiled_call(ctx, sdfg)
@@ -152,16 +195,15 @@ def measure_one(kind: str, name: str, heuristics: bool, repeats: int, preset: st
     # two thirds of its maximum, and the cap moves during a sweep -- a median tracks whatever the
     # clock was doing, and the two arms of an A/B are minutes apart, so it charges one arm for the
     # other's throttling. The minimum is the one estimator the cap can only spoil in one direction.
-    return dict(name=name, heuristics=heuristics, correct=correct, taskloops=taskloops, median=min(times))
+    return dict(name=name, arm=arm, correct=correct, taskloops=taskloops, median=min(times))
 
 
-def run_case(kind: str, name: str, heuristics: bool, repeats: int, preset: str, stage: str = 'full') -> Dict:
+def run_case(kind: str, name: str, arm: str, repeats: int, preset: str, stage: str = 'full') -> Dict:
     """Spawn ``measure_one``/``codegen_one`` and read back its JSON; a dead case reports itself
     incorrect. ``stage`` picks which, and with it the timeout: emitting cannot take minutes, so a
     screen that runs long is a hang and must not hold the sweep for the build budget."""
     cmd = [
-        sys.executable, '-m', 'tests.corpus.measure_gpu_taskloops', '--one', name, '--kind', kind, '--heuristics',
-        str(int(heuristics)), '--repeats',
+        sys.executable, '-m', 'tests.corpus.measure_gpu_arms', '--one', name, '--kind', kind, '--arm', arm, '--repeats',
         str(repeats), '--preset', preset, '--stage', stage
     ]
     budget = CASE_TIMEOUT if stage == 'full' else SCREEN_TIMEOUT
@@ -170,7 +212,7 @@ def run_case(kind: str, name: str, heuristics: bool, repeats: int, preset: str, 
     except subprocess.TimeoutExpired:
         return dict(kind=kind,
                     name=name,
-                    heuristics=heuristics,
+                    arm=arm,
                     correct=False,
                     taskloops=[],
                     median=float('nan'),
@@ -181,7 +223,7 @@ def run_case(kind: str, name: str, heuristics: bool, repeats: int, preset: str, 
     tail = [line for line in (done.stderr or done.stdout).strip().splitlines() if line.strip()]
     return dict(kind=kind,
                 name=name,
-                heuristics=heuristics,
+                arm=arm,
                 correct=False,
                 taskloops=[],
                 median=float('nan'),
@@ -190,6 +232,9 @@ def run_case(kind: str, name: str, heuristics: bool, repeats: int, preset: str, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--arms',
+                        default='canon,canon+taskloop',
+                        help=f"the two pipelines to compare, baseline first; one of {','.join(ARMS)}")
     parser.add_argument('--suites', default='poly,np,tsvc,tsvc25', help='comma-separated: poly, np, tsvc, tsvc25')
     parser.add_argument('--only', help='comma-separated kernel names')
     parser.add_argument('--preset', default='paper', choices=suite.PRESETS)
@@ -202,16 +247,21 @@ def main() -> int:
     parser.add_argument('--csv', help='write the table here as it goes')
     parser.add_argument('--one', help='internal: measure this one kernel in this process')
     parser.add_argument('--kind', default='np', help='internal: the suite for --one')
-    parser.add_argument('--heuristics', type=int, default=0, help='internal: the knob for --one')
+    parser.add_argument('--arm', default='canon', choices=tuple(ARMS), help='internal: the pipeline for --one')
     args = parser.parse_args()
 
     if args.one:
         if args.stage == 'codegen':
-            row = codegen_one(args.kind, args.one, bool(args.heuristics), args.preset)
+            row = codegen_one(args.kind, args.one, args.arm, args.preset)
         else:
-            row = measure_one(args.kind, args.one, bool(args.heuristics), args.repeats, args.preset)
+            row = measure_one(args.kind, args.one, args.arm, args.repeats, args.preset)
         print('RESULT ' + json.dumps(row), flush=True)
         return 0
+
+    base, test = args.arms.split(',')
+    unknown = [arm for arm in (base, test) if arm not in ARMS]
+    if unknown or base == test:
+        raise SystemExit(f"--arms wants two DIFFERENT names from {','.join(ARMS)}, got {args.arms}")
 
     wanted = args.only.split(',') if args.only else None
     suites = args.suites.split(',')
@@ -220,18 +270,21 @@ def main() -> int:
     cases = cases[index::total]
 
     rows: List[Dict] = []
-    print(f"preset={args.preset} repeats={args.repeats} stage={args.stage} cases={len(cases)}", flush=True)
-    print(f"{'suite':6s} {'kernel':28s} {'off':>10s} {'on':>10s} {'ratio':>7s}  taskloops", flush=True)
+    print(
+        f"arms={base} vs {test} preset={args.preset} repeats={args.repeats} stage={args.stage} "
+        f"cases={len(cases)}",
+        flush=True)
+    print(f"{'suite':6s} {'kernel':28s} {base:>10.10s} {test:>10.10s} {'ratio':>7s}  taskloops", flush=True)
     for kind, name in cases:
-        off_cg = run_case(kind, name, False, args.repeats, args.preset, stage='codegen')
-        on_cg = run_case(kind, name, True, args.repeats, args.preset, stage='codegen')
-        screened = off_cg.get('digest') is not None and off_cg.get('digest') == on_cg.get('digest')
+        base_cg = run_case(kind, name, base, args.repeats, args.preset, stage='codegen')
+        test_cg = run_case(kind, name, test, args.repeats, args.preset, stage='codegen')
+        screened = base_cg.get('digest') is not None and base_cg.get('digest') == test_cg.get('digest')
         if args.stage == 'codegen':
-            off, on = off_cg, on_cg
+            off, on = base_cg, test_cg
         else:
-            off = run_case(kind, name, False, args.repeats, args.preset)
+            off = run_case(kind, name, base, args.repeats, args.preset)
             # Byte-identical emitted programs cannot differ in runtime, so one build answers both.
-            on = off if (screened and not args.no_screen) else run_case(kind, name, True, args.repeats, args.preset)
+            on = off if (screened and not args.no_screen) else run_case(kind, name, test, args.repeats, args.preset)
         ratio = 1.0 if on is off else (on['median'] / off['median'] if off['median'] > 0 else float('nan'))
         note = '' if (off['correct'] and on['correct']) else '  ' + (on.get('error') or off.get('error') or 'WRONG')
         if not note and screened:
@@ -239,17 +292,19 @@ def main() -> int:
         rows.append(
             dict(suite=kind,
                  kernel=name,
+                 base_arm=base,
+                 test_arm=test,
                  off=off['median'],
                  on=on['median'],
                  ratio=ratio,
                  off_correct=off['correct'],
                  on_correct=on['correct'],
                  screened=screened,
-                 taskloops=' '.join(on_cg['taskloops']),
+                 taskloops=' '.join(test_cg['taskloops']),
                  note=note.strip()))
         print(
             f"{kind:6s} {name:28s} {off['median']:10.5f} {on['median']:10.5f} {ratio:7.2f}  "
-            f"{' '.join(on_cg['taskloops'])[:36]}{note[:90]}",
+            f"{' '.join(test_cg['taskloops'])[:36]}{note[:90]}",
             flush=True)
         if args.csv:
             with open(args.csv, 'w', newline='') as handle:
@@ -258,9 +313,9 @@ def main() -> int:
                 writer.writerows(rows)
 
     fired = [r['kernel'] for r in rows if r['taskloops']]
-    print(f"heuristics fired on {len(fired)}/{len(rows)}: {', '.join(fired)}", flush=True)
+    print(f"{test} keeps host taskloops on {len(fired)}/{len(rows)}: {', '.join(fired)}", flush=True)
     rewritten = [r['kernel'] for r in rows if not r['screened']]
-    print(f"knob rewrites the emitted program for {len(rewritten)}/{len(rows)}: {', '.join(rewritten)}", flush=True)
+    print(f"the arms emit different programs for {len(rewritten)}/{len(rows)}: {', '.join(rewritten)}", flush=True)
     wrong = [r['kernel'] for r in rows if not (r['off_correct'] and r['on_correct'])]
     if wrong:
         print(f"INCORRECT or FAILED: {', '.join(wrong)}", flush=True)

@@ -1,8 +1,14 @@
 # GPU offloading job
 
-`OffloadToAccelerator` over the four in-repo corpora, at both settings of
-`optimizer.gpu_taskloop_heuristics`. Two jobs, because correctness and timing cost three orders of
-magnitude apart.
+`OffloadToAccelerator` over the four in-repo corpora, comparing two GPU pipelines. Two jobs, because
+correctness and timing cost three orders of magnitude apart.
+
+`--arms` names the pair, baseline first, from `autoopt` (DaCe's `auto_optimize`), `canon`
+(canonicalize then offload) and `canon+taskloop` (that path with
+`optimizer.gpu_taskloop_heuristics` on). The default, `canon,canon+taskloop`, is the knob A/B;
+`--arms autoopt,canon` is the GPU half of the canon perf comparison whose CPU half lives in
+`canon_perf_jobs/`. Every flag this submitter does not recognize is passed straight to the driver,
+so no script here changes to run a different pair.
 
 | file | what it does |
 |:--|:--|
@@ -11,7 +17,7 @@ magnitude apart.
 | `gpu_offload_job.py` | the rank. Binds its GPU, takes a private build folder, runs its shard |
 | `run_local.sh` | the same two sweeps on one machine, no Slurm |
 
-The measurement itself is `tests/corpus/measure_gpu_taskloops.py`; these scripts only place it on a
+The measurement itself is `tests/corpus/measure_gpu_arms.py`; these scripts only place it on a
 cluster. Running that module directly is always a valid way to reproduce a row.
 
 ## The two jobs
@@ -30,6 +36,7 @@ with the container named, which is how the BLAS-alpha family (`symm`, `syr2k`, `
     ./submit_daint.sh cpu all            # 281 kernels, both arms, no device
     ./submit_daint.sh gpu poly           # one corpus, timed
     ./submit_daint.sh gpu all 2          # four jobs, 2 nodes each
+    ./submit_daint.sh gpu all 2 --arms autoopt,canon   # canon against auto_optimize on the GPU
 
 ## Why the sweep finishes at all
 

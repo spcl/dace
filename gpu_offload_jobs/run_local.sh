@@ -6,7 +6,10 @@
 #   ./run_local.sh cpu poly              # offload + validate + emit, no device needed
 #   ./run_local.sh gpu poly gemm,doitgen # build, verify, time both arms for two kernels
 #
-# Env: PRESET (default S here, not paper -- a laptop GPU does not hold the paper shapes), REPEATS.
+#   ARMS=autoopt,canon ./run_local.sh gpu poly   # canon against DaCe's established pipeline
+#
+# Env: PRESET (default S here, not paper -- a laptop GPU does not hold the paper shapes), REPEATS,
+# ARMS (baseline first; the driver's default compares the taskloop knob).
 
 set -euo pipefail
 
@@ -25,6 +28,7 @@ export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 export DACE_default_build_folder="${DACE_default_build_folder:-$HOME/.cache/dace_gpu_offload_local}"
 
 ARGS=(--preset "$PRESET" --suites "$SUITES" --csv "$OUT/rows.csv")
+[ -n "${ARMS:-}" ] && ARGS+=(--arms "$ARMS")
 [ -n "$ONLY" ] && ARGS+=(--only "$ONLY")
 if [ "$KIND" = cpu ]; then
     # No device is touched, so hide it: a stray CUDA context here would only add a teardown that can
@@ -35,4 +39,4 @@ else
     ARGS+=(--repeats "${REPEATS:-20}")
 fi
 
-exec python3 -m tests.corpus.measure_gpu_taskloops "${ARGS[@]}"
+exec python3 -m tests.corpus.measure_gpu_arms "${ARGS[@]}"

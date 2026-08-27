@@ -2,7 +2,7 @@
 """One rank of the GPU-offloading sweep. ``srun`` execs THIS file directly.
 
 The rank binds itself to its module's GPU, takes a private build folder, and hands the rest of the
-command line to ``tests.corpus.measure_gpu_taskloops``. It exists as a python entry rather than a
+command line to ``tests.corpus.measure_gpu_arms``. It exists as a python entry rather than a
 shell wrapper for the SIGCHLD reason below, which is the same one
 ``canon_perf_jobs/corpus_perf_job.py`` carries.
 
@@ -52,7 +52,7 @@ def main() -> int:
     scratch = os.environ.get('SCRATCH', '/tmp')
     os.environ.setdefault('DACE_default_build_folder', f'{scratch}/dace_gpu_offload/rank{rank}')
 
-    from tests.corpus import measure_gpu_taskloops as driver
+    from tests.corpus import measure_gpu_arms as driver
 
     # ``--out`` is a directory the submitter names; the driver writes ONE csv, so give each rank its
     # own file inside it. Aggregating is then a concatenation, and a rank that dies leaves the rows
