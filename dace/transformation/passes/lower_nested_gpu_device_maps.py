@@ -137,7 +137,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             index = path.index(edge)
             if len(path) > index + 1:
                 state.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
-        # ``remove_nodes_from`` drops the incident edges with the nodes.
         state.remove_nodes_from([map_entry, map_exit])
 
     def next_level_maps(self, state: SDFGState,
@@ -200,8 +199,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 raise NotImplementedError('Multiple levels of nestedness in GPU Device Maps are not supported')
             for param, rng in zip(inner_map.map.params, inner_map.map.range):
                 # Bounding box over the siblings sharing a parameter; each body's own bound check
-                # discards the iterations it does not own. Seeded with the first range, never with
-                # zero, which would widen the box down to an origin no map asked for.
+                # discards the iterations it does not own. Seeded with the first range, never zero,
+                # which would widen the box down to an origin no map asked for.
                 one = subsets.Range([rng])
                 ranges[param] = one if param not in ranges else subsets.union(ranges[param], one)
 
