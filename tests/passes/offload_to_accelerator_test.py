@@ -24,6 +24,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from tests.corpus.tsvc import tsvc
 
@@ -352,6 +353,90 @@ def test_a_wrapped_region_puts_every_root_under_its_entry():
     assert scopes[wrapped] is not None, 'a tasklet that reads nothing was left outside its wrapper'
 
 
+def kernel_with_a_one_iteration_inner_map() -> dace.SDFG:
+    """A ``GPU_Device`` map whose body is a single-iteration ``Sequential`` map over a length-1 local.
+
+    The shape the offload pass leaves behind: the inner map is a loop that runs once, and ``acc``
+    is the stack slot its body writes through. ``acc`` is a length-1 ARRAY rather than a scalar
+    because a kernel receives a scalar by value and would lose the write -- which stops being true
+    once the map around it is gone.
+    """
+    sdfg = dace.SDFG('kernel_with_a_one_iteration_inner_map')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('B', [256], dace.float64)
+    sdfg.add_array('acc', [1], dace.float64, transient=True)
+    state = sdfg.add_state('kernel')
+
+    outer_entry, outer_exit = state.add_map('device', {'i': '0:256'}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner_entry, inner_exit = state.add_map('once', {'k': '0:1'}, schedule=dtypes.ScheduleType.Sequential)
+
+    read = state.add_read('A')
+    double = state.add_tasklet('double', {'inp': None}, {'out': None}, 'out = inp * 2.0')
+    acc = state.add_access('acc')
+    bump = state.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
+    write = state.add_write('B')
+
+    state.add_memlet_path(read, outer_entry, inner_entry, double, dst_conn='inp', memlet=dace.Memlet('A[i]'))
+    state.add_edge(double, 'out', acc, None, dace.Memlet('acc[0]'))
+    state.add_edge(acc, None, bump, 'inp', dace.Memlet('acc[0]'))
+    state.add_memlet_path(bump, inner_exit, outer_exit, write, src_conn='out', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def eliminate_and_scalarize(sdfg: dace.SDFG) -> None:
+    """The pass's post-offload cleanup, on a graph already in post-offload shape."""
+    offloader = OffloadToAccelerator()
+    offloader.cache_scopes(sdfg)
+    offloader.scalarize_locals_of_removed_trivial_maps(sdfg)
+
+
+def test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind():
+    """Removing the map is what licenses the scalar, and the kernel itself is not removable.
+
+    ``TrivialMapElimination`` declines a GPU schedule, so the kernel survives its own trivial-looking
+    body being dropped; ``acc`` is then an ordinary local of that kernel and needs no array.
+    """
+    sdfg = kernel_with_a_one_iteration_inner_map()
+    eliminate_and_scalarize(sdfg)
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    maps = [n.map for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+    assert [m.label for m in maps] == ['device'], f'expected only the kernel to survive, got {maps}'
+    assert maps[0].schedule == dtypes.ScheduleType.GPU_Device
+    assert isinstance(sdfg.arrays['acc'], dace.data.Scalar), f'acc stayed {type(sdfg.arrays["acc"]).__name__}'
+
+
+def test_a_one_iteration_map_outside_a_kernel_keeps_its_array():
+    """The same map with no kernel around it: dropped, but its array is NOT device-local.
+
+    Only a kernel's schedule makes the write a register. Outside one the length-1 array may be
+    something a caller or another state reads through, so the elimination is allowed and the
+    conversion is not.
+    """
+    sdfg = kernel_with_a_one_iteration_inner_map()
+    outer = next(n for n in sdfg.states()[0].nodes()
+                 if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == 'device')
+    outer.map.schedule = dtypes.ScheduleType.CPU_Multicore
+    eliminate_and_scalarize(sdfg)
+    sdfg.validate()
+    assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'a host-level local was scalarized'
+
+
+def test_a_trivial_kernel_map_is_never_eliminated():
+    """The size-1 wrapper the pass builds for a hybrid state IS the kernel."""
+    sdfg = kernel_with_a_one_iteration_inner_map()
+    inner = next(n for n in sdfg.states()[0].nodes()
+                 if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == 'once')
+    inner.map.schedule = dtypes.ScheduleType.GPU_Device
+    eliminate_and_scalarize(sdfg)
+    sdfg.validate()
+    labels = {n.map.label for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)}
+    assert labels == {'device', 'once'}, f'a GPU-scheduled map was eliminated: {labels}'
+    assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'a kernel output was scalarized'
+
+
 def test_a_pinned_host_map_falls_back_to_the_old_transformation():
     """``host_maps`` / ``host_data`` name what must STAY on the host. The new pass derives that
     rather than accepting it, so a caller that pins anything gets the old transformation even with
@@ -376,3 +461,69 @@ if __name__ == '__main__':
     test_a_pinned_host_map_falls_back_to_the_old_transformation()
     test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
     test_a_wrapped_region_puts_every_root_under_its_entry()
+    test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind()
+    test_a_one_iteration_map_outside_a_kernel_keeps_its_array()
+    test_a_trivial_kernel_map_is_never_eliminated()
+
+
+def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
+    """A hybrid state whose free tasklet writes a scalar, and a second state that reads it.
+
+    ``pick`` reads device data, so the size-1 wrapper pulls it in -- and the ``acc`` access node it
+    writes comes with it. Nothing then crosses the ``MapExit``, which is the only boundary the
+    placement analysis looked at.
+    """
+    sdfg = dace.SDFG('kernel_writing_a_scalar_a_later_state_reads')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('B', [256], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+
+    produce = sdfg.add_state('produce')
+    produce.add_mapped_tasklet('device', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
+                               'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
+                               external_edges=True)
+    pick = produce.add_tasklet('pick', {'inp': None}, {'out': None}, 'out = inp + 1.0')
+    acc = produce.add_access('acc')
+    produce.add_edge(produce.add_read('B'), None, pick, 'inp', dace.Memlet('B[0]'))
+    produce.add_edge(pick, 'out', acc, None, dace.Memlet('acc[0]'))
+    # A second consumer INSIDE the region is what makes ``acc`` interior. Without it the access node
+    # is the region's last node, the wrapper leaves it outside the ``MapExit``, and the old
+    # boundary-only analysis already saw it -- so the shape under test would not be durbin's.
+    use = produce.add_tasklet('use', {'inp': None}, {'out': None}, 'out = inp * 3.0')
+    produce.add_edge(acc, None, use, 'inp', dace.Memlet('acc[0]'))
+    produce.add_edge(use, 'out', produce.add_write('B'), None, dace.Memlet('B[1]'))
+
+    consume = sdfg.add_state_after(produce, 'consume')
+    spread = consume.add_tasklet('spread', {'inp': None}, {'out': None}, 'out = inp')
+    consume.add_edge(consume.add_read('acc'), None, spread, 'inp', dace.Memlet('acc[0]'))
+    consume.add_edge(spread, 'out', consume.add_write('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
+    """A scalar goes into a kernel BY VALUE, so a kernel that writes one loses the write.
+
+    No error is raised and no launch fails -- polybench durbin ran to completion and returned wrong
+    numbers, because every iteration read the host ``alpha`` the previous kernel had only written to
+    its own stack. The write is observable outside the kernel, so the descriptor has to be device
+    memory and the parameter a pointer.
+    """
+    sdfg = kernel_writing_a_scalar_a_later_state_reads()
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+
+    written = [name for name, desc in sdfg.arrays.items() if name.startswith('acc') and desc.transient]
+    assert written, 'the scalar vanished, so this asserts nothing'
+    resident = [name for name in written if sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES]
+    assert resident, (f'no device copy of the kernel-written scalar: '
+                      f'{[(n, sdfg.arrays[n].storage.name) for n in written]}')
+
+    signatures = [
+        line for obj in sdfg.generate_code() if obj.language == 'cu' for line in obj.clean_code.splitlines()
+        if '__global__' in line
+    ]
+    assert signatures, 'nothing was emitted as a kernel, so the signature asserts nothing'
+    by_value = [line for line in signatures for name in resident if f'double {name}' in line]
+    assert not by_value, f'a kernel takes a scalar it writes by value: {by_value}'

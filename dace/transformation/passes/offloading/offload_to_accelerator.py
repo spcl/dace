@@ -21,6 +21,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
@@ -218,6 +219,121 @@ class OffloadToAccelerator(ppl.Pass):
 
         self.place_and_copy(sdfg)
         self.offload_host_level_bodies(sdfg)
+        self.scalarize_locals_of_removed_trivial_maps(sdfg)
+        self.refuse_by_value_scalars_the_device_writes(sdfg)
+
+    def kernel_local_len1_arrays(self, sdfg: SDFG) -> OrderedSet[str]:
+        """Length-1 transients written inside a TRIVIAL SEQUENTIAL map that a kernel encloses.
+
+        That map is a loop of one iteration inside device code, and the array is the stack slot its
+        body writes through. Both halves of the guard are load-bearing. A map with a real extent
+        needs the array, because the iterations are distinct writes. A trivial map at a HOST level,
+        or one carrying a GPU schedule, is not device-local at all: the schedule is what makes the
+        write a register rather than a kernel argument, and a scalar handed to a kernel goes by value
+        and loses the write -- which is why :meth:`place_and_copy` promoted these to arrays to begin
+        with.
+        """
+        found: OrderedSet[str] = OrderedSet()
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                scopes = state.scope_dict()
+                for entry in state.nodes():
+                    if not isinstance(entry, nodes.MapEntry) or entry.map.schedule in dtypes.GPU_SCHEDULES:
+                        continue
+                    if not all(begin == end for begin, end, _ in entry.map.range):
+                        continue
+                    if not self.enclosing_kernel(scopes, entry):
+                        continue
+                    for node in state.scope_subgraph(entry).nodes():
+                        if not isinstance(node, nodes.AccessNode) or node.data not in nested.arrays:
+                            continue
+                        desc = nested.arrays[node.data]
+                        if (desc.transient and self._is_length1_array(node.data, nested)
+                                and desc.storage not in GPU_RESIDENT_STORAGES):
+                            found.add(node.data)
+        return found
+
+    def enclosing_kernel(self, scopes: dict, node: nodes.Node) -> Optional[nodes.MapEntry]:
+        """The nearest enclosing map with a GPU schedule, or None outside every kernel."""
+        scope = scopes[node]
+        while scope is not None:
+            if isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES:
+                return scope
+            scope = scopes[scope]
+        return None
+
+    def data_written_by_device_code(self, sdfg: SDFG) -> OrderedSet[str]:
+        """Every descriptor a GPU-scheduled scope writes whose value has to OUTLIVE that scope.
+
+        A kernel writes across TWO boundaries and the analysis used to see only the first:
+
+        * an access node OUTSIDE the scope, reached through the ``MapExit`` -- what
+          :meth:`get_data_used_by_outgoing_access_nodes` reports;
+        * an access node INSIDE the scope. A size-1 wrapper that pulls a tasklet and the node it
+          writes into the same kernel leaves nothing at that exit, so the first test reports
+          nothing and the descriptor is never claimed for the device (polybench durbin).
+
+        Whether an inside write counts is decided by SCOPE, not by storage. Storage is still
+        ``Default`` when this runs, so durbin's ``alpha`` and the kernel-local
+        ``_wcr_priv_set_sum_out_sum`` are indistinguishable by it; what separates them is that
+        ``alpha`` is also accessed outside the kernel that writes it. An access under a DIFFERENT
+        kernel counts as outside too -- two launches cannot hand a value to each other in a
+        register.
+        """
+        through_the_exit: OrderedSet[str] = OrderedSet()
+        written_inside: OrderedSet[str] = OrderedSet()
+        kernels_per_data: dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
+        for state in sdfg.states():
+            scopes = state.scope_dict()
+            for node in state.nodes():
+                if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and self.has_GPU_schedule(node):
+                    through_the_exit |= self.get_data_used_by_outgoing_access_nodes(sdfg,
+                                                                                    state,
+                                                                                    node,
+                                                                                    include_scalars=True)
+                if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
+                    continue
+                kernel = self.enclosing_kernel(scopes, node)
+                kernels_per_data.setdefault(node.data, OrderedSet()).add(kernel)
+                if kernel is not None and state.in_degree(node) > 0:
+                    written_inside.add(node.data)
+        return through_the_exit | OrderedSet(name for name in written_inside if len(kernels_per_data[name]) > 1)
+
+    def refuse_by_value_scalars_the_device_writes(self, sdfg: SDFG) -> None:
+        """Raise if a Scalar a kernel writes would reach that kernel BY VALUE.
+
+        ``Scalar.as_arg`` renders a pointer for ``GPU_Global`` and a plain ``double x`` parameter
+        for every other storage, so a kernel handed one writes its own stack and the write is
+        discarded. Nothing downstream objects -- the launch succeeds and the numbers are wrong
+        (polybench durbin) -- so the placement is CHECKED here rather than trusted. A descriptor
+        this pass failed to claim has to stop the compile, not reach a user as a result.
+        """
+        offenders = [
+            name for name in self.data_written_by_device_code(sdfg) if isinstance(sdfg.arrays[name], data.Scalar)
+            and sdfg.arrays[name].storage is not dtypes.StorageType.GPU_Global
+        ]
+        if offenders:
+            raise ValueError(f'device code writes {offenders}, still Scalars in host storage. A kernel takes those '
+                             f'BY VALUE, so the write would be discarded and the result silently wrong: '
+                             f'{[(name, sdfg.arrays[name].storage.name) for name in offenders]}')
+
+    def scalarize_locals_of_removed_trivial_maps(self, sdfg: SDFG) -> None:
+        """Drop single-iteration maps, then scalarize the kernel locals that lost theirs.
+
+        ``TrivialMapElimination`` declines a GPU schedule itself, so a kernel is never the map that
+        goes; what goes is a one-iteration loop inside one. The filter is the DIFFERENCE across the
+        elimination rather than the census before it: a map the transformation declines (a dynamic
+        map range keeps one parameter alive) leaves its array under a map still, and converting that
+        one would hand a kernel a by-value scalar and lose the write.
+        """
+        before = self.kernel_local_len1_arrays(sdfg)
+        if not sdfg.apply_transformations_repeated(TrivialMapElimination, validate=False, validate_all=False):
+            return
+        self.cache_scopes(sdfg)
+        freed = before - self.kernel_local_len1_arrays(sdfg)
+        if freed:
+            ConvertLengthOneArraysToScalars(recursive=True, filter=freed).apply_pass(sdfg, {})
+            self.cache_scopes(sdfg)
 
     def place_and_copy(self, sdfg: SDFG) -> None:
         """Place every array across ONE host level and copy accordingly; taskloop bodies come later."""
@@ -254,14 +370,7 @@ class OffloadToAccelerator(ppl.Pass):
                 data_name
                 for data_name in sdfg.arrays if self._is_length1_array(data_name, sdfg)
             }
-            gpu_written = OrderedSet()
-            for state in sdfg.states():
-                for node in state.nodes():
-                    if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and self.has_GPU_schedule(node):
-                        gpu_written |= self.get_data_used_by_outgoing_access_nodes(sdfg,
-                                                                                   state,
-                                                                                   node,
-                                                                                   include_scalars=True)
+            gpu_written = self.data_written_by_device_code(sdfg)
 
             to_len1_arrays = (all_scalars & gpu_written) - attempted
             # ``__return`` stays by reference: the caller reads the result back through it.
