@@ -262,9 +262,15 @@ template <typename T, std::enable_if_t<std::is_integral<T>::value &&
                                        std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator,
                                                const T& denominator) {
-  auto divresult = std::div(numerator, denominator);
-  T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
-  return (T)divresult.quot - corr;
+  // ``/`` and ``%``, not ``std::div``: that one is HOST-ONLY, and nvcc answers a call to it from
+  // device code with a warning rather than an error. The guarded region holding the call is then
+  // deleted outright -- tsvc s315's ``a[i] = (7*i) % LEN`` compiled to an EMPTY kernel and the
+  // program read whatever the buffer already held. C++11 pins ``/`` to truncation toward zero, so
+  // the correction below is exact, and this form is ``constexpr`` where ``std::div`` is not.
+  const T quotient = numerator / denominator;
+  const T remainder = numerator % denominator;
+  const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+  return quotient - corr;
 }
 template <typename T, std::enable_if_t<std::is_integral<T>::value &&
                                        std::is_unsigned<T>::value>* = nullptr>
