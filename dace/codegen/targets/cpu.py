@@ -1676,7 +1676,6 @@ class CPUCodeGen(TargetCodeGenerator):
             for vn in nstate.nodes():
                 if not (isinstance(vn, nodes.AccessNode) and isinstance(nsdfg.arrays[vn.data], data.View)):
                     continue
-                # Direction is read off the view edge, as allocate_view does.
                 view_edge = sdutils.get_view_edge(nstate, vn)
                 if view_edge is None or view_edge.src is not vn:
                     continue
@@ -1688,7 +1687,6 @@ class CPUCodeGen(TargetCodeGenerator):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        # An input array argument is const-qualifiable only if the callee never mutates its data.
         written_inside = self._mutated_descriptors(node.sdfg)
 
         memlet_references = []
