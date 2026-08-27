@@ -117,10 +117,30 @@ def test_widening_with_a_stride_is_refused():
         scan.expand(sdfg, state)
 
 
-def test_widening_on_the_cuda_expansion_is_refused():
-    """``cub::DeviceScan`` deduces its accumulator from the input iterator."""
+def test_the_cuda_expansion_widens_through_its_exclusive_seed():
+    """``cub::DeviceScan::ExclusiveScan`` deduces ``AccumT`` from the INIT VALUE, not the input.
+
+    So the accumulator's width is an argument this expansion controls: seeding at the output's type
+    makes the fold happen there. The seed has to carry that type explicitly -- a bare ``0`` literal
+    is an ``int``, and an int8 -> int64 scan would then accumulate in 32 bits.
+    """
     sdfg, state, scan = scan_sdfg(dace.int8, dace.int64, 'CUDA')
-    with pytest.raises(NotImplementedError, match='CUDA expansion'):
+    tasklet = ExpandCUDA.expansion(scan, state, sdfg)
+    wrapper = next(code for code in sdfg.global_code.values() if 'ExclusiveScan' in code.code)
+    assert 'static_cast<long long>(0)' in wrapper.code or 'static_cast<int64_t>(0)' in wrapper.code, \
+        f'the seed does not name the accumulator type:\n{wrapper.code}'
+    assert 'cub::' not in tasklet.code.as_string, \
+        f'the CUB call must stay in the CUDA unit, not the host tasklet:\n{tasklet.code.as_string}'
+
+
+def test_an_inclusive_widening_scan_on_cuda_is_still_refused():
+    """Nothing pins the accumulator there.
+
+    A plain inclusive scan deduces from the input iterator, and a device-resident seed reaches cub as
+    a ``FutureValue`` of the SEED's type -- neither is the output's. Refuse rather than fold narrow.
+    """
+    sdfg, state, scan = scan_sdfg(dace.int8, dace.int64, 'CUDA', exclusive=False)
+    with pytest.raises(NotImplementedError, match='CUDA expansion without an exclusive seed'):
         ExpandCUDA.expansion(scan, state, sdfg)
 
 

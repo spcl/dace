@@ -383,14 +383,16 @@ def _identity_expr(node: "Scan", acc_desc) -> str:
     from :data:`_OP_TO_IDENTITY_CPP` is used; if the op has no universal
     identity (``min``/``max``) the user *must* set ``identity``.
     """
-    if node.identity is not None:
-        return str(node.identity)
-    default = _OP_TO_IDENTITY_CPP[node.op]
-    if default is None:
-        raise ValueError(f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
-                         f"set ``identity`` explicitly when using ``exclusive=True``.")
-    # Cast to the accumulator type for completeness (avoids signed/unsigned warnings on integers).
-    return f"static_cast<{acc_desc.dtype.ctype}>({default})"
+    literal = node.identity
+    if literal is None:
+        literal = _OP_TO_IDENTITY_CPP[node.op]
+        if literal is None:
+            raise ValueError(f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
+                             f"set ``identity`` explicitly when using ``exclusive=True``.")
+    # ALWAYS cast, including a user-supplied identity. Beyond avoiding signed/unsigned warnings, the
+    # cast is what pins the accumulator's width: ``cub::DeviceScan::ExclusiveScan`` deduces ``AccumT``
+    # from the init value, so a bare ``0`` would make an int8 -> int64 scan accumulate in ``int``.
+    return f"static_cast<{acc_desc.dtype.ctype}>({literal})"
 
 
 def _combine_expr(op: ScanOp, ctype: str, a: str, b: str) -> str:
@@ -892,7 +894,13 @@ class ExpandCUDA(ExpandTransformation):
         # functor, neither of which exists yet. Until they do, refuse: falling through would run
         # the recurrence's DELTA array through a plain sum scan and return a different function.
         refuse_affine_shape(node, 'the CUDA expansion')
-        refuse_widening(node, in_desc, out_desc, 'the CUDA expansion')
+        # A widening scan is safe here exactly where the accumulator's type is pinned by an argument
+        # this expansion controls. ``ExclusiveScan`` deduces ``AccumT`` from the init value, so
+        # seeding at the OUTPUT type accumulates there. An inclusive scan has no such argument -- it
+        # deduces from the input iterator, and a device-resident seed arrives as a ``FutureValue`` of
+        # the seed's own type -- so that shape still refuses rather than accumulate narrow.
+        if not node.exclusive:
+            refuse_widening(node, in_desc, out_desc, 'the CUDA expansion without an exclusive seed')
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
@@ -914,14 +922,23 @@ class ExpandCUDA(ExpandTransformation):
         # The chains are independent, so on the device they stay independent cub
         # launches -- the CPU-side fork/join fusion the multi-chain shape exists for
         # has no GPU analogue (a kernel launch is not a parallel region).
+        # ``cub/cub.cuh`` is a CUDA header: the host translation unit is compiled by the host
+        # compiler and cannot parse it, which is why the CUB call cannot be emitted here directly.
+        # Emit a wrapper into the CUDA unit and CALL it from the host tasklet -- the same shape
+        # ``ExpandFindFirstCUDA`` uses for ``dace::find_first_index_device``.
+        state_id = state.parent_graph.node_id(state)
+        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        in_ctype, out_ctype = in_desc.dtype.base_type.ctype, out_desc.dtype.base_type.ctype
         blocks = []
         for chain in range(node.chains):
             in_conn, out_conn = in_connector(chain), out_connector(chain)
+            seed_param, seed_expr, seed_actual = '', '', ''
             if node.exclusive:
-                seed = _identity_expr(node, in_desc)
-                args = f"{in_conn}, {out_conn}, {op_cub}, {seed}, ({n_expr}), __dace_current_stream);"
-                scan_call = f"::cub::DeviceScan::ExclusiveScan(_sc_scratch, _sc_needed, {args}"
-                query_call = f"::cub::DeviceScan::ExclusiveScan(nullptr, _sc_needed, {args}"
+                # The OUTPUT descriptor, not the input: this argument is what fixes cub's accumulator
+                # width, and on a widening scan the accumulator is the output's type.
+                seed_expr = _identity_expr(node, out_desc)
+                call = 'ExclusiveScan'
+                extra = f', {seed_expr}'
             elif _has_init(node, chain):
                 # Inclusive scan with init. ``cub::DeviceScan::InclusiveScanInit`` is the
                 # direct API (CUB >= 2.0 / CUDA 12+); on older CUB it'd need an
@@ -929,19 +946,37 @@ class ExpandCUDA(ExpandTransformation):
                 # supporting CUDA 11 becomes a requirement.
                 # A seed the host cannot read is passed as a ``cub::FutureValue``, which cub
                 # dereferences on the device; a host-resident one goes by value as before.
-                args = (f"{in_conn}, {out_conn}, {op_cub}, {seed_arg(node, state, sdfg, chain)}, "
-                        f"({n_expr}), __dace_current_stream);")
-                scan_call = f"::cub::DeviceScan::InclusiveScanInit(_sc_scratch, _sc_needed, {args}"
-                query_call = f"::cub::DeviceScan::InclusiveScanInit(nullptr, _sc_needed, {args}"
+                desc = seed_desc(node, state, sdfg, chain)
+                seed_ctype = desc.dtype.base_type.ctype
+                if desc is not None and desc.storage in GPU_RESIDENT_STORAGES:
+                    seed_param = f', const {seed_ctype}* __sc_init'
+                    extra = f', ::cub::FutureValue<{seed_ctype}>(__sc_init)'
+                else:
+                    seed_param = f', {seed_ctype} __sc_init'
+                    extra = ', __sc_init'
+                seed_actual = f', {init_connector(chain)}'
+                call = 'InclusiveScanInit'
             else:
-                args = f"{in_conn}, {out_conn}, {op_cub}, ({n_expr}), __dace_current_stream);"
-                scan_call = f"::cub::DeviceScan::InclusiveScan(_sc_scratch, _sc_needed, {args}"
-                query_call = f"::cub::DeviceScan::InclusiveScan(nullptr, _sc_needed, {args}"
-            blocks.append(f"{{\nsize_t _sc_needed = 0;\n"
-                          f"{query_call}\n"
-                          f"void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>("
-                          f"_sc_needed, __dace_current_stream);\n"
-                          f"{scan_call}\n}}")
+                call = 'InclusiveScan'
+                extra = ''
+
+            wrapper = f'__dace_scan_{idstr}_c{chain}'
+            params = (f'const {in_ctype}* __sc_in, {out_ctype}* __sc_out{seed_param}, '
+                      f'long long __sc_n, cudaStream_t __sc_stream')
+            prototype = f'DACE_EXPORTED cudaError_t {wrapper}({params});'
+            args = f'__sc_in, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream'
+            sdfg.append_global_code(prototype + '\n')
+            sdfg.append_global_code(
+                f'{prototype}\n'
+                f'cudaError_t {wrapper}({params}) {{\n'
+                f'    size_t _sc_needed = 0;\n'
+                f'    ::cub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
+                f'    void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>('
+                f'_sc_needed, __sc_stream);\n'
+                f'    return ::cub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n'
+                f'}}\n', 'cuda')
+            blocks.append(f'DACE_GPU_CHECK({wrapper}({in_conn}, {out_conn}{seed_actual}, '
+                          f'({n_expr}), __dace_current_stream));')
         inputs = {in_connector(c): None for c in range(node.chains)}
         # A device-resident seed reaches ``FutureValue`` as a POINTER; a scalar connector would be
         # dereferenced by the host code issuing the launch, which validation rejects.
