@@ -286,11 +286,10 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 parent_scopes.append(scope_dict[current_parent_scope])
                 current_parent_scope = scope_dict[current_parent_scope]
 
-            # ``add_memlet_path`` names and creates the scope connectors along the way. Propagation
-            # stays ON: with it off the loop reuses ONE Memlet object for every edge of the path,
-            # which validation rejects as a duplicate reference.
-            # ``add_memlet_path`` creates the connectors of the scope nodes it passes, but only
-            # VERIFIES the two endpoints', so the nested SDFG's own has to exist first.
+            # ``add_memlet_path`` creates the connectors of the scope nodes it passes but only
+            # VERIFIES the two endpoints', so the nested SDFG's own has to exist first. Propagation
+            # stays ON: with it off the path reuses ONE Memlet object per edge, which validation
+            # rejects as a duplicate reference.
             nsdfg_node.add_out_connector(array_name)
             nsdfg_parent_state.add_memlet_path(nsdfg_node,
                                                *(nsdfg_parent_state.exit_node(s) for s in parent_scopes),
@@ -298,17 +297,14 @@ class MoveArrayOutOfKernel(ppl.Pass):
                                                src_conn=array_name,
                                                memlet=Memlet.from_array(array_name, new_desc))
 
-        # Re-mark transient at the outermost SDFG so codegen allocates it instead of expecting a kernel input.
+        # Transient at the outermost SDFG, so codegen allocates it instead of expecting a kernel input.
         new_desc.transient = True
 
     def get_memlet_subset(self, map_chain: List[nodes.MapEntry], node: nodes.Node):
-        """Memlet subset for accessing an array given a node's position in
-        nested GPU maps.
+        """Memlet subset for accessing an array given a node's position in nested GPU maps.
 
-        Per ``GPU_Device``/``GPU_ThreadBlock`` map in the chain: a node
-        strictly inside the map yields the single symbolic map-param index;
-        otherwise the full map-dimension range. This makes memlets represent
-        per-thread/per-block slices when lifting arrays out of kernels.
+        Per ``GPU_Device``/``GPU_ThreadBlock`` map in the chain: a node strictly inside the map yields the
+        single symbolic map-param index, otherwise the full map-dimension range.
 
         :param map_chain: Nested MapEntry nodes, outermost to innermost.
         :returns: List of ``(start, end, stride)`` tuples per map dimension.
@@ -346,8 +342,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         map_entry_chain = self.get_maps_between(kernel_entry, outermost_node)
         params_as_ranges = self.get_memlet_subset(map_entry_chain, outermost_node)
 
-        # edge_bfs visits each edge once, linearly, unlike the old per-path enumeration which
-        # was exponential in fan-in/out.
+        # ``edge_bfs`` visits each edge once; per-path enumeration is exponential in fan-in/out.
         visited: OrderedSet = OrderedSet()
         for access_node in access_nodes:
             state = self.state_of(access_node)
@@ -495,7 +490,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if sdfg in visited_sdfgs:
                 continue
 
-            # Any one descriptor copy suffices -- we only read metadata from it.
+            # Any one descriptor copy suffices: only metadata is read off it.
             array_desc = access_node.desc(state)
 
             sdfg_set: OrderedSet[SDFG] = OrderedSet()
