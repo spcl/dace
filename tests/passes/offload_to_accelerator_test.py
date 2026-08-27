@@ -273,7 +273,7 @@ def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
                              'out = inp * 2.0', {'out': dace.Memlet('A[i]')},
                              external_edges=True)
     second = sdfg.add_state('host_work')
-    tasklet = second.add_tasklet('bump', {'inp'}, {'out'}, 'out = inp + 1.0')
+    tasklet = second.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
     second.add_edge(second.add_read('A'), None, tasklet, 'inp', dace.Memlet('A[0]'))
     second.add_edge(tasklet, 'out', second.add_write('A'), None, dace.Memlet('A[0]'))
     sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'C[0]'}))
@@ -296,6 +296,60 @@ def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
     written = {edge.data.data for edge in host_state.edges() if not edge.data.is_empty()}
     assert not [name for name in written if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global
                 ], (f'host tasklet left holding a device container: {written}')
+
+
+def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
+    """One state whose top level holds a device map and a free region with two roots.
+
+    The two roots differ in exactly what the bug turned on: ``scale`` reads an array, so wrapping
+    the region rewires a real edge for it; ``seed`` reads nothing, so it has no edge to rewire and
+    only an ordering edge can put it under the entry. Both feed ``combine``, which is what makes
+    them one region rather than two -- and what makes leaving one behind an invalid path rather
+    than a missed wrap (tsvc s252's shape).
+    """
+    sdfg = dace.SDFG('free_computation_with_a_reading_and_a_sourceless_tasklet')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('B', [256], dace.float64)
+    sdfg.add_scalar('half', dace.float64, transient=True)
+    sdfg.add_scalar('bias', dace.float64, transient=True)
+    state = sdfg.add_state('mixed')
+
+    state.add_mapped_tasklet('device', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
+                             'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
+                             external_edges=True)
+
+    scale = state.add_tasklet('scale', {'inp': None}, {'out': None}, 'out = inp * 0.5')
+    half = state.add_access('half')
+    state.add_edge(state.add_read('A'), None, scale, 'inp', dace.Memlet('A[0]'))
+    state.add_edge(scale, 'out', half, None, dace.Memlet('half[0]'))
+
+    seed = state.add_tasklet('seed', {}, {'out': None}, 'out = 1.0')
+    bias = state.add_access('bias')
+    state.add_edge(seed, 'out', bias, None, dace.Memlet('bias[0]'))
+
+    combine = state.add_tasklet('combine', {'lhs': None, 'rhs': None}, {'out': None}, 'out = lhs + rhs')
+    state.add_edge(half, None, combine, 'lhs', dace.Memlet('half[0]'))
+    state.add_edge(bias, None, combine, 'rhs', dace.Memlet('bias[0]'))
+    state.add_edge(combine, 'out', state.add_write('B'), None, dace.Memlet('B[0]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_wrapped_region_puts_every_root_under_its_entry():
+    """A size-1 wrapper holds the whole region, including the parts with nothing to rewire.
+
+    Leaving one root outside is not a missing optimization: the rest of the region IS in the scope,
+    so the edge between them runs from inside the map to outside it and validation rejects the
+    graph -- tsvc ``s252``, ``sink node _Add_ should be a data node``.
+    """
+    sdfg = free_computation_with_a_reading_and_a_sourceless_tasklet()
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    state = next(s for s in sdfg.states() if s.label == 'mixed')
+    scopes = state.scope_dict()
+    wrapped = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet) and n.label == 'seed')
+    assert scopes[wrapped] is not None, 'a tasklet that reads nothing was left outside its wrapper'
 
 
 def test_a_pinned_host_map_falls_back_to_the_old_transformation():
@@ -321,3 +375,4 @@ if __name__ == '__main__':
     test_a_find_first_answer_stays_on_the_host()
     test_a_pinned_host_map_falls_back_to_the_old_transformation()
     test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
+    test_a_wrapped_region_puts_every_root_under_its_entry()

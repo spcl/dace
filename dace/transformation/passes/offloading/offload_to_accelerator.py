@@ -1522,12 +1522,6 @@ class OffloadToAccelerator(ppl.Pass):
 
     from collections import deque
 
-    def _get_root_nodes(self, state: SDFGState, bounded_set: set):
-        return OrderedSet(node for node in bounded_set if state.in_degree(node) == 0)
-
-    def _get_leaf_nodes(self, state: SDFGState, bounded_set: set):
-        return OrderedSet(node for node in bounded_set if state.out_degree(node) == 0)
-
     def _get_boundary_in_edges(self, state: SDFGState, node, bounded_set: set):
         # A list, not a set: the connector numbering below follows this order.
         return [e for e in state.in_edges(node) if e.src not in bounded_set]
@@ -1554,67 +1548,67 @@ class OffloadToAccelerator(ppl.Pass):
         for node in region_nodes:
             boundary_in_edges += self._get_boundary_in_edges(state, node, region_nodes)
 
-        if not boundary_in_edges:  # if there are no boundary in edges, add new dependcy edges
-            root_nodes = self._get_root_nodes(state, region_nodes)
-            assert root_nodes, f"region: {region_nodes}"
-            for root in root_nodes:
-                state.add_nedge(map_entry, root, Memlet())
+        idx = 0
+        for edge in boundary_in_edges:
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            ext_memlet = deepcopy(edge.data)
+            int_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
 
-        else:  # if there are, rewire them through the map
-            idx = 0
-            for edge in boundary_in_edges:
-                src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
-                ext_memlet = deepcopy(edge.data)
-                int_memlet = deepcopy(edge.data)
-                state.remove_edge(edge)
+            # An empty memlet ORDERS; it carries no data and so may not carry a connector.
+            if ext_memlet.is_empty():
+                state.add_nedge(src, map_entry, ext_memlet)
+                state.add_nedge(map_entry, dst, int_memlet)
+                continue
 
-                # An empty memlet ORDERS; it carries no data and so may not carry a connector.
-                if ext_memlet.is_empty():
-                    state.add_nedge(src, map_entry, ext_memlet)
-                    state.add_nedge(map_entry, dst, int_memlet)
-                    continue
+            in_conn = f"IN_REGION_IN_{idx}"
+            out_conn = f"OUT_REGION_IN_{idx}"
+            map_entry.add_in_connector(in_conn)
+            map_entry.add_out_connector(out_conn)
+            idx += 1
 
-                in_conn = f"IN_REGION_IN_{idx}"
-                out_conn = f"OUT_REGION_IN_{idx}"
-                map_entry.add_in_connector(in_conn)
-                map_entry.add_out_connector(out_conn)
-                idx += 1
+            state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
+            state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
 
-                state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
-                state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
+        # A region root the rewiring did not reach reads nothing, so no edge put it under the entry
+        # and the scope does not contain it -- while whatever it feeds does, which is the invalid
+        # inside-to-outside path. Order it after the entry instead. Rewiring a boundary edge does
+        # not make the OTHER roots any less dangling, so this cannot be an else-branch of it: tsvc
+        # s252 wraps one tasklet reading two arrays beside one reading none.
+        for node in region_nodes:
+            if state.in_degree(node) == 0:
+                state.add_nedge(map_entry, node, Memlet())
 
         # MAP EXIT
         boundary_out_edges = []
         for node in region_nodes:
             boundary_out_edges += self._get_boundary_out_edges(state, node, region_nodes)
 
-        if not boundary_out_edges:  # add new dependency edges
-            leaf_nodes = self._get_leaf_nodes(state, region_nodes)
-            assert leaf_nodes
-            for leaf in leaf_nodes:
-                state.add_nedge(leaf, map_exit, Memlet())
+        idx = 0
+        for edge in boundary_out_edges:
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            int_memlet = deepcopy(edge.data)
+            ext_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
 
-        else:  # rewire out edges
-            idx = 0
-            for edge in boundary_out_edges:
-                src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
-                int_memlet = deepcopy(edge.data)
-                ext_memlet = deepcopy(edge.data)
-                state.remove_edge(edge)
+            if int_memlet.is_empty():  # ordering edge, see above
+                state.add_nedge(src, map_exit, int_memlet)
+                state.add_nedge(map_exit, dst, ext_memlet)
+                continue
 
-                if int_memlet.is_empty():  # ordering edge, see above
-                    state.add_nedge(src, map_exit, int_memlet)
-                    state.add_nedge(map_exit, dst, ext_memlet)
-                    continue
+            in_conn = f"IN_REGION_OUT_{idx}"
+            out_conn = f"OUT_REGION_OUT_{idx}"
+            map_exit.add_in_connector(in_conn)
+            map_exit.add_out_connector(out_conn)
+            idx += 1
 
-                in_conn = f"IN_REGION_OUT_{idx}"
-                out_conn = f"OUT_REGION_OUT_{idx}"
-                map_exit.add_in_connector(in_conn)
-                map_exit.add_out_connector(out_conn)
-                idx += 1
+            state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
+            state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
 
-                state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
-                state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
+        # The leaf half of the same rule.
+        for node in region_nodes:
+            if state.out_degree(node) == 0:
+                state.add_nedge(node, map_exit, Memlet())
 
         return map_entry, map_exit
 

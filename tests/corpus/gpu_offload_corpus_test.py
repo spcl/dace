@@ -33,29 +33,12 @@ PRESET = 'S'
 #: that reads the ambient value asserts about whichever configuration the box happens to carry.
 HEURISTICS = False
 
+
 #: Kernels the offloading path does not get through yet, by ``suite/name`` -> why. ``xfail`` and
 #: not ``skip``, and STRICT: each is a gap someone has to close, and the marker has to fail the day
 #: it is closed rather than quietly keep excusing a kernel that now works.
 #:
-#: Both are placement, and neither is the taskloop heuristics -- the arms fail identically with the
-#: knob on and off.
-BROKEN = {
-    'tsvc/s252_d_single': 'offload leaves a memlet path ending at a tasklet rather than a data node',
-    'tsvc/s256_d_single': 'the scan seed is placed on the device while the libnode reads it on the host',
-}
-
-
-def corpus_cases():
-    """Every ``(suite, name)`` pair, with the known-broken ones carrying a strict xfail."""
-    cases = []
-    for kind, name in suite.kernels():
-        reason = BROKEN.get(f'{kind}/{name}')
-        marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
-        cases.append(pytest.param(kind, name, marks=marks))
-    return cases
-
-
-@pytest.mark.parametrize('kind,name', corpus_cases())
+@pytest.mark.parametrize('kind,name', suite.kernels())
 def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
     """The pass leaves a graph that validates and emits for the GPU.
 
@@ -70,7 +53,7 @@ def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('kind,name', corpus_cases())
+@pytest.mark.parametrize('kind,name', suite.kernels())
 def test_the_offloaded_kernel_matches_the_reference(kind: str, name: str):
     """Compiled and run on the device, the offloaded kernel computes what the corpus oracle does."""
     ctx = suite.make(kind, name, preset=PRESET)
