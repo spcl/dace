@@ -40,28 +40,28 @@ def test_python_modulo_stores_on_the_device():
     assert np.array_equal(out, (7 * np.arange(64)) % 64)
 
 
-@pytest.mark.gpu
-def test_python_floor_division_agrees_between_the_host_and_the_device():
-    """Signed operands take the correction branch, which is where the host-only call sat.
+@pytest.mark.parametrize('target', [pytest.param('host'), pytest.param('device', marks=pytest.mark.gpu)])
+def test_python_floor_division_rounds_towards_negative_infinity(target):
+    """``//`` is Python's floor division, and a negative numerator is where that is visible.
 
-    The comparison is against the CPU lowering of the SAME program, not against numpy: this tree
-    lowers ``//`` to a truncating division on both targets, and that divergence is its own
-    question. What has to hold here is that the two targets compute the same thing.
+    ``-32 // 7`` is ``-5``: the quotient rounds toward negative infinity, so the remainder takes
+    the divisor's sign. C's ``/`` rounds toward zero and answers ``-4`` -- the value the emitter
+    produced while it wrote ``ifloor(a / b)``, where the integer division had already truncated and
+    flooring an integer changed nothing.
+
+    Both targets, one assertion: the correction branch is also the branch that held the host-only
+    ``std::div`` call, which nvcc answered by deleting the region around it.
     """
     numerator = np.arange(-32, 32, dtype=np.int64)
-
-    host = np.zeros(64, dtype=np.int64)
-    python_floor_division_on_device.to_sdfg()(numerator=numerator, out=host, N=64)
-
     sdfg = python_floor_division_on_device.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    device = np.zeros(64, dtype=np.int64)
-    sdfg(numerator=numerator, out=device, N=64)
-
-    assert np.array_equal(device, host)
-    assert np.any(device != 0), 'an empty kernel also leaves the output at zero'
+    if target == 'device':
+        sdfg.apply_gpu_transformations()
+    out = np.zeros(64, dtype=np.int64)
+    sdfg(numerator=numerator, out=out, N=64)
+    assert np.array_equal(out, numerator // 7)
 
 
 if __name__ == '__main__':
     test_python_modulo_stores_on_the_device()
-    test_python_floor_division_agrees_between_the_host_and_the_device()
+    test_python_floor_division_rounds_towards_negative_infinity('host')
+    test_python_floor_division_rounds_towards_negative_infinity('device')

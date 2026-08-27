@@ -295,6 +295,16 @@ static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator,
                                            const T& denominator) {
   return (T)std::floor(numerator / denominator);
 }
+// Mixed-operand-type overload, the same shape ``py_mod`` carries below: ``a // 7`` deduces
+// nothing from an ``int64_t`` numerator and an ``int`` literal, so promote both to their common
+// arithmetic type and delegate. Guarded so a same-type call still binds the more specialized
+// overloads above.
+template <typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator)
+    -> decltype(numerator + denominator) {
+  using T = decltype(numerator + denominator);
+  return py_floor<T>((T)numerator, (T)denominator);
+}
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(
     const std::complex<T>& numerator, const std::complex<T>& denominator) {

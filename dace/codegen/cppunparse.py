@@ -1085,7 +1085,11 @@ class CPPUnparser:
         "BitXor": "^",
         "BitAnd": "&"
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    #: ``py_floor``, not ``ifloor(a / b)``: with integer operands ``a / b`` is the integer division
+    #: that has ALREADY truncated toward zero, and flooring an integer is a no-op -- ``-32 // 7``
+    #: came out ``-4`` where Python says ``-5``. ``py_floor`` dispatches on the operand type, so the
+    #: integer path gets the correction term and the floating one keeps ``floor(a / b)``.
+    funcops = {"FloorDiv": (",", "py_floor"), "MatMult": (",", "dace::gemm")}
 
     #: Arithmetic ops folded over two complex literal operands (see _BinOp).
     binop_lambda = {
