@@ -851,14 +851,24 @@ class CPPUnparser:
         "Sub": "-",
         "Mult": "*",
         "Div": "/",
-        "Mod": "%",
         "LShift": "<<",
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
         "BitAnd": "&"
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    # ``//`` and ``%`` are Python's, hence numpy's: the quotient rounds toward negative infinity and
+    # the remainder therefore takes the divisor's sign (``-32 // 7 == -5``, ``-32 % 7 == 3``). C
+    # rounds toward zero and gives the remainder the dividend's sign, so neither can be written
+    # infix. ``ifloor(a / b)`` was wrong on integers, where ``a / b`` has already truncated and
+    # flooring an integer changes nothing; a bare ``%`` was wrong the same way on integers and does
+    # not compile at all on floats, which C has no ``%`` for. ``py_floor`` / ``py_mod`` dispatch on
+    # the operand type and answer for every one of them.
+    funcops = {
+        "FloorDiv": (",", "py_floor"),
+        "Mod": (",", "py_mod"),
+        "MatMult": (",", "dace::gemm"),
+    }
 
     def _BinOp(self, t):
         # Operations that require a function call

@@ -212,9 +212,14 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const da
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-    auto divresult = std::div(numerator, denominator);
-    T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
-    return (T)divresult.quot - corr;
+    // ``/`` and ``%`` rather than ``std::div``: the latter is host-only, and nvcc answers a call to
+    // it from device code with a warning rather than an error, then removes the guarded region that
+    // holds the call -- the kernel launches and stores nothing. C++11 pins ``/`` to truncation
+    // toward zero, so the correction below is exact, and this form is constexpr where std::div is not.
+    const T quotient = numerator / denominator;
+    const T remainder = numerator % denominator;
+    const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    return quotient - corr;
 }
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
@@ -232,6 +237,14 @@ static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denomina
 template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
+}
+// Mixed-operand-type overload (e.g. ``a // 7``, where ``a`` is int64_t and the literal ``7`` is
+// int): promote both operands to their common arithmetic type and delegate, since the single-type
+// templates above cannot deduce T from two different types.
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_floor<T>((T)numerator, (T)denominator);
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
@@ -259,6 +272,13 @@ template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
     T quotient = py_floor(numerator, denominator);
     return (T)(numerator - quotient * denominator);
+}
+
+// Mixed-operand-type overload, as for py_floor above.
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_mod<T>((T)numerator, (T)denominator);
 }
 
 // Computes C/C++ modulus (operator % and fmod)
