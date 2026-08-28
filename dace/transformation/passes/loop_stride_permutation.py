@@ -57,6 +57,7 @@ DOALL once innermost certifies every adjacent swap along the way. Multi-statemen
 bodies (which need :class:`LoopFission` to run first) are still out of scope --
 the innermost body must be a single statement for the oracle.
 """
+import re
 from typing import Dict, List, Optional, Set, Tuple
 
 import sympy
@@ -67,7 +68,10 @@ from dace import data as dt
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.properties import CodeBlock
+from dace.symbolic import symstr
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.analysis import loop_analysis
 
 #: Loop-control properties swapped to realize an interchange.
 _LOOP_META_ATTRS = ('loop_variable', 'init_statement', 'loop_condition', 'update_statement', 'inverted')
@@ -183,20 +187,24 @@ class LoopStridePermutation(ppl.Pass):
             return False
 
         done: List[Tuple[LoopRegion, LoopRegion]] = []
+        snapshot = [{attr: getattr(lr, attr) for attr in _LOOP_META_ATTRS} for lr in chain]
 
         def revert() -> None:
-            for a, b in reversed(done):
-                self._swap_loop_metadata(a, b)
+            # Restore rather than re-swap: a trapezoid rewrite is not its own inverse.
+            for lr, meta in zip(chain, snapshot):
+                for attr, value in meta.items():
+                    setattr(lr, attr, value)
 
         for k in range(pos, len(chain) - 1):
             # After prior swaps the target var sits at chain[k]; the pair being
             # interchanged is (target=chain[k], chain[k + 1]). A metadata swap only
             # realizes the interchange when the iteration space stays rectangular;
             # a triangular pair changes the iteration SET and is rejected here.
-            if not self._bounds_independent(chain[k], chain[k + 1]):
+            if self._bounds_independent(chain[k], chain[k + 1]):
+                self._swap_loop_metadata(chain[k], chain[k + 1])
+            elif not self._swap_trapezoid(chain[k], chain[k + 1]):
                 revert()
                 return False
-            self._swap_loop_metadata(chain[k], chain[k + 1])
             done.append((chain[k], chain[k + 1]))
         if self._is_doall(sdfg, chain[-1]):
             return True
@@ -210,18 +218,72 @@ class LoopStridePermutation(ppl.Pass):
     def _bounds_independent(outer: LoopRegion, inner: LoopRegion) -> bool:
         """``True`` iff neither loop's bounds reference the other's loop variable
         (a rectangular iteration space). A triangular nest fails this test."""
-        import re
+        return (inner.loop_variable not in LoopStridePermutation._meta_tokens(outer)
+                and outer.loop_variable not in LoopStridePermutation._meta_tokens(inner))
 
-        def meta_tokens(lr: LoopRegion) -> Set[str]:
-            toks: Set[str] = set()
-            for attr in ('init_statement', 'loop_condition', 'update_statement'):
-                cb = getattr(lr, attr)
-                if cb is None:
-                    continue
-                toks |= set(re.findall(r"\b[A-Za-z_]\w*\b", cb.as_string))
-            return toks
+    @staticmethod
+    def _tokens(text: str) -> Set[str]:
+        """Identifiers appearing in ``text``."""
+        return set(re.findall(r"\b[A-Za-z_]\w*\b", text))
 
-        return (inner.loop_variable not in meta_tokens(outer)) and (outer.loop_variable not in meta_tokens(inner))
+    @staticmethod
+    def _meta_tokens(lr: LoopRegion) -> Set[str]:
+        """Identifiers appearing anywhere in ``lr``'s loop control."""
+        toks: Set[str] = set()
+        for attr in ('init_statement', 'loop_condition', 'update_statement'):
+            block = getattr(lr, attr)
+            if block is not None:
+                toks |= LoopStridePermutation._tokens(block.as_string)
+        return toks
+
+    @staticmethod
+    def _swap_trapezoid(outer: LoopRegion, inner: LoopRegion) -> bool:
+        """Interchange a trapezoidal pair by rebuilding both loops' bounds.
+
+        For an inner loop STARTING at an affine function of the outer variable (TSVC ``s1232``),
+        ``{j0 <= j <= j1, c*j + d <= i <= i1}`` with ``c > 0`` is exactly
+        ``{c*j0 + d <= i <= i1, j0 <= j <= min(j1, (i - d) // c)}``. Anything else is refused.
+
+        :param outer: The outer loop of the adjacent pair.
+        :param inner: The inner loop.
+        :returns: ``True`` if the pair was interchanged.
+        """
+        ovar, ivar = outer.loop_variable, inner.loop_variable
+        if ivar in LoopStridePermutation._meta_tokens(outer):
+            return False
+        for attr in ('loop_condition', 'update_statement'):
+            block = getattr(inner, attr)
+            if block is not None and ovar in LoopStridePermutation._tokens(block.as_string):
+                return False
+        if loop_analysis.get_loop_stride(outer) != 1 or loop_analysis.get_loop_stride(inner) != 1:
+            return False
+
+        j0 = loop_analysis.get_init_assignment(outer)
+        j1 = loop_analysis.get_loop_end(outer)
+        i0 = loop_analysis.get_init_assignment(inner)
+        i1 = loop_analysis.get_loop_end(inner)
+        if any(b is None for b in (j0, j1, i0, i1)):
+            return False
+
+        osym = pystr_to_symbolic(ovar)
+        c = i0.coeff(osym, 1)
+        d = dace.symbolic.simplify(i0 - c * osym)
+        if osym in d.free_symbols or not c.is_integer or not c.is_positive:
+            return False
+        # ``int_floor`` is a floor division: a negative numerator would round the wrong way, so the
+        # rewrite is only taken where the new outer loop starts at or above ``d``.
+        if (c * j0).is_nonnegative is not True:
+            return False
+
+        floor_expr = symstr(dace.symbolic.int_floor(pystr_to_symbolic(ivar) - d, c))
+        outer.loop_variable, inner.loop_variable = ivar, ovar
+        outer.init_statement = CodeBlock(ivar + ' = ' + symstr(c * j0 + d))
+        outer.loop_condition = CodeBlock(ivar + ' <= ' + symstr(i1))
+        outer.update_statement = CodeBlock(ivar + ' = ' + ivar + ' + 1')
+        inner.init_statement = CodeBlock(ovar + ' = ' + symstr(j0))
+        inner.loop_condition = CodeBlock(ovar + ' <= min(' + symstr(j1) + ', ' + floor_expr + ')')
+        inner.update_statement = CodeBlock(ovar + ' = ' + ovar + ' + 1')
+        return True
 
     @staticmethod
     def _swap_loop_metadata(a: LoopRegion, b: LoopRegion) -> None:

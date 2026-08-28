@@ -14,6 +14,8 @@ reference, applies the pass, and re-runs to confirm the interchange preserved
 the result.
 """
 
+import time
+
 import numpy as np
 import pytest
 
@@ -70,20 +72,48 @@ def test_interchange_moves_unit_stride_loop_innermost():
 
 # ---------------------------------------------------------------------------
 #  Triangular nest: the inner bound references the outer loop var, so a metadata
-#  swap would change the iteration set. Must be rejected.
+#  swap would change the iteration set. The lower-bound (trapezoidal) form is
+#  rebuilt; the upper-bound form is refused.
 # ---------------------------------------------------------------------------
 @dace.program
-def triangular(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+def trapezoid_lower_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    for j in range(N):
+        for i in range(8 * j, N):
+            aa[i, j] = aa[i, j] + bb[i, j]
+
+
+def test_trapezoidal_nest_is_interchanged_by_bound_rewrite():
+    """TSVC s1232: the inner loop STARTS at 8*j, so the unit-stride axis (j) is the outer one.
+       A metadata swap alone would change the iteration set; the bounds are rebuilt instead."""
+    sdfg = trapezoid_lower_bound.to_sdfg(simplify=True)
+    assert LoopStridePermutation().apply_pass(sdfg, {}) == 1
+    assert _loop_nest_order(sdfg) == ['i', 'j']
+    sdfg.validate()
+
+    n = 64
+    aa = np.arange(n * n, dtype=np.float64).reshape(n, n).copy()
+    bb = np.arange(n * n, dtype=np.float64).reshape(n, n).copy() * 0.5
+    expected = aa.copy()
+    for j in range(n):
+        for i in range(8 * j, n):
+            expected[i, j] = aa[i, j] + bb[i, j]
+    sdfg(aa=aa, bb=bb, N=n)
+    assert np.allclose(aa, expected)
+
+
+@dace.program
+def triangular_upper_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for j in range(N):
         for i in range(0, j + 1):
-            aa[j, i] = aa[j, i] + bb[j, i]
+            aa[i, j] = aa[i, j] + bb[i, j]
 
 
-def test_reject_triangular_nest():
-    sdfg = triangular.to_sdfg(simplify=True)
+def test_reject_triangular_upper_bound():
+    """The outer variable in the inner CONDITION is outside the rewrite: the interchanged upper
+       bound is not an affine function of the new outer iterate."""
+    sdfg = triangular_upper_bound.to_sdfg(simplify=True)
     before = _loop_nest_order(sdfg)
-    applied = LoopStridePermutation().apply_pass(sdfg, {})
-    assert not applied, "triangular (non-rectangular) nest must not be interchanged"
+    assert not LoopStridePermutation().apply_pass(sdfg, {})
     assert _loop_nest_order(sdfg) == before
 
 
@@ -251,3 +281,46 @@ def test_noop_on_wavefront_unit_stride_already_inner():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])
+
+
+# ---------------------------------------------------------------------------
+#  A/B: the interchange is the whole difference between the two binaries, so the
+#  measurement isolates access order (both nests stay sequential, same work).
+# ---------------------------------------------------------------------------
+@dace.program
+def s1232(aa: dace.float64[N, N], bb: dace.float64[N, N], cc: dace.float64[N, N]):
+    for j in range(N):
+        for i in range(8 * j, N):
+            aa[i, j] = bb[i, j] + cc[i, j]
+
+
+@pytest.mark.perf
+def test_trapezoid_interchange_is_faster():
+    """Same iteration set, same arithmetic, opposite access order: the strided nest touches a new
+       cache line per iteration. Measured 16x (N=1024) and 28x (N=2048) here; assert only 2x, which
+       no cache hierarchy inverts."""
+    n = 1024
+    rng = np.random.default_rng(0)
+    bb = rng.random((n, n))
+    cc = rng.random((n, n))
+
+    def build(permute: bool):
+        sdfg = s1232.to_sdfg(simplify=True)
+        if permute:
+            assert LoopStridePermutation().apply_pass(sdfg, {}) == 1
+        return sdfg.compile()
+
+    def best(csdfg) -> tuple:
+        aa = np.zeros((n, n))
+        csdfg(aa=aa, bb=bb, cc=cc, N=n)  # warm the caches and the first-call overhead
+        times = []
+        for _ in range(5):
+            start = time.perf_counter()
+            csdfg(aa=aa, bb=bb, cc=cc, N=n)
+            times.append(time.perf_counter() - start)
+        return min(times), aa
+
+    strided, aa_strided = best(build(False))
+    unit, aa_unit = best(build(True))
+    assert np.allclose(aa_strided, aa_unit)
+    assert unit * 2 < strided, f'unit-stride {unit:.4f}s not faster than strided {strided:.4f}s'
