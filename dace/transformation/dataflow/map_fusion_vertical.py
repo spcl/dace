@@ -231,6 +231,65 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return True
         return False
 
+    @staticmethod
+    def tiled_producer_subset(producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]], ) -> Optional[subsets.Range]:
+        """The per-iteration footprint several producers together write into an intermediate.
+
+        Multiple producers reach one ``IN_`` connector of the first MapExit when a Map body
+        writes an intermediate in pieces (``T[i, 0]`` from one Tasklet, ``T[i, 1]`` from the
+        next). The reduced intermediate has to hold all of them, so it is sized from the
+        bounding box rather than from any single producer.
+
+        The box is only usable when the producers TILE it -- no hole and no overlap -- which
+        equal volumes establish: a hole would leave a consumer reading an element this Map
+        never wrote, and an overlap means two producers race for one element.
+
+        :param producer_edges: The edges entering the MapExit connector, at least one.
+        :returns: The bounding box, or ``None`` when the producers do not tile it.
+        """
+        subset: Optional[subsets.Range] = None
+        volume = 0
+        for edge in producer_edges:
+            if edge.data.dst_subset is None:
+                return None
+            subset = (edge.data.dst_subset if subset is None else subsets.bounding_box_union(
+                subset, edge.data.dst_subset))
+            volume += edge.data.dst_subset.num_elements()
+        if subset is None:
+            return None
+        if len(producer_edges) > 1 and symbolic.equal(volume, subset.num_elements()) is not True:
+            return None
+        return subset
+
+    @staticmethod
+    def ordering_sources_of_intermediates(
+        state: dace.SDFGState,
+        first_map_exit: nodes.MapExit,
+        intermediates: Iterable[graph.MultiConnectorEdge[dace.Memlet]],
+    ) -> OrderedSet[nodes.Node]:
+        """Nodes that an intermediate's ordering-only IN edges keep before the second Map.
+
+        An empty Memlet is a happens-before edge, not a data edge (see :meth:`dace.Memlet.is_empty`),
+        so the path ``u -> intermediate -> second_map_entry`` ordered ``u`` before the second Map.
+        Fusion turns the intermediate into an OUTPUT of the fused Map, which reverses that path and
+        leaves the constraint carrying nothing -- cg's zero-fill of ``p`` then floats past the Map
+        that writes ``p`` and every later iterate is NaN. :meth:`apply` re-anchors them on the
+        surviving entry.
+
+        :param state: The state that holds both Maps.
+        :param first_map_exit: Exit of the producer Map; it never constrains itself.
+        :param intermediates: The exclusive and shared intermediate edges.
+        :returns: Sources of those ordering edges, in insertion order.
+        """
+        sources: OrderedSet[nodes.Node] = OrderedSet()
+        for edge in intermediates:
+            if not isinstance(edge.dst, nodes.AccessNode):
+                continue
+            for iedge in state.in_edges(edge.dst):
+                if iedge.src is not first_map_exit and iedge.data is not None and iedge.data.is_empty():
+                    sources.add(iedge.src)
+        return sources
+
     def can_be_applied(
         self,
         graph: dace.SDFGState,
@@ -391,6 +450,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     if not self._inout_split_is_safe(inner, name):
                         return False
 
+        # Re-anchoring an intermediate's ordering edges on the fused entry (see `apply`) works only
+        #  while the source is not itself downstream of the Map: the edge would close a cycle, which
+        #  says the ordering and the fusion cannot both hold.
+        for src in self.ordering_sources_of_intermediates(graph, first_map_exit, exclusive_outputs | shared_outputs):
+            if mfhelper.is_node_reachable_from(graph, first_map_entry, src):
+                return False
+
         return True
 
     @staticmethod
@@ -519,6 +585,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
+        # Collected BEFORE the rewiring, which deletes the intermediates carrying these edges.
+        ordering_sources = self.ordering_sources_of_intermediates(graph, first_map_exit,
+                                                                  exclusive_outputs | shared_outputs)
+
         # If any intermediate's data name is shared with an InOut connector of a
         # NestedSDFG in the producer's body, split the connector so the standard
         # rename machinery below produces a valid InOut-free shape.
@@ -597,6 +667,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
 
+        # Put back the happens-before the rewrite took out of the graph, see
+        #  `ordering_sources_of_intermediates`.
+        already_ordered = OrderedSet(iedge.src for iedge in graph.in_edges(first_map_entry) if iedge.data.is_empty())
+        for src in ordering_sources:
+            if src not in already_ordered:
+                graph.add_edge(src, None, first_map_entry, None, dace.Memlet())
+
         # If we have "consolidated" edges, i.e., reused existing edges, then the set
         #  of that might have expanded, thus we have to propagate them. However,
         #  in case we never consolidated, i.e., all edges were preserved, then we
@@ -660,17 +737,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = OrderedSet()
 
         # Set of intermediate nodes that we have already processed.
-        processed_inter_nodes: Set[nodes.Node] = set()
+        processed_inter_nodes: OrderedSet[nodes.Node] = OrderedSet()
 
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
 
-            # We already processed the node, this should indicate that we should
-            #  run simplify again, or we should start implementing this case.
-            # TODO(phimuell): Handle this case, already partially handled here.
-            if intermediate_node in processed_inter_nodes:
-                return None
+            # Several exit edges may target one intermediate node, one per piece of it the
+            #  body writes. They are classified independently and `handle_intermediate_set()`
+            #  processes them as a group, sizing one reduced intermediate from all the pieces.
             processed_inter_nodes.add(intermediate_node)
 
             # If the second Map is not reachable from the intermediate node, then
@@ -685,17 +760,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 pure_outputs.add(out_edge)
                 continue
 
-            # We require that there is only one edge between the MapExit of the
-            #  top Map and the intermediate. We allow that the intermediate has
-            #  multiple incoming edges. We assume that there is no write conflicts.
-            # TODO(phimuell): Lift this restriction to allow multiple edges from
-            #   `first_map_exit`. It is important that this is different, but related
-            #   from the check bellow where we check the `IN_*` connectors.
+            # Another writer that the first Map does not feed would race the pieces this Map
+            #  writes, so only edges from `first_map_exit` itself may join here.
             for intermediate_node_iedge in state.in_edges(intermediate_node):
-                if intermediate_node_iedge is out_edge:
+                if intermediate_node_iedge is out_edge or intermediate_node_iedge.src is first_map_exit:
                     continue
-                if intermediate_node_iedge.src is first_map_exit:
-                    return None
                 if mfhelper.is_node_reachable_from(
                         graph=state,
                         begin=first_map_exit,
@@ -733,22 +802,29 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if out_edge.src_conn is None or not out_edge.src_conn.startswith("OUT_"):
                 return None
 
-            # It can happen that multiple edges converges at the `IN_` connector
-            #  of the first MapExit, but there is only one edge leaving the exit.
-            #  This is complicate to handle, so for now we ignore it.
-            # TODO(phimuell): Handle this case properly.
-            #   To handle this we need to associate a consumer edge (the outgoing edges
-            #   of the second Map) with exactly one producer.
-            # The zero case is refused for the same reason: `handle_intermediate_set()` needs
-            #  exactly one pre-exit edge to size the new intermediate from.
-            producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(
-                state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
-            if len(producer_edges) != 1:
+            # Several edges may converge at the `IN_` connector of the first MapExit, one per
+            #  piece of the intermediate the body writes. They are handled together, sizing the
+            #  reduced intermediate from the box they tile; `tiled_producer_subset()` refuses the
+            #  shapes where that box is not a faithful stand-in for the pieces. The zero case is
+            #  always refused: `handle_intermediate_set()` has nothing to size the new
+            #  intermediate from.
+            #  The group spans every exit edge that targets this intermediate, not just this one:
+            #  the consumers below read the whole node, so checking them against one connector's
+            #  producers would refuse a read that a sibling connector plainly writes.
+            producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = [
+                pedge for oedge in state.out_edges(first_map_exit)
+                if oedge.dst is intermediate_node and oedge.src_conn is not None and oedge.src_conn.startswith("OUT_")
+                for pedge in state.in_edges_by_connector(first_map_exit, "IN_" + oedge.src_conn[4:])
+            ]
+            if not producer_edges:
+                return None
+            group_subset = self.tiled_producer_subset(producer_edges)
+            if group_subset is None:
                 return None
 
-            # Maps a producer subset to the reduced intermediate shape. This is needed
-            #  to avoid it to recompute it again later.
-            reduced_intermediate_shape_cache: Dict[subsets.Subset, Tuple[int, ...]] = {}
+            # The shape `apply()` will actually build, sized from the whole group.
+            _, reduced_inter_shape, _ = self.compute_reduced_intermediate(producer_subset=group_subset,
+                                                                          inter_desc=intermediate_desc)
 
             # NestedSDFG producers together with the edge that connects them to the
             #  first MapExit, needed for the shared-mode write-coverage check below.
@@ -780,9 +856,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if not isinstance(producer_edge.data.dst_subset, subsets.Range):
                     return None
 
-                _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
-                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc)
-
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
                 #  data dependency checks. Thus we have to check them separately here.
@@ -807,8 +880,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         nsdfg_producer_leaves.append((final_producer, final_producer_edge))
 
                 producer_subsets.append(producer_edge.data.dst_subset)
-                assert producer_subsets[-1] not in reduced_intermediate_shape_cache
-                reduced_intermediate_shape_cache[producer_subsets[-1]] = reduced_inter_shape
 
             # Check if the producer do not intersect
             if len(producer_subsets) == 1:
@@ -887,8 +958,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     ]
                     if len(prospective_producers) != 1:
                         return None
-                    prospective_producer = prospective_producers[0]
-                    reduced_inter_shape = reduced_intermediate_shape_cache[prospective_producer]
 
                     # As for the producer we have to check if the reduction of the memory
                     #  layout of the intermediate can be handled.
@@ -980,8 +1049,69 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 # The intermediate can be removed, as it is not used anywhere else.
                 exclusive_outputs.add(out_edge)
 
-        assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
+        # Counted per NODE, not per edge: a node reached by several exit edges is one entry here
+        #  and one group in `handle_intermediate_set()`.
+        assert processed_inter_nodes == OrderedSet(e.dst for e in (pure_outputs | exclusive_outputs | shared_outputs))
         return (pure_outputs, exclusive_outputs, shared_outputs)
+
+    def _reduce_producer_tree(
+        self,
+        state: dace.SDFGState,
+        new_pre_exit_edge: graph.MultiConnectorEdge[dace.Memlet],
+        inter_name: str,
+        new_inter_name: str,
+        new_inter_desc: data.Data,
+        producer_offset: subsets.Range,
+        squeezed_dims: List[int],
+        is_scalar: bool,
+    ) -> None:
+        """Retarget one producer's MemletTree onto the reduced intermediate.
+
+        The edge created at the MapExit only covers the last collection step; the tree below it
+        still names the old intermediate and still addresses it at its original offset.
+
+        :param state: The state being rewritten.
+        :param new_pre_exit_edge: The freshly created edge into the reduced intermediate.
+        :param inter_name: Name of the original intermediate.
+        :param new_inter_name: Name of the reduced intermediate.
+        :param new_inter_desc: Descriptor of the reduced intermediate.
+        :param producer_offset: Where the writes originally began.
+        :param squeezed_dims: Dimensions dropped when the intermediate was reduced.
+        :param is_scalar: Whether the reduced intermediate is a Scalar.
+        """
+        for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children(include_self=False):
+            producer_edge = producer_tree.edge
+
+            # Ignore empty edges
+            if producer_edge.data.is_empty():
+                continue
+
+            # In order to preserve the intrinsic direction of Memlets we only have to change
+            #  the `.data` attribute of the producer Memlet if it refers to the old intermediate.
+            #  If it refers to something different we keep it. Note that this case can only
+            #  occur if the producer is an AccessNode.
+            if producer_edge.data.data == inter_name:
+                producer_edge.data.data = new_inter_name
+
+            # Regardless of the intrinsic direction of the Memlet, the subset we care about
+            #  is always `dst_subset`.
+            if is_scalar:
+                producer_edge.data.dst_subset = "0"
+            elif producer_edge.data.dst_subset is not None:
+                # Since we now write into a smaller memory patch, we must
+                #  compensate for that. We do this by substracting where the write
+                #  originally had begun.
+                producer_edge.data.dst_subset.offset(producer_offset, negative=True)
+                producer_edge.data.dst_subset.pop(squeezed_dims)
+
+            # Modify the strides of the mapped data of the nested SDFG.
+            if isinstance(producer_edge.src, nodes.NestedSDFG):
+                self._updated_inner_strides_of_nested_sdfg(
+                    nsdfg=producer_edge.src,
+                    reduced_intermediate_desc=new_inter_desc,
+                    inner_data=producer_edge.src_conn,
+                    outer_edge=producer_edge,
+                )
 
     def handle_intermediate_set(
         self,
@@ -1015,24 +1145,34 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         map_params = first_map_exit.map.params.copy()
 
-        # Now we will iterate over all intermediate edges and process them.
-        #  If not stated otherwise the comments assume that we run in exclusive mode.
+        # Grouped by intermediate NODE: several exit edges can write one node, and they share a
+        #  single reduced intermediate, so processing them one edge at a time would mint one
+        #  temporary per piece and leave the consumers reading whichever piece came last.
+        grouped: Dict[nodes.AccessNode, List[graph.MultiConnectorEdge[dace.Memlet]]] = {}
         for out_edge in intermediate_outputs:
-            # This is the intermediate node that, that we want to get rid of.
-            #  In shared mode we want to recreate it after the second Map.
-            inter_node: nodes.AccessNode = out_edge.dst
+            grouped.setdefault(out_edge.dst, []).append(out_edge)
+
+        # Now we will iterate over all intermediate nodes and process them.
+        #  If not stated otherwise the comments assume that we run in exclusive mode.
+        for inter_node, out_edges in grouped.items():
+            # In shared mode we want to recreate the intermediate node after the second Map.
+            #  The first edge stands for the group wherever one representative is enough.
+            out_edge = out_edges[0]
             inter_name = inter_node.data
             inter_desc = inter_node.desc(sdfg)
 
             # Now we will determine the shape of the new intermediate. This size of
-            #  this temporary is given by the Memlet that goes into the first MapExit.
-            pre_exit_edges = list(state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
-            if len(pre_exit_edges) != 1:
+            #  this temporary is given by the Memlets that go into the first MapExit.
+            pre_exit_edges = [
+                e for oedge in out_edges
+                for e in state.in_edges_by_connector(first_map_exit, "IN_" + oedge.src_conn[4:])
+            ]
+            producer_subset = self.tiled_producer_subset(pre_exit_edges)
+            if producer_subset is None:
                 raise NotImplementedError()
-            pre_exit_edge = pre_exit_edges[0]
 
             (new_inter_shape_raw, new_inter_shape, squeezed_dims) = (self.compute_reduced_intermediate(
-                producer_subset=pre_exit_edge.data.dst_subset,
+                producer_subset=producer_subset,
                 inter_desc=inter_desc,
             ))
 
@@ -1046,7 +1186,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
             # Now generate the intermediate data container.
             if len(new_inter_shape) == 0:
-                assert pre_exit_edge.data.subset.num_elements() == 1
+                assert producer_subset.num_elements() == 1
                 is_scalar = True
                 new_inter_name, new_inter_desc = sdfg.add_scalar(
                     new_inter_name,
@@ -1071,80 +1211,63 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  the old output edge wrote to. We need that to adjust the producer
             #  Memlets, since they now write into the new (smaller) intermediate.
             producer_offset = self.compute_offset_subset(
-                original_subset=pre_exit_edge.data.dst_subset,
+                original_subset=producer_subset,
                 intermediate_desc=inter_desc,
                 map_params=map_params,
                 producer_offset=None,
             )
 
-            # Memlets have a lot of additional informations, to ensure that we get
-            #  all of them, we have to do it this way. The main reason for this is
-            #  to handle the case were the "Memlet reverse direction", i.e., `data`
-            #  refers to the other end of the connection than before.
-            assert pre_exit_edge.data.dst_subset is not None
-            new_pre_exit_memlet_src_subset = copy.deepcopy(pre_exit_edge.data.src_subset)
-            new_pre_exit_memlet_dst_subset = subsets.Range.from_array(new_inter_desc)
+            # Each producer keeps its own piece of the reduced intermediate; with a single one
+            #  that piece is the whole of it.
+            for pre_exit_edge in pre_exit_edges:
+                # Memlets have a lot of additional informations, to ensure that we get
+                #  all of them, we have to do it this way. The main reason for this is
+                #  to handle the case were the "Memlet reverse direction", i.e., `data`
+                #  refers to the other end of the connection than before.
+                assert pre_exit_edge.data.dst_subset is not None
+                new_pre_exit_memlet_src_subset = copy.deepcopy(pre_exit_edge.data.src_subset)
+                if len(pre_exit_edges) == 1:
+                    new_pre_exit_memlet_dst_subset = subsets.Range.from_array(new_inter_desc)
+                else:
+                    new_pre_exit_memlet_dst_subset = copy.deepcopy(pre_exit_edge.data.dst_subset)
+                    new_pre_exit_memlet_dst_subset.offset(producer_offset, negative=True)
+                    new_pre_exit_memlet_dst_subset.pop(squeezed_dims)
 
-            new_pre_exit_memlet = copy.deepcopy(pre_exit_edge.data)
-            new_pre_exit_memlet.data = new_inter_name
+                new_pre_exit_memlet = copy.deepcopy(pre_exit_edge.data)
+                new_pre_exit_memlet.data = new_inter_name
 
-            new_pre_exit_edge = state.add_edge(
-                pre_exit_edge.src,
-                pre_exit_edge.src_conn,
-                new_inter_node,
-                None,
-                new_pre_exit_memlet,
-            )
-
-            # We can update `{src, dst}_subset` only after we have inserted the
-            #  edge, this is because the direction of the Memlet might change.
-            new_pre_exit_edge.data.src_subset = new_pre_exit_memlet_src_subset
-            new_pre_exit_edge.data.dst_subset = new_pre_exit_memlet_dst_subset
-
-            # Modify the strides of the mapped data of the nested SDFG.
-            if isinstance(new_pre_exit_edge.src, nodes.NestedSDFG):
-                self._updated_inner_strides_of_nested_sdfg(
-                    nsdfg=new_pre_exit_edge.src,
-                    reduced_intermediate_desc=new_inter_desc,
-                    inner_data=new_pre_exit_edge.src_conn,
-                    outer_edge=new_pre_exit_edge,
+                new_pre_exit_edge = state.add_edge(
+                    pre_exit_edge.src,
+                    pre_exit_edge.src_conn,
+                    new_inter_node,
+                    None,
+                    new_pre_exit_memlet,
                 )
 
-            # We now handle the MemletTree defined by this edge.
-            #  The newly created edge, only handled the last collection step.
-            for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children(include_self=False):
-                producer_edge = producer_tree.edge
-
-                # Ignore empty edges
-                if producer_edge.data.is_empty():
-                    continue
-
-                # In order to preserve the intrinsic direction of Memlets we only have to change
-                #  the `.data` attribute of the producer Memlet if it refers to the old intermediate.
-                #  If it refers to something different we keep it. Note that this case can only
-                #  occur if the producer is an AccessNode.
-                if producer_edge.data.data == inter_name:
-                    producer_edge.data.data = new_inter_name
-
-                # Regardless of the intrinsic direction of the Memlet, the subset we care about
-                #  is always `dst_subset`.
-                if is_scalar:
-                    producer_edge.data.dst_subset = "0"
-                elif producer_edge.data.dst_subset is not None:
-                    # Since we now write into a smaller memory patch, we must
-                    #  compensate for that. We do this by substracting where the write
-                    #  originally had begun.
-                    producer_edge.data.dst_subset.offset(producer_offset, negative=True)
-                    producer_edge.data.dst_subset.pop(squeezed_dims)
+                # We can update `{src, dst}_subset` only after we have inserted the
+                #  edge, this is because the direction of the Memlet might change.
+                new_pre_exit_edge.data.src_subset = new_pre_exit_memlet_src_subset
+                new_pre_exit_edge.data.dst_subset = new_pre_exit_memlet_dst_subset
 
                 # Modify the strides of the mapped data of the nested SDFG.
-                if isinstance(producer_edge.src, nodes.NestedSDFG):
+                if isinstance(new_pre_exit_edge.src, nodes.NestedSDFG):
                     self._updated_inner_strides_of_nested_sdfg(
-                        nsdfg=producer_edge.src,
+                        nsdfg=new_pre_exit_edge.src,
                         reduced_intermediate_desc=new_inter_desc,
-                        inner_data=producer_edge.src_conn,
-                        outer_edge=producer_edge,
+                        inner_data=new_pre_exit_edge.src_conn,
+                        outer_edge=new_pre_exit_edge,
                     )
+
+                self._reduce_producer_tree(
+                    state=state,
+                    new_pre_exit_edge=new_pre_exit_edge,
+                    inter_name=inter_name,
+                    new_inter_name=new_inter_name,
+                    new_inter_desc=new_inter_desc,
+                    producer_offset=producer_offset,
+                    squeezed_dims=squeezed_dims,
+                    is_scalar=is_scalar,
+                )
 
             # Now after we have handled the input of the new intermediate node,
             #  we must handle its output. For this we have to "inject" the newly
@@ -1267,29 +1390,35 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if is_exclusive_set:
                 # In exclusive mode the old intermediate node is no longer needed.
                 #  This will also remove `out_edge` from the SDFG.
-                assert state.degree(inter_node) == 1
-                state.remove_edge_and_connectors(out_edge)
+                assert state.degree(inter_node) == len(out_edges)
+                for oedge in out_edges:
+                    state.remove_edge_and_connectors(oedge)
                 state.remove_node(inter_node)
 
-                state.remove_edge(pre_exit_edge)
-                first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
-                first_map_exit.remove_out_connector(out_edge.src_conn)
+                for pre_exit_edge in pre_exit_edges:
+                    state.remove_edge(pre_exit_edge)
+                    first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
+                for oedge in out_edges:
+                    first_map_exit.remove_out_connector(oedge.src_conn)
                 del sdfg.arrays[inter_name]
 
             else:
                 # TODO(phimuell): Lift this restriction
-                assert pre_exit_edge.data.data == inter_name
+                assert all(e.data.data == inter_name for e in pre_exit_edges)
 
                 # This is the shared mode, so we have to recreate the intermediate
                 #  node, but this time it is at the exit of the second Map.
-                state.remove_edge(pre_exit_edge)
-                first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
+                for pre_exit_edge in pre_exit_edges:
+                    state.remove_edge(pre_exit_edge)
+                    first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
 
                 # This is the Memlet that goes from the Map internal intermediate
                 #  temporary node to the Map output. This will essentially restore
                 #  or preserve the output for the intermediate node. It is important
-                #  that we use the data that `preExitEdge` was used.
-                final_pre_exit_memlet = copy.deepcopy(pre_exit_edge.data)
+                #  that we use the data that `preExitEdge` was used. With several producers
+                #  the restored write covers the box they tile, not any single piece of it.
+                final_pre_exit_memlet = copy.deepcopy(pre_exit_edges[0].data)
+                final_pre_exit_memlet.subset = copy.deepcopy(producer_subset)
                 final_pre_exit_memlet.other_subset = subsets.Range.from_array(new_inter_desc)
 
                 new_pre_exit_conn = second_map_exit.next_connector()
@@ -1310,8 +1439,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
                 second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
 
-                first_map_exit.remove_out_connector(out_edge.src_conn)
-                state.remove_edge(out_edge)
+                for oedge in out_edges:
+                    first_map_exit.remove_out_connector(oedge.src_conn)
+                    state.remove_edge(oedge)
 
     def compute_reduced_intermediate(
         self,

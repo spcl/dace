@@ -12,6 +12,7 @@ import uuid
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
+from dace.transformation.dataflow.map_fusion_helper import is_node_reachable_from
 
 
 def count_nodes(
@@ -1456,15 +1457,14 @@ def test_fusion_intermediate_different_access_mod_shape_2():
     _impl_fusion_intermediate_different_access(modified_shape=True, traditional_memlet_direction=True)
 
 
-@pytest.mark.skip(reason="This feature is not yet fully supported.")
 def test_fusion_multiple_producers_consumers():
     """Multiple producer and consumer nodes.
 
     This test is very similar to the `test_fusion_intermediate_different_access()`
     and `test_fusion_intermediate_different_access_mod_shape()` test, with the
     exception that now full data is used in the second map.
-    However, currently `MapFusionVertical` only supports a single producer, thus this test can
-    not run.
+    The two producers converge on one `IN_` connector of the first MapExit, so the reduced
+    intermediate is sized from the box they tile rather than from either one alone.
     """
 
     def reference(A, B):
@@ -3047,7 +3047,6 @@ def _make_multiple_top_level_connections_multi_producer_sdfg(
     return sdfg, state, first_map_exit, b, second_map_entry
 
 
-@pytest.mark.xfail(reason="Multiple edges between `first_map_exit` and intermediate are not yet supported.")
 @pytest.mark.parametrize("strict_dataflow", [True, False])
 def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflow: bool):
     sdfg, state, first_map_exit, b, second_map_entry = _make_multiple_top_level_connections_multi_producer_sdfg()
@@ -3062,8 +3061,7 @@ def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflo
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
-    # The transformation can not apply because there are multiple edges between
-    #  `first_map_exit` and intermediate are not yet supported.
+    # Both exit edges write one intermediate, so they share a single reduced intermediate.
     apply_fusion(
         sdfg,
         removed_maps=1,
@@ -3921,6 +3919,81 @@ def test_fusion_empty_memlet_ordering(ordering_only: bool, both: bool):
     assert np.allclose(res["B"], a * 2.0), "fusing across the ordering edges changed the result"
 
 
+def _make_ordering_into_intermediate_sdfg() -> SDFG:
+    """cg's shape: an ordering edge reaches the second Map only THROUGH the intermediate.
+
+    ``fill`` writes ``B``, an empty Memlet puts it before the intermediate ``tmp``, the first
+    Map writes ``tmp`` and the second reads ``tmp`` to write ``B`` again. Nothing else keeps
+    the fill before that second write: the whole constraint is the path
+    ``B_filled -> tmp -> second_entry``, which fusion turns around by making ``tmp`` an output.
+    """
+    sdfg = SDFG(unique_name("ordering_into_intermediate"))
+    state = sdfg.add_state("state", is_start_block=True)
+
+    for name in ("A", "B"):
+        sdfg.add_array(name, shape=(20, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(20, ), dtype=dace.float64, transient=True)
+
+    a_node, b_filled, b_out = state.add_access("A"), state.add_access("B"), state.add_access("B")
+    tmp_inter = state.add_access("tmp")
+
+    state.add_mapped_tasklet("fill",
+                             map_ranges={"__i": "0:20"},
+                             inputs={},
+                             code="__out = 0.0",
+                             outputs={"__out": dace.Memlet("B[__i]")},
+                             output_nodes={"B": b_filled},
+                             external_edges=True)
+    state.add_mapped_tasklet("first",
+                             map_ranges={"__i": "0:20"},
+                             inputs={"__a": dace.Memlet("A[__i]")},
+                             code="__out = __a + 1.0",
+                             outputs={"__out": dace.Memlet("tmp[__i]")},
+                             input_nodes={"A": a_node},
+                             output_nodes={"tmp": tmp_inter},
+                             external_edges=True)
+    state.add_mapped_tasklet("second",
+                             map_ranges={"__i": "0:20"},
+                             inputs={"__t": dace.Memlet("tmp[__i]")},
+                             code="__out = __t * 2.0",
+                             outputs={"__out": dace.Memlet("B[__i]")},
+                             input_nodes={"tmp": tmp_inter},
+                             output_nodes={"B": b_out},
+                             external_edges=True)
+
+    state.add_nedge(b_filled, tmp_inter, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+def test_fusion_keeps_ordering_that_ran_through_the_intermediate():
+    """Fusing must not silently drop the happens-before an intermediate carried.
+
+    The edge itself survives the rewrite, so counting edges proves nothing -- what breaks is
+    its REACH: once ``tmp`` is an output of the fused Map, ``B_filled -> tmp`` no longer puts
+    the fill before the Map that writes ``B``. That is a scheduling hazard, not a value the
+    reference disagrees with, so the assertion is reachability rather than numerics (cg's
+    zero-fill of ``p`` floated past its writer and only surfaced as a NaN 100 iterations on).
+    """
+    sdfg = _make_ordering_into_intermediate_sdfg()
+    state = sdfg.start_block
+    b_filled = next(n for n in state.data_nodes()
+                    if n.data == "B" and state.in_degree(n) > 0 and any(e.data.is_empty() for e in state.out_edges(n)))
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    entries = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert len(entries) == 2, "expected the fill Map and the fused Map"
+    fused_entry = next(e for e in entries if not e.map.label.startswith("fill"))
+    assert is_node_reachable_from(state, b_filled, fused_entry), \
+        "the fill is no longer ordered before the Map that overwrites B"
+
+    a = np.random.rand(20)
+    res = {"A": a.copy(), "B": np.zeros(20)}
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(res["B"], (a + 1.0) * 2.0), "fusing changed the result"
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()
@@ -3980,4 +4053,5 @@ if __name__ == '__main__':
     test_fusion_empty_memlet_ordering(ordering_only=False, both=False)
     test_fusion_empty_memlet_ordering(ordering_only=True, both=False)
     test_fusion_empty_memlet_ordering(ordering_only=False, both=True)
+    test_fusion_keeps_ordering_that_ran_through_the_intermediate()
     test_map_fusion_is_deprecated()
