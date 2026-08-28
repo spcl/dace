@@ -378,7 +378,16 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # took the device form, so the GPU column compared library selection, not pipelines.
             return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
-            return ['rocBLAS', 'GPUAuto', 'pure']
+            # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
+            # compared column against column, so a node that takes a tuned expansion under one and
+            # the serial ``pure`` loop under the other measures the priority LIST rather than the
+            # hardware. ``CUB`` and ``CUDA`` earn their place here for the same reason they do
+            # above: they are the keys the device-primitive nodes register under (``Scan``,
+            # ``IntegerSort``, ``ArgReduce``, ``FindFirst``, ``ScatterConflictCheck``,
+            # ``Symmetrize``), and their emitted code names the backend-neutral ``gpucub`` /
+            # ``gpu*`` aliases, so one expansion serves both. Each node's own environment still
+            # gates whether the library is actually present.
+            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', 'hipTENSOR', 'CUB', 'CUDA', 'pure']
         else:
             return ['GPUAuto', 'pure']
     elif device == dtypes.DeviceType.CPU:

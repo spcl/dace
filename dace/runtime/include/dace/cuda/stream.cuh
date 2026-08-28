@@ -9,20 +9,14 @@
 #include <new>  // Used for the in-memory ctor call in the move assignment operator below
 #include <vector>
 
+// Only the cooperative-groups header differs here; the gpu* runtime aliases this file uses come
+// from cudacommon.cuh below, which is where all of them live.
 #ifdef __HIPCC__
 #include <hip/hip_cooperative_groups.h>
 #include <hip/hip_runtime.h>
-#define gpuLaunchKernel hipLaunchKernel
-#define gpuMalloc hipMalloc
-#define gpuMemset hipMemset
-#define gpuFree hipFree
 #else
 #include <cooperative_groups.h>
 #include <cuda_runtime.h>
-#define gpuLaunchKernel cudaLaunchKernel
-#define gpuMalloc cudaMalloc
-#define gpuMemset cudaMemset
-#define gpuFree cudaFree
 #endif
 
 #include "cudacommon.cuh"

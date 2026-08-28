@@ -16,8 +16,8 @@ class CopyLibraryNode(nodes.LibraryNode):
     """Library node representing a data copy between two access nodes. Implementations:
     ``MappedTasklet`` (element-wise tasklet, also the rank-mismatch/reshape and large-CPU-copy
     path), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy``),
-    ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
-    (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
+    ``MemcpyCUDA1D``/``2D`` (``gpuMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
+    (Sequential map of ``gpuMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
     ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
     optional ``__syncthreads()`` barriers controlled by ``sync``).
 

@@ -502,7 +502,7 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
 
 
 # Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
-# figure is the cudaMalloc/cudaMallocAsync contract (256 B). Anything else is unknown and gets no
+# figure is the gpuMalloc/gpuMallocAsync contract (256 B). Anything else is unknown and gets no
 # assumption. Register is NOT here on purpose -- see :func:`base_align_bytes`.
 _BASE_ALIGN_BYTES = {
     dace.dtypes.StorageType.GPU_Global: 256,

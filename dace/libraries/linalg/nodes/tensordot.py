@@ -363,7 +363,7 @@ class ExpandCuTensor(ExpandTransformation):
                 __dace_cutensor_handle, opDesc, planPref,
                 CUTENSOR_WORKSPACE_DEFAULT, &worksize));
             void *work = nullptr;
-            if (worksize > 0) cudaMalloc(&work, worksize);
+            if (worksize > 0) gpuMalloc(&work, worksize);
         """
 
         execute = """
@@ -384,7 +384,7 @@ class ExpandCuTensor(ExpandTransformation):
             cutensorDestroyTensorDescriptor(descC);
             cutensorDestroyTensorDescriptor(descB);
             cutensorDestroyTensorDescriptor(descA);
-            if (work) cudaFree(work);
+            if (work) gpuFree(work);
         """
 
         code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"

@@ -62,17 +62,17 @@ class ExpandOrgqrCuSolverDn(ExpandTransformation):
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dt)
         func = func + 'orgqr'
         code = environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-            cudaMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
-                            cudaMemcpyDeviceToDevice, __dace_current_stream);
+            gpuMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
+                            gpuMemcpyDeviceToDevice, __dace_current_stream);
             int __dace_workspace_size = 0;
             {cuda_type}* __dace_workspace;
             cusolverDn{func}_bufferSize(
                 __dace_cusolverDn_handle, {m}, {n}, {k}, _aout, {lda_out}, _tau, &__dace_workspace_size);
-            cudaMalloc<{cuda_type}>(&__dace_workspace, sizeof({cuda_type}) * __dace_workspace_size);
+            gpuMalloc<{cuda_type}>(&__dace_workspace, sizeof({cuda_type}) * __dace_workspace_size);
             cusolverDn{func}(
                 __dace_cusolverDn_handle, {m}, {n}, {k}, _aout, {lda_out}, _tau,
                 __dace_workspace, __dace_workspace_size, _res);
-            cudaFree(__dace_workspace);
+            gpuFree(__dace_workspace);
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

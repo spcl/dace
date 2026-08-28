@@ -169,15 +169,15 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
         state_id = parent_state.parent_graph.node_id(parent_state)
         idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
         ctype = desc.dtype.base_type.ctype
-        prototype = (f'DACE_EXPORTED cudaError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, '
-                     f'int __sym_ld, int __sym_off, int __sym_upper, cudaStream_t __sym_stream);')
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, '
+                     f'int __sym_ld, int __sym_off, int __sym_upper, gpuStream_t __sym_stream);')
         parent_sdfg.append_global_code(prototype + '\n')
         # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a free
         # function in the CUDA unit does not have. The status is returned and checked at the call.
         parent_sdfg.append_global_code(
             f'{prototype}\n'
-            f'cudaError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, int __sym_ld, int __sym_off, '
-            f'int __sym_upper, cudaStream_t __sym_stream) {{\n'
+            f'gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, int __sym_ld, int __sym_off, '
+            f'int __sym_upper, gpuStream_t __sym_stream) {{\n'
             f'    return ::dace::cuda_transpose::symmetrize<{ctype}>(__sym_x, __sym_n, __sym_ld, __sym_off, '
             f'__sym_upper != 0, __sym_stream);\n'
             f'}}\n', 'cuda')

@@ -4,7 +4,7 @@
 #include <hip/amd_detail/amd_hip_complex.h>  // for hip*Complex
 #include <hip/hip_fp16.h>                    // for __float2half
 #include <hip/hip_runtime.h>
-#include <rocblas.h>
+#include <rocblas/rocblas.h>  // ROCm 4.5+ layout; the flat <rocblas.h> is gone by ROCm 7
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error

@@ -453,7 +453,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
                                             {opB},
                                             {alpha}, matA, matB, {beta}, matC, {compute},
                                             CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) );
-            cudaMalloc(&dBuffer, bufferSize);
+            gpuMalloc(&dBuffer, bufferSize);
 
             // execute SpMM
             dace::sparse::CheckCusparseError( cusparseSpMM({handle},
@@ -466,7 +466,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
             dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
             dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
             dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
-            cudaFree(dBuffer);
+            gpuFree(dBuffer);
         """.format_map(opt)
 
         code = (call_prefix + call + call_suffix)

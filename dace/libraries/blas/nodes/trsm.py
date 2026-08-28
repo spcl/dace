@@ -88,8 +88,8 @@ class ExpandTrsmCuBLAS(ExpandTransformation):
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         code += f"""
         {dt.ctype} __alpha = ({dt.ctype})({a});
-        cudaMemcpyAsync(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}),
-                        cudaMemcpyDeviceToDevice, __dace_current_stream);
+        gpuMemcpyAsync(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}),
+                        gpuMemcpyDeviceToDevice, __dace_current_stream);
         cublas{func}trsm(__dace_cublas_handle, {side}, {uplo}, {trans}, {diag}, {m}, {n}, &__alpha, _A, {lda}, _Bout, {ldb_out});
         """
         return dace.sdfg.nodes.Tasklet(node.name,

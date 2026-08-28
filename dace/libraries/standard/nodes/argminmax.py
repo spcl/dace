@@ -28,8 +28,8 @@ outer iterators are the dim-reduced output coordinates.
 Future backends (not yet implemented; ``pure`` is the only registered
 implementation):
 
-* ``CUB`` one-pass: ``cub::DeviceReduce::ArgMax`` / ``ArgMin`` return a
-  ``cub::KeyValuePair<int, T>``, which would collapse the two reduction
+* ``CUB`` one-pass: ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin`` return a
+  ``gpucub::KeyValuePair<int, T>``, which would collapse the two reduction
   passes below into one.  Both passes already go through ``Reduce``
   nodes, so each of them reaches CUB's ``DeviceReduce`` on its own; a
   dedicated expansion would only save the second pass.

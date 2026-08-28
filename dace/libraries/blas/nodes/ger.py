@@ -174,8 +174,8 @@ class ExpandGerCuBLAS(ExpandTransformation):
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         code += f"""
         {dtype.ctype} __alpha = {dtype.ctype}({alpha});
-        cudaMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
-                        cudaMemcpyDeviceToDevice, __dace_current_stream);
+        gpuMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
+                        gpuMemcpyDeviceToDevice, __dace_current_stream);
         cublas{cfunc}(__dace_cublas_handle, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
         """
         return dace.sdfg.nodes.Tasklet(node.name,

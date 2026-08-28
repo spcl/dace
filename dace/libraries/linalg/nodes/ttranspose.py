@@ -236,15 +236,15 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
         state_id = state.parent_graph.node_id(state)
         idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
         ctype = inp_tensor.dtype.base_type.ctype
-        prototype = (f'DACE_EXPORTED cudaError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
-                     f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, cudaStream_t __tr_stream);')
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
+                     f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream);')
         sdfg.append_global_code(prototype + '\n')
         # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a free
         # function in the CUDA unit does not have. The status is returned and checked at the call.
         sdfg.append_global_code(
             f'{prototype}\n'
-            f'cudaError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, int __tr_rows, '
-            f'int __tr_cols, int __tr_ldin, int __tr_ldout, cudaStream_t __tr_stream) {{\n'
+            f'gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, int __tr_rows, '
+            f'int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream) {{\n'
             f'    return ::dace::cuda_transpose::transpose<{ctype}>(__tr_in, __tr_out, __tr_rows, __tr_cols, '
             f'__tr_ldin, __tr_ldout, __tr_stream);\n'
             f'}}\n', 'cuda')

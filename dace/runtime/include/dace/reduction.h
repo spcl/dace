@@ -942,7 +942,7 @@ inline auto stridedIterator(size_t stride) {
 #ifdef DACE_THRUST_ITERATORS
   thrust::counting_iterator
 #else
-  cub::CountingInputIterator
+  gpucub::CountingInputIterator
 #endif
       <int>
           counting_iterator(0);
@@ -952,7 +952,7 @@ inline auto stridedIterator(size_t stride) {
                              decltype(counting_iterator)>
       itr(counting_iterator, conversion_op);
 #else
-  cub::TransformInputIterator<int, decltype(conversion_op),
+  gpucub::TransformInputIterator<int, decltype(conversion_op),
                               decltype(counting_iterator)>
       itr(counting_iterator, conversion_op);
 #endif

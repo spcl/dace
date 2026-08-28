@@ -24,7 +24,7 @@ its size):
 
 - ``pure`` -- tagged-write + verify, serial.
 - ``CPU``  -- tagged-write + verify, OpenMP-parallel.
-- ``CUDA`` -- the same tagged-write + verify run ON the device (``cub::BlockReduce`` fold, one
+- ``CUDA`` -- the same tagged-write + verify run ON the device (``gpucub::BlockReduce`` fold, one
   atomic per block), with only the resulting flag copied back.
 """
 from typing import Dict, Optional, Tuple
@@ -164,7 +164,7 @@ class ExpandCUDA(ExpandTransformation):
     """Tagged-write + verify ON THE DEVICE: :cpp:func:`dace::detect_collision_device`.
 
     The index never leaves the GPU. Both passes are grid-stride kernels and the verify pass folds
-    its per-lane flag through ``cub::BlockReduce`` into one atomic per block, the shape DaCe's own
+    its per-lane flag through ``gpucub::BlockReduce`` into one atomic per block, the shape DaCe's own
     GPU WCR lowering emits; only the resulting flag crosses back, so the cost is two device passes
     plus one 8-byte copy instead of the whole index array.
 
@@ -194,13 +194,13 @@ class ExpandCUDA(ExpandTransformation):
         idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
         cap_param = '' if owner is None else ', long long __sc_capacity'
         cap_arg = '' if owner is None else ', __sc_capacity'
-        prototype = (f'DACE_EXPORTED cudaError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, '
-                     f'long long __sc_n{cap_param}, long long *__sc_out, cudaStream_t __sc_stream);')
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, '
+                     f'long long __sc_n{cap_param}, long long *__sc_out, gpuStream_t __sc_stream);')
         sdfg.append_global_code(prototype + '\n')
         sdfg.append_global_code(
             f'{prototype}\n'
-            f'cudaError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, '
-            f'long long *__sc_out, cudaStream_t __sc_stream) {{\n'
+            f'gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, '
+            f'long long *__sc_out, gpuStream_t __sc_stream) {{\n'
             f'    return ::dace::detect_collision_device(__sc_idx, __sc_n{cap_arg}, __sc_out, __sc_stream);\n'
             f'}}\n', 'cuda')
 

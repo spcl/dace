@@ -3,7 +3,7 @@
 
 The node is deliberately specialised: integer keys, ascending order, no values, no
 custom comparator, no stability requirement. This matches the radix-sort sweet spot
-on both CPU (`ska_sort`) and GPU (`cub::DeviceRadixSort`), and keeps the libnode
+on both CPU (`ska_sort`) and GPU (`gpucub::DeviceRadixSort`), and keeps the libnode
 surface minimal so it can serve as the sort primitive behind the scatter-conflict
 guard (and any future DaCe pass that needs to sort integer indices).
 
@@ -13,8 +13,8 @@ Implementations:
   :file:`dace/runtime/include/dace/ska_sort.hpp`). The clear winner among MSD radix
   sorts in the Probably Dance benchmarks, and on the same order as `vqsort` on
   non-AVX-512 CPUs. Zero added external dependency: ``#include <dace/ska_sort.hpp>``.
-- ``CUDA`` -- ``cub::DeviceRadixSort::SortKeys``. Uses scratch allocated via
-  ``cudaMalloc`` once per call; for the scatter-guard use case the sort runs at
+- ``CUDA`` -- ``gpucub::DeviceRadixSort::SortKeys``. Uses scratch allocated via
+  ``gpuMalloc`` once per call; for the scatter-guard use case the sort runs at
   most once per scatter so the allocation cost is acceptable.
 - ``pure`` -- a ``std::sort`` C++ tasklet. Used as a portable fallback when neither
   CPU nor CUDA expansion is selectable (e.g. FPGA backends), and as the default
@@ -147,7 +147,7 @@ class ExpandCPU(ExpandTransformation):
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """``cub::DeviceRadixSort::SortKeys`` over the input array (device-global memory).
+    """``gpucub::DeviceRadixSort::SortKeys`` over the input array (device-global memory).
 
     Temporary storage is obtained from the per-libnode-class, per-stream CUB scratch pool
     tagged ``SortTag`` (see :file:`dace/runtime/include/dace/cub_scratch.cuh` and the
@@ -156,7 +156,7 @@ class ExpandCUDA(ExpandTransformation):
     reused across every ``IntegerSort`` call on that stream, grown in place if a request
     exceeds the current allocation, and released at SDFG exit. The libnode threads
     ``__dace_current_stream`` to both the scratch lookup and the underlying
-    ``cub::DeviceRadixSort`` call, so concurrent launches on different streams cannot race
+    ``gpucub::DeviceRadixSort`` call, so concurrent launches on different streams cannot race
     on the pool.
     """
 
@@ -168,18 +168,18 @@ class ExpandCUDA(ExpandTransformation):
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node)
         n_expr = _resolve_length(node, state, sdfg)
-        # ``cub::DeviceRadixSort::SortKeys`` accepts the stream as its last (default-0)
+        # ``gpucub::DeviceRadixSort::SortKeys`` accepts the stream as its last (default-0)
         # parameter; positional preceding args (``begin_bit``, ``end_bit``) take the
         # natural defaults for full-range key sort.
         in_dtype = _in_desc.dtype.ctype
         bit_args = f"0, sizeof({in_dtype}) * 8"
         code = (f"size_t _ks_needed = 0;\n"
-                f"::cub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, "
+                f"::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, "
                 f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), "
                 f"{bit_args}, __dace_current_stream);\n"
                 f"void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>("
                 f"_ks_needed, __dace_current_stream);\n"
-                f"::cub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, "
+                f"::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, "
                 f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), "
                 f"{bit_args}, __dace_current_stream);")
         return nodes.Tasklet(
@@ -203,7 +203,7 @@ class IntegerSort(nodes.LibraryNode):
     Implementations:
 
     - ``'CPU'`` -- ska_sort (vendored, fast MSD radix). Default on host.
-    - ``'CUDA'`` -- ``cub::DeviceRadixSort::SortKeys`` (memory-bandwidth bound on GPU).
+    - ``'CUDA'`` -- ``gpucub::DeviceRadixSort::SortKeys`` (memory-bandwidth bound on GPU).
     - ``'pure'`` -- ``std::sort`` portable fallback.
 
     The libnode is contractually pure: it neither aliases the input/output buffers

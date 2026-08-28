@@ -66,8 +66,8 @@ class ExpandPotrsCuSolverDn(ExpandTransformation):
         func = func + 'potrs'
         uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
         code = environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-            cudaMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
-                            cudaMemcpyDeviceToDevice, __dace_current_stream);
+            gpuMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
+                            gpuMemcpyDeviceToDevice, __dace_current_stream);
             cusolverDn{func}(
                 __dace_cusolverDn_handle, {uplo}, {n_A}, {nrhs},
                 _a, {lda}, _bout, {ldb_out}, _res);

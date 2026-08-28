@@ -19,7 +19,7 @@ Why a library node, not a transformation: GPU implementations (Blelloch upsweep
 + downsweep) have O(N log N) work / O(log N) depth and are non-trivial to
 emit from generic SDFG primitives; the CPU implementation is a tight
 memory-bandwidth-bound sequential loop. Both already exist as battle-tested
-library functions (``cub::DeviceScan`` on GPU, ``std::partial_sum`` /
+library functions (``gpucub::DeviceScan`` on GPU, ``std::partial_sum`` /
 ``std::inclusive_scan`` / ``std::exclusive_scan`` on CPU). The libnode is the
 right level of abstraction.
 
@@ -30,7 +30,7 @@ Implementations:
   OpenMP 5.0 ``simd`` ``inscan``. Below the header's element threshold it is that
   same vectorised pass on one thread, which is what the cloudsc-style
   vertical-flux pattern (N ~ 137) gets.
-- ``CUDA`` -- ``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` (Blelloch
+- ``CUDA`` -- ``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` (Blelloch
   upsweep + downsweep; memory-bandwidth-bound on modern NVIDIA GPUs at
   GKeys/s rates).
 - ``pure`` -- portable single-loop fallback (used when neither CPU nor CUDA
@@ -138,10 +138,10 @@ _OP_TO_OMP_REDUCTION = {
     ScanOp.MAX: 'max',
 }
 
-#: Map op enum to the CUB-side binary functor for ``cub::DeviceScan::InclusiveScan``.
+#: Map op enum to the CUB-side binary functor for ``gpucub::DeviceScan::InclusiveScan``.
 #: Routed through the ``DACE_CUB_*_OP`` macros from ``dace/cub_compat.cuh`` so the
-#: same SDFG source builds against CUDA Toolkit 12 (CUB <= 2.x has ``cub::Sum`` /
-#: ``cub::Min`` / ``cub::Max``) and 13 (CCCL 3.x dropped those in favour of
+#: same SDFG source builds against CUDA Toolkit 12 (CUB <= 2.x has ``gpucub::Sum`` /
+#: ``gpucub::Min`` / ``gpucub::Max``) and 13 (CCCL 3.x dropped those in favour of
 #: ``cuda::std::plus`` + device lambdas).
 _OP_TO_CUB = {
     ScanOp.SUM: 'DACE_CUB_SUM_OP',
@@ -284,7 +284,7 @@ def refuse_widening(node: "Scan", in_desc, out_desc, shape: str) -> None:
 
     The widening accumulator lives in the unit-stride single-chain host routines only. The strided
     form carries one accumulator per residue class seeded from the input, the multi-chain form
-    spells K accumulators into one ``inscan`` clause at a single ctype, and ``cub::DeviceScan``
+    spells K accumulators into one ``inscan`` clause at a single ctype, and ``gpucub::DeviceScan``
     deduces its accumulator from the input iterator -- each would need its own widening design.
     Refuse loudly; a silent narrow accumulator is a wrong answer, not a slow one.
     """
@@ -329,7 +329,7 @@ def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -
     desc = seed_desc(node, state, sdfg, chain)
     if desc is None or desc.storage not in GPU_RESIDENT_STORAGES:
         return conn
-    return f"::cub::FutureValue<{desc.dtype.base_type.ctype}>({conn})"
+    return f"::gpucub::FutureValue<{desc.dtype.base_type.ctype}>({conn})"
 
 
 def coef_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int = 0):
@@ -397,7 +397,7 @@ def _identity_expr(node: "Scan", acc_desc) -> str:
             raise ValueError(f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
                              f"set ``identity`` explicitly when using ``exclusive=True``.")
     # ALWAYS cast, including a user-supplied identity. Beyond avoiding signed/unsigned warnings, the
-    # cast is what pins the accumulator's width: ``cub::DeviceScan::ExclusiveScan`` deduces ``AccumT``
+    # cast is what pins the accumulator's width: ``gpucub::DeviceScan::ExclusiveScan`` deduces ``AccumT``
     # from the init value, so a bare ``0`` would make an int8 -> int64 scan accumulate in ``int``.
     return f"static_cast<{acc_desc.dtype.ctype}>({literal})"
 
@@ -901,12 +901,12 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     state_id = state.parent_graph.node_id(state)
     wrapper = f'__dace_scan_affine_{sdfg.name}_{state_id}_{state.node_id(node)}'
     params = (f'const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, '
-              f'{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, cudaStream_t __sc_stream')
-    prototype = f'DACE_EXPORTED cudaError_t {wrapper}({params});'
+              f'{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream')
+    prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
     sdfg.append_global_code(prototype + '\n')
     sdfg.append_global_code(
         f'{prototype}\n'
-        f'cudaError_t {wrapper}({params}) {{\n'
+        f'gpuError_t {wrapper}({params}) {{\n'
         f'    return ::dace::cuda_scan::inclusive_affine<{e_ctype}, {c_ctype}, {d_ctype}, {s_ctype}>(\n'
         f'        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n'
         f'}}\n', 'cuda')
@@ -925,7 +925,7 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
 
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
-    """``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory.
+    """``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory.
 
     Temporary storage is obtained from the per-libnode-class, per-stream CUB scratch pool
     tagged ``ScanTag`` (see :file:`dace/runtime/include/dace/cub_scratch.cuh` and the
@@ -933,7 +933,7 @@ class ExpandCUDA(ExpandTransformation):
     at SDFG init; additional streams allocate lazily on first use. Each per-stream entry is
     reused across every ``Scan`` call on that stream, grown in place if a request exceeds
     the current allocation, and released at SDFG exit. The libnode threads
-    ``__dace_current_stream`` to both the scratch lookup and the underlying ``cub::DeviceScan``
+    ``__dace_current_stream`` to both the scratch lookup and the underlying ``gpucub::DeviceScan``
     call, so concurrent launches on different streams cannot race on the pool.
     """
 
@@ -966,7 +966,7 @@ class ExpandCUDA(ExpandTransformation):
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
         if not is_stride_one:
-            # ``cub::DeviceScan`` only handles a single contiguous scan; the
+            # ``gpucub::DeviceScan`` only handles a single contiguous scan; the
             # strided / residue-class shape has its own implementation
             # (``ExpandCUDAStrided``). Direct the user to the right knob
             # rather than silently mis-dispatch through a unit-stride cub
@@ -997,17 +997,17 @@ class ExpandCUDA(ExpandTransformation):
                 call = 'ExclusiveScan'
                 extra = f', {seed_expr}'
             elif _has_init(node, chain):
-                # Inclusive scan with init. ``cub::DeviceScan::InclusiveScanInit`` is the
+                # Inclusive scan with init. ``gpucub::DeviceScan::InclusiveScanInit`` is the
                 # direct API (CUB >= 2.0 / CUDA 12+); on older CUB it'd need an
                 # ``ExclusiveScan`` + tail-add fallback, which can be added when
                 # supporting CUDA 11 becomes a requirement.
-                # A seed the host cannot read is passed as a ``cub::FutureValue``, which cub
+                # A seed the host cannot read is passed as a ``gpucub::FutureValue``, which cub
                 # dereferences on the device; a host-resident one goes by value as before.
                 desc = seed_desc(node, state, sdfg, chain)
                 seed_ctype = desc.dtype.base_type.ctype
                 if desc is not None and desc.storage in GPU_RESIDENT_STORAGES:
                     seed_param = f', const {seed_ctype}* __sc_init'
-                    extra = f', ::cub::FutureValue<{seed_ctype}>(__sc_init)'
+                    extra = f', ::gpucub::FutureValue<{seed_ctype}>(__sc_init)'
                 else:
                     seed_param = f', {seed_ctype} __sc_init'
                     extra = ', __sc_init'
@@ -1019,18 +1019,18 @@ class ExpandCUDA(ExpandTransformation):
 
             wrapper = f'__dace_scan_{idstr}_c{chain}'
             params = (f'const {in_ctype}* __sc_in, {out_ctype}* __sc_out{seed_param}, '
-                      f'long long __sc_n, cudaStream_t __sc_stream')
-            prototype = f'DACE_EXPORTED cudaError_t {wrapper}({params});'
+                      f'long long __sc_n, gpuStream_t __sc_stream')
+            prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
             args = f'__sc_in, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream'
             sdfg.append_global_code(prototype + '\n')
             sdfg.append_global_code(
                 f'{prototype}\n'
-                f'cudaError_t {wrapper}({params}) {{\n'
+                f'gpuError_t {wrapper}({params}) {{\n'
                 f'    size_t _sc_needed = 0;\n'
-                f'    ::cub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
+                f'    ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
                 f'    void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>('
                 f'_sc_needed, __sc_stream);\n'
-                f'    return ::cub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n'
+                f'    return ::gpucub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n'
                 f'}}\n', 'cuda')
             blocks.append(f'DACE_GPU_CHECK({wrapper}({in_conn}, {out_conn}{seed_actual}, '
                           f'({n_expr}), __dace_current_stream));')
@@ -1152,7 +1152,7 @@ class Scan(nodes.LibraryNode):
 
     - ``'CPU'`` (default) -- ``std::inclusive_scan`` / ``std::exclusive_scan`` (C++17 ``<numeric>``),
       or ``dace::scan::inclusive_affine`` for ``op=AFFINE``.
-    - ``'CUDA'``           -- ``cub::DeviceScan::InclusiveScan`` / ``ExclusiveScan``. No ``AFFINE``.
+    - ``'CUDA'``           -- ``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan``. No ``AFFINE``.
     - ``'pure'``           -- portable single-loop fallback.
 
     The libnode is contractually pure: no aliasing between ``in`` and ``out`` is required

@@ -18,7 +18,7 @@ Expansions:
 
 * ``pure`` (CPU default): a CPP tasklet with a sequential scan over the
   flattened input -- correctness-first, no external dependency.
-* ``CUDA`` (GPU): ``cub::DeviceReduce::ArgMax`` / ``ArgMin``, splitting the
+* ``CUDA`` (GPU): ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin``, splitting the
   returned ``KeyValuePair`` into the two scalar outputs. Unit-stride input only;
   a strided slice needs an input iterator CUB does not take for free.
 
@@ -151,12 +151,12 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
 
 @library.expansion
 class ExpandArgReduceCUDA(ExpandTransformation):
-    """Device lowering: ``cub::DeviceReduce::ArgMax`` / ``ArgMin``, split into the two outputs.
+    """Device lowering: ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin``, split into the two outputs.
 
     CUB answers with a ``KeyValuePair<int, T>`` in DEVICE memory, so the wrapper takes the pair and
     the workspace from one scratch block (the pair first, the block is allocator-aligned) and copies
     the pair back before the outputs are written -- both are host scalars, as they are in every other
-    expansion. ``cub::ArgMax`` breaks ties toward the LOWER key, which is the first-occurrence rule
+    expansion. ``gpucub::ArgMax`` breaks ties toward the LOWER key, which is the first-occurrence rule
     the sequential source has.
     """
 
@@ -181,48 +181,48 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
         if symbolic.equal(step, 1) is not True:
             raise NotImplementedError(
-                f"ArgReduce CUDA reads a slice of stride {step}; cub::DeviceReduce::{_OP_CUB[node.op]} takes a "
+                f"ArgReduce CUDA reads a slice of stride {step}; gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a "
                 "contiguous pointer. Lower this one through 'pure' or 'OpenMP', or wrap the input in a "
-                "cub::TransformInputIterator over a CountingInputIterator first.")
+                "gpucub::TransformInputIterator over a CountingInputIterator first.")
 
         state_id = parent_state.parent_graph.node_id(parent_state)
         idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
         vt, it = in_dtype.ctype, idx_dtype.ctype
-        pair = f'cub::KeyValuePair<int, {vt}>'
-        prototype = (f'DACE_EXPORTED cudaError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, '
-                     f'long long *__ar_idx, int __ar_items, cudaStream_t __ar_stream);')
+        pair = f'gpucub::KeyValuePair<int, {vt}>'
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, '
+                     f'long long *__ar_idx, int __ar_items, gpuStream_t __ar_stream);')
 
         parent_sdfg.append_global_code(prototype + '\n')
         parent_sdfg.append_global_code(
             f'{prototype}\n'
-            f'cudaError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, long long *__ar_idx, '
-            f'int __ar_items, cudaStream_t __ar_stream) {{\n'
+            f'gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, long long *__ar_idx, '
+            f'int __ar_items, gpuStream_t __ar_stream) {{\n'
             # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a
             # free function in the CUDA unit does not have. Every call's status is returned to the
             # host tasklet instead, and the ``DACE_GPU_CHECK`` around the call there reports it.
             f'    size_t _cub_needed = 0;\n'
-            f'    cudaError_t _cub_status;\n'
-            f'    _cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}(nullptr, _cub_needed, __ar_in, '
+            f'    gpuError_t _cub_status;\n'
+            f'    _cub_status = gpucub::DeviceReduce::{_OP_CUB[node.op]}(nullptr, _cub_needed, __ar_in, '
             f'({pair}*)nullptr, __ar_items, __ar_stream);\n'
-            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    if (_cub_status != gpuSuccess) return _cub_status;\n'
             f'    size_t _ar_head = ((sizeof({pair}) + 255) / 256) * 256;\n'
             f'    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_ar_head + _cub_needed, '
             f'__ar_stream, &_cub_status);\n'
-            f'    if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : '
-            f'cudaErrorMemoryAllocation;\n'
+            f'    if (_cub_scratch == nullptr) return _cub_status != gpuSuccess ? _cub_status : '
+            f'gpuErrorMemoryAllocation;\n'
             f'    {pair} *_ar_dev = ({pair}*)_cub_scratch;\n'
-            f'    _cub_status = cub::DeviceReduce::{_OP_CUB[node.op]}((char*)_cub_scratch + _ar_head, '
+            f'    _cub_status = gpucub::DeviceReduce::{_OP_CUB[node.op]}((char*)_cub_scratch + _ar_head, '
             f'_cub_needed, __ar_in, _ar_dev, __ar_items, __ar_stream);\n'
-            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    if (_cub_status != gpuSuccess) return _cub_status;\n'
             f'    {pair} _ar_host;\n'
-            f'    _cub_status = cudaMemcpyAsync(&_ar_host, _ar_dev, sizeof({pair}), '
-            f'cudaMemcpyDeviceToHost, __ar_stream);\n'
-            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
-            f'    _cub_status = cudaStreamSynchronize(__ar_stream);\n'
-            f'    if (_cub_status != cudaSuccess) return _cub_status;\n'
+            f'    _cub_status = gpuMemcpyAsync(&_ar_host, _ar_dev, sizeof({pair}), '
+            f'gpuMemcpyDeviceToHost, __ar_stream);\n'
+            f'    if (_cub_status != gpuSuccess) return _cub_status;\n'
+            f'    _cub_status = gpuStreamSynchronize(__ar_stream);\n'
+            f'    if (_cub_status != gpuSuccess) return _cub_status;\n'
             f'    if (__ar_val != nullptr) *__ar_val = _ar_host.value;\n'
             f'    *__ar_idx = (long long)_ar_host.key;\n'
-            f'    return cudaSuccess;\n'
+            f'    return gpuSuccess;\n'
             f'}}\n',
             'cuda')
 

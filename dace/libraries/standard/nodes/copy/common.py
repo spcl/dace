@@ -275,7 +275,7 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
 
 
 def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
-    """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
+    """``gpuMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     backend = get_gpu_backend()
@@ -286,13 +286,13 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     """Build a Tasklet emitting one contiguous-block copy. Raises ``ValueError`` on a
     non-contiguous subset (the single-call form would overrun the region; use ``MappedTasklet``).
 
-    Emits ``cudaMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU allowed, direction
+    Emits ``gpuMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU allowed, direction
     (HostToDevice/DeviceToHost/DeviceToDevice/HostToHost) inferred from endpoint storages --
     else a same-storage ``std::memcpy``.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :param cuda: emit ``cudaMemcpyAsync`` (else ``memcpy``).
+    :param cuda: emit ``gpuMemcpyAsync`` (else ``memcpy``).
     :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the copy.
     :raises ValueError: a subset is non-contiguous.
     """

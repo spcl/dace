@@ -83,13 +83,13 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
                 cusolverDn{func}_bufferSize(
                     __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
                     {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
+                gpuMalloc<{cuda_type}>(
                     &__dace_workspace,
                     sizeof({cuda_type}) * __dace_workspace_size);
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
                     {stride_x}, __dace_workspace, __dace_workspace_size, _res);
-                cudaFree(__dace_workspace);
+                gpuFree(__dace_workspace);
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

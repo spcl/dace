@@ -7,14 +7,14 @@
 // find-first over a predicate. Same contracts, same return values; only the machine
 // differs, so a libnode picks an expansion and nothing else changes.
 //
-// All three end in a block-wide reduction folded by ``cub::BlockReduce`` and ONE atomic
+// All three end in a block-wide reduction folded by ``gpucub::BlockReduce`` and ONE atomic
 // per block, which is the shape DaCe's own GPU WCR lowering emits (see
 // ``drain_gpu_block_reduction`` in ``dace/codegen/targets/cpu.py``, down to naming
 // ``BLOCK_REDUCE_WARP_REDUCTIONS``): a per-thread atomic on a single word is correct but
 // serializes the whole grid on one cache line.
 //
-// CUB is spelled ``::cub::`` throughout: this code lives in namespace ``dace``, where a bare
-// ``cub::`` resolves to ``dace::cub`` -- the scratch-pool namespace from ``cub_scratch.cuh``, not
+// CUB is spelled ``::gpucub::`` throughout: this code lives in namespace ``dace``, where a bare
+// ``gpucub::`` resolves to ``dace::cub`` -- the scratch-pool namespace from ``cub_scratch.cuh``, not
 // the library.
 //
 // This header belongs in the ``.cu`` translation unit. A libnode reaches it the way the
@@ -85,7 +85,7 @@ __global__ void detect_tag_kernel(const T *idx, long long n, TagT *owner, long l
 template <typename T, typename TagT>
 __global__ void detect_verify_kernel(const T *idx, long long n, const TagT *owner, long long capacity,
                                      unsigned long long *flag) {
-    typedef ::cub::BlockReduce<int, DETECT_BLOCK_THREADS, ::cub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockOr;
+    typedef ::gpucub::BlockReduce<int, DETECT_BLOCK_THREADS, ::gpucub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockOr;
     __shared__ typename BlockOr::TempStorage tmp;
 
     int local = 0;
@@ -106,7 +106,7 @@ __global__ void detect_verify_kernel(const T *idx, long long n, const TagT *owne
  */
 template <typename T>
 __global__ void detect_all_positive_kernel(const T *a, long long n, unsigned long long *bad) {
-    typedef ::cub::BlockReduce<int, DETECT_BLOCK_THREADS, ::cub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockOr;
+    typedef ::gpucub::BlockReduce<int, DETECT_BLOCK_THREADS, ::gpucub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockOr;
     __shared__ typename BlockOr::TempStorage tmp;
 
     int local = 0;
@@ -123,7 +123,7 @@ __global__ void detect_all_positive_kernel(const T *a, long long n, unsigned lon
  *
  * One tile is one block-wide sweep. Before each tile the block reads the current answer once
  * and stops if its tile starts past it, so cancellation costs one shared load per tile rather
- * than a per-thread atomic; the tile's own minimum folds through ``cub::BlockReduce`` and thread
+ * than a per-thread atomic; the tile's own minimum folds through ``gpucub::BlockReduce`` and thread
  * 0 alone does the ``atomicMin`` -- so a tile that fires publishes in one atomic, and a tile
  * that does not fire issues none at all.
  *
@@ -135,7 +135,7 @@ __global__ void detect_all_positive_kernel(const T *a, long long n, unsigned lon
  */
 template <typename Pred>
 __global__ void find_first_kernel(long long begin, long long end, Pred pred, unsigned long long *result) {
-    typedef ::cub::BlockReduce<long long, DETECT_BLOCK_THREADS, ::cub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockMin;
+    typedef ::gpucub::BlockReduce<long long, DETECT_BLOCK_THREADS, ::gpucub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockMin;
     __shared__ typename BlockMin::TempStorage tmp;
     __shared__ long long stop;
 
@@ -162,41 +162,41 @@ __global__ void find_first_kernel(long long begin, long long end, Pred pred, uns
  * initialization. The answer lands in ``*out`` on the host, so the call synchronizes ``stream``.
  */
 template <typename T, typename TagT>
-inline cudaError_t detect_collision_device(const T *idx, long long n, TagT *owner, long long capacity, long long *out,
-                                          cudaStream_t stream) {
+inline gpuError_t detect_collision_device(const T *idx, long long n, TagT *owner, long long capacity, long long *out,
+                                          gpuStream_t stream) {
     *out = 0;
-    if (n <= 0) return cudaSuccess;
+    if (n <= 0) return gpuSuccess;
 
-    cudaError_t status = cudaSuccess;
+    gpuError_t status = gpuSuccess;
     unsigned long long *flag =
         static_cast<unsigned long long *>(
             ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
-    if (flag == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
+    if (flag == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
     if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
-    status = cudaMemsetAsync(flag, 0, sizeof(unsigned long long), stream);
-    if (status != cudaSuccess) return status;
+    status = gpuMemsetAsync(flag, 0, sizeof(unsigned long long), stream);
+    if (status != gpuSuccess) return status;
     detect_tag_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity);
     detect_verify_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, owner, capacity, flag);
 
     unsigned long long host_flag = 0;
-    status = cudaMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
-    if (status != cudaSuccess) return status;
-    status = cudaStreamSynchronize(stream);
+    status = gpuMemcpyAsync(&host_flag, flag, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
+    if (status != gpuSuccess) return status;
+    status = gpuStreamSynchronize(stream);
     *out = static_cast<long long>(host_flag != 0);
     return status;
 }
 
 /**
- * Largest in-range value in ``idx``, OR-free: a block max folded by ``cub::BlockReduce`` and one
+ * Largest in-range value in ``idx``, OR-free: a block max folded by ``gpucub::BlockReduce`` and one
  * ``atomicMax`` per block. Negative entries clamp to 0 -- they are skipped by the check anyway,
  * and an unsigned atomic would read them as huge.
  */
 template <typename T>
 __global__ void detect_max_kernel(const T *idx, long long n, unsigned long long *mx) {
-    typedef ::cub::BlockReduce<long long, DETECT_BLOCK_THREADS, ::cub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockMax;
+    typedef ::gpucub::BlockReduce<long long, DETECT_BLOCK_THREADS, ::gpucub::BLOCK_REDUCE_WARP_REDUCTIONS> BlockMax;
     __shared__ typename BlockMax::TempStorage tmp;
 
     long long local = 0;
@@ -217,12 +217,12 @@ __global__ void detect_max_kernel(const T *idx, long long n, unsigned long long 
  * device reduction plus a round trip before the check can even start.
  */
 template <typename T>
-inline cudaError_t detect_collision_device(const T *idx, long long n, long long capacity, long long *out,
-                                          cudaStream_t stream) {
-    cudaError_t status = cudaSuccess;
+inline gpuError_t detect_collision_device(const T *idx, long long n, long long capacity, long long *out,
+                                          gpuStream_t stream) {
+    gpuError_t status = gpuSuccess;
     long long *owner = static_cast<long long *>(::dace::cub::get_scratch< ::dace::cub::DetectOwnerTag>(
         static_cast<size_t>(capacity) * sizeof(long long), stream, &status));
-    if (owner == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
+    if (owner == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
     return detect_collision_device(idx, n, owner, capacity, out, stream);
 }
 
@@ -234,28 +234,28 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, long long 
  * taking a capacity wherever the scattered array's domain is known.
  */
 template <typename T>
-inline cudaError_t detect_collision_device(const T *idx, long long n, long long *out, cudaStream_t stream) {
+inline gpuError_t detect_collision_device(const T *idx, long long n, long long *out, gpuStream_t stream) {
     *out = 0;
-    if (n <= 0) return cudaSuccess;
+    if (n <= 0) return gpuSuccess;
 
-    cudaError_t status = cudaSuccess;
+    gpuError_t status = gpuSuccess;
     unsigned long long *mx =
         static_cast<unsigned long long *>(
             ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
-    if (mx == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
+    if (mx == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
     if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
-    status = cudaMemsetAsync(mx, 0, sizeof(unsigned long long), stream);
-    if (status != cudaSuccess) return status;
+    status = gpuMemsetAsync(mx, 0, sizeof(unsigned long long), stream);
+    if (status != gpuSuccess) return status;
     detect_max_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(idx, n, mx);
 
     unsigned long long host_max = 0;
-    status = cudaMemcpyAsync(&host_max, mx, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
-    if (status != cudaSuccess) return status;
-    status = cudaStreamSynchronize(stream);
-    if (status != cudaSuccess) return status;
+    status = gpuMemcpyAsync(&host_max, mx, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
+    if (status != gpuSuccess) return status;
+    status = gpuStreamSynchronize(stream);
+    if (status != gpuSuccess) return status;
     return detect_collision_device(idx, n, static_cast<long long>(host_max) + 1, out, stream);
 }
 
@@ -263,27 +263,27 @@ inline cudaError_t detect_collision_device(const T *idx, long long n, long long 
  * :cpp:func:`dace::detect_all_positive` on the device: ``*out`` is 1 iff every element is > 0.
  */
 template <typename T>
-inline cudaError_t detect_all_positive_device(const T *a, long long n, long long *out, cudaStream_t stream) {
+inline gpuError_t detect_all_positive_device(const T *a, long long n, long long *out, gpuStream_t stream) {
     *out = 1;
-    if (n <= 0) return cudaSuccess;
+    if (n <= 0) return gpuSuccess;
 
-    cudaError_t status = cudaSuccess;
+    gpuError_t status = gpuSuccess;
     unsigned long long *bad =
         static_cast<unsigned long long *>(
             ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
-    if (bad == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
+    if (bad == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
 
     long long blocks = (n + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
     if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
-    status = cudaMemsetAsync(bad, 0, sizeof(unsigned long long), stream);
-    if (status != cudaSuccess) return status;
+    status = gpuMemsetAsync(bad, 0, sizeof(unsigned long long), stream);
+    if (status != gpuSuccess) return status;
     detect_all_positive_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(a, n, bad);
 
     unsigned long long host_bad = 0;
-    status = cudaMemcpyAsync(&host_bad, bad, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
-    if (status != cudaSuccess) return status;
-    status = cudaStreamSynchronize(stream);
+    status = gpuMemcpyAsync(&host_bad, bad, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
+    if (status != gpuSuccess) return status;
+    status = gpuStreamSynchronize(stream);
     *out = static_cast<long long>(host_bad == 0);
     return status;
 }
@@ -297,30 +297,30 @@ inline cudaError_t detect_all_positive_device(const T *a, long long n, long long
  * global code next to the wrapper that instantiates this.
  */
 template <typename Pred>
-inline cudaError_t find_first_index_device(long long begin, long long end, Pred pred, long long *out,
-                                          cudaStream_t stream) {
+inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, long long *out,
+                                          gpuStream_t stream) {
     *out = end;
-    if (begin >= end) return cudaSuccess;
+    if (begin >= end) return gpuSuccess;
 
-    cudaError_t status = cudaSuccess;
+    gpuError_t status = gpuSuccess;
     unsigned long long *result =
         static_cast<unsigned long long *>(
             ::dace::cub::get_scratch< ::dace::cub::DetectFlagTag>(sizeof(unsigned long long), stream, &status));
-    if (result == nullptr) return status != cudaSuccess ? status : cudaErrorMemoryAllocation;
+    if (result == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
 
     const long long span = end - begin;
     long long blocks = (span + DETECT_BLOCK_THREADS - 1) / DETECT_BLOCK_THREADS;
     if (blocks > DETECT_MAX_BLOCKS) blocks = DETECT_MAX_BLOCKS;
 
     const unsigned long long sentinel = static_cast<unsigned long long>(end);
-    status = cudaMemcpyAsync(result, &sentinel, sizeof(unsigned long long), cudaMemcpyHostToDevice, stream);
-    if (status != cudaSuccess) return status;
+    status = gpuMemcpyAsync(result, &sentinel, sizeof(unsigned long long), gpuMemcpyHostToDevice, stream);
+    if (status != gpuSuccess) return status;
     find_first_kernel<<<static_cast<unsigned>(blocks), DETECT_BLOCK_THREADS, 0, stream>>>(begin, end, pred, result);
 
     unsigned long long host_result = sentinel;
-    status = cudaMemcpyAsync(&host_result, result, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream);
-    if (status != cudaSuccess) return status;
-    status = cudaStreamSynchronize(stream);
+    status = gpuMemcpyAsync(&host_result, result, sizeof(unsigned long long), gpuMemcpyDeviceToHost, stream);
+    if (status != gpuSuccess) return status;
+    status = gpuStreamSynchronize(stream);
     *out = static_cast<long long>(host_result);
     return status;
 }

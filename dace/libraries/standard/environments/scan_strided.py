@@ -28,7 +28,7 @@ class ScanStrided:
     are in :file:`dace/runtime/include/dace/cuda/scan_strided_decls.h`.
 
     Pulls in the ``CUDA`` env to ensure ``find_package(CUDAToolkit)`` runs
-    first (the wrappers' signatures reference ``cudaStream_t``).
+    first (the wrappers' signatures reference ``gpuStream_t``).
     """
 
     cmake_minimum_version = None

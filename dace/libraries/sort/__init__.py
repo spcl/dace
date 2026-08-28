@@ -2,7 +2,7 @@
 """DaCe library exposing integer-sort primitives.
 
 Currently provides :class:`~dace.libraries.sort.nodes.integer_sort.IntegerSort` --
-a 1-D integer sort with CPU (`ska_sort`), CUDA (`cub::DeviceRadixSort`), and a
+a 1-D integer sort with CPU (`ska_sort`), CUDA (`gpucub::DeviceRadixSort`), and a
 portable `std::sort` fallback. Used by passes that need to sort integer indices,
 notably the scatter-conflict guard.
 """
