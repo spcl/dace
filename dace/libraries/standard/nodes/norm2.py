@@ -20,7 +20,7 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
+from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
@@ -40,16 +40,21 @@ class ExpandNorm2Pure(ExpandTransformation):
         rank = len(shape)
 
         sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_x", shape, dtype)
+        # Carry the operand strides, not just the shape: a compact declaration reads a strided view (``a[:, 0:2*h:2]``) at the wrong offsets and returns a plausible array of the right shape and dtype.
+        sdfg.add_array("_x", shape, dtype, strides=desc_x.strides, storage=desc_x.storage)
 
-        if dim_zero is None:
-            sdfg.add_array("_out", [1], dtype)
+        out_shape = [1] if dim_zero is None else [s for d, s in enumerate(shape) if d != dim_zero]
+        if not out_shape:
             out_shape = [1]
-        else:
-            out_shape = [s for d, s in enumerate(shape) if d != dim_zero]
-            if not out_shape:
-                out_shape = [1]
-            sdfg.add_array("_out", out_shape, dtype)
+        # The result connector takes the writer's strides only when the expansion's own result shape
+        # IS the outer one; the reduced/flat spellings below build a shape of their own, and a
+        # stride list from a differently-ranked descriptor would be nonsense.
+        out_matches = symbolic.shapes_equal(out_shape, desc_out.shape)
+        sdfg.add_array("_out",
+                       out_shape,
+                       dtype,
+                       strides=desc_out.strides if out_matches else None,
+                       storage=desc_out.storage)
         # The intermediates take the INPUT's storage rather than the default. A transient left at
         # ``Default`` under a GPU-scheduled expansion resolves to ``GPU_Shared``, and
         # ``ExpandReduceGPUAuto`` refuses anything but ``GPU_Global`` -- it falls back to the pure

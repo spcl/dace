@@ -4,7 +4,8 @@ lifted transient's shape does not leak an out-of-scope outer-loop symbol into ``
 import sympy
 
 import dace
-from dace.transformation.passes.move_array_out_of_kernel import _tile_extent, MoveArrayOutOfKernel
+from dace.transformation.passes.move_array_out_of_kernel import (_prepend_subscript_indices, _tile_extent,
+                                                                 MoveArrayOutOfKernel)
 
 
 def test_tile_extent_recognises_min_pattern():
@@ -52,3 +53,29 @@ def test_get_new_shape_info_multidim_prepend_strides():
     assert [int(s) for s in new_shape] == [128, 32, 64], new_shape
     assert [int(s) for s in new_strides] == [2048, 64, 1], new_strides
     assert int(new_total) == 128 * 32 * 64, new_total
+
+
+def test_prepend_subscript_indices_rewrites_an_inlined_body():
+    """``InlineTaskletConnectors`` bakes the memlet subset into the body TEXT before this pass runs.
+
+    From that point the readable generator reads the body, not the memlet, as the access. Reshaping
+    the descriptor without rewriting the body leaves a rank-1 subscript on a rank-3 array; the
+    emitter finds the rank mismatch, declines to build an ``arr_idx(...)`` access and emits the
+    stale subscript verbatim, so every kernel iteration writes the same leading slice.
+    """
+    rewritten = _prepend_subscript_indices('tmp[k] = a[i, j, k] * 2.0', 'tmp', ['i', 'j'])
+    assert rewritten == 'tmp[i, j, k] = a[i, j, k] * 2.0'
+
+    both = _prepend_subscript_indices('out[k] = tmp[NZ - 1 - k] + 1.0', 'tmp', ['i', 'j'])
+    assert both == 'out[k] = tmp[i, j, NZ - 1 - k] + 1.0'
+
+
+def test_prepend_subscript_indices_leaves_unrelated_bodies_alone():
+    """A body that never names the array, and one that cannot be parsed, are both returned unchanged.
+
+    The rewrite is best-effort by design: a body it cannot handle keeps the form it had, which is
+    exactly the behaviour that existed before the rewrite.
+    """
+    assert _prepend_subscript_indices('out[k] = a[k] + 1.0', 'tmp', ['i']) is None
+    assert _prepend_subscript_indices('tmp[k = ', 'tmp', ['i']) is None
+    assert _prepend_subscript_indices('tmp[k] = 1.0', 'tmp', []) is None

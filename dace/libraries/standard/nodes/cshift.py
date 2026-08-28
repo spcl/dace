@@ -97,8 +97,12 @@ class ExpandCShiftPure(ExpandTransformation):
         shift = node.shift if node.direction is ShiftDirection.FORTRAN else -node.shift
 
         sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_x", shape, dtype)
-        sdfg.add_array("_out", shape, dtype)
+        # Carry the operands' STRIDES and storage, not just their shape. A compact declaration is
+        # right only for a compact operand: rolling a strided view (``a[:, 0:2*h:2]``) then indexes
+        # it as ``d0*h + d1`` where the data really steps ``d0*N + 2*d1``, so the node reads the
+        # wrong elements and returns a plausible array of the right shape and dtype.
+        sdfg.add_array("_x", shape, dtype, strides=desc_x.strides, storage=desc_x.storage)
+        sdfg.add_array("_out", shape, dtype, strides=desc_out.strides, storage=desc_out.storage)
 
         state = sdfg.add_state()
         map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}

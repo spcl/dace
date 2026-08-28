@@ -202,6 +202,15 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             if fast is not None:
                 node.implementation = fast
                 continue
+            # No device expansion to fall back on (Merge, Fill, and the other pure-only nodes).
+            # Leaving the schedule Sequential is not a slow-but-correct choice here: the pure
+            # expansion is a host map over ``GPU_Global`` operands, which validation rejects
+            # outright ("stored as StorageType.GPU_Global but accessed on host", npbench bfs).
+            # ``set_default_schedule_and_storage_types`` reads a host loop as Sequential the same
+            # way it reads a kernel body, and this is the half of that verdict that is wrong: a
+            # host-level node on a device graph is a kernel launch per iteration. The expansions
+            # honour ``node.schedule``, so setting it here is what makes the map a kernel.
+            node.schedule = dtypes.ScheduleType.GPU_Device
         # That same rule pins a node to ``pure`` without checking that the node HAS one:
         # ``CopyLibraryNode`` does not, and expansion then raises ``Unknown implementation``
         # (polybench durbin). Its own default is the lowering that reads the schedule.

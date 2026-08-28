@@ -15,6 +15,21 @@ import warnings
 from ordered_set import OrderedSet
 
 
+def zero_extent_may_occur(extent) -> bool:
+    """True unless ``extent`` is provably a positive constant.
+
+    ``gemv`` returns IMMEDIATELY when either dimension is 0 -- without applying ``beta`` -- so a
+    contraction that can be empty leaves the output at whatever was already in memory. With
+    ``beta == 0`` the caller is promised a written result and gets uninitialized storage instead.
+    A provably positive extent skips the guard so the common shape stays a bare library call.
+    """
+    try:
+        value = symbolic.simplify(symbolic.pystr_to_symbolic(str(extent)))
+    except Exception:
+        return True
+    return not (value.is_number and value > 0)
+
+
 @dace.library.expansion
 class ExpandGemvPure(ExpandTransformation):
 
@@ -164,6 +179,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
+        scal_func = func + 'scal'
         func += 'gemv'
         call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
         call_suffix = ''
@@ -199,10 +215,20 @@ dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_P
             alpha = constants[node.alpha]
             beta = constants[node.beta]
 
-        code = (call_prefix + f"""
+        call = f"""
 dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
              _x, {strides_x[0]}, {beta}, _y, {strides_y[0]}));
-                """ + call_suffix)
+                """
+        # Same empty-contraction hazard as the cblas path, scaled on the device: cuBLAS also
+        # returns early for a zero dimension and leaves ``_y`` unwritten. ``scal`` applies the
+        # ``beta`` the skipped call owed, under whichever pointer mode this branch set up.
+        y_len, contracted = (n, m) if trans == 'CUBLAS_OP_T' else (m, n)
+        if zero_extent_may_occur(contracted):
+            scal = f"""
+dace::blas::CheckCublasError(cublas{scal_func}(__dace_cublas_handle, {y_len}, {beta}, _y, {strides_y[0]}));
+                """
+            call = f"if (({contracted}) <= 0) {{{scal}}} else {{{call}}}"
+        code = (call_prefix + call + call_suffix)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -283,8 +309,24 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = '&__alpha'
             beta = '&__beta'
 
-        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
+        call = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
                                 _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
+        # ``_y`` is indexed by the dimension BLAS does not contract over; the other one is the
+        # contraction, and an empty contraction is what makes the call return without touching
+        # ``_y``. Measured on cholesky: at ``j == 0`` the contraction is empty and the freshly
+        # allocated output came back as ~1e251 garbage with a run-to-run NaN count.
+        y_len, contracted = (n, m) if trans == 'CblasTrans' else (m, n)
+        if zero_extent_may_occur(contracted):
+            beta_value = '__beta' if dtype in (dace.complex64, dace.complex128) else beta
+            code += f"""if (({contracted}) <= 0) {{
+                for (long long __i = 0; __i < ({y_len}); ++__i) {{
+                    _y[__i * ({strides_y[0]})] = ({beta_value}) * _y[__i * ({strides_y[0]})];
+                }}
+            }} else {{
+                {call}
+            }}"""
+        else:
+            code += call
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

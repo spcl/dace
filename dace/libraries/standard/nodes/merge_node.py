@@ -97,6 +97,11 @@ class ExpandPure(ExpandTransformation):
             code="_out_v = (_in_t if _in_mask else _in_f)",
             outputs={"_out_v": dace.memlet.Memlet(f"{_OUTPUT_CONNECTOR_NAME}[{full_idx}]")},
             external_edges=True,
+            # Inherit the node's schedule instead of taking the Default. On a GPU graph the
+            # operands are already GPU_Global by the time this expands, so a Default map inlines
+            # as host code reading device memory and validation rejects the whole SDFG with
+            # "stored as StorageType.GPU_Global but accessed on host".
+            schedule=node.schedule,
         )
         return sdfg
 

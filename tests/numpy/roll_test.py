@@ -126,6 +126,43 @@ def test_mismatched_shift_and_axis_counts_are_refused():
         prog.to_sdfg()
 
 
+def test_roll_of_a_strided_view_keeps_the_view_strides():
+    """The expanded node must index the operand the way the OPERAND is laid out.
+
+    A view like ``a[:, 0:8:2]`` has strides ``(8, 2)``. Declaring the ``_x`` connector compact
+    makes the expansion read it as ``d0*4 + d1``, which lands on entirely different elements --
+    and still produces an array of the right shape and dtype, so only the strides or the values
+    can catch it.
+    """
+    n = 8
+
+    @dace.program
+    def prog(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
+        out[:] = np.roll(a[:, 0:n:2], -1, axis=1)
+
+    sdfg = prog.to_sdfg(simplify=False)
+    assert any(isinstance(v, CShift) for v, _ in sdfg.all_nodes_recursive()), "roll must lower to CShift"
+    sdfg.expand_library_nodes()
+    inner = next(v.sdfg for v, _ in sdfg.all_nodes_recursive()
+                 if isinstance(v, dace.sdfg.nodes.NestedSDFG) and "_x" in v.sdfg.arrays)
+    assert list(inner.arrays["_x"].strides) == [n, 2], \
+        f'_x must carry the view strides, got {list(inner.arrays["_x"].strides)}'
+
+
+def test_roll_of_a_strided_view_computes_the_right_values():
+    """The numbers, not just the strides: the shape is right either way."""
+    n = 8
+
+    @dace.program
+    def prog(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
+        out[:] = np.roll(a[:, 0:n:2], -1, axis=1)
+
+    a = np.arange(n * n, dtype=np.float64).reshape(n, n)
+    out = np.zeros((n, n // 2))
+    prog(a=a.copy(), out=out)
+    assert np.allclose(out, np.roll(a[:, 0:n:2], -1, axis=1)), f"{out[0]} != {np.roll(a[:, 0:n:2], -1, axis=1)[0]}"
+
+
 if __name__ == '__main__':
     test_roll_1d_forward()
     test_roll_1d_backward()
@@ -142,3 +179,5 @@ if __name__ == '__main__':
     test_roll_over_two_axes_chains_two_nodes()
     test_an_axis_less_roll_over_a_matrix_is_refused()
     test_mismatched_shift_and_axis_counts_are_refused()
+    test_roll_of_a_strided_view_keeps_the_view_strides()
+    test_roll_of_a_strided_view_computes_the_right_values()

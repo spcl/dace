@@ -41,8 +41,9 @@ class ExpandBroadcastPure(ExpandTransformation):
         out_rank = len(dst_shape)
 
         sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_src", src_shape, dtype)
-        sdfg.add_array("_dst", dst_shape, dtype)
+        # Carry the operand strides, not just the shape: a compact declaration reads a strided view (``a[:, 0:2*h:2]``) at the wrong offsets and returns a plausible array of the right shape and dtype.
+        sdfg.add_array("_src", src_shape, dtype, strides=desc_src.strides, storage=desc_src.storage)
+        sdfg.add_array("_dst", dst_shape, dtype, strides=desc_dst.strides, storage=desc_dst.storage)
 
         state = sdfg.add_state()
         map_rng = {f"__o{d}": f"0:{dst_shape[d]}" for d in range(out_rank)}

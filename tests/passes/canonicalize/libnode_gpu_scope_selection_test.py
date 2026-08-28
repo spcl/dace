@@ -11,6 +11,7 @@ therefore decides from the enclosing scopes instead, which is what the cases bel
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.dot import Dot
+from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 
@@ -89,7 +90,49 @@ def test_a_loop_does_not_make_its_body_device_code():
     assert node.implementation == 'cuBLAS', node.implementation
 
 
+def merge_in_a_host_loop():
+    """The npbench bfs shape: a pure-only node re-entered by a host loop over device memory.
+
+    ``MergeLibraryNode`` publishes no device expansion, so the implementation rule the cases above
+    pin has nothing to select and the node keeps whatever schedule it arrived with.
+    """
+    sdfg = dace.SDFG('merge_in_a_host_loop')
+    for name in ('t', 'f', 'out'):
+        sdfg.add_array(name, [256], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('mask', [256], dace.bool_, storage=dtypes.StorageType.GPU_Global)
+    loop = dace.sdfg.state.LoopRegion('sweeps', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('body', is_start_block=True)
+    node = MergeLibraryNode('_where_')
+    node.schedule = dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_edge(state.add_read('t'), None, node, node.TRUE_CONNECTOR_NAME, dace.Memlet('t[0:256]'))
+    state.add_edge(state.add_read('f'), None, node, node.FALSE_CONNECTOR_NAME, dace.Memlet('f[0:256]'))
+    state.add_edge(state.add_read('mask'), None, node, node.MASK_CONNECTOR_NAME, dace.Memlet('mask[0:256]'))
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0:256]'))
+    sdfg.validate()
+    return sdfg, node
+
+
+def test_a_pure_only_node_in_a_host_loop_becomes_a_kernel():
+    """With no device expansion to pick, the SCHEDULE is what has to move.
+
+    Left ``Sequential`` the pure expansion lowers as a host map indexing ``GPU_Global`` operands,
+    and validation rejects the SDFG outright rather than running it slowly -- npbench bfs died on
+    exactly that, reported as a runtime error with no wrong number to trace.
+    """
+    sdfg, node = merge_in_a_host_loop()
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.schedule == dtypes.ScheduleType.GPU_Device, node.schedule
+
+    sdfg.expand_library_nodes()
+    maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+    assert maps, 'the expansion produced no map at all'
+    assert all(m.schedule == dtypes.ScheduleType.GPU_Device for m in maps), [str(m.schedule) for m in maps]
+
+
 if __name__ == '__main__':
     test_a_sequential_node_at_a_host_level_calls_the_device_library()
     test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion()
     test_a_loop_does_not_make_its_body_device_code()
+    test_a_pure_only_node_in_a_host_loop_becomes_a_kernel()

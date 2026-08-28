@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
 from typing import Dict, FrozenSet, Optional, Set, Tuple, List
+import ast
 import copy
 import functools
 
@@ -9,7 +10,7 @@ import sympy
 import dace
 from dace import SDFG, SDFGState, dtypes, data as dt
 from dace.sdfg import nodes
-from dace.properties import make_properties
+from dace.properties import CodeBlock, make_properties
 from dace.transformation import transformation, helpers
 from dace.transformation.pass_pipeline import Pass
 from dace.subsets import Range
@@ -21,6 +22,45 @@ from dace.symbolic import symbol
 # maps tiled inside it. Deliberately NOT ``dtypes.GPU_SCHEDULES``, which also includes the
 # dynamic / persistent thread-block schedules that this pass does not lift.
 GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock)
+
+
+class _SubscriptPrefixer(ast.NodeTransformer):
+    """Prepend fixed leading index expressions to every subscript of one array name."""
+
+    def __init__(self, array_name: str, prefix: List[str]):
+        self.array_name = array_name
+        self.prefix = [ast.parse(expr, mode='eval').body for expr in prefix]
+        self.changed = False
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        self.generic_visit(node)
+        if not isinstance(node.value, ast.Name) or node.value.id != self.array_name:
+            return node
+        existing = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+        node.slice = ast.Tuple(elts=[copy.deepcopy(e) for e in self.prefix] + existing, ctx=ast.Load())
+        self.changed = True
+        return node
+
+
+def _prepend_subscript_indices(body: str, array_name: str, prefix: List[str]) -> Optional[str]:
+    """Rewritten ``body`` with ``prefix`` prepended to each ``array_name`` subscript, or ``None``.
+
+    ``None`` covers both "nothing to do" and "cannot parse": a body this cannot rewrite is left as
+    it was, which is the same outcome as before the rewrite existed.
+    """
+    # An empty prefix is a no-op, and rewriting anyway turns ``tmp[k]`` into the tuple ``tmp[k,]``.
+    if not prefix or array_name not in body:
+        return None
+    try:
+        tree = ast.parse(body)
+    except SyntaxError:
+        return None
+    prefixer = _SubscriptPrefixer(array_name, prefix)
+    tree = prefixer.visit(tree)
+    if not prefixer.changed:
+        return None
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
 
 
 def _tile_extent(max_elem, min_elem):
@@ -348,6 +388,36 @@ class MoveArrayOutOfKernel(Pass):
                 elif not is_incoming and edge.src is access_node and edge.data.src_subset is not None:
                     edge.data.src_subset = Range(params_as_ranges + edge.data.src_subset.ndrange())
                     visited.add(edge)
+            self.update_inlined_tasklet_accesses(state, array_name, params_as_ranges)
+
+    def update_inlined_tasklet_accesses(self, state: SDFGState, array_name: str, params_as_ranges) -> None:
+        """Prepend the lift's new leading indices to ``array_name`` subscripts written into tasklet
+        BODIES, not just into memlets.
+
+        ``InlineTaskletConnectors`` runs before this pass at codegen and rewrites a Python body from
+        ``__out = ...`` to ``arr[k] = ...``, after which the generator reads the body -- not the
+        memlet -- as the access. Reshaping the descriptor underneath such a body leaves a rank-1
+        subscript on a rank-3 array: the emitter finds the rank mismatch, declines to build an
+        ``arr_idx(...)`` access, and emits the stale subscript verbatim. Every kernel iteration then
+        writes the same leading slice, which compiles, validates and returns wrong numbers.
+
+        Only point indices are prepended, which is what the lift adds for a node inside the map; a
+        body subscript cannot carry a range. A dimension that came back as a full range means the
+        access is not per-iteration, and rewriting it would be wrong, so those are left alone.
+        """
+        prefix = []
+        for start, end, _stride in params_as_ranges:
+            if start != end:
+                return
+            prefix.append(str(start))
+        if not prefix:
+            return
+        for node in state.nodes():
+            if not isinstance(node, nodes.Tasklet) or node.code.language is not dtypes.Language.Python:
+                continue
+            rewritten = _prepend_subscript_indices(node.code.as_string, array_name, prefix)
+            if rewritten is not None:
+                node.code = CodeBlock(rewritten, dtypes.Language.Python)
 
     # Array, symbol and renaming related helper functions
     def get_new_shape_info(self, array_desc: dt.Array, map_exit_chain: List[nodes.MapEntry]):

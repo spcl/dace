@@ -15,28 +15,44 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
+#: Storage a kernel-internal transient can carry that codegen emits as a plain local declaration
+#: inside device code. ``Default`` lands there too: inside a kernel scope it resolves to the same
+#: thing. ``GPU_Shared`` is deliberately absent -- shared memory has its own sizing rules.
+DEVICE_LOCAL_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
 
-def _is_register_demotable(desc, max_elements: int) -> bool:
-    """True if ``desc`` is safe and worth demoting to per-thread ``Register``.
 
-    Requires every shape dim to be a concrete positive integer (a symbol
-    would leak into host-side ``cudaMalloc`` and cannot size a per-thread
-    array) and ``prod(shape) <= max_elements`` (larger arrays go through
-    ``MoveArrayOutOfKernel`` instead of a per-thread slab).
+def has_literal_shape(desc) -> bool:
+    """True if every dimension of ``desc`` is a concrete positive integer.
+
+    A symbolic extent cannot size a per-thread array, and it cannot size a stack array in device
+    code either: nvcc rejects a VLA outright ("expression must have a constant value"), where the
+    host compiler would have accepted one.
     """
-    total = 1
     for dim in desc.shape:
         if symbolic.issymbolic(dim):
             return False
         try:
             dim = int(dim)
         except (TypeError, ValueError):
-            # Non-symbolic but not a finite integer (e.g. sympy.oo): cannot size
-            # a per-thread array, so it is not demotable.
+            # Non-symbolic but not a finite integer (e.g. sympy.oo): cannot size a per-thread array.
             return False
         if dim <= 0:
             return False
-        total *= dim
+    return True
+
+
+def _is_register_demotable(desc, max_elements: int) -> bool:
+    """True if ``desc`` is safe and worth demoting to per-thread ``Register``.
+
+    Requires a literal shape (:func:`has_literal_shape` -- a symbol would leak into host-side
+    ``cudaMalloc``) and ``prod(shape) <= max_elements`` (larger arrays go through
+    ``MoveArrayOutOfKernel`` instead of a per-thread slab).
+    """
+    if not has_literal_shape(desc):
+        return False
+    total = 1
+    for dim in desc.shape:
+        total *= int(dim)
     return total <= max_elements
 
 
@@ -111,7 +127,16 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             # unique view edge ``sdutil.get_view_edge`` needs.
             if not isinstance(desc, data.Array) or isinstance(desc, data.View) or not desc.transient:
                 continue
-            if desc.storage != dtypes.StorageType.GPU_Global:
+            # A symbolically-sized device-local transient is the second thing that cannot stay in
+            # the kernel, and it is the one no guard used to catch: codegen emits it as a stack
+            # array, and inside device code that is a VLA, which nvcc refuses outright while the
+            # host compiler accepts it (npbench bout_arakawa, ``double jpp[(NZ - 2)];``). It has no
+            # per-thread form either, so it takes the same route as an in-kernel ``GPU_Global``
+            # array: promote it here and let ``MoveArrayOutOfKernel`` give it one slice per map
+            # iteration outside the kernel.
+            needs_global = (desc.storage == dtypes.StorageType.GPU_Global
+                            or (desc.storage in DEVICE_LOCAL_STORAGE and not has_literal_shape(desc)))
+            if not needs_global:
                 continue
 
             kernel_entry = None
@@ -144,9 +169,13 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                     and not _has_wcr_incoming(sdfg, data_name)):
                 desc.storage = dtypes.StorageType.Register
                 continue
-            warnings.warn(f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel "
-                          f"{kernel_entry}. GPU_Global memory cannot be allocated within GPU kernels; "
-                          f"the array will be lifted outside the kernel as a non-transient GPU_Global array.")
+            reason = ("with storage type GPU_Global"
+                      if desc.storage == dtypes.StorageType.GPU_Global else f"of symbolic shape {list(desc.shape)}")
+            warnings.warn(f"Transient array '{data_name}' {reason} detected inside kernel {kernel_entry}. "
+                          f"Neither GPU_Global memory nor a variable-length local array can be allocated "
+                          f"within a GPU kernel; the array will be lifted outside the kernel as a "
+                          f"non-transient GPU_Global array, one slice per map iteration.")
+            desc.storage = dtypes.StorageType.GPU_Global
             MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, data_name)
 
     def _fail_on_in_kernel_global_global(self, sdfg: SDFG):
