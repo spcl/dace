@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.libraries.linalg.nodes.cholesky import GPU_SOLVERS
 from dace import Memlet
 from dace.libraries.linalg import Cholesky
 import numpy as np
@@ -67,10 +68,12 @@ def test_cholesky_pure_refuses_a_slice_of_a_higher_rank_array():
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
     pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
     pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
 ])
 def test_cholesky(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
     np_dtype = getattr(np, dtype.to_string())

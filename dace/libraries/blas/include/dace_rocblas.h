@@ -1,7 +1,7 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#include <hip/amd_detail/amd_hip_complex.h>  // for hip*Complex
+#include <hip/hip_complex.h>  // for hip*Complex; the public header, not the amd_detail one
 #include <hip/hip_fp16.h>                    // for __float2half
 #include <hip/hip_runtime.h>
 #include <rocblas/rocblas.h>  // ROCm 4.5+ layout; the flat <rocblas.h> is gone by ROCm 7
