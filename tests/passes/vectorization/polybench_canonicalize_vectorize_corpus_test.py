@@ -35,21 +35,9 @@ from tests.corpus.polybench import polybench
 _KERNELS = [k.name for k in polybench.collect()]
 _PHASES = ("canon", "canon_vec")
 
-# Genuine per-(kernel, phase) gaps, marked xfail(strict) with the tracking reason -- NOT a blanket skip:
-# a case that starts passing flips the suite red so the entry is removed. Populated from the full sweep.
-# All canon_vec-phase, all in the multidim-vectorizer (canon alone passes every polybench kernel).
-# Empty: every previously-tracked multidim-vectorize gap (adi / deriche / durbin / gramschmidt / lu)
-# now passes on the current tree, so its xfail was removed (per the policy above).
-_XFAIL: dict = {}
-
 
 def _cases():
-    out = []
-    for name in _KERNELS:
-        for phase in _PHASES:
-            marks = (pytest.mark.xfail(reason=_XFAIL[(name, phase)], strict=True), ) if (name, phase) in _XFAIL else ()
-            out.append(pytest.param(name, phase, id=f"{name}-{phase}", marks=marks))
-    return out
+    return [pytest.param(name, phase, id=f"{name}-{phase}") for name in _KERNELS for phase in _PHASES]
 
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the

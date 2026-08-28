@@ -14,9 +14,6 @@ Round-robin (rather than the full knob cross-product) keeps the corpus-wide run
 tractable while still exercising every knob across the suite. A kernel that
 canonicalization renders as a 2-D nested map additionally gets a ``K=2`` multidim
 config.
-
-Known multidim vectorize gaps are marked ``xfail`` with the tracking
-reason -- see ``_MULTIDIM_XFAIL``.
 """
 import os
 
