@@ -54,24 +54,22 @@ class ExpandPotrsMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandPotrsCuSolverDn(ExpandTransformation):
+class ExpandPotrsGPUSolver(ExpandTransformation):
+    """Cholesky solve on a vendor GPU solver; the two differ only in the vocabulary below."""
 
-    environments = [environments.cusolverdn.cuSolverDn]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_A, lda, n_A), (desc_B, ldb_in, ldb_out, nrhs) = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
         func = func + 'potrs'
-        uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
-        code = environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
+        uplo = cls.fill_enum(node.lower)
+        code = cls.environments[0].handle_setup_code(node) + f"""
             gpuMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            cusolverDn{func}(
-                __dace_cusolverDn_handle, {uplo}, {n_A}, {nrhs},
-                _a, {lda}, _bout, {ldb_out}, _res);
-            """
+            """ + cls.call(func, uplo, n_A, nrhs, lda, ldb_out)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -82,6 +80,43 @@ class ExpandPotrsCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandPotrsCuSolverDn(ExpandPotrsGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        return "CUBLAS_FILL_MODE_LOWER" if lower else "CUBLAS_FILL_MODE_UPPER"
+
+    @classmethod
+    def call(cls, func, uplo, n_a, nrhs, lda, ldb) -> str:
+        return f"""
+            cusolverDn{func}(
+                __dace_cusolverDn_handle, {uplo}, {n_a}, {nrhs},
+                _a, {lda}, _bout, {ldb}, _res);
+            """
+
+
+@dace.library.expansion
+class ExpandPotrsRocSolver(ExpandPotrsGPUSolver):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        return "rocblas_fill_lower" if lower else "rocblas_fill_upper"
+
+    @classmethod
+    def call(cls, func, uplo, n_a, nrhs, lda, ldb) -> str:
+        # rocsolver_?potrs takes no info argument -- it cannot fail on a factored matrix -- so the
+        # status code the caller reads is written here rather than by the solver.
+        return f"""
+            dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
+                __dace_rocblas_handle, {uplo}, {n_a}, {nrhs},
+                _a, {lda}, _bout, {ldb}));
+            DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
+            """
+
+
 @dace.library.node
 class Potrs(dace.sdfg.nodes.LibraryNode):
     """LAPACK ``?POTRS``: solve ``A X = B`` given the Cholesky factor.
@@ -90,7 +125,12 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
     Outputs: ``_bout`` (solution X), ``_res`` (LAPACK info).
     """
 
-    implementations = {"OpenBLAS": ExpandPotrsOpenBLAS, "MKL": ExpandPotrsMKL, "cuSolverDn": ExpandPotrsCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandPotrsOpenBLAS,
+        "MKL": ExpandPotrsMKL,
+        "cuSolverDn": ExpandPotrsCuSolverDn,
+        "rocSOLVER": ExpandPotrsRocSolver
+    }
     default_implementation = None
 
     lower = dace.properties.Property(dtype=bool, default=True, desc="True if the factor in _a is lower triangular")

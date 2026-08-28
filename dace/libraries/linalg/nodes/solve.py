@@ -87,6 +87,17 @@ def restride(nsdfg, connectors, dtype):
         nsdfg.add_array(name, shape, dtype=dtype, strides=strides, transient=transient)
 
 
+#: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
+#: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
+#: about which vendor it is, so a second backend must not need a second branch.
+GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
+
+#: The vendor BLAS that goes with each, for the transposes staged around the factorization. Naming
+#: a cuBLAS transpose inside a rocSOLVER graph selects an expansion whose environment is not
+#: installed, and every one of them silently drops to the serial loop.
+SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
+
+
 def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
@@ -105,7 +116,7 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
     ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True, storage=storage)
     bin_arr = sdfg.add_array('_bin', bin_shape, dtype=bin_dtype, strides=bin_strides)
     binout_shape = [n, rhs]
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         binout_shape = [rhs, n]
     binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True, storage=storage)
     bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
@@ -131,17 +142,17 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
     binout1 = state.add_read('_binout')
     binout2 = state.add_read('_binout')
     bout = state.add_access('_bout')
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         transpose_ain = Transpose('AT', dtype=ain_dtype)
-        transpose_ain.implementation = 'cuBLAS'
+        transpose_ain.implementation = SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
         state.add_edge(transpose_ain, '_out', ainout1, None, Memlet.from_array(*ainout_arr))
         transpose_bin = Transpose('bT', dtype=bin_dtype)
-        transpose_bin.implementation = 'cuBLAS'
+        transpose_bin.implementation = SOLVER_BLAS[implementation]
         state.add_edge(bin, None, transpose_bin, '_inp', Memlet.from_array(*bin_arr))
         state.add_edge(transpose_bin, '_out', binout1, None, Memlet.from_array(*binout_arr))
         transpose_out = Transpose('XT', dtype=bin_dtype)
-        transpose_out.implementation = 'cuBLAS'
+        transpose_out.implementation = SOLVER_BLAS[implementation]
         state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, '_out', bout, None, Memlet.from_array(*bout_arr))
     else:
@@ -265,6 +276,16 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandSolveRocSolver(ExpandTransformation):
+
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "rocSOLVER")
+
+
 @dace.library.node
 class Solve(dace.sdfg.nodes.LibraryNode):
 
@@ -273,7 +294,8 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandSolvePure,
         "OpenBLAS": ExpandSolveOpenBLAS,
         "MKL": ExpandSolveMKL,
-        "cuSolverDn": ExpandSolveCuSolverDn
+        "cuSolverDn": ExpandSolveCuSolverDn,
+        "rocSOLVER": ExpandSolveRocSolver
     }
     default_implementation = None
 

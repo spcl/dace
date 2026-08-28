@@ -232,12 +232,13 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandTransposeCuBLAS(ExpandTransformation):
+class ExpandTransposeGPUBLAS(ExpandTransformation):
+    """Transpose as a vendor ``?geam`` with alpha=1, beta=0; the two backends differ only below."""
 
-    environments = [blas_environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, state, sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
 
@@ -262,13 +263,13 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         func = func + 'geam'
 
-        alpha = f"__state->cublas_handle.Constants().{factort}Pone()"
-        beta = f"__state->cublas_handle.Constants().{factort}Zero()"
+        alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
+        beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
         _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
         _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
 
-        code = (blas_environments.cublas.cuBLAS.handle_setup_code(node) + f"""dace::blas::CheckCublasError(cublas{func}(
-                    __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
+        code = (cls.environments[0].handle_setup_code(node) + f"""{cls.check_error}({cls.funcname(func)}(
+                    {cls.handle}, {cls.op('T')}, {cls.op('N')},
                     {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m}));
                 """)
 
@@ -279,6 +280,38 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         return tasklet
+
+
+@dace.library.expansion
+class ExpandTransposeCuBLAS(ExpandTransposeGPUBLAS):
+    environments = [blas_environments.cublas.cuBLAS]
+    handle = "__dace_cublas_handle"
+    handle_field = "cublas_handle"
+    check_error = "dace::blas::CheckCublasError"
+
+    @classmethod
+    def op(cls, mode: str) -> str:
+        return f"CUBLAS_OP_{mode}"
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        return f"cublas{func}"
+
+
+@dace.library.expansion
+class ExpandTransposeRocBLAS(ExpandTransposeGPUBLAS):
+    environments = [blas_environments.rocblas.rocBLAS]
+    handle = "__dace_rocblas_handle"
+    handle_field = "rocblas_handle"
+    check_error = "dace::blas::CheckRocblasError"
+
+    @classmethod
+    def op(cls, mode: str) -> str:
+        return "rocblas_operation_transpose" if mode == "T" else "rocblas_operation_none"
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        return f"rocblas_{func.lower()}"
 
 
 @dace.library.expansion
@@ -348,6 +381,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
+        "rocBLAS": ExpandTransposeRocBLAS,
         "CUDA": ExpandTransposeCUDA,
     }
     default_implementation = 'pure'

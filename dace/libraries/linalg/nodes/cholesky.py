@@ -3,6 +3,7 @@ import copy
 import math
 
 import dace.library
+from dace.codegen import common
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
@@ -14,6 +15,16 @@ from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
+
+#: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
+#: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
+#: about which vendor it is, so a second backend must not need a second branch.
+GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
+
+#: The vendor BLAS that goes with each, for the transposes staged around the factorization. Naming
+#: a cuBLAS transpose inside a rocSOLVER graph selects an expansion whose environment is not
+#: installed, and every one of them silently drops to the serial loop.
+SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -32,7 +43,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     # pipeline's InsertExplicitGPUGlobalMemoryCopies lowers it to an explicit
     # D2H copy -- the host then has a readable status code.
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         info_host_arr = sdfg.add_array('_info_host', [1],
                                        dtype=dace.int32,
                                        transient=True,
@@ -55,17 +66,17 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
                                          external_edges=True)
 
     ain = state.add_read('_a')
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         binout1 = state.add_access('_bt')
         binout2 = state.add_access('_bt')
         binout3 = state.in_edges(me)[0].src
         bout = state.out_edges(mx)[0].dst
         transpose_ain = Transpose('AT', dtype=dtype)
-        transpose_ain.implementation = 'cuBLAS'
+        transpose_ain.implementation = SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
         state.add_edge(transpose_ain, '_out', binout1, None, Memlet.from_array(*binout_arr))
         transpose_out = Transpose('BT', dtype=dtype)
-        transpose_out.implementation = 'cuBLAS'
+        transpose_out.implementation = SOLVER_BLAS[implementation]
         state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, '_out', binout3, None, Memlet.from_array(*bout_arr))
     else:
@@ -80,7 +91,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
     state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
 
-    if implementation == 'cuSolverDn':
+    if implementation in GPU_SOLVERS:
         info_host = state.add_write('_info_host')
         state.add_nedge(info, info_host, Memlet.from_array(*info_host_arr))
 
@@ -176,6 +187,16 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
         return _make_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandCholeskyRocSolver(ExpandTransformation):
+
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg(node, parent_state, parent_sdfg, "rocSOLVER")
+
+
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
 
@@ -184,7 +205,8 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandCholeskyPure,
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
-        "cuSolverDn": ExpandCholeskyCuSolverDn
+        "cuSolverDn": ExpandCholeskyCuSolverDn,
+        "rocSOLVER": ExpandCholeskyRocSolver
     }
     default_implementation = None
 
@@ -197,11 +219,13 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         self.lower = lower
 
     def expand(self, state, sdfg=None, *args, **kwargs):
-        # Storage-aware auto-pick: cuSolverDn for GPU input, OpenBLAS otherwise.
+        # Storage-aware auto-pick: the device solver for GPU input, OpenBLAS otherwise.
         # Without this, ``apply_gpu_transformations + expand_library_nodes`` lands
         # on OpenBLAS for a GPU-resident matrix (alphabetical default), which
         # then puts ``_info`` on GPU storage but writes it from a CPU library and
-        # fails validation.
+        # fails validation. WHICH device solver follows the configured backend --
+        # picking cuSolverDn on an AMD node names an environment that is not
+        # installed, which lands back on the CPU library this exists to avoid.
         actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
         if self.implementation is None:
             in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
@@ -209,7 +233,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
                 outer = state.memlet_path(in_edges[0])[0].src
                 if isinstance(outer, dace.sdfg.nodes.AccessNode):
                     if actual_sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global:
-                        self.implementation = 'cuSolverDn'
+                        self.implementation = ('rocSOLVER' if common.get_gpu_backend() == 'hip' else 'cuSolverDn')
         if sdfg is not None:
             return super().expand(state, sdfg, *args, **kwargs)
         return super().expand(state, *args, **kwargs)

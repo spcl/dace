@@ -888,9 +888,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
         arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
-        allocation_stream.write(
-            cpp.gpu_alloc_check(f'{self.backend}MallocHost(&{dataname}, {arrsize_malloc})', nodedesc), cfg, state_id,
-            node)
+        allocation_stream.write(cpp.gpu_alloc_check(f'gpuMallocHost(&{dataname}, {arrsize_malloc})', nodedesc), cfg,
+                                state_id, node)
         if node.setzero:
             allocation_stream.write(f'memset({dataname}, 0, {arrsize_malloc});\n', cfg, state_id, node)
         if nodedesc.start_offset != 0:
@@ -953,7 +952,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             if nodedesc.dtype == dtypes.gpuStream_t:
                 return
-            callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeHost({dataname}));\n', cfg, state_id, node)
+            callsite_stream.write(f'DACE_GPU_CHECK(gpuFreeHost({dataname}));\n', cfg, state_id, node)
 
         elif nodedesc.storage in {dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register}:
             return
