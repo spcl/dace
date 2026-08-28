@@ -3,6 +3,7 @@
 
 import dace
 import numpy as np
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -359,6 +360,74 @@ def test_nested_boundary_wcr_survives_a_second_reducer():
     assert np.allclose(got, ref), f'got {got}, ref {ref}'
 
 
+def tasklet_to_tasklet_data_edges(sdfg: dace.SDFG) -> list:
+    """Edges carrying a data memlet straight from one tasklet to another, at every nesting depth."""
+    return [(sub.label, st.label, e.src.label, e.dst.label, e.data.data) for sub in sdfg.all_sdfgs_recursive()
+            for st in sub.states() for e in st.edges() if isinstance(e.src, nodes.Tasklet)
+            and isinstance(e.dst, nodes.Tasklet) and e.data is not None and e.data.data is not None]
+
+
+def assert_every_memlet_is_carried(sdfg: dace.SDFG) -> None:
+    """No data memlet runs tasklet-to-tasklet, and every container a memlet names still exists."""
+    stray = tasklet_to_tasklet_data_edges(sdfg)
+    assert not stray, f'data memlet between two tasklets: {stray}'
+    for sub in sdfg.all_sdfgs_recursive():
+        for st in sub.states():
+            for e in st.edges():
+                if e.data is not None and e.data.data is not None:
+                    assert e.data.data in sub.arrays, f'{sub.label}: memlet names a missing container: {e.data.data}'
+    sdfg.validate()
+
+
+def test_augassign_operand_is_routed_through_an_access_node():
+    """The materialised RMW reads its incoming operand from an AccessNode, not off the tasklet.
+
+    A bare tasklet-to-tasklet memlet names a container that no AccessNode carries, and every scan that
+    counts uses through access nodes then reads the container as dead: LoopToMap took minife's one such
+    scalar for loop-unique data and removed the descriptor while the memlet still named it.
+    """
+
+    @dace.program
+    def rmw():
+        a = np.zeros((10, ))
+        for i in dace.map[1:9]:
+            a[i - 1] += 1
+        return a
+
+    sdfg = rmw.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations(WCRToAugAssign) == 1
+    assert_every_memlet_is_carried(sdfg)
+    assert np.allclose(sdfg(), rmw.f())
+
+
+def test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node():
+    """Same invariant for the map-exit branch of ``apply``, which mints its own operand scalar."""
+    N = 16
+    sdfg = dace.SDFG('wcr_mapexit_operand')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('v', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('t', {'inp': None}, {'out': None}, 'out = inp')
+    v_node = state.add_read('v')
+    a_node = state.add_write('a')
+    state.add_memlet_path(v_node, me, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
+    state.add_memlet_path(tasklet,
+                          mx,
+                          a_node,
+                          src_conn='out',
+                          memlet=dace.Memlet(data='a', subset='i', wcr='lambda a, b: a - b'))
+
+    assert sdfg.apply_transformations(WCRToAugAssign) == 1
+    assert_every_memlet_is_carried(sdfg)
+
+    rng = np.random.default_rng(0)
+    a0, v0 = rng.random(N), rng.random(N)
+    a = a0.copy()
+    sdfg(a=a, v=v0.copy())
+    assert np.allclose(a, a0 - v0), f'got {a[:3]}'
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
@@ -370,3 +439,5 @@ if __name__ == '__main__':
     test_mapexit_wcr_reduction_kept()
     test_nested_boundary_wcr_is_cleared_on_revert()
     test_nested_boundary_wcr_survives_a_second_reducer()
+    test_augassign_operand_is_routed_through_an_access_node()
+    test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node()

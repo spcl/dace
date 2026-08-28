@@ -15,6 +15,20 @@ from dace.sdfg.propagation import propagate_memlets_state
 from ordered_set import OrderedSet
 
 
+def connect_through_scalar(state: SDFGState, sdfg: SDFG, src: nodes.Node, src_conn: str, dst: nodes.Node, dst_conn: str,
+                           dtype: dtypes.typeclass) -> None:
+    """Route a value from one tasklet to another through a materialized transient scalar.
+
+    A bare memlet straight between two tasklets names a container that no AccessNode carries, so every
+    scan that counts uses through access nodes sees the container as dead: LoopToMap took minife's one
+    such scalar for loop-unique data and removed it from the SDFG while the memlet still named it.
+    """
+    name, desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'), dtype, transient=True)
+    node = state.add_access(name)
+    state.add_edge(src, src_conn, node, None, Memlet.from_array(name, desc))
+    state.add_edge(node, None, dst, dst_conn, Memlet.from_array(name, desc))
+
+
 def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
     """Iteration parameters of every Map enclosing ``node`` (innermost outward)."""
     params: List[str] = []
@@ -309,8 +323,15 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             if len(graph.edges_between(tasklet, outarr)) > 1:
                 return False
 
-            # Make sure augmented assignment can be fissioned as necessary
-            if any(not isinstance(e.src, nodes.AccessNode) for e in graph.in_edges(tasklet)):
+            # Make sure augmented assignment can be fissioned as necessary. ``apply`` only calls
+            # ``isolate_tasklet`` when the accumulator is ALSO written in this state; with
+            # ``in_degree(inarr) == 0`` nothing is relocated, so a producer that is not an
+            # AccessNode is harmless. An indirect scatter-accumulate reaches here exactly that way
+            # -- edge_laplacian's ``Lx[src[i]] += flux[i]`` takes its delta straight off the slice
+            # tasklet -- and refusing it left the accumulate a plain write, which the scatter guard
+            # then aborted on as a duplicate-index collision.
+            if graph.in_degree(inarr) > 0 and any(not isinstance(e.src, nodes.AccessNode)
+                                                  for e in graph.in_edges(tasklet)):
                 return False
 
             outedge = graph.edges_between(tasklet, outarr)[0]
@@ -1345,14 +1366,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edge.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', OrderedSet(('__in1', '__in2')), {'__out'}, f"__out = {code}")
-            # `tmp` is a generic name minted into a graph whose connectors this transformation did
-            # not choose, which is exactly the case that needs the connector-avoiding minter: an
-            # array named after an existing connector is a graph validation rejects.
-            scal_name, scal_desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'),
-                                                   sdfg.arrays[self.output.data].dtype,
-                                                   transient=True)
             state.add_edge(in_access, None, new_tasklet, '__in1', copy.deepcopy(edge.data))
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
+            connect_through_scalar(state, sdfg, self.tasklet, edge.src_conn, new_tasklet, '__in2',
+                                   sdfg.arrays[self.output.data].dtype)
             state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
         elif self.expr_index == 1:
@@ -1363,14 +1379,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', OrderedSet(('__in1', '__in2')), {'__out'}, f"__out = {code}")
-            # `tmp` is a generic name minted into a graph whose connectors this transformation did
-            # not choose, which is exactly the case that needs the connector-avoiding minter: an
-            # array named after an existing connector is a graph validation rejects.
-            scal_name, scal_desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'),
-                                                   sdfg.arrays[self.output.data].dtype,
-                                                   transient=True)
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
+            connect_through_scalar(state, sdfg, self.tasklet, edge.src_conn, new_tasklet, '__in2',
+                                   sdfg.arrays[self.output.data].dtype)
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
         elif self.expr_index == 2:

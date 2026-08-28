@@ -517,3 +517,54 @@ def test_aug_assign_state_fission_is_order_stable():
     expected[0] += d[0]
     applied(A=a, B=b, C=c, D=d)
     assert np.allclose(a, expected), f"{a[:2]} != {expected[:2]}"
+
+
+def _rmw_with_tasklet_delta(also_write_accumulator: bool):
+    """``acc[k] = acc[k] + f(b[k])`` where the delta reaches the augassign straight from another
+    tasklet, so no AccessNode separates the two. Optionally give the read-side accumulator an
+    in-edge, which is what makes ``apply`` fission the state.
+    """
+    sdfg = dace.SDFG(f"rmw_tasklet_delta_{int(also_write_accumulator)}")
+    sdfg.add_array("acc", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+
+    read = state.add_access("acc")
+    write = state.add_access("acc")
+    delta = state.add_tasklet("delta", {"__inp": None}, {"__out": None}, "__out = __inp * 2.0")
+    augassign = state.add_tasklet("augassign", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+
+    state.add_edge(state.add_access("b"), None, delta, "__inp", dace.Memlet("b[k]"))
+    state.add_edge(delta, "__out", augassign, "__in2", dace.Memlet("b[k]"))
+    state.add_edge(read, None, augassign, "__in1", dace.Memlet("acc[k]"))
+    state.add_edge(augassign, "__out", write, None, dace.Memlet("acc[k]"))
+    if also_write_accumulator:
+        seed = state.add_tasklet("seed", {}, {"__out": None}, "__out = 1.0")
+        state.add_edge(seed, "__out", read, None, dace.Memlet("acc[k]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_aug_assign_matches_rmw_whose_delta_comes_from_a_tasklet():
+    """A non-AccessNode delta producer must not block the match when no fission is needed.
+
+    ``apply`` only relocates the producer chain when the accumulator is ALSO written in this state;
+    with nothing writing it, the chain stays put and its shape is irrelevant. The unstructured-grid
+    assembly ``Lx[src[i]] += flux[i]`` arrives exactly like this after the pipeline stages its
+    delta, and refusing it left a plain write where an accumulation belongs: the parallel lift then
+    reads the repeated indices as a write-write race and the scatter guard aborts on them.
+    """
+    sdfg = _rmw_with_tasklet_delta(also_write_accumulator=False)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 1
+    wcrs = [e.data.wcr for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcrs) == 1 and '+' in wcrs[0], f"expected one summing WCR, got {wcrs}"
+    sdfg.validate()
+
+
+def test_aug_assign_still_refuses_a_tasklet_delta_when_fission_is_needed():
+    """The guard stays in force for the case it was written for: an accumulator written in the same
+    state forces ``isolate_tasklet``, and only then does the producer's shape matter."""
+    sdfg = _rmw_with_tasklet_delta(also_write_accumulator=True)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 0
+    assert not [e for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
