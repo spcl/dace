@@ -509,3 +509,39 @@ def test_arrayize_rewrites_conditional_guard_after_branch_removal():
 
     assert isinstance(sdfg.arrays['arr'], dace.data.Array)
     assert 'arr[0]' in cond.branches[0][0].as_string, cond.branches[0][0].as_string
+
+
+def test_staged_scalar_of_a_host_written_device_array_stays_on_the_host():
+    """A staged scalar host code writes must not inherit the array's device storage.
+
+    A fully sequential program (npbench crc16) has no map to offload, so the GPU offload leaves every
+    tasklet on the host while its signature arrays sit in ``GPU_Global``. Staging then produced a
+    ``GPU_Global`` scalar that a host tasklet writes, which validation rejects.
+    """
+    sdfg = dace.SDFG('host_written_device_output')
+    sdfg.add_array('crc', [1], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
+    st = sdfg.add_state('main')
+    t = st.add_tasklet('w', {}, {'o'}, 'o = 7')
+    st.add_edge(t, 'o', st.add_write('crc'), None, dace.Memlet('crc[0]'))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['scal_crc'], dd.Scalar)
+    assert sdfg.arrays['scal_crc'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['crc'].storage is dace.StorageType.GPU_Global
+    sdfg.validate()
+
+
+def test_staged_scalar_of_a_kernel_written_array_keeps_device_storage():
+    """The other side of the rule: a GPU map writing the array keeps its staged scalar on the device."""
+    sdfg = dace.SDFG('kernel_written_output')
+    sdfg.add_array('res', [1], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    st = sdfg.add_state('main')
+    entry, exit_ = st.add_map('k', {'i': '0:1'}, schedule=dace.ScheduleType.GPU_Device)
+    t = st.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    st.add_nedge(entry, t, dace.Memlet())
+    st.add_memlet_path(t, exit_, st.add_write('res'), src_conn='o', memlet=dace.Memlet('res[0]'))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    assert sdfg.arrays['scal_res'].storage is dace.StorageType.GPU_Global

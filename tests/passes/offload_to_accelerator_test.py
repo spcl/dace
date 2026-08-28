@@ -527,3 +527,30 @@ def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
     assert signatures, 'nothing was emitted as a kernel, so the signature asserts nothing'
     by_value = [line for line in signatures for name in resident if f'double {name}' in line]
     assert not by_value, f'a kernel takes a scalar it writes by value: {by_value}'
+
+
+def test_apply_gpu_storage_leaves_every_scalar_on_the_host():
+    """A non-transient scalar stays host-resident even when device code writes it.
+
+    Host code reads a scalar as a loop bound, a branch condition or from a tasklet outside any
+    map, and a device-resident one makes every such read invalid. A kernel that writes one gets a
+    GPU transient and a copy back from the offload pass instead.
+    """
+    from dace.transformation.auto import auto_optimize
+
+    sdfg = dace.SDFG('scalar_stays_on_host')
+    sdfg.add_scalar('written', dace.float64, transient=False)
+    sdfg.add_scalar('read_only', dace.float64, transient=False)
+    sdfg.add_array('A', [8], dace.float64, transient=False)
+    st = sdfg.add_state('main')
+    entry, exit_ = st.add_map('k', {'i': '0:8'}, schedule=dace.ScheduleType.GPU_Device)
+    t = st.add_tasklet('w', {'r': None}, {'o': None, 'a': None}, 'o = r\na = r')
+    st.add_memlet_path(st.add_read('read_only'), entry, t, dst_conn='r', memlet=dace.Memlet('read_only[0]'))
+    st.add_memlet_path(t, exit_, st.add_write('written'), src_conn='o', memlet=dace.Memlet('written[0]'))
+    st.add_memlet_path(t, exit_, st.add_write('A'), src_conn='a', memlet=dace.Memlet('A[i]'))
+
+    auto_optimize.apply_gpu_storage(sdfg)
+
+    assert sdfg.arrays['written'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['read_only'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['A'].storage is dace.StorageType.GPU_Global

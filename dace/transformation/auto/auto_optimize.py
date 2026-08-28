@@ -766,19 +766,16 @@ def make_transients_persistent(sdfg: SDFG,
 
 
 def apply_gpu_storage(sdfg: SDFG) -> None:
-    """ Changes the storage of the SDFG's input and output data to GPU global memory. """
+    """ Changes the storage of the SDFG's input and output arrays to GPU global memory.
 
-    written_scalars = set()
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            desc = node.desc(sdfg)
-            if isinstance(desc, dt.Scalar) and not desc.transient and state.in_degree(node) > 0:
-                written_scalars.add(node.data)
-
-    for name, desc in sdfg.arrays.items():
+    Scalars stay on the host: host code reads them (loop bounds, branch conditions, a tasklet
+    outside any map), and a device-resident scalar makes every such read invalid. A device map
+    that writes one gets a GPU transient and a copy back from the offload pass.
+    """
+    for desc in sdfg.arrays.values():
+        if isinstance(desc, dt.Scalar):
+            continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
-            if isinstance(desc, dt.Scalar) and not name in written_scalars:
-                continue
             desc.storage = dtypes.StorageType.GPU_Global
 
 
