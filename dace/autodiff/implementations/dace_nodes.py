@@ -9,7 +9,7 @@ import copy
 import numbers
 import astunparse
 import sympy as sp
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
 # DaCe imports
 import dace
@@ -22,6 +22,9 @@ from dace.data import find_new_name
 # Autodiff imports
 from dace.autodiff.base_abc import BackwardResult, AutoDiffException
 import dace.autodiff.utils as ad_utils
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
 class DaceNodeBackwardImplementations:
@@ -112,8 +115,11 @@ class DaceNodeBackwardImplementations:
         # Create the sdfg and return it
         nsdfg = backward_state.add_nested_sdfg(
             reverse_nsdfg,
-            inputs=inputs,
-            outputs=outputs,
+            inputs=sorted(inputs),
+            outputs=sorted(outputs),
+            # Rebound below for every connector that names a symbol; identity is right for the rest,
+            # the backward SDFG being built from this SDFG's own descriptors.
+            symbol_mapping=ad_utils.backward_symbol_mapping(reverse_nsdfg, backward_state),
         )
 
         # If any input connectors point to symbols
@@ -349,7 +355,7 @@ class DaceNodeBackwardImplementations:
             Required gradient: dx (∂L/∂x)
             Generated code: ``dx_gradient = dy_gradient * (2*x + 2)``
         """
-        output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, list(sdfg.symbols.keys()))
+        output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, sdfg.symbols)
 
         # for each output that an input is used in, there will be an entry for the expression of the
         # grad in this list in the final code snippet. When we generate the final code for the
@@ -398,15 +404,19 @@ class DaceNodeBackwardImplementations:
                 if isinstance(output_expr, numbers.Real):
                     output_expr = sp.Float(output_expr)
 
-                # We need to prepare the w.r.t expression
-                if inp in indexed_objects_map:
-                    # if the input is an indexed object, we need to create the sympy expression
-                    indexed_base = sp.IndexedBase(inp)
-                    idx_objects = [sp.Idx(index) for index in indexed_objects_map[inp]]
-                    inp_expr = indexed_base[tuple(idx_objects)]
+                # Differentiate against the instance already inside the expression: a re-minted
+                # equivalent compares unequal to it while still substituting, so diff() returns a
+                # silent zero for a symbol and a KroneckerDelta for an Indexed. A connector absent
+                # from the expression falls back to a fresh symbol, where zero is the right answer.
+                indices = indexed_objects_map.get(inp)
+                if indices is None:
+                    occurrences = [s for s in output_expr.free_symbols if str(s) == inp]
                 else:
-                    # if the input is not an indexed object, we can just use it as is
-                    inp_expr = sp.symbols(inp)
+                    occurrences = [
+                        a for a in output_expr.atoms(sp.Indexed)
+                        if str(a.base) == inp and tuple(str(i) for i in a.indices) == tuple(indices)
+                    ]
+                inp_expr = min(occurrences, key=str) if occurrences else ad_utils.connector_symbol(inp)
 
                 # symbolically differentiate the output w.r.t inp
                 diff_expr = output_expr.diff(inp_expr)

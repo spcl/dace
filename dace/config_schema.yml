@@ -349,6 +349,24 @@ required:
                             generate "#pragma omp parallel sections" code around
                             them.
 
+                    parallel_transfer_min_elements:
+                        type: int
+                        default: 262144
+                        title: Parallel copy/fill element threshold
+                        description: >
+                            Minimum element count (symbolic size counts as large) for a
+                            copy/fill to lower to an OpenMP element map instead of memcpy/memset.
+
+                    explicit_copy:
+                        type: bool
+                        default: true
+                        title: Lower implicit copies to explicit copy nodes
+                        description: >
+                            If set to true, codegen lifts every implicit copy edge to a
+                            CopyLibraryNode before expansion. An implicit copy is a write no node
+                            performs, so an empty memlet ordering that write has nothing to point
+                            at; giving the copy a node is what makes it orderable.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:
@@ -737,6 +755,16 @@ required:
             * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
+
+    cache_distaware:
+        type: bool
+        default: true
+        title: Distribution-aware build cache
+        description: >
+            Give every rank of a job its own build folder, named after the rank its launcher
+            (MPI, Flux, Slurm) advertises. Without it, ranks that each compile share one folder
+            and can load a library another rank is still writing. Leave it off when only one
+            rank compiles, as ``dace.sdfg.utils.distributed_compile`` does.
 
     store_history:
         type: bool
