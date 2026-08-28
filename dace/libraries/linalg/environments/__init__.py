@@ -2,3 +2,4 @@
 from .hptt import HPTT
 from .cutensor import cuTensor
 from .tblis import TBLIS
+from .hiptensor import hipTensor

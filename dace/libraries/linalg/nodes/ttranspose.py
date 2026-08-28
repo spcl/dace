@@ -89,46 +89,51 @@ class ExpandHPTT(ExpandTransformation):
 
 
 @library.expansion
-class ExpandCuTensor(ExpandTransformation):
+class ExpandGPUTensor(ExpandTransformation):
     """
-    Implements the TensorTranspose library node using the cuTENSOR v2 API
-    (cutensorPermute). Requires cuTENSOR >= 2.0.
+    Implements the TensorTranspose library node through a vendor tensor library's v2 permutation
+    API. cuTENSOR (>= 2.0) and hipTensor expose that surface call for call -- descriptor,
+    permutation, plan preference, plan, execute, destroy -- so the body below is shared and the two
+    subclasses carry only the names. Their TYPE_MAPs are NOT shared: cuTENSOR takes the CUDA-wide
+    ``cudaDataType`` and hipTensor its own ``hiptensorDataType_t``.
 
     The permutation is expressed as:
         C_{modesC} = alpha * A_{modesA}
     where modesA is the identity [0, 1, ..., n-1] and modesC encodes the
     axis permutation.
 
-    NOTE: beta != 0 is not supported by cutensorPermute (its signature is
+    NOTE: beta != 0 is not supported by either vendor's permute (the signature is
     ``(handle, plan, alpha, A, B, stream)`` -- out-of-place ``B = alpha*op(A)``,
     no beta term). For C = alpha * perm(A) + beta * C, use ExpandPure or
-    implement via cutensorElementwiseBinary.
+    the elementwise-binary entry point.
     See https://docs.nvidia.com/cuda/cutensor/latest/api/cutensor.html#cutensorpermute
     """
 
-    environments = [environments.cuTensor]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
-                                      "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
+            raise NotImplementedError(f"{cls.vendor} permute does not support beta != 0. Its signature is "
+                                      "(handle, plan, alpha, A, B, stream) -- out-of-place B = alpha*op(A), no "
+                                      "beta term. Use the 'pure' expansion for C = alpha*perm(A) + beta*C.")
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
 
-        if dtype not in environments.cuTensor.TYPE_MAP:
+        if dtype not in cls.environments[0].TYPE_MAP:
             # Fall back to pure expansion for unsupported types (integers, etc.).
             # The pure expansion generates a GPU map when data is GPU_Global,
             # so integer transposes still execute on the GPU.
-            warnings.warn("CuTensor does not support integer tensors, falling back to pure implementation")
+            warnings.warn(f"{cls.vendor} does not support {dtype} tensors, falling back to the pure "
+                          "implementation (still a GPU map on GPU-resident data)")
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
 
-        cutensor_dtype, compute_desc, alpha_type = environments.cuTensor.TYPE_MAP[dtype]
+        tensor_dtype, compute_desc, alpha_type = cls.environments[0].TYPE_MAP[dtype]
         alpha_val = f"({alpha_type}){node.alpha}"
 
         # Input modes: identity mapping  [0, 1, ..., n-1]
@@ -144,9 +149,9 @@ class ExpandCuTensor(ExpandTransformation):
         stride_c_str = ', '.join(sym2cpp(s) for s in out_tensor.strides)
 
         code = f"""\
-{environments.cuTensor.handle_setup_code(node)}
+{cls.environments[0].handle_setup_code(node)}
 {{
-    // cuTENSOR v2 permutation
+    // vendor tensor-library v2 permutation
     const uint32_t kNdim = {ndim};
 
     int32_t  modesA[{ndim}]   = {{{modes_a_str}}};
@@ -159,44 +164,44 @@ class ExpandCuTensor(ExpandTransformation):
     {alpha_type} alpha = {alpha_val};
 
     // tensor descriptors (v2: alignment hint in bytes, 256 is safe)
-    cutensorTensorDescriptor_t descA, descC;
-    dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-        __dace_cutensor_handle, &descA, kNdim,
-        extentA, stridesA, {cutensor_dtype}, 256));
-    dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-        __dace_cutensor_handle, &descC, kNdim,
-        extentC, stridesC, {cutensor_dtype}, 256));
+    {cls.vendor_lower}TensorDescriptor_t descA, descC;
+    {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+        {cls.handle}, &descA, kNdim,
+        extentA, stridesA, {tensor_dtype}, 256));
+    {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+        {cls.handle}, &descC, kNdim,
+        extentC, stridesC, {tensor_dtype}, 256));
 
     // operation descriptor (permutation)
-    cutensorOperationDescriptor_t opDesc;
-    dace::linalg::CheckCuTensorError(cutensorCreatePermutation(
-        __dace_cutensor_handle, &opDesc,
-        descA, modesA, CUTENSOR_OP_IDENTITY,
+    {cls.vendor_lower}OperationDescriptor_t opDesc;
+    {cls.check}({cls.vendor_lower}CreatePermutation(
+        {cls.handle}, &opDesc,
+        descA, modesA, {cls.op_identity},
         descC, modesC,
         {compute_desc}));
 
     // plan preference & plan
-    cutensorPlanPreference_t planPref;
-    dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
-        __dace_cutensor_handle, &planPref,
-        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
+    {cls.vendor_lower}PlanPreference_t planPref;
+    {cls.check}({cls.vendor_lower}CreatePlanPreference(
+        {cls.handle}, &planPref,
+        {cls.algo_default}, {cls.jit_default}));
 
-    cutensorPlan_t plan;
-    dace::linalg::CheckCuTensorError(cutensorCreatePlan(
-        __dace_cutensor_handle, &plan, opDesc, planPref, 0));
+    {cls.vendor_lower}Plan_t plan;
+    {cls.check}({cls.vendor_lower}CreatePlan(
+        {cls.handle}, &plan, opDesc, planPref, 0));
 
     // execute
-    dace::linalg::CheckCuTensorError(cutensorPermute(
-        __dace_cutensor_handle, plan,
+    {cls.check}({cls.vendor_lower}Permute(
+        {cls.handle}, plan,
         (const void*)&alpha, _inp_tensor, _out_tensor,
         __dace_current_stream));
 
     // cleanup
-    cutensorDestroyPlan(plan);
-    cutensorDestroyPlanPreference(planPref);
-    cutensorDestroyOperationDescriptor(opDesc);
-    cutensorDestroyTensorDescriptor(descC);
-    cutensorDestroyTensorDescriptor(descA);
+    {cls.vendor_lower}DestroyPlan(plan);
+    {cls.vendor_lower}DestroyPlanPreference(planPref);
+    {cls.vendor_lower}DestroyOperationDescriptor(opDesc);
+    {cls.vendor_lower}DestroyTensorDescriptor(descC);
+    {cls.vendor_lower}DestroyTensorDescriptor(descA);
 }}
 """
 
@@ -206,6 +211,34 @@ class ExpandCuTensor(ExpandTransformation):
                                 code,
                                 language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@library.expansion
+class ExpandCuTensor(ExpandGPUTensor):
+    environments = [environments.cuTensor]
+    vendor = "cuTENSOR"
+    vendor_lower = "cutensor"
+    handle = "__dace_cutensor_handle"
+    check = "dace::linalg::CheckCuTensorError"
+    op_identity = "CUTENSOR_OP_IDENTITY"
+    algo_default = "CUTENSOR_ALGO_DEFAULT"
+    jit_default = "CUTENSOR_JIT_MODE_DEFAULT"
+
+
+@library.expansion
+class ExpandHipTensor(ExpandGPUTensor):
+    environments = [environments.hipTensor]
+    vendor = "hipTensor"
+    vendor_lower = "hiptensor"
+    handle = "__dace_hiptensor_handle"
+    check = "dace::linalg::CheckHipTensorError"
+    op_identity = "HIPTENSOR_OP_IDENTITY"
+    algo_default = "HIPTENSOR_ALGO_DEFAULT"
+    #: NOT the literal translation of cuTENSOR's ``JIT_MODE_DEFAULT``. hipTensor accepts that name
+    #: and then refuses the plan at execution with ``HIPTENSOR_STATUS_NOT_SUPPORTED``, for every
+    #: rank and dtype (measured); ``NONE`` -- no just-in-time compilation, which is what cuTENSOR's
+    #: DEFAULT means anyway -- is the mode its plans are actually built for.
+    jit_default = "HIPTENSOR_JIT_MODE_NONE"
 
 
 @library.expansion
@@ -220,6 +253,21 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
     environments = [TiledTranspose]
 
     @staticmethod
+    def tensor_delegate():
+        """The vendor tensor library to hand a genuine permutation to, for THIS backend.
+
+        Named by backend rather than hardcoded: a cuTENSOR delegate on an AMD build selects an
+        environment that is not installed, and the configure step fails for a graph that has a
+        working expansion available.
+        """
+        from dace.codegen.common import get_gpu_backend  # Avoid import loop
+        try:
+            backend = get_gpu_backend()
+        except RuntimeError:
+            backend = 'cuda'
+        return ExpandHipTensor if backend == 'hip' else ExpandCuTensor
+
+    @staticmethod
     def expansion(node, state, sdfg, **kwargs):
         from dace.codegen.targets.cpp import sym2cpp
         inp_tensor, out_tensor = node.validate(sdfg, state)
@@ -228,8 +276,9 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
             # ``ExpandTransformation.apply`` attaches THIS class's ``environments`` to whatever is
             # returned, so a delegation has to carry the delegate's -- otherwise cuTENSOR's expansion
             # is emitted without its library and the unit fails to link.
-            ExpandTensorTransposeCUDA.environments = list(ExpandCuTensor.environments)
-            return ExpandCuTensor.expansion(node, state, sdfg, **kwargs)
+            delegate = ExpandTensorTransposeCUDA.tensor_delegate()
+            ExpandTensorTransposeCUDA.environments = list(delegate.environments)
+            return delegate.expansion(node, state, sdfg, **kwargs)
         ExpandTensorTransposeCUDA.environments = [TiledTranspose]
 
         rows, cols = inp_tensor.shape
@@ -263,6 +312,7 @@ class TensorTranspose(nodes.LibraryNode):
         "pure": ExpandPure,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
+        "hipTENSOR": ExpandHipTensor,
         "CUDA": ExpandTensorTransposeCUDA,
     }
     default_implementation = 'pure'
