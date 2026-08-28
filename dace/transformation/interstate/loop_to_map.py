@@ -1116,6 +1116,11 @@ class LoopToMap(xf.MultiStateTransformation):
             # ``.dst_subset`` None; fall back to ``.subset`` so the dependency test
             # doesn't crash on ``None.ndrange()``.
             write = candidate.dst_subset if candidate.dst_subset is not None else candidate.subset
+            # A WCR write is a read-modify-write of its destination, and the write tests above
+            # exempt it -- sound only for a reduction whose accumulator the loop never reads back.
+            if (candidate.wcr is not None and not _check_range(write, a, itersym, b, step)
+                    and subsets.intersects(read, write) is not False):
+                return False
             if read == write:
                 continue
             # Step-aware per-dimension disjointness: if any dimension's read/write

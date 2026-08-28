@@ -87,6 +87,9 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
         return False
     (in_edge, ) = in_edges
     (write_edge, ) = out_edges
+    # A WCR store is ``acc = wcr(acc, rhs)``: not an IV recurrence, so not fissionable as one.
+    if in_edge.data.wcr is not None or write_edge.data.wcr is not None:
+        return False
     if in_edge.dst_conn != var_conn:
         return False
     if not isinstance(write_edge.dst, nodes.AccessNode):
@@ -109,17 +112,22 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     return True
 
 
-def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Dict:
-    """BFS from ``tasklet`` through every connected node in ``state``.
+def value_edges(edges) -> list:
+    """The edges carrying a VALUE; an empty memlet is an ordering edge and carries none."""
+    return [e for e in edges if e.data is not None and not e.data.is_empty()]
 
-    Walks both in- and out-edges, into AccessNodes and through them; the returned
-    (ordered-set) dict is the connected component of ``tasklet`` in the state's data-flow graph.
+
+def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Dict:
+    """BFS from ``tasklet`` over the VALUE edges of ``state``.
+
+    An ordering (empty) memlet decides ORDER, never membership: following one would make an
+    unrelated statement part of the IV component and fission it into the sibling loop.
     """
     seen: Dict = {tasklet: None}
     frontier = [tasklet]
     while frontier:
         n = frontier.pop()
-        for e in list(state.in_edges(n)) + list(state.out_edges(n)):
+        for e in value_edges(state.in_edges(n)) + value_edges(state.out_edges(n)):
             for nb in (e.src, e.dst):
                 if nb not in seen:
                     seen[nb] = None
@@ -151,6 +159,10 @@ def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optio
     for n in component:
         if isinstance(n, nodes.Tasklet) and n is not tasklet and not _is_copy_tasklet(n):
             return None
+        # The fission runs the component FIRST and would drop a boundary-crossing ordering edge.
+        for e in state.in_edges(n) + state.out_edges(n):
+            if e.data is not None and e.data.is_empty() and (e.src not in component or e.dst not in component):
+                return None
     return component
 
 

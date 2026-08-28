@@ -161,7 +161,17 @@ def _define_literal_ex(pv: ProgramVisitor,
 
     # From existing data descriptor
     if isinstance(obj, str):
-        desc = dcpy(sdfg.arrays[obj])
+        src = sdfg.arrays[obj]
+        if isinstance(src, (data.ArrayView, data.ArrayReference)):
+            # ``numpy.array`` COPIES; only slicing, ``asarray`` and ``.view()`` alias. Deep-copying the
+            # operand's descriptor made ``np.array(a[:, :, k])`` a VIEW of ``a``, so vadv's later
+            # ``data_col *= ...`` wrote straight back into ``dcol`` -- and the copy edge left a View
+            # access node with no viewed-data edge, which simplify rejects as ambiguous. A copy is a
+            # fresh contiguous array: its strides and total size come from its own shape, not from the
+            # parent it was sliced out of.
+            desc = data.Array(src.dtype, src.shape, storage=src.storage)
+        else:
+            desc = dcpy(src)
         if dtype is not None:
             desc.dtype = dtype
     else:  # From literal / constant

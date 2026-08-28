@@ -63,6 +63,52 @@ def _uniquify_data_against(inner: SDFG, taken_data) -> dict:
     return drepl
 
 
+def shared_carrier_connectors(state: SDFGState, keep: nodes.NestedSDFG,
+                              drop: nodes.NestedSDFG) -> Optional[Dict[str, Tuple[str, nodes.AccessNode]]]:
+    """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge.
+
+    ``MapFusion`` leaves a producer and its consumer as siblings wired through one outer AccessNode
+    (``nsdfg0 -> X -> nsdfg1``). Merging them makes X both a predecessor and a successor of the
+    single surviving node, which no state can express -- the value would have to leave and re-enter
+    the node that produces it. :func:`_append_cfg` already sequences base before tail, so the
+    dependence belongs INSIDE: bind tail's inner array to keep's, and the value crosses the
+    sequencing edge instead of the state.
+
+    That is only sound when the carrier is a pure intermediate. Two refusals:
+
+    * the REVERSE direction (``keep`` reads what ``drop`` writes) forms the same cycle, but
+      publishing the write would need a second AccessNode plus every downstream reader moved onto
+      it -- no corpus kernel merges siblings that way;
+    * a carrier anything ELSE touches cannot be internalized, and leaving the outer write behind
+      would strand a sink inside the map scope that reaches no exit -- ``all_nodes_between`` then
+      reports the whole body as empty and every pass that walks map bodies skips the map.
+
+    :param state: The state holding both nested SDFGs.
+    :param keep: The merge base, topologically first.
+    :param drop: The sibling being folded into ``keep``.
+    :returns: ``{drop in-connector: (keep out-connector, carrier node)}``, or ``None`` to refuse.
+    """
+    produced = {e.data.data: e.src_conn for e in state.out_edges(keep) if e.data.data is not None}
+    consumed = {e.data.data for e in state.in_edges(keep) if e.data.data is not None}
+    if any(e.data.data in consumed for e in state.out_edges(drop) if e.data.data is not None):
+        return None
+
+    forward: Dict[str, Tuple[str, nodes.AccessNode]] = {}
+    for e in state.in_edges(drop):
+        if e.data.data not in produced or not isinstance(e.src, nodes.AccessNode):
+            continue
+        carrier, name = e.src, e.data.data
+        elsewhere = sum(1 for st in state.sdfg.states() for n in st.data_nodes() if n.data == name)
+        if elsewhere != 1 or not state.sdfg.arrays[name].transient:
+            return None  # something else observes it: cannot be made internal
+        if any(oe.dst is not drop for oe in state.out_edges(carrier)):
+            return None
+        if any(ie.src is not keep for ie in state.in_edges(carrier)):
+            return None
+        forward[e.dst_conn] = (produced[name], carrier)
+    return forward
+
+
 def _append_cfg(base: SDFG, tail: SDFG) -> None:
     """Splice ``tail``'s control-flow graph after ``base``'s sink, in place.
 
@@ -192,6 +238,9 @@ class NormalizeMapBody(ppl.Pass):
         keep = siblings[0]
         base = keep.sdfg
         for drop in siblings[1:]:
+            carried = shared_carrier_connectors(state, keep, drop)
+            if carried is None:
+                return False
             tail = copy.deepcopy(drop.sdfg)
             # Rename tail's data that collides with any base identifier, tracking how
             # drop's connectors were renamed so we can rewire the outer edges. DaCe forbids
@@ -204,6 +253,13 @@ class NormalizeMapBody(ppl.Pass):
                 for bnode in bstate.nodes():
                     reserved.update(dict.fromkeys([*bnode.in_connectors.keys(), *bnode.out_connectors.keys()]))
             drepl = _uniquify_data_against(tail, reserved)
+            # A container keep WRITES and drop READS is one value, not two: point tail's copy at
+            # keep's array so it crosses the sequencing edge ``_append_cfg`` adds.
+            for drop_conn, (keep_conn, _carrier) in carried.items():
+                renamed = drepl.get(drop_conn, drop_conn)
+                if renamed != keep_conn:
+                    replace_datadesc_names(tail, {renamed: keep_conn})
+                    drepl[drop_conn] = keep_conn
             # Carry tail's (now non-colliding) data descriptors + symbols into base.
             for name, desc in list(tail.arrays.items()):
                 if name not in base.arrays:
@@ -225,15 +281,41 @@ class NormalizeMapBody(ppl.Pass):
             # references a nonexistent connector (invalid SDFG: "b written but only given
             # as an input connector").
             for e in list(state.in_edges(drop)):
+                if e.dst_conn in carried:
+                    state.remove_edge(e)  # satisfied inside; re-adding it would close a cycle
+                    continue
+                if e.dst_conn is None:
+                    # Ordering memlet: no connector to rename, and keep->keep would be a cycle.
+                    if e.src is not keep:
+                        state.add_edge(e.src, e.src_conn, keep, None, copy.deepcopy(e.data))
+                    state.remove_edge(e)
+                    continue
+
                 conn = drepl.get(e.dst_conn, e.dst_conn)
                 keep.add_in_connector(conn, force=True)
                 state.add_edge(e.src, e.src_conn, keep, conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
             for e in list(state.out_edges(drop)):
+                if e.src_conn is None:
+                    if e.dst is not keep:
+                        state.add_edge(keep, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
+                    state.remove_edge(e)
+                    continue
                 conn = drepl.get(e.src_conn, e.src_conn)
                 keep.add_out_connector(conn, force=True)
                 state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
                 state.remove_edge(e)
+
+            # The carrier is now produced AND consumed inside ``keep``, so its outer plumbing is
+            # dead. Left in place it is a sink the map exit never reaches, which makes the whole
+            # body invisible to ``all_nodes_between``.
+            for keep_conn, carrier in carried.values():
+                for oe in list(state.out_edges(keep)):
+                    if oe.dst is carrier:
+                        state.remove_edge(oe)
+                keep.remove_out_connector(keep_conn)
+                state.remove_node(carrier)
+                base.arrays[keep_conn].transient = True
 
             # Merge symbol mapping (rename keys that were renamed inside tail).
             for k, v in drop.symbol_mapping.items():

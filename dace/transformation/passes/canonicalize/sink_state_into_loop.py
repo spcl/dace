@@ -10,7 +10,7 @@ Replication is only value-preserving when re-running the state is idempotent:
   * the second loop must not write anything the state reads -- otherwise later replicas see
     different inputs than the original single execution did,
   * the second loop must not write anything the state writes (WAW), and the state must not
-    accumulate (a WCR would apply once per iteration instead of once),
+    accumulate -- neither the WCR spelling nor a container it both reads and writes,
   * the second loop must run at least once, or the state would never execute at all.
 Everything the state reads from the first loop is fine: the state stays after it.
 """
@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional, Tuple
 import sympy
 from ordered_set import OrderedSet
 
-from dace import SDFG, symbolic
+from dace import SDFG, Memlet, symbolic
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -95,15 +95,24 @@ class SinkStateIntoLoop(ppl.Pass):
         """Whether re-running ``state`` once per iteration of ``loop`` computes the same thing."""
         if not SinkStateIntoLoop.runs_at_least_once(loop):
             return False
-        if any(e.data.wcr is not None for s in [state] for e in s.edges() if e.data is not None):
+        if SinkStateIntoLoop.accumulates(state):
             return False
 
         reads, writes = SinkStateIntoLoop.access_sets(state)
+        # Read-modify-write: replica k would read what replica k-1 wrote.
+        if reads & writes:
+            return False
         loop_writes: OrderedSet[str] = OrderedSet()
         for block in loop.all_states():
             loop_writes |= SinkStateIntoLoop.access_sets(block)[1]
         # A replica must observe the same inputs, and must not race the loop's own writes.
         return not (loop_writes & (reads | writes))
+
+    @staticmethod
+    def accumulates(state: SDFGState) -> bool:
+        """Whether ``state`` carries a WCR anywhere -- nested SDFGs too, whose boundary memlet
+        need not carry the ``wcr`` the body writes with."""
+        return any(isinstance(e.data, Memlet) and e.data.wcr is not None for e, _ in state.all_edges_recursive())
 
     @staticmethod
     def access_sets(state: SDFGState) -> Tuple[OrderedSet[str], OrderedSet[str]]:

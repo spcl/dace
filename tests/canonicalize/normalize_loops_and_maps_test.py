@@ -359,5 +359,40 @@ def test_normalize_loop_bounds_leaves_zero_based_untouched():
     assert NormalizeLoopBounds().apply_pass(sdfg, {}) is None
 
 
+def test_a_copy_memlets_other_subset_is_normalized_too():
+    """A two-sided (copy) memlet indexes the map parameter on BOTH sides; leaving `other_subset`
+    stale sends the copy to the row the unnormalized parameter named."""
+    sdfg = dace.SDFG("norm_other_subset")
+    sdfg.add_array("A", [10, 4], dace.float64)
+    sdfg.add_array("B", [10, 4], dace.float64)
+    st = sdfg.add_state("main")
+    a, b = st.add_access("A"), st.add_access("B")
+    me, mx = st.add_map("m", {"i": "2:9:3"})
+    inner = st.add_access("B")
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_b")
+    mx.add_out_connector("OUT_b")
+    st.add_edge(a, None, me, "IN_a", dace.Memlet("A[2:9, 0:4]"))
+    st.add_edge(me, "OUT_a", inner, None, dace.Memlet(data="A", subset="i, 0:4", other_subset="i, 0:4"))
+    st.add_edge(inner, None, mx, "IN_b", dace.Memlet("B[i, 0:4]"))
+    st.add_edge(mx, "OUT_b", b, None, dace.Memlet("B[2:9, 0:4]"))
+    sdfg.validate()
+
+    def run(g):
+        args = {"A": np.arange(40, dtype=np.float64).reshape(10, 4), "B": np.zeros((10, 4))}
+        g(**args)
+        return args["B"]
+
+    oracle = run(copy.deepcopy(sdfg))
+    assert sorted(set(np.nonzero(oracle)[0].tolist())) == [2, 5, 8]
+
+    assert NormalizeLoopsAndMaps().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, nodes.MapEntry))
+    assert str(entry.map.range) == "0:3", str(entry.map.range)
+    assert np.array_equal(run(copy.deepcopy(sdfg)), oracle)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

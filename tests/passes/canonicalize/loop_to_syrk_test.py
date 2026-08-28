@@ -178,5 +178,26 @@ def test_asymmetric_pairing_not_matched():
     assert nodes_of(sdfg, Syrk) == [] and nodes_of(sdfg, Syr2k) == []
 
 
+def test_rank_k_resolver_refuses_a_wcr_write():
+    """A WCR in-edge accumulates onto the destination; reading it as a plain def would make the
+    matcher believe the state computes the increment alone."""
+    from dace.transformation.passes.canonicalize.rank_k_match import StateValueResolver
+
+    sdfg = dace.SDFG("wcr_probe")
+    sdfg.add_array("C", [4, 4], dace.float64)
+    sdfg.add_array("A", [4, 4], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("inc", {"__a"}, {"__o"}, "__o = __a")
+    state.add_edge(state.add_read("A"), None, tasklet, "__a", dace.Memlet("A[0, 0]"))
+    state.add_edge(tasklet, "__o", state.add_write("C"), None,
+                   dace.Memlet(data="C", subset="0, 0", wcr="lambda x, y: x + y"))
+    sdfg.validate()
+
+    sink = next(n for n in state.data_nodes() if n.data == "C")
+    zero = dace.symbolic.pystr_to_symbolic("0")
+    with pytest.raises(ValueError, match="WCR"):
+        StateValueResolver(state).value_at(sink, [zero, zero])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -120,9 +120,24 @@ import copy
 from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, symbolic
+from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+
+
+def states_touch_view(states, arrays: dict) -> bool:
+    """Whether any state names a ``View``: it owns no storage, so a clone cut from its binding
+    edge is unbound, and the split refuses rather than try to carry the binding."""
+    return any(isinstance(arrays[n.data], dt.View) for st in states for n in st.data_nodes() if n.data in arrays)
+
+
+def neighbours_touch_view(state: SDFGState, node) -> bool:
+    """Whether an AccessNode adjacent to ``node`` is a ``View`` (the split rewires those edges)."""
+    arrays = state.sdfg.arrays
+    return any(
+        isinstance(arrays[n.data], dt.View) for e in state.all_edges(node) for n in (e.src, e.dst)
+        if isinstance(n, nodes.AccessNode) and n.data in arrays)
 
 
 def is_opaque_code(node, sdfg: SDFG) -> bool:
@@ -844,6 +859,8 @@ class SplitStatements(ppl.Pass):
         out_conns = list(node.out_connectors)
         if len(out_conns) < 2:
             return None
+        if states_touch_view(node.sdfg.all_states(), node.sdfg.arrays) or neighbours_touch_view(state, node):
+            return None
         # No WCR on the boundary (it would not be replicable per group).
         for e in state.out_edges(node):
             if e.data is None or e.data.wcr is not None:
@@ -893,8 +910,10 @@ class SplitStatements(ppl.Pass):
                     continue
                 state.add_edge(e.src, e.src_conn, clone, e.dst_conn, copy.deepcopy(e.data))
             for e in out_edges:
-                if e.src_conn in grp:
-                    state.add_edge(clone, e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+                # ``src_conn is None`` is an ORDERING edge, not an output: every clone inherits it.
+                if e.src_conn is not None and e.src_conn not in grp:
+                    continue
+                state.add_edge(clone, e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
             for arr in [c for c in clone_sdfg.arrays if c not in grp and c not in kept_in]:
                 desc = clone_sdfg.arrays[arr]
                 if not desc.transient:
@@ -976,6 +995,10 @@ class SplitStatements(ppl.Pass):
         if any(a in write_arrays for a in read_arrays):
             return False
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+        if any(
+                isinstance(cfg.arrays[n.data], dt.View) for n in scope.nodes()
+                if isinstance(n, nodes.AccessNode) and n.data in cfg.arrays):
+            return False
         inner = [n for n in scope.nodes() if n not in (entry, xit)]
         # A PLAIN dataflow NestedSDFG body (a dependent read-after-write the frontend wrapped, e.g.
         # ``A[i]=..; B[i]=A[i]*2``) is inlined FIRST, so the split sees flat tasklets and a shared local
@@ -1064,6 +1087,8 @@ class SplitStatements(ppl.Pass):
         # Same black-box refusal as the other two paths: the clones recompute the whole body per
         # output, which is only sound while every node's effect is exactly its out-memlets.
         if any(is_opaque_code(n, sdfg) for n in body_nodes):
+            return None
+        if states_touch_view(states, sdfg.arrays):
             return None
         # Both clones must sweep the SAME iteration space, so the trip count may not depend on
         # anything the body writes: a counting loop whose bounds are pure symbols.
@@ -1220,6 +1245,10 @@ class SplitStatements(ppl.Pass):
         if any(not isinstance(e.src, nodes.AccessNode) for e in in_edges):
             return None
         if any(not isinstance(e.dst, nodes.AccessNode) for e in out_edges):
+            return None
+        # An ORDERING edge cannot be re-homed: the clones land in CONSECUTIVE states, so a copy in
+        # a later state constrains nothing about the endpoint left behind in the first. Refuse.
+        if any(e.data is not None and e.data.is_empty() for e in in_edges + out_edges):
             return None
         parent = state.parent_graph
         clones = []

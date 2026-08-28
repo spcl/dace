@@ -262,6 +262,11 @@ class FuseChainedScalarReductions(ppl.Pass):
         return chains
 
     def _chain_is_clean(self, st: SDFGState, chain: List[_Step]) -> bool:
+        # remove_node would take a deleted chain node's ordering memlets with it.
+        for step in chain[1:]:
+            for node in (step.binop, *step.write_copies, *step.write_intermediates):
+                if any(e.data is not None and e.data.is_empty() for e in (*st.in_edges(node), *st.out_edges(node))):
+                    return False
         # Every intermediate accumulator node (written by step k, read by step k+1) must
         # have exactly one out edge (into step k+1's binop) and one in edge.
         for k in range(len(chain) - 1):

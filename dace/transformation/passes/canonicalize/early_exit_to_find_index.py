@@ -1164,9 +1164,9 @@ class EarlyExitToFindIndex(ppl.Pass):
                 cloned.add_node(cn)
                 node_map[n] = cn
             for e in src_state.edges():
-                if e.data is None or e.data.is_empty():
-                    continue
-                cloned.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, _copy.deepcopy(e.data))
+                # Empty memlets order their endpoints and hold input-less nodes in their map scope.
+                mem = mm.Memlet() if e.data is None else _copy.deepcopy(e.data)
+                cloned.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, mem)
             state_map[src_state] = cloned
         # Replicate the interstate edges that connect two cloned body states.
         for src_state in state_blocks:

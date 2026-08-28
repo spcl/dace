@@ -39,6 +39,11 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 
 
+def value_edges(edges) -> List:
+    """The edges carrying a VALUE; an empty memlet is an ordering edge and carries none."""
+    return [e for e in edges if e.data is not None and not e.data.is_empty()]
+
+
 def _const_int(value) -> Optional[int]:
     """Return ``value`` as a Python ``int`` if it is a constant integer, else ``None``.
 
@@ -366,7 +371,9 @@ class RerollUnrolledLoops(ppl.Pass):
             if not isinstance(n, nodes.AccessNode):
                 continue
             desc = state.sdfg.arrays.get(n.data)
-            if (desc is not None and not desc.transient) or state.in_degree(n) == 0 or state.out_degree(n) == 0:
+            # Value edges only: an ordering memlet is no producer, so it makes no lane boundary.
+            if (desc is not None and
+                    not desc.transient) or not value_edges(state.in_edges(n)) or not value_edges(state.out_edges(n)):
                 shared[n] = None
         return shared
 
@@ -377,6 +384,8 @@ class RerollUnrolledLoops(ppl.Pass):
         :param lane_edges: The boundary edges (in this state) belonging to the lane.
         :param shared: Access nodes shared across lanes (excluded from the walk).
         :returns: The set of internal nodes that belong only to this lane.
+
+        Walks VALUE edges only -- an ordering memlet fixes order, never lane membership.
         """
         seen: Dict = {}
         frontier = []
@@ -389,10 +398,10 @@ class RerollUnrolledLoops(ppl.Pass):
             if n in seen:
                 continue
             seen[n] = None
-            for e in state.in_edges(n):
+            for e in value_edges(state.in_edges(n)):
                 if e.src not in shared:
                     frontier.append(e.src)
-            for e in state.out_edges(n):
+            for e in value_edges(state.out_edges(n)):
                 if e.dst not in shared:
                     frontier.append(e.dst)
         return seen

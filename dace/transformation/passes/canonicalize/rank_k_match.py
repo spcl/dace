@@ -102,6 +102,8 @@ class StateValueResolver:
         if len(producers) != 1:
             raise ValueError(f"rank-k resolve: {node.data} has {len(producers)} producers")
         edge = producers[0]
+        if edge.data.wcr is not None:
+            raise ValueError(f"rank-k resolve: WCR write into {node.data}")  # accumulate, not a def
         if isinstance(edge.src, nodes.MapExit):
             return self.through_map_exit(edge.src, edge.src_conn, index, depth)
         if isinstance(edge.src, nodes.Tasklet):

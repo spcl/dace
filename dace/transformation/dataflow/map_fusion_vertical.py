@@ -602,12 +602,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  in case we never consolidated, i.e., all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
-            # Propagation re-derives a copy-out edge's WCR from its IN edge, which would turn a
-            #  seeded reduction's completed result into a live accumulate. Keep those edges plain.
-            plain_copy_outs = [e for e in graph.out_edges(second_map_exit) if e.data is not None and e.data.wcr is None]
             propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
-            for edge in plain_copy_outs:
-                edge.data.wcr = None
 
     def partition_first_outputs(
         self,
@@ -899,6 +894,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  layout of the intermediate can be handled.
                     for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
                         final_consumer = final_consumer_edge.dst
+                        # As on the producer side: shrinking the intermediate under a View
+                        # leaves it addressing more elements than the container holds.
+                        if isinstance(final_consumer, nodes.AccessNode) and self.is_view(final_consumer, sdfg):
+                            return None
                         if isinstance(final_consumer, nodes.NestedSDFG):
                             if not self._check_if_nested_sdfg_can_be_handled(
                                     state=state,
@@ -1541,10 +1540,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return True
                 resolved_names.add(tracked.data)
             resolved_sets.append(resolved_names)
-            # If the resolved and unresolved names do not have the same length.
-            #  Then different views point to the same location, which we forbid
+            # Different views onto one location: forbid. This reports a HAZARD, so `True`.
             if len(unresolved_set) != len(resolved_sets[-1]):
-                return False
+                return True
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second Map each write to the same data.

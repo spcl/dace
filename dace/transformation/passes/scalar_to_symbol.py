@@ -155,6 +155,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             if candidate not in candidates:
                 continue
 
+            # A View bound to this candidate loses its binding: promotion rebuilds the edge from
+            # the assignment tasklet. The filter above only refuses candidates that ARE views.
+            if (any(e.dst_conn == 'views' for e in state.out_edges(node))
+                    or any(e.src_conn == 'views' for e in state.in_edges(node))):
+                candidates.remove(candidate)
+                continue
+
             # If candidate is read by a library node, or feeds a write-conflict resolution, skip
             removed = False
             for oe in state.out_edges(node):
@@ -214,8 +221,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 continue
             edge = state.in_edges(node)[0]
 
-            # Edge must not be empty
+            # Edge must not be empty. An ordering edge defines no value, so this node is not a
+            # writer -- and a bare ``continue`` kept the candidate while skipping every remaining
+            # rejection below, leaving a scalar that nothing assigns. Promotion then strips the
+            # descriptor and Step 2 fissions out whatever the ordering edge came from and deletes
+            # it: silent wrong numbers, on a graph that still validates. Refusing the candidate is
+            # conservative -- a scalar with a real write elsewhere loses its promotion too -- but
+            # this pass has no way to tell the two apart from one node.
             if edge.data.is_empty():
+                candidates.remove(candidate)
                 continue
 
             # Edge must not be WCR

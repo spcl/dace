@@ -945,8 +945,10 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: Optional[nodes.AccessN
         return 0.0
     # Scoped to THIS sdfg so a same-named array in an unrelated nested SDFG cannot
     # false-positive a prior writer.
-    has_prior_writer = any(n.data == array and st.in_degree(n) > 0 and n is not write_node for st in sdfg.states()
-                           for n in st.data_nodes())
+    # Only a non-empty in-edge is a write: an ordering memlet transfers nothing.
+    has_prior_writer = any(n.data == array and n is not write_node and any(e.data is not None and not e.data.is_empty()
+                                                                           for e in st.in_edges(n))
+                           for st in sdfg.states() for n in st.data_nodes())
     return 1.0 if (has_prior_writer or not sdfg.arrays[array].transient) else 0.0
 
 
@@ -970,6 +972,13 @@ def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Tr
         return None
     full = lambda desc: subsets.Range([(0, s - 1, 1) for s in desc.shape])
     return TransposeSpec(src, dst, sdesc.dtype, full(sdesc), full(ddesc))
+
+
+def _scope_boundary_is_ordered(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether an empty memlet crosses the scope boundary -- deleting the scope would lose it."""
+    exit_node = state.exit_node(entry)
+    return (any(e.data.is_empty() for e in state.in_edges(entry))
+            or any(e.data.is_empty() for e in state.out_edges(exit_node)))
 
 
 def _may_hold_map_contraction(state: SDFGState) -> bool:
@@ -1074,6 +1083,8 @@ class LoopToEinsum(ppl.Pass):
         for state, entry, root in candidates:
             if entry not in state.nodes():
                 continue  # swallowed by an earlier lift in the same state (defensive)
+            if _scope_boundary_is_ordered(state, entry):
+                continue  # an ordering memlet would be dropped with the scope; refuse
             spec = _match_nest(_nest_of_map(state, entry), root)
             if not isinstance(spec, EinsumSpec):
                 continue  # map-form transposes stay maps: no loop scaffold to remove

@@ -288,6 +288,39 @@ def test_targeted_helper_refuses_non_wcr_edge():
     assert set(sdfg.arrays.keys()) == arrays_before
 
 
+def test_ordering_memlet_is_not_an_in_state_init():
+    """An empty memlet into a second accumulator AccessNode writes nothing, so it must not be
+    mistaken for an in-state ``acc = 0``: that drops the incoming seed."""
+    n = 16
+    sdfg = dace.SDFG("priv_ordering")
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("dot", [1], dace.float64)
+    sdfg.add_array("z", [1], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i=f"0:{n}"))
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_dot")
+    mx.add_out_connector("OUT_dot")
+    tasklet = state.add_tasklet("acc", {"__a"}, {"__o"}, "__o = __a")
+    state.add_edge(state.add_read("a"), None, me, "IN_a", dace.Memlet(f"a[0:{n}]"))
+    state.add_edge(me, "OUT_a", tasklet, "__a", dace.Memlet("a[i]"))
+    wcr = "lambda x, y: x + y"
+    state.add_edge(tasklet, "__o", mx, "IN_dot", dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(mx, "OUT_dot", state.add_write("dot"), None, dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(state.add_read("z"), None, state.add_access("dot"), None, dace.Memlet())
+    sdfg.validate()
+
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(5)
+    a = rng.random(n)
+    dot = np.array([7.0])
+    sdfg(a=a, dot=dot, z=np.zeros(1))
+    assert np.allclose(dot[0], 7.0 + a.sum()), f"seed dropped: got {dot[0]}, want {7.0 + a.sum()}"
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()

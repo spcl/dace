@@ -308,6 +308,43 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 ##############################################################################
 
 
+def nested_connectors_may_alias(sdfg: SDFG, first: str, second: str) -> bool:
+    """Whether two names of a NESTED SDFG can be two pointers into one outer array.
+
+    Distinct non-transient descriptors are distinct storages at the top level, but inside a nested
+    SDFG they are connectors, and two connectors may address overlapping parts of one container.
+
+    :param sdfg: The SDFG holding both names.
+    :param first: First container name.
+    :param second: Second container name.
+    :returns: ``True`` when the two may alias.
+    """
+    nsdfg_node = sdfg.parent_nsdfg_node
+    if nsdfg_node is None or first == second:
+        return False
+    if sdfg.arrays[first].transient or sdfg.arrays[second].transient:
+        return False
+    outer = sdfg.parent
+    if outer is None:
+        return True  # cannot inspect the call site: assume the worst
+
+    outer_memlets: Dict[str, List[mm.Memlet]] = {}
+    for edge in outer.in_edges(nsdfg_node):
+        if edge.dst_conn in (first, second) and edge.data.data is not None:
+            outer_memlets.setdefault(edge.dst_conn, []).append(edge.data)
+    for edge in outer.out_edges(nsdfg_node):
+        if edge.src_conn in (first, second) and edge.data.data is not None:
+            outer_memlets.setdefault(edge.src_conn, []).append(edge.data)
+    if first not in outer_memlets or second not in outer_memlets:
+        return True
+
+    for one in outer_memlets[first]:
+        for other in outer_memlets[second]:
+            if one.data == other.data and subsets.intersects(one.subset, other.subset) is not False:
+                return True
+    return False
+
+
 class RedundantArray(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
@@ -338,6 +375,13 @@ class RedundantArray(pm.SingleStateTransformation):
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
+
+        # Removing in_array joins its predecessors straight to out_array; two connectors of a
+        # nested SDFG may be two pointers into one outer array.
+        for pred in graph.in_edges(in_array):
+            if isinstance(pred.src, nodes.AccessNode) and nested_connectors_may_alias(
+                    sdfg, pred.src.data, out_array.data):
+                return False
 
         # Skip structure views
         if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
@@ -452,6 +496,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 for a in accesses:
                     subsets_intersect = False
                     for e in graph.out_edges(a):
+                        if e.data.is_empty():  # ordering edge, carries no subset to race with
+                            continue
                         try:
                             subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
                         except (NotImplementedError, ValueError) as ex:
@@ -547,6 +593,11 @@ class RedundantArray(pm.SingleStateTransformation):
 
         # 2. Iterate over the e2 edges
         for e2 in graph.in_edges(in_array):
+            # An ordering edge carries no subset to cover: it constrains order, not data, and the
+            # state-level order the fold preserves already subsumes it. Left unfiltered it reaches
+            # ``_validate_subsets``, which raises, and the fold is refused with a warning.
+            if e2.data.is_empty():
+                continue
             # 2-a. Extract/validate subsets for array A and others
             try:
                 _, a2_subset = _validate_subsets(e2, sdfg.arrays)
@@ -761,6 +812,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 wcr = e1.data.wcr
                 wcr_nonatomic = e1.data.wcr_nonatomic
                 for e3 in path:
+                    if e3.data.is_empty():
+                        continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                     # 2-a. Extract subsets for array B and others
                     other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                     # 2-b. Modify memlet to match array B.
@@ -784,6 +837,8 @@ class RedundantArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
@@ -874,6 +929,12 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
             return False
+
+        # Mirror of RedundantArray: removing out_array joins in_array to its successors.
+        for succ in graph.out_edges(out_array):
+            if isinstance(succ.dst, nodes.AccessNode) and nested_connectors_may_alias(
+                    sdfg, in_array.data, succ.dst.data):
+                return False
 
         # Skip structure views
         if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
@@ -983,6 +1044,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     for a in accesses:
                         subsets_intersect = False
                         for e in graph.in_edges(a):
+                            if e.data.is_empty():  # ordering edge, carries no subset to race with
+                                continue
                             try:
                                 _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
                             except (NotImplementedError, ValueError) as ex:
@@ -1069,6 +1132,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # 2. Iterate over the e2 edges
         for e2 in graph.out_edges(out_array):
+            if e2.data.is_empty():  # ordering edge: no subset to cover (see RedundantArray)
+                continue
             # 2-a. Extract/validate subsets for array B and others
             try:
                 b2_subset, _ = _validate_subsets(e2, sdfg.arrays)
@@ -1219,6 +1284,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 if not path.downwards and e3.src is not out_array:
                     # Says nothing about out_array (can_be_applied refuses otherwise), so redirecting
                     # the innermost edge to A leaves it correct as it stands.
@@ -1449,8 +1516,9 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         # Modify data and subset on all outgoing edges
         for e in state.memlet_tree(vedge):
             e.data.data = out_array.data
-            # Offset subset, then unsqueeze
-            e.data.subset.offset(aedge.data.subset, False)
+            # Only the SQUEEZED subset is rank-aligned with view space; the full one pairs
+            # view dim 0 with array dim 0 (``A[k, 0:N]`` became ``A[k, k:k+N]``).
+            e.data.subset.offset(array_subset, False)
             e.data.subset.unsqueeze(asqdims_mirror)
             for i in asqdims_mirror:
                 e.data.subset.ranges[i] = aedge.data.subset.ranges[i]
@@ -1603,6 +1671,8 @@ class RedundantReadSlice(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 # Extract subsets for view V and others
                 v3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # Modify memlet to match array A. Example:
@@ -1753,6 +1823,8 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 # Extract subsets for view V and others
                 other_subset, v3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # Modify memlet to match array A.
@@ -1859,6 +1931,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if sdutil.map_view_to_array(desc, vdesc, subset) is None:
             return False
 
+        # Ordering edges on the untouched side are re-attached to whatever replaces the view;
+        # with no data edge there is nothing to attach them to.
+        ordering = state.in_edges(self.view) if is_src else state.out_edges(self.view)
+        if any(e.data.is_empty() for e in ordering) and not non_view_edges:
+            return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -1888,6 +1966,13 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = subsets.Range.from_array(viewed.desc(sdfg))
 
         mapping, unsqueezed, squeezed = sdutil.map_view_to_array(desc, viewed.desc(sdfg), subset)
+
+        # The rewiring below only touches one side of the view, so an ordering edge on the other
+        # side would die with the node; it is re-attached to what takes the view's place.
+        replacements = [e.dst for e in non_view_edges] if is_src else [e.src for e in non_view_edges]
+        ordering_edges = [
+            e for e in (state.in_edges(self.view) if is_src else state.out_edges(self.view)) if e.data.is_empty()
+        ]
 
         # Update edges
         for edge in non_view_edges:
@@ -1929,21 +2014,30 @@ class RemoveSliceView(pm.SingleStateTransformation):
             else:
                 state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
 
+        for edge in ordering_edges:
+            for replacement in replacements:
+                if is_src:
+                    state.add_edge(edge.src, None, replacement, None, mm.Memlet())
+                else:
+                    state.add_edge(replacement, None, edge.dst, None, mm.Memlet())
+
         # Remove view node
         state.remove_node(self.view)
 
     def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
-        # Get offset and size from the space of the view to compose
-        old_subset = edge_subset.min_element()
-        old_size = edge_subset.size()
+        """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
 
-        # Create a new subset in the space of the data container from the offsets and sizes
+        Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the edge
+        subset's own STEP and re-derives the end as ``offset + size - 1``, which turns a strided
+        window into a contiguous one of the same element count: dwt2d's ``b[:, 0:2*h:2]`` folded
+        into ``out[:, 0:h]``, reading the first half of every row instead of its even columns. It
+        also dropped ``rs`` from the offset, so a strided view of a strided view was wrong twice.
+        """
         new_subset: List[Tuple[int, int, int]] = subset.ndrange()
         for vdim, adim in mapping.items():
             rb, re, rs = new_subset[adim]
-            rb += old_subset[vdim]
-            re = rb + old_size[vdim] - 1
-            new_subset[adim] = (rb, re, rs)
+            vb, ve, vs = edge_subset.ranges[vdim]
+            new_subset[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
 
         return subsets.Range(new_subset)
 

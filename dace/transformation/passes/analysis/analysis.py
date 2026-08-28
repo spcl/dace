@@ -308,20 +308,22 @@ class AccessSets(ppl.Pass):
                 readset, writeset = OrderedSet(), OrderedSet()
                 if isinstance(block, SDFGState):
                     for anode in block.data_nodes():
-                        if block.in_degree(anode) > 0:
+                        # Ordering edges transfer nothing: neither read nor written. Must match
+                        # ``FindAccessNodes`` -- ``MarkConstInit`` bails on a disagreement.
+                        if any(not e.data.is_empty() for e in block.in_edges(anode)):
                             writeset.add(anode.data)
                             if has_wcr_in_edge(block, anode):
                                 readset.add(anode.data)
-                        if block.out_degree(anode) > 0:
+                        if any(not e.data.is_empty() for e in block.out_edges(anode)):
                             readset.add(anode.data)
                 elif isinstance(block, AbstractControlFlowRegion):
                     for state in block.all_states():
                         for anode in state.data_nodes():
-                            if state.in_degree(anode) > 0:
+                            if any(not e.data.is_empty() for e in state.in_edges(anode)):
                                 writeset.add(anode.data)
                                 if has_wcr_in_edge(state, anode):
                                     readset.add(anode.data)
-                            if state.out_degree(anode) > 0:
+                            if any(not e.data.is_empty() for e in state.out_edges(anode)):
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
                         readset |= self._get_loop_region_readset(block, arrays)
@@ -503,9 +505,12 @@ class FindAccessNodes(ppl.Pass):
                                        lambda: defaultdict(lambda: [OrderedSet(), OrderedSet()]))
             for state in sdfg.states():
                 for anode in state.data_nodes():
-                    if state.in_degree(anode) > 0:
+                    # Ordering edges transfer nothing: a node reached only by them is neither read
+                    # nor written. By raw degree it read as a WRITE and ``ScalarFission`` renamed it
+                    # twice, versioning a read onto a container nothing writes.
+                    if any(not e.data.is_empty() for e in state.in_edges(anode)):
                         result[anode.data][state][1].add(anode)
-                    if state.out_degree(anode) > 0:
+                    if any(not e.data.is_empty() for e in state.out_edges(anode)):
                         result[anode.data][state][0].add(anode)
             top_result[sdfg.cfg_id] = result
         return top_result

@@ -132,7 +132,8 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
             continue
         if n is arr_node or n.data != arr_node.data:
             continue
-        if state.in_degree(n) == 0:
+        # Only a non-empty in-edge is a write: an ordering memlet initialises nothing.
+        if not any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n)):
             continue
         # Reject the AN if any inbound edge is itself a WCR write (then it's a
         # different reduction target, not an init).

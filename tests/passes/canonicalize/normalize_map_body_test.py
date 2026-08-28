@@ -226,5 +226,151 @@ def test_merge_siblings_preserves_deep_nested_state_backpointers():
     assert np.allclose(b, a + 1.0) and np.allclose(c, a * 2.0)
 
 
+def _scalar_body(name: str, in_conn: str, out_conn: str, code: str) -> dace.SDFG:
+    """A one-state nested SDFG computing ``out_conn = f(in_conn)`` on scalars."""
+    inner = dace.SDFG(name)
+    inner.add_array(in_conn, [1], dace.float64)
+    inner.add_array(out_conn, [1], dace.float64)
+    st = inner.add_state('body', is_start_block=True)
+    t = st.add_tasklet('t', {'i'}, {'o'}, code)
+    st.add_edge(st.add_read(in_conn), None, t, 'i', dace.Memlet(f'{in_conn}[0]'))
+    st.add_edge(t, 'o', st.add_write(out_conn), None, dace.Memlet(f'{out_conn}[0]'))
+    return inner
+
+
+def _producer_consumer_siblings() -> dace.SDFG:
+    """A map body of two nested SDFGs wired producer -> carrier -> consumer.
+
+    The shape ``MapFusion`` leaves behind when the computations it co-locates are data-dependent.
+    Merging them makes the carrier both a predecessor and a successor of the single surviving
+    node, which no state can express.
+    """
+    sdfg = dace.SDFG('sibling_carrier')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('c', [N], dace.float64)
+    sdfg.add_scalar('carrier', dace.float64, transient=True)
+
+    state = sdfg.add_state('main', is_start_block=True)
+    me, mx = state.add_map('m', dict(i='0:N'))
+    producer = state.add_nested_sdfg(_scalar_body('produce', 'x', 'y', 'o = i + 1.0'), {'x'}, {'y'})
+    consumer = state.add_nested_sdfg(_scalar_body('consume', 'y', 'z', 'o = i * 2.0'), {'y'}, {'z'})
+    carrier = state.add_access('carrier')
+
+    state.add_memlet_path(state.add_read('a'), me, producer, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_edge(producer, 'y', carrier, None, dace.Memlet('carrier[0]'))
+    state.add_edge(carrier, None, consumer, 'y', dace.Memlet('carrier[0]'))
+    state.add_memlet_path(consumer, mx, state.add_write('c'), src_conn='z', memlet=dace.Memlet('c[i]'))
+    return sdfg
+
+
+def test_data_dependent_siblings_merge_without_a_cycle():
+    """The carrier's dependence must move INSIDE the merged nested SDFG.
+
+    Re-adding the consumer's boundary edge after the merge points the carrier node at the very
+    node that produces it -- ``State should be acyclic but contains cycles``. ``_append_cfg``
+    already sequences the two bodies, so binding them to one inner array carries the value across
+    that ordering edge instead.
+    """
+    sdfg = _producer_consumer_siblings()
+    sdfg.validate()
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
+    sdfg.validate()
+    state = sdfg.states()[0]
+    nested = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nested) == 1, f'the map body must be a single nested SDFG, got {len(nested)}'
+    merged = nested[0]
+    assert not (set(state.predecessors(merged)) & set(state.successors(merged))), (
+        'a node may not both produce and consume the same access node')
+    assert not [n for n in state.data_nodes() if n.data == 'carrier'
+                ], ('the carrier is produced and consumed inside the merged nested SDFG: its outer node is dead')
+    me = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)][0]
+    assert merged in state.all_nodes_between(
+        me,
+        state.exit_node(me)), ('a sink the map exit cannot reach makes the whole body invisible to all_nodes_between')
+
+    n = 16
+    rng = np.random.default_rng(0)
+    a = rng.random(n)
+    c = np.zeros(n)
+    sdfg(a=a, c=c, N=n)
+    assert np.allclose(c, (a + 1.0) * 2.0), f'got {c[:3]}'
+
+
+def _inner_read_write() -> dace.SDFG:
+    """Sibling body ``b = a + 1``."""
+    inner = dace.SDFG('inner_rw')
+    inner.add_array('a', [1], dace.float64)
+    inner.add_array('b', [1], dace.float64)
+    st = inner.add_state()
+    tasklet = st.add_tasklet('add', {'__i'}, {'__o'}, '__o = __i + 1.0')
+    st.add_edge(st.add_read('a'), None, tasklet, '__i', dace.Memlet('a[0]'))
+    st.add_edge(tasklet, '__o', st.add_write('b'), None, dace.Memlet('b[0]'))
+    return inner
+
+
+def _inner_const_write() -> dace.SDFG:
+    """Sibling body ``c = 7``, no in-connectors."""
+    inner = dace.SDFG('inner_const')
+    inner.add_array('c', [1], dace.float64)
+    st = inner.add_state()
+    tasklet = st.add_tasklet('const', {}, {'__o'}, '__o = 7.0')
+    st.add_edge(tasklet, '__o', st.add_write('c'), None, dace.Memlet('c[0]'))
+    return inner
+
+
+def _sibling_nsdfgs_with_ordering_edge(n: int) -> dace.SDFG:
+    """``map i: { nsdfg(b=a+1) ; nsdfg(c=7) }``; the reader-less sibling is held by an empty memlet."""
+    sdfg = dace.SDFG('ordering_edge_siblings')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [n], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i=f'0:{n}'))
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    for conn in ('B', 'C'):
+        mx.add_in_connector(f'IN_{conn}')
+        mx.add_out_connector(f'OUT_{conn}')
+
+    first = state.add_nested_sdfg(_inner_read_write(), {'a'}, {'b'})
+    second = state.add_nested_sdfg(_inner_const_write(), {}, {'c'})
+
+    state.add_edge(state.add_read('A'), None, me, 'IN_A', dace.Memlet(f'A[0:{n}]'))
+    state.add_edge(me, 'OUT_A', first, 'a', dace.Memlet('A[i]'))
+    state.add_edge(first, 'b', mx, 'IN_B', dace.Memlet('B[i]'))
+    state.add_edge(mx, 'OUT_B', state.add_write('B'), None, dace.Memlet(f'B[0:{n}]'))
+    state.add_edge(me, None, second, None, dace.Memlet())
+    state.add_edge(second, 'c', mx, 'IN_C', dace.Memlet('C[i]'))
+    state.add_edge(mx, 'OUT_C', state.add_write('C'), None, dace.Memlet(f'C[0:{n}]'))
+    return sdfg
+
+
+def test_ordering_memlet_into_sibling_keeps_no_connector():
+    """An ordering (empty) memlet into the dropped sibling must move over WITHOUT a connector."""
+    n = 8
+    sdfg = _sibling_nsdfgs_with_ordering_edge(n)
+    sdfg.validate()
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
+
+    state = sdfg.states()[0]
+    nested = [nd for nd in state.nodes() if isinstance(nd, nodes.NestedSDFG)]
+    assert len(nested) == 1, f'the map body must be a single nested SDFG, got {len(nested)}'
+    merged = nested[0]
+    assert None not in merged.in_connectors, f'ordering memlet became a connector: {merged.in_connectors}'
+    assert None not in merged.out_connectors, f'ordering memlet became a connector: {merged.out_connectors}'
+    me = [nd for nd in state.nodes() if isinstance(nd, nodes.MapEntry)][0]
+    assert any(e.data.is_empty() for e in state.edges_between(me, merged)), (
+        'the happens-before edge that held the reader-less sibling in the scope was dropped')
+    sdfg.validate()
+
+    a = np.arange(n, dtype=np.float64)
+    b = np.zeros(n)
+    c = np.zeros(n)
+    sdfg(A=a, B=b, C=c)
+    assert np.allclose(b, a + 1.0), f'got {b}'
+    assert np.allclose(c, 7.0), f'got {c}'
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

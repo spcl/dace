@@ -1234,6 +1234,36 @@ def test_border_access_node_copied_into_map():
     assert np.allclose(bval[1:], expected_b[1:])
 
 
+N_ORD, M_ORD = dace.symbol('N_ORD'), dace.symbol('M_ORD')
+
+
+@dace.program
+def accumulate_then_two_readers(A: dace.float64[N_ORD, M_ORD], B: dace.float64[N_ORD], C: dace.float64[N_ORD]):
+    for i in dace.map[0:N_ORD]:
+        s = 0.0
+        for j in dace.map[0:M_ORD]:
+            s += A[i, j]
+        B[i] = s * 2.0
+        C[i] = s + 1.0
+
+
+def test_ordering_edge_is_not_an_exit_boundary_write():
+    """The frontend leaves a happens-before edge from the accumulator init into the map's INPUT
+       connector node. Counted as a boundary edge it reads as a write leaving the nested SDFG, and
+       the matching outer out-edge does not exist."""
+    sdfg = accumulate_then_two_readers.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(MapFission) == 1
+    sdfg.validate()
+
+    n, m = 6, 4
+    A = np.arange(n * m, dtype=np.float64).reshape(n, m).copy()
+    B = np.zeros(n)
+    C = np.zeros(n)
+    sdfg(A=A, B=B, C=C, N_ORD=n, M_ORD=m)
+    assert np.allclose(B, A.sum(axis=1) * 2.0)
+    assert np.allclose(C, A.sum(axis=1) + 1.0)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -1270,3 +1300,4 @@ if __name__ == '__main__':
     test_nested_loop_iterator_is_not_mapped_at_the_parent()
     test_border_access_node_read_inside_and_copied_out()
     test_border_access_node_copied_into_map()
+    test_ordering_edge_is_not_an_exit_boundary_write()

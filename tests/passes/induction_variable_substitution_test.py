@@ -661,6 +661,33 @@ def test_array_load_not_inlined_as_iv_handbuilt():
         "the interstate load 'idx := A[jl, jm]' must survive -- it is not an IV"
 
 
+def test_a_wcr_accumulator_is_not_an_induction_variable():
+    """A WCR store is `acc = wcr(acc, rhs)`; closing it as `acc = rhs` drops the accumulation."""
+    import copy
+
+    n = 4
+    sdfg = dace.SDFG("ivs_wcr")
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+    loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    st = loop.add_state("body", is_start_block=True)
+    t = st.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in * 0.99")
+    st.add_edge(st.add_access("acc"), None, t, "__in", dace.Memlet("acc[0]"))
+    st.add_edge(t, "__out", st.add_access("acc"), None, dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
+    sdfg.add_node(loop, is_start_block=True)
+    sdfg.validate()
+
+    ref = np.array([1.0])
+    copy.deepcopy(sdfg)(acc=ref)
+    assert np.isclose(ref[0], 1.99**n), ref  # acc = wcr(acc, acc*0.99) = acc * 1.99
+
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None
+    assert [type(b).__name__ for b in sdfg.nodes()] == ["LoopRegion"]
+    got = np.array([1.0])
+    sdfg(acc=got)
+    assert np.isclose(got[0], ref[0]), (got, ref)
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()

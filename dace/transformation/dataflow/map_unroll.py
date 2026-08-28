@@ -43,10 +43,11 @@ class MapUnroll(transformation.SingleStateTransformation):
 
         subgraph = sdutil.weakly_connected_component(state, map_entry)
 
-        # Check for local memories that need to be replicated
+        # Local memories to replicate. Views included: one binding is emitted per allocation
+        # scope, so copies sharing a descriptor all read the same row.
         local_memories = [
             name for name in sdutil.local_transients(sdfg, subgraph, entry_node=map_entry, include_nested=True)
-            if not isinstance(sdfg.arrays[name], dt.Stream) and not isinstance(sdfg.arrays[name], dt.View)
+            if not isinstance(sdfg.arrays[name], dt.Stream)
         ]
 
         ranges = map_entry.map.range.ranges

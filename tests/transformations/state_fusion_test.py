@@ -580,6 +580,30 @@ def test_state_fusion_pins_the_region_entry_the_region_cannot_derive():
     assert sdfg.start_block is worker
 
 
+def test_war_behind_an_ordering_edge():
+    """A read node carrying an ordering in-edge is still a read: the WAR must block fusion."""
+    sdfg = dace.SDFG('war_ordering')
+    for name in ('A', 'B', 'P'):
+        sdfg.add_array(name, [4], dace.float64)
+    sdfg.add_transient('C', [1], dace.float64)
+
+    s1 = sdfg.add_state()
+    s1.add_edge(s1.add_tasklet('tP', {}, {'o': None}, 'o = 7.0'), 'o', s1.add_access('P'), None, dace.Memlet('P[0]'))
+    cnode = s1.add_access('C')
+    s1.add_edge(s1.add_tasklet('tZ', {}, {'o': None}, 'o = 0.0'), 'o', cnode, None, dace.Memlet('C[0]'))
+    anode = s1.add_access('A')
+    s1.add_edge(cnode, None, anode, None, dace.Memlet())
+    s1.add_nedge(anode, s1.add_access('B'), dace.Memlet('A[0:4] -> [0:4]'))
+
+    s2 = sdfg.add_state_after(s1)
+    t2 = s2.add_tasklet('t2', {'p': None}, {'a': None}, 'a = 100.0 + p')
+    s2.add_edge(s2.add_access('P'), None, t2, 'p', dace.Memlet('P[0]'))
+    s2.add_edge(t2, 'a', s2.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
+
+
 if __name__ == "__main__":
     test_state_fusion_leaves_a_derivable_region_entry_implicit()
     test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
@@ -601,3 +625,4 @@ if __name__ == "__main__":
     test_inout_second_state_2()
     test_check_paths()
     test_side_effect_free_single_cc_fuses()
+    test_war_behind_an_ordering_edge()

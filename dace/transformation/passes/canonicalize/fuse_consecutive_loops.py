@@ -242,11 +242,15 @@ class FuseConsecutiveLoops(ppl.Pass):
     def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: dict) -> Tuple:
         """An iterator- and scratch-name-independent structural signature of a
         body state: its sorted node keys and its sorted edge descriptors
-        (endpoints, connectors, memlet data/subset/wcr)."""
+        (endpoints, connectors, memlet data / both subsets / wcr)."""
         node_sig = sorted(_node_key(n, loop_var, local_scratch) for n in state.nodes())
         edge_sig = []
         for e in state.edges():
             subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ''
+            # A copy memlet indexes its DESTINATION in ``other_subset``; two bodies differing only
+            # there are two different statements, and the loser's body is deleted by ``_merge``.
+            other = _normalize(str(e.data.other_subset), loop_var) if (e.data
+                                                                       and e.data.other_subset is not None) else ''
             data_name = _canon_data(e.data.data, local_scratch) if (e.data is not None and e.data.data) else ''
             wcr = str(e.data.wcr) if e.data is not None else ''
             # Connectors are the only raw fields here, and a memlet-path edge carries None while a
@@ -254,7 +258,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             # None-vs-str comparison in the sort below, so spell an absent connector like the rest.
             src_key = _node_key(e.src, loop_var, local_scratch)
             dst_key = _node_key(e.dst, loop_var, local_scratch)
-            edge_sig.append((src_key, e.src_conn or '', dst_key, e.dst_conn or '', data_name, subset, wcr))
+            edge_sig.append((src_key, e.src_conn or '', dst_key, e.dst_conn or '', data_name, subset, other, wcr))
         return (tuple(node_sig), tuple(sorted(edge_sig)))
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link) -> None:

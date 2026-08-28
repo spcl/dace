@@ -124,17 +124,14 @@ class ScalarFission(ppl.Pass):
             for write, shadowed_reads in write_scope_dict.items():
                 if write is not None and len(shadowed_reads) > 0:
                     newdesc = desc.clone()
+                    # Versions already minted count too: a node can be renamed twice in one pass.
+                    aliases = {name} | set(results[name])
                     newname = sdfg.add_datadesc(name, newdesc, find_new_name=True)
 
                     # Replace the write and any connected memlets with writes to the new data container.
                     write_node = write[1]
                     write_node.data = newname
-                    for iedge in write[0].in_edges(write_node):
-                        if iedge.data.data == name:
-                            self._rename_memlet_path(write[0], iedge, name, newname, write_node)
-                    for oeade in write[0].out_edges(write_node):
-                        if oeade.data.data == name:
-                            self._rename_memlet_path(write[0], oeade, name, newname, write_node)
+                    self.rename_node_memlets(write[0], write_node, aliases, newname)
 
                     # Replace all dominated reads and connected memlets.
                     affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
@@ -142,12 +139,7 @@ class ScalarFission(ppl.Pass):
                         if isinstance(read[1], nd.AccessNode):
                             read_node = read[1]
                             read_node.data = newname
-                            for iedge in read[0].in_edges(read_node):
-                                if iedge.data.data == name:
-                                    self._rename_memlet_path(read[0], iedge, name, newname, read_node)
-                            for oeade in read[0].out_edges(read_node):
-                                if oeade.data.data == name:
-                                    self._rename_memlet_path(read[0], oeade, name, newname, read_node)
+                            self.rename_node_memlets(read[0], read_node, aliases, newname)
                             if isinstance(read[0], SDFGState):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
@@ -221,6 +213,21 @@ class ScalarFission(ppl.Pass):
                     }
                     carried |= in_arrays & out_arrays
         return carried
+
+    def rename_node_memlets(self, state: SDFGState, node: nd.AccessNode, aliases: Set[str], new: str) -> None:
+        """Point every memlet on ``node``'s edges that still names one of ``aliases`` at ``new``.
+
+        A node renamed twice in one pass no longer names the ORIGINAL container, so a guard on that
+        name alone leaves an edge whose memlet names neither endpoint.
+
+        :param state: The state holding ``node``.
+        :param node: The access node whose ``data`` was just set to ``new``.
+        :param aliases: The original container name plus every version already minted for it.
+        :param new: The container name to rename onto.
+        """
+        for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
+            if edge.data.data in aliases:
+                self._rename_memlet_path(state, edge, edge.data.data, new, node)
 
     @staticmethod
     def _rename_memlet_path(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:

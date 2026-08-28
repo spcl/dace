@@ -349,6 +349,10 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
         return None
     (in_edge, ) = in_edges
     (write_edge, ) = out_edges
+    # A WCR store is ``acc = wcr(acc, rhs)``, not ``acc = rhs``, so it is not the recurrence the
+    # closed form below solves.
+    if in_edge.data.wcr is not None or write_edge.data.wcr is not None:
+        return None
     if in_edge.dst_conn != var_conn:
         return None
     if not isinstance(write_edge.dst, nodes.AccessNode):
@@ -520,6 +524,8 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
     if [n for n in versions if written_by(n)] != [post_node]:
         return None  # a second write to the slot -> the value a read sees is no longer this recurrence
     (write_in, ) = written_by(post_node)
+    if write_in.data.wcr is not None:  # an accumulation into the slot, not this recurrence's store
+        return None
     written = write_in.data.subset if write_in.data.data == iv.accum else write_in.data.dst_subset
     if written is None or str(written) != iv.subset:
         return None

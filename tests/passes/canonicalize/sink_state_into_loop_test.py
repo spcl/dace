@@ -119,5 +119,103 @@ def test_a_possibly_empty_loop_does_not_swallow_the_state():
     assert _top_level(sdfg) == ["LoopRegion", "SDFGState", "LoopRegion"]
 
 
+def _build_middle_reads_what_it_writes() -> dace.SDFG:
+    """`loop1{A[i]+=1}` ; `middle{X[0] = X[0] + 1}` ; `loop2{A[i]*=2}`.
+
+    The middle state is a plain (non-WCR) read-modify-write of `X`, so replica k consumes replica
+    k-1's output and sinking it turns `X[0] + 1` into `X[0] + N`.
+    """
+    sdfg = dace.SDFG("sink_state_rmw")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+
+    first = _loop("loop1", start="0")
+    b1 = first.add_state("b1", is_start_block=True)
+    t1 = b1.add_tasklet("t1", {"a"}, {"o"}, "o = a + 1.0")
+    b1.add_edge(b1.add_access("A"), None, t1, "a", dace.Memlet("A[i]"))
+    b1.add_edge(t1, "o", b1.add_access("A"), None, dace.Memlet("A[i]"))
+
+    sdfg.add_node(first, is_start_block=True)
+    middle = sdfg.add_state("middle")
+    bump = middle.add_tasklet("bump", {"v"}, {"o"}, "o = v + 1.0")
+    middle.add_edge(middle.add_access("X"), None, bump, "v", dace.Memlet("X[0]"))
+    middle.add_edge(bump, "o", middle.add_access("X"), None, dace.Memlet("X[0]"))
+
+    second = _loop("loop2", start="0")
+    b2 = second.add_state("b2", is_start_block=True)
+    t2 = b2.add_tasklet("t2", {"a"}, {"o"}, "o = a * 2.0")
+    b2.add_edge(b2.add_access("A"), None, t2, "a", dace.Memlet("A[i]"))
+    b2.add_edge(t2, "o", b2.add_access("A"), None, dace.Memlet("A[i]"))
+
+    sdfg.add_node(second)
+    sdfg.add_edge(first, middle, InterstateEdge())
+    sdfg.add_edge(middle, second, InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def _build_middle_accumulates_inside_a_nested_sdfg() -> dace.SDFG:
+    """Same shape, but the accumulation is a WCR inside a `NestedSDFG`.
+
+    The connector memlet crossing the nested-SDFG boundary carries no `wcr` of its own, and the
+    outer access sets see `X` as written but never read -- so only a recursive WCR scan sees it.
+    """
+    sdfg = dace.SDFG("sink_state_nested_wcr")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+
+    first = _loop("loop1", start="0")
+    b1 = first.add_state("b1", is_start_block=True)
+    t1 = b1.add_tasklet("t1", {"a"}, {"o"}, "o = a + 1.0")
+    b1.add_edge(b1.add_access("A"), None, t1, "a", dace.Memlet("A[i]"))
+    b1.add_edge(t1, "o", b1.add_access("A"), None, dace.Memlet("A[i]"))
+
+    sdfg.add_node(first, is_start_block=True)
+    middle = sdfg.add_state("middle")
+
+    inner = dace.SDFG("acc_inner")
+    inner.add_array("xo", [1], dace.float64)
+    ist = inner.add_state("ist")
+    seed = ist.add_tasklet("seed", {}, {"o"}, "o = 1.0")
+    ist.add_edge(seed, "o", ist.add_access("xo"), None, dace.Memlet(data="xo", subset="0", wcr="lambda a, b: a + b"))
+    nsdfg = middle.add_nested_sdfg(inner, {}, dict.fromkeys(["xo"]))
+    middle.add_edge(nsdfg, "xo", middle.add_access("X"), None, dace.Memlet("X[0]"))
+
+    second = _loop("loop2", start="0")
+    b2 = second.add_state("b2", is_start_block=True)
+    t2 = b2.add_tasklet("t2", {"a"}, {"o"}, "o = a * 2.0")
+    b2.add_edge(b2.add_access("A"), None, t2, "a", dace.Memlet("A[i]"))
+    b2.add_edge(t2, "o", b2.add_access("A"), None, dace.Memlet("A[i]"))
+
+    sdfg.add_node(second)
+    sdfg.add_edge(first, middle, InterstateEdge())
+    sdfg.add_edge(middle, second, InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def _run_accumulator(sdfg: dace.SDFG) -> dict:
+    args = {"A": np.arange(N, dtype=np.float64), "X": np.zeros(1, dtype=np.float64)}
+    sdfg(**args)
+    return args
+
+
+@pytest.mark.parametrize("build", [_build_middle_reads_what_it_writes, _build_middle_accumulates_inside_a_nested_sdfg])
+def test_a_non_idempotent_middle_state_is_not_sunk(build):
+    """Replicating a read-modify-write -- WCR-spelled or not -- applies it once per iteration."""
+    sdfg = build()
+    oracle = _run_accumulator(copy.deepcopy(sdfg))
+    assert oracle["X"][0] == 1.0
+
+    assert SinkStateIntoLoop().apply_pass(sdfg, {}) is None
+    assert _top_level(sdfg) == ["LoopRegion", "SDFGState", "LoopRegion"], _top_level(sdfg)
+
+    got = _run_accumulator(sdfg)
+    assert got["X"][0] == oracle["X"][0], f"the state ran {got['X'][0]} times, not once"
+    assert np.array_equal(got["A"], oracle["A"])
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

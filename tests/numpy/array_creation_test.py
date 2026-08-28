@@ -297,6 +297,38 @@ def test_ones_scalar_size():
     assert out[0] == 20 * 20
 
 
+def test_array_of_a_slice_copies_instead_of_viewing():
+    """``numpy.array`` copies; only slicing, ``asarray`` and ``.view()`` alias.
+
+    Inheriting the operand's descriptor made the result a View OF the source, so the next in-place
+    update wrote straight back into it -- and the copy edge left a View access node carrying no
+    viewed-data edge, which simplify rejects as ambiguous.
+    """
+    S = dace.symbol('S')
+
+    @dace.program
+    def copy_slice_then_scale(a: dace.float64[S, S, S], out: dace.float64[S, S]):
+        col = np.array(a[:, :, 1])
+        col *= 2.0
+        out[:] = col
+
+    sdfg = copy_slice_then_scale.to_sdfg(simplify=False)
+    desc = sdfg.arrays['col']
+    assert not isinstance(desc, dace.data.View), f'np.array must copy, but "col" is a {type(desc).__name__}'
+    assert [str(x) for x in desc.strides] == ['S', '1'], f'a copy is contiguous, got strides {desc.strides}'
+    assert str(desc.total_size) == 'S**2', f'a copy sizes itself, not its parent, got {desc.total_size}'
+    sdfg.simplify()
+
+    n = 5
+    rng = np.random.default_rng(0)
+    a = rng.random((n, n, n))
+    before = a.copy()
+    out = np.zeros((n, n))
+    sdfg(a=a, out=out, S=n)
+    assert np.allclose(out, before[:, :, 1] * 2.0), f'got {out}'
+    assert np.allclose(a, before), 'the in-place update wrote through into the sliced source'
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -333,3 +365,4 @@ if __name__ == "__main__":
     test_zeros_symbolic_size_scalar()
     test_ones_scalar_size_scalar()
     test_ones_scalar_size()
+    test_array_of_a_slice_copies_instead_of_viewing()

@@ -223,8 +223,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
         # Check that all successors are dead. AccessNodes get one exception: an outgoing EMPTY edge
         # only enforces execution order (no data flows on it), so a live successor reached solely
-        # that way does not keep an otherwise-unread AccessNode alive -- there is nothing left to
-        # order once the node's own (dead) producers are gone, so the edge is dropped with it.
+        # that way does not keep an otherwise-unread AccessNode alive, provided its producers die too.
         # Scope-structural nodes (map entries/exits, tasklets, library nodes) keep the strict rule:
         # their empty edges can express scope membership, not just ordering, and dropping one could
         # orphan the scope (e.g. a MapEntry feeding a live Tasklet through an empty dependency edge).
@@ -239,6 +238,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 # carries the data. Treat it as live so an initializing access node is not removed
                 # while a sibling access node still reads the same data.
                 if isinstance(e.dst, nodes.AccessNode) and e.dst.data == node.data:
+                    return False
+                # The ordering only vanishes with the producer; one with another successor survives it.
+                if any(succ is not node for pe in state.in_edges(node) for succ in state.successors(pe.src)):
                     return False
         elif any(succ not in dead_nodes for succ in state.successors(node)):
             return False

@@ -156,5 +156,50 @@ def test_refuses_when_prep_produces_loop_bound(kk):
         assert np.allclose(ra[name], ca[name]), f"{name} (kk={kk}): MoveIfIntoLoop changed the result"
 
 
+@dace.program
+def carried_prep(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1], acc: dace.float64[1]):
+    # The guarded prep updates ``acc`` FROM ITS OWN previous value, so running it once and running
+    # it N times differ. Sinking it into the loop body runs it once per iteration.
+    if c[0] > 0:
+        acc[0] = acc[0] * 2.0
+        for i in range(N):
+            b[i] = a[i] + acc[0]
+
+
+def test_refuses_a_prep_that_carries_its_own_value():
+    """``_move`` re-runs the prep every iteration, so the chain must be idempotent.
+
+    The existing guard compared the prep's reads against the LOOP's writes only. A prep that reads
+    what the PREP updates passes that check and is then applied once per iteration: ``acc`` is
+    doubled N times instead of once, and every ``b[i]`` reads a different multiplier.
+    """
+    n = 7
+    rng = np.random.default_rng(0)
+    a = rng.random(n)
+
+    sdfg = carried_prep.to_sdfg(simplify=True)
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, 'a prep carrying its own value must not sink'
+    sdfg.validate()
+
+    for cval in (1, 0):
+        acc = np.array([3.0], np.float64)
+        out = np.zeros(n)
+        sdfg(a=a.copy(), b=out, c=np.array([cval], np.int32), acc=acc, N=n)
+        if cval > 0:
+            assert np.allclose(acc, 6.0), f'the prep must run exactly once, acc={acc[0]}'
+            assert np.allclose(out, a + 6.0), f'got {out[:3]}'
+        else:
+            assert np.allclose(acc, 3.0), 'the guard was false: the prep must not run'
+
+
+def test_staged_prep_still_sinks():
+    """Guard against over-reach: a prep that reads what an EARLIER prep state wrote recomputes the
+    same value from the same loop-invariant inputs, so it stays idempotent and must still move.
+    ``nested_guards`` is exactly that shape -- its condition is materialised in stages."""
+    sdfg = nested_guards.to_sdfg(simplify=True)
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None, 'a staged, idempotent prep must still sink'
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

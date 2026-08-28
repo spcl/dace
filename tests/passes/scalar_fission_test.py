@@ -451,6 +451,103 @@ def test_scalar_fission_propagates_rename_into_nsdfg():
     sdfg.validate()
 
 
+def ordering_edge_between_writes_sdfg() -> dace.SDFG:
+    """Two real writes to ``s``, with an ordering edge landing on the second one's node.
+
+    The eigh_test shape: the empty memlet transfers nothing, so the node it reaches is a READ of the
+    preceding write, not a write of its own.
+    """
+    sdfg = dace.SDFG('ordering_edge_between_writes')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_scalar('order', dace.float64, transient=True)
+
+    state = sdfg.add_state('main', is_start_block=True)
+    a_read = state.add_read('A')
+    written = state.add_access('s')
+    ordered = state.add_access('s')
+    order_src = state.add_access('order')
+    out_write = state.add_write('out')
+
+    init = state.add_tasklet('init', {'i'}, {'o'}, 'o = i * 2.0')
+    side = state.add_tasklet('side', {'i'}, {'o'}, 'o = i')
+    consumer = state.add_tasklet('consumer', {'i'}, {'o'}, 'o = i + 1.0')
+
+    state.add_edge(a_read, None, init, 'i', dace.Memlet('A[0]'))
+    state.add_edge(init, 'o', written, None, dace.Memlet('s[0]'))
+    state.add_edge(a_read, None, side, 'i', dace.Memlet('A[0]'))
+    state.add_edge(side, 'o', order_src, None, dace.Memlet('order[0]'))
+    state.add_edge(written, None, ordered, None, dace.Memlet())
+    state.add_edge(order_src, None, ordered, None, dace.Memlet())
+    state.add_edge(ordered, None, consumer, 'i', dace.Memlet('s[0]'))
+    state.add_edge(consumer, 'o', out_write, None, dace.Memlet('out[0]'))
+
+    second = sdfg.add_state_after(state, 'second')
+    reread = second.add_read('s')
+    tail = second.add_tasklet('tail', {'i'}, {'o'}, 'o = i')
+    second.add_edge(reread, None, tail, 'i', dace.Memlet('s[0]'))
+    second.add_edge(tail, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def assert_memlets_name_an_endpoint(sdfg: dace.SDFG) -> None:
+    """Every data memlet names the container of the AccessNode it touches."""
+    for sub in sdfg.all_sdfgs_recursive():
+        for state in sub.states():
+            for edge in state.edges():
+                if edge.data.data is None:
+                    continue
+                endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
+                assert not endpoints or edge.data.data in endpoints, (
+                    f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
+
+
+def test_ordering_edge_does_not_start_a_version():
+    """An access node reached only by empty memlets is not a dominating write.
+
+    Treating it as one split ``s`` into two versions, left a memlet naming the first while its node
+    carried the second, and versioned the later read onto a container nothing writes.
+    """
+    sdfg = ordering_edge_between_writes_sdfg()
+    sdfg.validate()
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert_memlets_name_an_endpoint(sdfg)
+
+    minted = set(sdfg.arrays.keys()) - before
+    assert not minted, f'the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}'
+
+    A = np.array([3.0], dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, out=out)
+    assert out[0] == 6.0, f'got {out[0]}'
+
+
+def test_rename_node_memlets_follows_an_earlier_version():
+    """The rename guard must accept a memlet already pointing at an earlier version of the name.
+
+    A node renamed twice in one pass no longer carries the ORIGINAL container on its memlets, and a
+    guard comparing only against that name skips them -- leaving an edge whose memlet matches
+    neither endpoint.
+    """
+    sdfg = dace.SDFG('rename_alias')
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_scalar('s_0', dace.float64, transient=True)
+    sdfg.add_scalar('s_1', dace.float64, transient=True)
+    state = sdfg.add_state('main', is_start_block=True)
+    node = state.add_access('s_0')
+    sink = state.add_tasklet('sink', {'i'}, {}, 'pass')
+    state.add_edge(node, None, sink, 'i', dace.Memlet('s_0[0]'))
+
+    node.data = 's_1'
+    ScalarFission().rename_node_memlets(state, node, {'s', 's_0'}, 's_1')
+
+    assert state.out_edges(node)[0].data.data == 's_1', 'a memlet on an already-renamed node stayed stale'
+
+
 if __name__ == '__main__':
     test_scalar_fission(False)
     test_branch_subscopes_nofission(False)
@@ -459,6 +556,8 @@ if __name__ == '__main__':
     test_branch_subscopes_nofission(True)
     test_branch_subscopes_fission(True)
     test_scalar_fission_propagates_rename_into_nsdfg()
+    test_ordering_edge_does_not_start_a_version()
+    test_rename_node_memlets_follows_an_earlier_version()
 
 
 def test_privatize_loop_local_undominated_through_map_scope():

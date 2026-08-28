@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
-from dace import subsets
+from dace import data, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
@@ -63,6 +63,21 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
         if graph.out_degree(in_array) != 1:
             return False
         if graph.in_degree(med_array) != 1 or graph.out_degree(med_array) != 1:
+            return False
+
+        # ``apply`` deletes both nodes and redirects the writers of ``in`` it finds IN THIS STATE;
+        # any other access to either container -- another state's write above all -- loses its copy.
+        for node in (in_array, med_array):
+            occurrences = [n for n in sdfg.data_nodes() if n.data == node.data]
+            for isedge in sdfg.all_interstate_edges():
+                if node.data in isedge.data.free_symbols:
+                    occurrences.append(isedge)
+            if len(occurrences) > 1:
+                return False
+
+        # A View owns no storage: its binding edge IS a full identity copy, so the
+        # fold would delete the binding and lose the write-through.
+        if any(isinstance(d, data.View) for d in (in_desc, med_desc, out_desc)):
             return False
 
         # ``in`` and ``med`` are the nodes the fold deletes; only transients
@@ -155,6 +170,11 @@ class RedundantArrayCopying(pm.SingleStateTransformation):
 
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
+            return False
+
+        # A View owns no storage; folding the chain moves its 'views' binding connector
+        # onto a node that does not view anything.
+        if any(isinstance(n.desc(sdfg), data.View) for n in (in_array, med_array, out_array)):
             return False
 
         # Make sure that the removal candidate is a transient variable

@@ -405,5 +405,62 @@ def test_refused_shapes(program, reason):
     sdfg.validate()
 
 
+def test_ordering_memlet_is_not_a_prior_writer():
+    """An empty memlet on the accumulator must not turn ``beta`` into 1 -- that folds the
+    contraction onto uninitialized transient memory."""
+    n, k, m = 8, 6, 5
+
+    @dace.program
+    def k2(A: dace.float64[n, k], B: dace.float64[k, m], C: dace.float64[n, m]):
+        E = dace.define_local([n, m], dace.float64)
+        for i in range(n):
+            for j in range(m):
+                for kk in range(k):
+                    E[i, j] += A[i, kk] * B[kk, j]
+        C[:] = E
+
+    sdfg = k2.to_sdfg(simplify=True)
+    # An ordering-only AccessNode for the accumulator: legal SDFG, transfers nothing.
+    last = sdfg.states()[-1]
+    last.add_edge(next(iter(last.data_nodes())), None, last.add_access('E'), None, dace.Memlet())
+
+    assert LoopToEinsum().apply_pass(sdfg, {}) == 1
+    betas = [nd.beta for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, Einsum)]
+    assert betas == [0.0], f'ordering memlet was read as a prior writer: beta={betas}'
+    sdfg.validate()
+
+    rng = np.random.default_rng(7)
+    a = rng.random((n, k))
+    b = rng.random((k, m))
+    ref = a @ b
+    csdfg = sdfg.compile()
+    for _ in range(3):  # the transient keeps its previous contents, so beta=1 would compound
+        c = np.zeros((n, m))
+        csdfg(A=a, B=b, C=c)
+        assert np.allclose(c, ref), f'max diff {np.abs(c - ref).max()}'
+
+
+def test_map_form_lift_refuses_a_boundary_ordering_memlet():
+    """Replacing a map scope deletes it whole, so an empty memlet crossing its boundary would
+    lose a happens-before constraint. Refuse instead of dropping it."""
+    n = 9
+    sdfg = map_matmul.to_sdfg(simplify=True)
+    state = next(s for s in sdfg.states() if any(isinstance(nd, dace.sdfg.nodes.MapEntry) for nd in s.nodes()))
+    me = next(nd for nd in state.nodes() if isinstance(nd, dace.sdfg.nodes.MapEntry))
+    anchor = state.add_access('C')
+    state.add_edge(anchor, None, me, None, dace.Memlet())
+    sdfg.validate()
+
+    assert LoopToEinsum().apply_pass(sdfg, {}) is None, 'the lift must decline'
+    assert _n_einsum(sdfg) == 0
+    assert state.edges_between(anchor, me), 'the ordering memlet must survive the refusal'
+    sdfg.validate()
+
+    rng = np.random.default_rng(21)
+    A, B, C = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    sdfg(A=A, B=B, C=C, N=n)
+    assert np.allclose(C, A @ B, rtol=1e-9, atol=1e-12)
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v', '-p', 'no:cacheprovider']))

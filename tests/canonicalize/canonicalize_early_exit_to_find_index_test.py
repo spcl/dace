@@ -21,6 +21,7 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.interstate import LoopToMap
 
 N = dace.symbol('N')
+M = dace.symbol('M')
 
 
 def _num_loops(sdfg):
@@ -902,6 +903,41 @@ def test_find_first_is_exact_when_most_indices_fire():
         sdfg(a=got, b=b.copy(), c=c.copy(), d=d.copy(), N=n)
         assert np.allclose(got, ref), (f'dense-firing trial {trial} (first={first}): the search answered a firing '
                                        f'index that is not the first; max diff {np.abs(got - ref).max()}')
+
+
+def test_body_ordering_memlet_survives_the_body_clone():
+    """``for i: if d[i] < 0: break; a[i, :] = 1.0`` -- the body clone must keep the map entry's
+    ordering memlet, or the constant tasklet falls out of its scope."""
+
+    @dace.program
+    def s481m(a: dace.float64[N, M], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i, :] = 1.0
+
+    sdfg = s481m.to_sdfg(simplify=True)
+    before = sum(1 for st in sdfg.states() for e in st.edges() if e.data.is_empty())
+    assert before == 1, f'the fixture must carry exactly one ordering memlet, got {before}'
+
+    assert EarlyExitToFindIndex().apply_pass(sdfg, {}) == 1
+    after = sum(1 for st in sdfg.states() for e in st.edges() if e.data.is_empty())
+    assert after == before, f'the body clone dropped the ordering memlet: {before} -> {after}'
+    sdfg.validate()
+
+    n, m = 8, 4
+    rng = np.random.default_rng(4811)
+    a = rng.random((n, m))
+    d = rng.random(n) - 0.3
+    expected = a.copy()
+    for i in range(n):
+        if d[i] < 0.0:
+            break
+        expected[i, :] = 1.0
+
+    got = a.copy()
+    sdfg(a=got, d=d, N=n, M=m)
+    assert np.allclose(got, expected), f'max diff {np.abs(got - expected).max()}'
 
 
 if __name__ == '__main__':

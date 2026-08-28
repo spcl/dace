@@ -174,8 +174,62 @@ def test_s2_gather_guard_map():
         assert np.allclose(out, _s2_oracle(w, cidx, av, n, m)), f"map av={av}"
 
 
+# --------------------------------------------------------------------------- #
+# Scenario 3: the guard's prep state READS what the loop writes               #
+# --------------------------------------------------------------------------- #
+
+
+@dace.program
+def s3_snapshot_prep(items: dace.int64[N], goal: dace.int64[1], ways: dace.int64[M], prev: dace.int64[M]):
+    """0/1-knapsack count: the guarded branch snapshots ``ways`` into ``prev`` and then updates
+    ``ways`` from that snapshot. The snapshot is prep for the inner loop, but the inner loop
+    clobbers its source, so re-running it per iteration is not the same program."""
+    g = goal[0]
+    for d in range(N):
+        v = items[d]
+        if v <= g:
+            prev[:] = ways
+            for s in range(M - v):
+                ways[s + v] = ways[s + v] + prev[s]
+
+
+def _s3_oracle(items, goal, ways0, m):
+    ways = ways0.copy()
+    for v in items:
+        if v <= goal:
+            prev = ways.copy()
+            for s in range(m - v):
+                ways[s + v] += prev[s]
+    return ways
+
+
+def test_prep_that_reads_loop_written_data_is_not_sunk():
+    """The prep state must stay OUTSIDE the loop.
+
+    ``_move`` re-runs prep on every iteration. ``prev[:] = ways`` is only a snapshot if it runs
+    once; re-snapshotting mid-update lets one item be counted twice within its own pass, which
+    counts multisets instead of subsets.
+    """
+    m = 12
+    items = np.array([2, 3, 5, 7], np.int64)
+    ways0 = np.zeros(m, np.int64)
+    ways0[0] = 1
+
+    sdfg = s3_snapshot_prep.to_sdfg(simplify=True)
+    before = len(_any_cond(sdfg))
+    assert before >= 1, "the guard must survive parsing for this test to mean anything"
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, ("MoveIfIntoLoop must decline: the prep state "
+                                                           "reads data the loop writes")
+    sdfg.validate()
+
+    ways = ways0.copy()
+    sdfg(items=items.copy(), goal=np.array([m - 1], np.int64), ways=ways, prev=np.zeros(m, np.int64), N=len(items), M=m)
+    assert np.array_equal(ways, _s3_oracle(items, m - 1, ways0, m)), "0/1 counts must survive the pass"
+
+
 if __name__ == '__main__':
     test_s1_invariant_guard_loop()
     test_s1_invariant_guard_map()
     test_s2_gather_guard_loop()
     test_s2_gather_guard_map()
+    test_prep_that_reads_loop_written_data_is_not_sunk()

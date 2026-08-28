@@ -717,6 +717,38 @@ def test_dde_removes_an_initializer_a_reduction_with_identity_overwrites():
     assert not any(isinstance(n, nodes.Tasklet) and n.label == 'init' for n in state.nodes())
 
 
+def test_dde_keeps_an_ordering_edge_whose_producer_is_live():
+    """A dead transient's empty out-edge orders a LIVE producer before a reader."""
+    sdfg = dace.SDFG('dde_live_ordering')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    sdfg.add_transient('t', [1], dace.float64)
+    state = sdfg.add_state()
+
+    src = state.add_access('A')
+    me, mx = state.add_map('reader', dict(i='0:4'))
+    tasklet = state.add_tasklet('r', {'x': None}, {'z': None}, 'z = x')
+    state.add_memlet_path(src, me, tasklet, dst_conn='x', memlet=dace.Memlet('A[0]'))
+    state.add_memlet_path(tasklet, mx, state.add_access('B'), src_conn='z', memlet=dace.Memlet('B[i]'))
+
+    # 'w' survives on its A[0] output; 't' is never read, so DDE removes it.
+    w = state.add_tasklet('w', {}, {'o': None, 'p': None}, 'o = 100.0\np = 999.0')
+    state.add_edge(w, 'o', state.add_access('A'), None, dace.Memlet('A[0]'))
+    tnode = state.add_access('t')
+    state.add_edge(w, 'p', tnode, None, dace.Memlet('t[0]'))
+    state.add_edge(tnode, None, src, None, dace.Memlet())
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert state.in_degree(src) == 1, 'the happens-before edge into the reader source was dropped'
+
+    A = np.zeros(4)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, 100.0)
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -747,3 +779,4 @@ if __name__ == '__main__':
     test_dde_loop_condition()
     test_dde_keeps_an_initializer_the_second_write_does_not_cover()
     test_dde_removes_an_initializer_the_second_write_fully_covers()
+    test_dde_keeps_an_ordering_edge_whose_producer_is_live()

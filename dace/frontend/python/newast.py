@@ -1364,6 +1364,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self.inputs: DependencyType = {}
         self.outputs: DependencyType = {}
+        # Connector name -> its own axes that a slice created and squeezing must not drop
+        self.connector_keep_dims: Dict[str, List[int]] = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
         self.current_ast_stack: List[ast.AST] = []
         self.default_output_index: int = 0
@@ -3438,9 +3440,13 @@ class ProgramVisitor(ExtNodeVisitor):
             access_type: str,  # 'r' or 'w'
             target: Union[ast.Name, ast.Subscript],
             new_name: str = None,
-            arr_type: data.Data = None) -> str:
+            arr_type: data.Data = None,
+            keep_dims: Optional[List[int]] = None,
+            new_axes: Optional[List[int]] = None) -> str:
         if access_type not in ('r', 'w'):
             raise ValueError("Access type {} is invalid".format(access_type))
+        # An axis that came from a SLICE keeps its length-1 extent; only an integer index drops one.
+        keep = set(keep_dims or [])
         if new_name:
             var_name = new_name
         elif target:
@@ -3467,11 +3473,27 @@ class ProgramVisitor(ExtNodeVisitor):
             nested_rng = subsets.Range.from_array(parent_array)
             non_squeezed = list(range(len(rng)))
         else:
+            # ``A[i, :, None]``: a new axis lives in the value only, so extend a COPY of the range and
+            # leave the outer memlet on the original one.
+            work_rng = rng
+            inserted: List[int] = []
+            if new_axes:
+                work_rng = copy.deepcopy(rng)
+                inserted = work_rng.unsqueeze(new_axes)
+                for i in sorted(inserted):
+                    strides.insert(i, 1)
+                shifted_keep = set(inserted)
+                for d in keep:
+                    for ins in sorted(inserted):
+                        if ins <= d:
+                            d += 1
+                    shifted_keep.add(d)
+                keep = shifted_keep
             ignore_indices = []
             sym_rng = []
             offset = []
             rebase_syms = set()  # symbols whose min is actually folded into the connector origin
-            for i, r in enumerate(rng):
+            for i, r in enumerate(work_rng):
                 repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
@@ -3510,6 +3532,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     offset.append(0)
 
+            # Same refusal as the top-level slice path: a negative step here yields a negative shape.
+            for i, r in enumerate(work_rng.ranges):
+                if i not in ignore_indices and (r[2] < 0) == True:
+                    raise DaceSyntaxError(
+                        self, target, 'Negative strides are not supported in subscripts. '
+                        'Please use a Map scope to express this operation.')
+
+            # A new axis shifts every later dimension, so the loop-symbol rebase below no longer lines
+            # up with the outer array. Refuse rather than emit a shifted subset.
+            if inserted and ignore_indices:
+                raise DaceSyntaxError(
+                    self, target, 'np.newaxis on a subscript that depends on a loop-carried index is not '
+                    'supported inside a nested scope')
+
             # Which symbols must the OUTER memlet already account for? A MAP parameter is propagated
             # later by its own MapEntry scope, so its raw range is the right memlet and pre-propagating
             # it here would widen it wrongly (``inp[i-1]`` over ``i in 0:5`` becomes a negative-start
@@ -3535,15 +3571,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   self.symbols[in_rng[0]],
                                                   use_dst=use_dst)
                     rebased_by_sequential = True
-            to_squeeze_rng = rng
+            to_squeeze_rng = work_rng
             if ignore_indices:
-                to_squeeze_rng = rng.offset_new(offset, True)
+                to_squeeze_rng = work_rng.offset_new(offset, True)
             squeezed_rng = copy.deepcopy(to_squeeze_rng)
-            non_squeezed = squeezed_rng.squeeze(ignore_indices)
+            non_squeezed = squeezed_rng.squeeze(sorted(set(ignore_indices) | keep))
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             nested_rng = subsets.Range([(0, s - 1, 1) for s in shape])
-            for i, r in enumerate(rng.ranges):
+            for i, r in enumerate(work_rng.ranges):
                 if i in ignore_indices:
                     continue
                 _, _, step = r
@@ -3555,7 +3591,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if (step < 0) == True:
                     iMin, iMax, step = iMax, iMin, -step
                 ts = to_squeeze_rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
+                # By position, not by value: a kept length-1 axis can compare equal to this range.
+                sqz_idx = non_squeezed.index(i)
                 shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
                                                      (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
                                                     (step.approx if isinstance(step, symbolic.SymExpr) else step))
@@ -3564,8 +3601,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if arr_type is None:
             arr_type = type(parent_array)
-            # Size (1,) slice of NumPy array returns scalar value
-            if arr_type not in (data.Stream, data.Structure) and (shape == [1] or shape == (1, )):
+            # Size (1,) slice of NumPy array returns scalar value, but only if no axis was kept
+            if arr_type not in (data.Stream, data.Structure) and not keep and (shape == [1] or shape == (1, )):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
@@ -3583,6 +3620,7 @@ class ProgramVisitor(ExtNodeVisitor):
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
         self.accesses[(name, rng, access_type)] = (var_name, nested_rng)
+        self.connector_keep_dims[var_name] = [non_squeezed.index(d) for d in sorted(keep) if d in non_squeezed]
 
         inner_indices = set(non_squeezed)
 
@@ -3617,7 +3655,9 @@ class ProgramVisitor(ExtNodeVisitor):
                          rng: subsets.Range,
                          target: Union[ast.Name, ast.Subscript],
                          new_name: str = None,
-                         arr_type: data.Data = None):
+                         arr_type: data.Data = None,
+                         keep_dims: Optional[List[int]] = None,
+                         new_axes: Optional[List[int]] = None):
         if name in self.sdfg.arrays:
             return (name, None)
         elif name in self.variables:
@@ -3631,32 +3671,61 @@ class ProgramVisitor(ExtNodeVisitor):
         elif (name, rng, 'r') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
-            new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
+            new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type, keep_dims, new_axes)
         else:
             raise NotImplementedError
 
         full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
+        inner_keep = self.connector_keep_dims.get(new_name)
         if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
-            new_name, new_rng = self.make_slice(new_name, rng)
+            new_name, new_rng = self.make_slice(new_name, rng, inner_keep)
         elif full_rng != new_rng:
-            new_name, new_rng = self.make_slice(new_name, new_rng)
+            new_name, new_rng = self.make_slice(new_name, new_rng, inner_keep)
         return (new_name, new_rng)
+
+    def connector_memlet(self, name: str) -> Optional[Memlet]:
+        """Returns the outer-array memlet a nested SDFG connector carries, or None if it is not one."""
+        if not isinstance(name, str):
+            return None
+        if name in self.inputs:
+            return self.inputs[name][1]
+        if name in self.outputs:
+            return self.outputs[name][1]
+        return None
+
+    def view_root(self, name: str) -> str:
+        """Follows a chain of views down to the data descriptor that actually owns the storage."""
+        seen = OrderedSet()
+        while name in self.views and name not in seen:
+            seen.add(name)
+            name = self.views[name][0]
+        return name
+
+    def promote_read_connector_to_output(self, name: str) -> None:
+        """Makes a read-only nested SDFG connector in/out, because NumPy writes through the view."""
+        root = self.view_root(name)
+        if root in self.inputs and root not in self.outputs:
+            self.outputs[root] = (self.last_block, *self.inputs[root][1:])
 
     def _add_write_access(self,
                           name: str,
                           rng: subsets.Range,
                           target: Union[ast.Name, ast.Subscript],
                           new_name: str = None,
-                          arr_type: data.Data = None):
+                          arr_type: data.Data = None,
+                          keep_dims: Optional[List[int]] = None,
+                          new_axes: Optional[List[int]] = None):
 
         if name in self.sdfg.arrays:
+            self.promote_read_connector_to_output(name)
             return (name, rng)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
+            self.promote_read_connector_to_output(self.variables[name])
             return (self.variables[name], rng)
         elif (name, rng, 'r') in self.accesses or until(name, '.') in self.scope_vars:
-            return self._add_access(name, rng, 'w', target, new_name, arr_type)
+            return self._add_access(name, rng, 'w', target, new_name, arr_type, keep_dims, new_axes)
         else:
             raise NotImplementedError
 
@@ -3996,7 +4065,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data and not visited_target:
-                new_name, new_rng = self._add_write_access(true_name, rng, target)
+                new_name, new_rng = self._add_write_access(true_name,
+                                                           rng,
+                                                           target,
+                                                           keep_dims=expr.slice_dims,
+                                                           new_axes=expr.new_axes)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng
@@ -4009,17 +4082,26 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
 
             # Self-copy check
+            read_rng, write_rng = None, None
             if result in self.views and new_name == self.views[result][1].data:
-                read_rng = self.views[result][1].subset
+                read_rng, write_rng = self.views[result][1].subset, new_rng
+            elif self.nested:
+                # Two connectors cut from one outer array are POINTERS into it, so an overlapping
+                # copy between them is an in-place copy even though the descriptors differ.
+                src_outer = self.connector_memlet(result)
+                dst_outer = self.connector_memlet(new_name)
+                if (src_outer is not None and dst_outer is not None and src_outer.data == dst_outer.data):
+                    read_rng, write_rng = src_outer.subset, dst_outer.subset
+            if read_rng is not None:
                 # The view's subset was parsed from a string, so its symbols carry the default dtype;
                 # identity includes the dtype, so put both sides on one instance per name first.
-                pool = symbolic.symbols_in([new_rng])
+                pool = symbolic.symbols_in([write_rng])
                 remap = {sym: pool[name] for name, sym in read_rng.symbols.items() if name in pool}
                 if remap:
                     read_rng = copy.deepcopy(read_rng)
                     read_rng.replace(remap)
                 try:
-                    needs_copy = not (new_rng.intersects(read_rng) == False)
+                    needs_copy = not (write_rng.intersects(read_rng) == False)
                 except TypeError:
                     needs_copy = True
                 if needs_copy:
@@ -5937,10 +6019,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         is_read: bool = not isinstance(node.ctx, ast.Store)
 
-        if self.nested:
+        # Only a plain name can denote an outer array; anything else (e.g. "(a + b)[i]") is a local value.
+        if self.nested and isinstance(node.value, ast.Name):
 
             defined_vars = {**self.variables, **self.scope_vars}
-            defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
 
             name = rname(node)
             tokens = name.split('.')
@@ -5958,6 +6040,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Visit slice contents
                 nslice = self._parse_subscript_slice(node.slice)
 
+                # Index arrays only become local connectors while parsing the slice, so collect after it.
+                defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
+
                 # Try to construct memlet from subscript
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
                 rng = expr.subset
@@ -5966,17 +6051,27 @@ class ProgramVisitor(ExtNodeVisitor):
                 if inference:
                     rng.offset(rng, True)
                     return self.sdfg.arrays[true_name].dtype, rng.size()
+                if expr.arrdims and is_read:
+                    return self.nested_array_indirection(name, node, expr, rng)
                 if is_read:
-                    new_name, new_rng = self._add_read_access(name, rng, node)
+                    new_name, new_rng = self._add_read_access(name,
+                                                              rng,
+                                                              node,
+                                                              keep_dims=expr.slice_dims,
+                                                              new_axes=expr.new_axes)
                 else:
-                    new_name, new_rng = self._add_write_access(name, rng, node)
+                    new_name, new_rng = self._add_write_access(name,
+                                                               rng,
+                                                               node,
+                                                               keep_dims=expr.slice_dims,
+                                                               new_axes=expr.new_axes)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
                 if new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
                     if is_read:
-                        new_name, _ = self.make_slice(new_name, new_rng)
+                        new_name, _ = self.make_slice(new_name, new_rng, self.connector_keep_dims.get(new_name))
                     else:
                         raise NotImplementedError('Cannot slice a write access')
                     return new_name
@@ -6071,7 +6166,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return node
 
-    def make_slice(self, arrname: str, rng: subsets.Range):
+    def make_slice(self, arrname: str, rng: subsets.Range, keep_dims: Optional[List[int]] = None):
 
         array = arrname
         arrobj = self.sdfg.arrays[arrname]
@@ -6081,7 +6176,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s' % (array))
         rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
         other_subset = copy.deepcopy(rng)
-        other_subset.squeeze()
+        # A length-1 axis a slice created stays; squeezing it would change the rank NumPy gives.
+        other_subset.squeeze(sorted(keep_dims or []))
         if _subset_has_indirection(rng, self):
             memlet = Memlet.simple(array, rng)
             tmp = self.sdfg._find_new_name(f'{arrname}_indirect_slice')
@@ -6345,6 +6441,29 @@ class ProgramVisitor(ExtNodeVisitor):
             Memlet(data=aname, subset=subsets.Range(output_ndrange), volume=1),
             index_memlets,
         )
+
+    def nested_array_indirection(self, name: str, node: ast.Subscript, expr: MemletExpr, rng: subsets.Range) -> str:
+        """
+        Lowers advanced (array) indexing inside a nested scope by first binding the sliced array to a
+        connector, then reusing the top-level indirection subgraph on that connector.
+
+        :param name: Name of the sliced array in the current scope.
+        :param node: The subscript AST node, for error reporting.
+        :param expr: The parsed memlet expression, whose ``arrdims`` name the index arrays.
+        :param rng: The parsed subset, in the outer array's coordinates.
+        :return: The name of the transient holding the indirected result.
+        """
+        for arrname in expr.arrdims.values():
+            desc = self.sdfg.arrays.get(arrname) if isinstance(arrname, str) else None
+            if desc is not None and desc.dtype == dtypes.bool:
+                raise DaceSyntaxError(
+                    self, node, f'Boolean array indexing of "{name}" is not supported inside a map or nested scope')
+        # Keep every axis so that ``arrdims`` still indexes the connector's dimensions.
+        conn_name, conn_rng = self._add_read_access(name, rng, node, keep_dims=list(range(len(rng))))
+        self._add_state('slice_%s_%d' % (conn_name.replace('.', '_'), node.lineno))
+        rnode = self.current_state.add_read(conn_name, debuginfo=self.current_lineinfo)
+        expr.name, expr.subset = conn_name, conn_rng
+        return self._array_indirection_subgraph(rnode, expr)
 
     def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
         aname = rnode.data

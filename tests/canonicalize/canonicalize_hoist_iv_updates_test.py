@@ -202,5 +202,35 @@ def test_use_site_substitution_pre_update_read():
     assert np.array_equal(a, a_ref), f"pre-update read got the wrong step:\nref={a_ref}\ngot={a}"
 
 
+def test_an_ordering_edge_does_not_make_a_statement_part_of_the_iv_component():
+    """An empty memlet decides ORDER, never membership: the copy statement is not the IV's."""
+    import dace as _dace
+    from dace.sdfg.state import LoopRegion
+
+    n = 8
+    sdfg = _dace.SDFG("hoist_iv_ordering")
+    sdfg.add_array("a", [n], _dace.float64)
+    sdfg.add_array("b", [n], _dace.float64)
+    sdfg.add_array("scale", [1], _dace.float64)
+    sdfg.add_symbol("i", _dace.int64)
+
+    loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    st = loop.add_state("body", is_start_block=True)
+    scale_r, scale_w = st.add_access("scale"), st.add_access("scale")
+    iv = st.add_tasklet("iv", {"__in"}, {"__out"}, "__out = __in * 0.99")
+    st.add_edge(scale_r, None, iv, "__in", _dace.Memlet("scale[0]"))
+    st.add_edge(iv, "__out", scale_w, None, _dace.Memlet("scale[0]"))
+    cp = st.add_tasklet("cp", {"__inp"}, {"__out"}, "__out = __inp")
+    st.add_edge(st.add_access("b"), None, cp, "__inp", _dace.Memlet("b[i]"))
+    st.add_edge(cp, "__out", st.add_access("a"), None, _dace.Memlet("a[i]"))
+    st.add_nedge(scale_w, cp, _dace.Memlet())
+    sdfg.add_node(loop, is_start_block=True)
+    sdfg.validate()
+
+    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None
+    assert [b.label for b in sdfg.nodes()] == ["loop"]
+    assert sorted(t.label for t in st.nodes() if isinstance(t, _dace.nodes.Tasklet)) == ["cp", "iv"]
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

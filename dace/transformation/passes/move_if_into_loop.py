@@ -122,19 +122,54 @@ def _match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlo
             acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
             if lvar in acc or (_state_writes(p) & loop_w) or (_state_writes(p) & bound_syms):
                 bad = True
+            # ``_move`` re-runs the prep every iteration, so a prep that READS what the loop
+            # writes is not idempotent (subset_sum re-snapshots ``prev[:] = ways`` mid-update).
+            if _state_reads(p) & loop_w:
+                bad = True
+        # Also idempotent w.r.t. itself. Staged computation is fine; an UPWARD-EXPOSED read of a
+        # container the chain then updates applies the update N times (eigh's ``bw``).
+        exposed, defined = set(), set()
+        for p in prep:
+            exposed |= upward_exposed_reads(p) - defined
+            defined |= _state_writes(p)
+        if exposed & defined:
+            bad = True
         for e in region.edges():
             for lhs, rhs in e.data.assignments.items():
                 if lhs in loop_w or lhs in bound_syms or lvar in _free(rhs) or (_free(rhs) & loop_w):
                     bad = True
+                if lhs in _free(rhs):
+                    bad = True  # self-referential: accumulates over iterations
         if bad:
             continue
         return cb, cond, region
     return None
 
 
+def upward_exposed_reads(st: SDFGState) -> set:
+    """Containers ``st`` reads before writing -- the only reads repetition can change.
+
+    Ordering edges carry nothing, so they decide neither side.
+
+    :param st: The state to inspect.
+    :returns: The names read before being written in ``st``.
+    """
+    exposed = set()
+    for n in st.data_nodes():
+        if (any(not e.data.is_empty() for e in st.out_edges(n))
+                and not any(not e.data.is_empty() for e in st.in_edges(n))):
+            exposed.add(n.data)
+    return exposed
+
+
 def _state_writes(st: SDFGState) -> set:
     """Data containers written in ``st``."""
     return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0}
+
+
+def _state_reads(st: SDFGState) -> set:
+    """Data containers read in ``st``."""
+    return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) > 0}
 
 
 def _loop_bound_symbols(loop: LoopRegion) -> set:

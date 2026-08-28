@@ -112,13 +112,19 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         def _subs(x):
             return x.subs(subsdict) if isinstance(x, sympy.Basic) else x
 
+        def subs_range(sub) -> dace.subsets.Range:
+            return dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in sub.ndrange()])
+
         # Param-local: substitute only within this map's scope.
         scope = state.scope_subgraph(me, include_entry=True, include_exit=True)
         for edge in scope.edges():
             md = edge.data
             if md is None or md.data is None or md.subset is None:
                 continue
-            md.subset = dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in md.subset.ndrange()])
+            md.subset = subs_range(md.subset)
+            # The other side of a copy memlet is indexed by the same parameter, so it moves too.
+            if md.other_subset is not None:
+                md.other_subset = subs_range(md.other_subset)
         self._repl_tasklets_on_node_list(state, list(scope.nodes()), repldict)
         for n in scope.nodes():
             # An inner map's RANGE reads the rewritten parameter as often as a memlet does: a tiled

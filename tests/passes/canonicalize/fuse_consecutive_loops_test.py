@@ -174,5 +174,46 @@ def test_view_and_plain_copy_edge_tie_does_not_raise_typeerror():
     sdfg.validate()
 
 
+def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
+    """`other_subset` is the destination side of a copy memlet: two bodies differing only there are
+    two different statements, and fusing deletes one of them."""
+    import copy as _copy
+    from dace.sdfg.sdfg import InterstateEdge
+    from dace.sdfg.state import LoopRegion
+
+    def make_loop(label, lo, hi, dst):
+        loop = LoopRegion(label,
+                          condition_expr=f"i < {hi}",
+                          loop_var="i",
+                          initialize_expr=f"i = {lo}",
+                          update_expr="i = i + 1")
+        st = loop.add_state("body", is_start_block=True)
+        st.add_edge(st.add_access("A"), None, st.add_access("B"), None,
+                    dace.Memlet(data="A", subset="i, 0:2", other_subset=dst))
+        return loop
+
+    sdfg = dace.SDFG("fuse_other_subset")
+    sdfg.add_array("A", [8, 2], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+    first, second = make_loop("loop1", 0, 4, "0:2"), make_loop("loop2", 4, 8, "2:4")
+    sdfg.add_node(first, is_start_block=True)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, InterstateEdge())
+    sdfg.validate()
+
+    def run(g):
+        args = {"A": np.arange(16, dtype=np.float64).reshape(8, 2), "B": np.zeros(4)}
+        g(**args)
+        return args["B"]
+
+    oracle = run(_copy.deepcopy(sdfg))
+    assert np.array_equal(oracle, np.array([6.0, 7.0, 14.0, 15.0]))
+
+    assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None
+    assert [b.label for b in sdfg.nodes()] == ["loop1", "loop2"]
+    assert np.array_equal(run(sdfg), oracle)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
