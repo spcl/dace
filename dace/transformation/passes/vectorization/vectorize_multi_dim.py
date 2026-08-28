@@ -39,10 +39,9 @@ from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.utils.pass_invariants import (no_lane_collapsing_nested_sdfgs,
-                                                                            no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs,
-                                                                            no_widened_scalar_tasklets)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    no_conditional_interstate_assign_on_widened_data, no_lane_collapsing_nested_sdfgs, no_wcr_in_map_body,
+    no_wcr_inside_nested_sdfgs, no_widened_scalar_tasklets)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -457,6 +456,9 @@ class _AssertTileOpsLowered(ppl.Pass):
         violation = no_lane_collapsing_nested_sdfgs(sdfg, len(self._widths), self._widths)
         if violation is not None:
             raise VectorizeUnsupported(f"nested SDFG collapses the tile to one lane: {violation}")
+        violation = no_conditional_interstate_assign_on_widened_data(sdfg, self._widths)
+        if violation is not None:
+            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}")
         return None
 
 

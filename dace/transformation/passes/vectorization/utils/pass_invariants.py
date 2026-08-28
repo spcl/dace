@@ -25,7 +25,7 @@ from dace.dtypes import ReductionType
 from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
@@ -609,6 +609,42 @@ def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> Optional[
                     return (f"{sd.name}.{state.label}: strided map ``{node.map.label}`` still holds a "
                             f"conditional guarding its own param -- that guard is evaluated once per "
                             f"tile, not per lane")
+    return None
+
+
+def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: Tuple[int, ...]) -> Optional[str]:
+    """No ``ConditionalBlock`` guarded by WIDENED data may assign a symbol on an interstate edge.
+
+    The lane-varying analogue of :func:`no_strided_map_param_in_surviving_condition`. A symbol holds
+    ONE value for the whole tile, so an assignment only some lanes reach cannot be represented.
+    Widening turns the guard's operand into a ``(W,)`` buffer while the guard itself stays scalar
+    control flow, and codegen then emits ``if (<bool[W]>)`` -- an array decaying to a never-null
+    pointer, so every lane takes the branch. Branch lowering must first rewrite the assignment as
+    dataflow (an ITE tasklet writing a scalar the widener widens per lane).
+
+    :param sdfg: the SDFG after widening.
+    :param widths: tile widths; a descriptor whose last dim is one of them is a per-lane buffer.
+    :returns: an error string, or ``None`` when the invariant holds.
+    """
+    for block in sdfg.all_control_flow_blocks(recursive=True):
+        if not isinstance(block, ConditionalBlock):
+            continue
+        for condition, region in block.branches:
+            if condition is None:
+                continue
+            assigned = [
+                e for r in region.all_control_flow_regions(recursive=True) for e in r.edges() if e.data.assignments
+            ]
+            if not assigned:
+                continue
+            for name in condition.get_free_symbols():
+                desc = block.sdfg.arrays.get(name)
+                if desc is None or not desc.shape or desc.shape[-1] not in widths:
+                    continue
+                keys = sorted(k for e in assigned for k in e.data.assignments)
+                return (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
+                        f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
+                        f"hold a per-lane value, so the guard runs for every lane")
     return None
 
 
