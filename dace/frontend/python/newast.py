@@ -4064,6 +4064,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
+                # An integer index drops an axis, but the indirection below numbers dims against the
+                # full-rank array, so the write lands on the wrong axis (or out of range). An index
+                # array and a slice both keep theirs, which is why only this mix is refused.
+                if indirect_indices and (len(indirect_indices) + len(expr.slice_dims or []) != len(rng)):
+                    raise DaceSyntaxError(
+                        self, node, 'Combining an index array with an integer index is not supported when assigning; '
+                        'give the indexed axis a slice instead')
+
             if self.nested and not new_data and not visited_target:
                 new_name, new_rng = self._add_write_access(true_name,
                                                            rng,

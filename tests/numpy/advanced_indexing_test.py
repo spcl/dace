@@ -545,6 +545,17 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
     assert np.allclose(res, ref)
 
 
+def test_index_array_with_integer_index_write_is_refused():
+    """An integer index drops an axis the indirection still counts, so the write is refused."""
+
+    @dace.program
+    def scatter_row(A: dace.float64[4, 8], idx: dace.int64[3], out: dace.float64[4, 8]):
+        out[0, idx] = A[0, 0:3]
+
+    with pytest.raises(DaceSyntaxError):
+        scatter_row.to_sdfg()
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -583,3 +594,4 @@ if __name__ == '__main__':
     # test_combining_basic_and_advanced_indexing_write()
     test_combining_basic_and_advanced_indexing_with_newaxes()
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
+    test_index_array_with_integer_index_write_is_refused()
