@@ -90,6 +90,12 @@ class ExpandDotOpenBLAS(ExpandTransformation):
 
         func = func.lower() + 'dot'
 
+        # The mixed-precision form names vendor DATATYPE enums, and ``dtype_to_cudadatatype`` only
+        # speaks CUDA's. Fall back rather than emit a rocBLAS call with CUDA enum names in it.
+        if node.accumulator_type is not None and not cls.ex_name:
+            warnings.warn(f'{cls.__name__} has no mixed-precision dot. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
+
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
@@ -112,13 +118,18 @@ class ExpandDotMKL(ExpandTransformation):
         return ExpandDotOpenBLAS.expansion(*args, **kwargs)
 
 
-@dace.library.expansion
-class ExpandDotCuBLAS(ExpandTransformation):
+class ExpandDotGPUBLAS(ExpandTransformation):
+    """``?dot`` on a vendor GPU BLAS. The two backends differ only in the vocabulary below.
 
-    environments = [environments.cublas.cuBLAS]
+    Same split as :class:`~dace.libraries.blas.nodes.gemm.ExpandGemmGPUBLAS`: the body -- operand
+    validation, the veclen division, the conjugate and unsupported-dtype fallbacks -- is identical
+    for both, and only the handle, the error check and the routine spelling move.
+    """
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
@@ -139,14 +150,14 @@ class ExpandDotCuBLAS(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         if node.accumulator_type is None:
-            code += f"""dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y,
+            code += f"""{cls.check_error}({cls.funcname(func)}({cls.handle}, {n}, _x, {stride_x}, _y,
                              {stride_y}, _result));"""
         else:
             code += f"""
-            dace::blas::CheckCublasError(cublasDotEx(
-                __dace_cublas_handle,
+            {cls.check_error}({cls.ex_name}(
+                {cls.handle},
                 {n},
                 _x,
                 {blas_helpers.dtype_to_cudadatatype(dtype)},
@@ -167,6 +178,34 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandDotCuBLAS(ExpandDotGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    handle = "__dace_cublas_handle"
+    check_error = "dace::blas::CheckCublasError"
+    ex_name = "cublasDotEx"
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        return f"cublas{func}"
+
+
+@dace.library.expansion
+class ExpandDotRocBLAS(ExpandDotGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    handle = "__dace_rocblas_handle"
+    check_error = "dace::blas::CheckRocblasError"
+    #: No mixed-precision path: ``rocblas_dot_ex`` takes ``rocblas_datatype_*`` enums, which the
+    #: shared body has no mapping for. Empty makes the base fall back to ``pure`` for that case
+    #: instead of emitting a rocBLAS call carrying CUDA enum names.
+    ex_name = ""
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        # ``Ddot`` -> ``rocblas_ddot``: rocBLAS is snake_case with the type letter lowered.
+        return f"rocblas_{func.lower()}"
+
+
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
 
@@ -176,6 +215,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "rocBLAS": ExpandDotRocBLAS,
     }
     default_implementation = None
 
