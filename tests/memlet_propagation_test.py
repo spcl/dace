@@ -196,6 +196,46 @@ def test_a_supplied_symbol_table_propagates_what_the_derived_one_does():
     assert derived.volume == supplied.volume, (derived, supplied)
 
 
+def test_widening_a_subset_whose_rank_does_not_match_its_array():
+    """A border memlet can name an array whose rank its subset does not share.
+
+    ``fft_3d`` reaches propagation with a rank-3 ``0:1024, r_index, s_index`` on the rank-1
+    ``__gather0_o``. Indexing the per-dimension fallback by the subset's own dimension then walks
+    off its end with an IndexError, so a mismatched rank widens to the whole array instead -- the
+    same over-approximation this fallback already makes, and the only sound answer when the
+    dimensions cannot be matched up.
+    """
+    from dace.sdfg.propagation import widen_inner_symbol_dims
+
+    desc = dace.data.Array(dace.float64, [1024])
+    inner_only = dace.subsets.Range.from_string('0:1024, r_index, s_index')
+    widened = widen_inner_symbol_dims(inner_only, desc, {'N': dace.int64}, '__gather0_o')
+    assert len(widened) == 1, f'a mismatched rank must widen to the array, got {widened}'
+    assert str(widened) == '0:1024', str(widened)
+
+
+def test_a_mismatched_rank_with_only_outer_symbols_is_left_alone():
+    """Rank disagreement alone is not a reason to widen: the fallback exists for symbols that do
+    not survive outside the nested SDFG, and a subset naming none of them still describes what it
+    describes."""
+    from dace.sdfg.propagation import widen_inner_symbol_dims
+
+    desc = dace.data.Array(dace.float64, [1024])
+    outer_only = dace.subsets.Range.from_string('0:1024, 0:N')
+    kept = widen_inner_symbol_dims(outer_only, desc, {'N': dace.int64}, '__gather0_o')
+    assert str(kept) == '0:1024, 0:N', str(kept)
+
+
+def test_matching_rank_widens_only_the_inner_symbol_dimension():
+    """The per-dimension path is unchanged: only the dim naming an inside-only symbol widens."""
+    from dace.sdfg.propagation import widen_inner_symbol_dims
+
+    desc = dace.data.Array(dace.float64, [8, 16])
+    mixed = dace.subsets.Range.from_string('0:N, r_index')
+    widened = widen_inner_symbol_dims(mixed, desc, {'N': dace.int64}, 'arr')
+    assert str(widened) == '0:N, 0:16', str(widened)
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
@@ -203,3 +243,6 @@ if __name__ == '__main__':
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_strided_write_keeps_the_multiplier()
     test_a_supplied_symbol_table_propagates_what_the_derived_one_does()
+    test_widening_a_subset_whose_rank_does_not_match_its_array()
+    test_a_mismatched_rank_with_only_outer_symbols_is_left_alone()
+    test_matching_rank_widens_only_the_inner_symbol_dimension()

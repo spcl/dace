@@ -1619,3 +1619,82 @@ if __name__ == "__main__":
     test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('wcr-scalar')
     test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient()
     test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays()
+
+# ---- scatter: the accumulator SLOT moves per iteration -------------------
+
+
+@dace.program
+def scatter_add_by_index(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M]):
+    for i in range(N):
+        out[idx[i]] += val[i]
+
+
+@dace.program
+def scatter_add_guarded_bin(radius: dace.float64[N], out: dace.float64[M], lo: dace.float64, hi: dace.float64):
+    for i in range(N):
+        if lo <= radius[i] and radius[i] <= hi:
+            b = int((radius[i] - lo) * M / (hi - lo))
+            if b < 0:
+                b = 0
+            if b > M - 1:
+                b = M - 1
+            out[b] += 1.0
+
+
+def test_scatter_by_index_array_is_not_retargeted():
+    """``out[idx[i]] += val[i]`` is a SCATTER, not a reduction into one accumulator.
+
+    The slot moves every iteration through a symbol the body assigns, so privatizing it into a
+    single scalar collapses every scattered bin onto one. The matcher must refuse it.
+    """
+    sdfg = scatter_add_by_index.to_sdfg(simplify=True)
+    sdfg.validate()
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+
+
+def test_scatter_with_guarded_bin_index_is_not_retargeted():
+    """The same refusal when the moving symbol is assigned INSIDE a guard.
+
+    A histogram computes its bin on an iedge nested in ``if lo <= r <= hi``, so the symbol is not
+    on the loop's own edges and a shallow scan of those edges reports the slot as loop-invariant.
+    This is the shape that made azimint_hist lose 999 of its 1000 bins with no error raised.
+    """
+    sdfg = scatter_add_guarded_bin.to_sdfg(simplify=True)
+    sdfg.validate()
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+
+
+def test_guarded_scatter_histogram_keeps_every_bin():
+    """The refusal has to hold through the whole canonicalize pipeline, not just this matcher.
+
+    Structure alone would not have caught the original bug end to end: the collapse compiled, ran,
+    and returned a full-length array whose entries were simply wrong. The histogram shape is the
+    one the corpus actually carries (azimint_hist), and its accumulator is a transient the scatter
+    stage leaves sequential, so this measures the retarget refusal and nothing else.
+    """
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    n, m = 4096, 64
+    rng = np.random.default_rng(0)
+    radius = rng.random(n)
+    lo, hi = float(radius.min()), float(radius.max())
+    bins = np.clip(((radius - lo) * m / (hi - lo)).astype(np.int64), 0, m - 1)
+    expected = np.zeros(m)
+    np.add.at(expected, bins, 1.0)
+
+    sdfg = scatter_add_guarded_bin.to_sdfg(simplify=True)
+    canonicalize(sdfg, target='cpu', validate_all=False)
+    out = np.zeros(m)
+    sdfg(radius=radius, out=out, lo=lo, hi=hi, N=n, M=m)
+
+    assert np.allclose(out, expected)

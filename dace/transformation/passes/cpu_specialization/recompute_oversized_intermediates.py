@@ -64,6 +64,17 @@ class OversizedIntermediateOTFFusion(OTFMapFusion):
         # several edges into the SAME map entry, and that is still one consumer.
         if len({e.dst for e in graph.out_edges(self.array)}) != 1:
             return False
+        # Counted over the WHOLE SDFG, not this state. ``graph`` is one state, and an intermediate
+        # read from several states -- stencil_3d's ``padded``, read at six offsets per tap inside
+        # the radius loop -- looks single-consumer in every one of them. Fusing then folds the
+        # producer into one reader and leaves the others on a buffer nothing writes: measured on
+        # stencil_3d, the surviving access node came out ``in=0, out=6`` and the kernel returned
+        # uninitialized memory. The SDFG still validates, so nothing downstream catches it.
+        readers = sum(
+            1 for state in sdfg.states() for node in state.nodes()
+            if isinstance(node, nodes.AccessNode) and node.data == self.array.data and state.out_degree(node) > 0)
+        if readers != 1:
+            return False
         return intermediate_outgrows_cache(sdfg, self.array.data)
 
     def apply(self, graph: SDFGState, sdfg: SDFG):

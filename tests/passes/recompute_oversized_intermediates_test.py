@@ -53,6 +53,16 @@ def chain_two_consumers(a: dace.float64[N], out: dace.float64[N], other: dace.fl
         other[i] = t[i] * 3.0
 
 
+@dace.program
+def chain_consumer_in_a_loop(a: dace.float64[N], out: dace.float64[N]):
+    t = dace.define_local([N], dace.float64)
+    for i in dace.map[0:N]:
+        t[i] = a[i] * 2.0
+    for _ in range(3):
+        for i in dace.map[0:N]:
+            out[i] = out[i] + t[i]
+
+
 def transients(sdfg):
     return [n for n, d in sdfg.arrays.items() if d.transient and isinstance(d, data.Array)]
 
@@ -107,6 +117,34 @@ def test_two_consumers_stay_materialized():
     assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
     assert len(transients(sdfg)) == 1
     assert len(top_level_maps(sdfg)) == 3
+
+
+def test_consumers_in_separate_states_stay_materialized():
+    """The consumer count is a property of the SDFG, not of the state the match was found in.
+
+    stencil_3d reads its ``padded`` intermediate at six offsets per tap inside the radius loop, so
+    every individual state sees exactly one consumer. Counting per state fused the producer into
+    one of them and left the rest reading a buffer nothing writes -- the surviving access node came
+    out ``in=0, out=6``, the SDFG still validated, and the kernel returned uninitialized memory.
+    """
+    sdfg = chain_consumer_in_a_loop.to_sdfg(simplify=True)
+    intermediate = transients(sdfg)
+    assert len(intermediate) == 1
+
+    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+    assert intermediate[0] in sdfg.arrays
+
+    writers = [(st, n) for st in sdfg.all_states() for n in st.nodes()
+               if isinstance(n, nodes.AccessNode) and n.data == intermediate[0] and st.in_degree(n) > 0]
+    assert writers, 'the intermediate is read but nothing writes it'
+
+    n = 64
+    rng = np.random.default_rng(7)
+    a = rng.random(n)
+    out = np.zeros(n)
+    sdfg(a=a, out=out, N=n)
+    assert np.allclose(out, 3.0 * (a * 2.0))
 
 
 def test_the_gate_reads_the_host_last_level_cache():

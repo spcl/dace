@@ -1201,6 +1201,36 @@ def _propagate_border_memlet_candidates(candidates,
     return propagated
 
 
+def widen_inner_symbol_dims(subset: subsets.Range, desc, outer_symbols, data_name: str) -> subsets.Range:
+    """Replace every dim of ``subset`` whose bounds name a symbol that does not exist outside the
+    nested SDFG with that dimension's full array range.
+
+    ``subset`` is supposed to live in ``desc``'s index space, so the two ranks agree and the
+    replacement is per-dimension. They can disagree -- fft_3d reaches here with a rank-3
+    ``0:1024, r_index, s_index`` on the rank-1 ``__gather0_o`` -- and the old code indexed the
+    fallback by the subset's own dimension, walking off its end with an IndexError. A subset that
+    does not belong to the array it names cannot be mapped dimension by dimension, so widen the
+    whole thing to the array: over-approximating is what this fallback does anyway, and it is
+    always sound for propagation.
+    """
+    fallback_subset = subsets.Range.from_array(desc)
+
+    def out_of_scope(rng) -> bool:
+        return any(str(s) not in outer_symbols.keys() for item in rng for s in item.free_symbols)
+
+    if len(subset) != len(fallback_subset):
+        if any(out_of_scope(rng) for rng in subset):
+            warnings.warn(f'Propagation: border memlet for "{data_name}" carries a rank-{len(subset)} '
+                          f'subset on a rank-{len(fallback_subset)} array; widening it to the whole '
+                          f'array because the dimensions cannot be matched up.')
+            return fallback_subset
+        return subset
+    for i, rng in enumerate(subset):
+        if out_of_scope(rng):
+            subset[i] = fallback_subset[i]
+    return subset
+
+
 def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) -> None:
     """
     Propagate all connector-adjacent memlets contributed by one state.
@@ -1307,27 +1337,15 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                 if border_memlet.src_subset is not None:
                     if border_memlet.data is None:
                         border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.src_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.src_subset[i] = fallback_subset[i]
+                    border_memlet.src_subset = widen_inner_symbol_dims(border_memlet.src_subset,
+                                                                       sdfg.arrays[border_memlet.data], outer_symbols,
+                                                                       border_memlet.data)
                 if border_memlet.dst_subset is not None:
                     if border_memlet.data is None:
                         border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.dst_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.dst_subset[i] = fallback_subset[i]
+                    border_memlet.dst_subset = widen_inner_symbol_dims(border_memlet.dst_subset,
+                                                                       sdfg.arrays[border_memlet.data], outer_symbols,
+                                                                       border_memlet.data)
 
     # Propagate the inside 'border' memlets outside the SDFG by
     # offsetting, and unsqueezing if necessary.

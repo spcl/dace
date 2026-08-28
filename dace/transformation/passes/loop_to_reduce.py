@@ -15,7 +15,7 @@ Accumulator: ``Scalar``, length-1 ``Array``, or one loop-invariant slice of an `
 """
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Set
 
 import sympy
 
@@ -356,6 +356,20 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
                                                      validate_all=False,
                                                      permissive=False)
         return count or None
+
+
+def loop_iteration_assigned_symbols(loop: LoopRegion) -> Set[str]:
+    """Every symbol ``loop`` reassigns per iteration, at any depth inside it.
+
+    ``loop.edges()`` alone sees only the body's top level. A histogram computes its bin index on an
+    iedge inside a guard (``if lo <= r <= hi: b = ...``), so the symbol that moves the accumulator
+    slot each iteration is invisible there, and a scatter then reads as a single-slot reduction.
+    """
+    assigned: Set[str] = set()
+    for region in (loop, *loop.all_control_flow_regions(recursive=True)):
+        for edge in region.edges():
+            assigned.update(edge.data.assignments.keys())
+    return assigned
 
 
 def _one_elem(subset) -> Optional[int]:
@@ -1213,9 +1227,7 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     # Same per-iter-mutated-symbol guard as ``_extract``: write subset must not reference
     # a symbol reassigned on a loop iedge (TSVC s141 ``k = k + j + 1``), else each iteration
     # writes a different slot -> not a single-accumulator reduction.
-    loop_iedge_assignees = set()
-    for e in loop.edges():
-        loop_iedge_assignees.update(e.data.assignments.keys())
+    loop_iedge_assignees = loop_iteration_assigned_symbols(loop)
     candidates = []
     for state in loop.all_states():
         # A WCR write inside a nested loop is the nested loop's reduction, not ours.
@@ -1304,6 +1316,12 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
     if not loop.loop_variable:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    # Same per-iteration-mutated-symbol guard as ``_extract_wcr_body``. The loop variable is not the
+    # only thing that moves the slot: a SCATTER (``sums[x[i]] += v[i]``) reaches the accumulator
+    # through a symbol assigned on a body iedge (``__sc0_x0_index = x[i]``), so its subset never
+    # mentions the loop variable and the ``_uses`` test below passes. Privatising that collapses
+    # every scattered bin onto one scalar -- azimint_naive lost 999 of 1000 bins to it, silently.
+    loop_iedge_assignees = loop_iteration_assigned_symbols(loop)
     for state in loop.all_states():
         # A reduction chain inside a nested loop belongs to that nested loop; retargeting
         # the outer loop would wrap the init/writeback outside the inner reduction and lose
@@ -1360,6 +1378,10 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if _one_elem(carry_subset) != 1 or _one_elem(write_subset) != 1:
                 continue
             if _uses(carry_subset, loop_var_sym) or _uses(write_subset, loop_var_sym):
+                continue
+            if any(
+                    str(sym) in loop_iedge_assignees for subset in (carry_subset, write_subset)
+                    for sym in subset.free_symbols):
                 continue
             if str(carry_subset) != str(write_subset):
                 continue
