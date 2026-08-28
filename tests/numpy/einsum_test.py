@@ -321,6 +321,37 @@ def test_c_transposed():
     assert np.allclose(c, c_expected)
 
 
+def test_einsum_libnode_ordering_edge():
+    """An ordering memlet into the Einsum node names no container; expansion must skip it."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG('tester_ordering')
+    sdfg.arg_names = ['A', 'B']
+    sdfg.add_array('A', (20, 21), dace.float64)
+    sdfg.add_array('B', (21, 22), dace.float64)
+    sdfg.add_array('__return', (20, 22), dace.float64)
+    sdfg.add_transient('anchor', (1, ), dace.float64)
+
+    state = sdfg.add_state()
+    enode = Einsum('einsum')
+    enode.einsum_str = 'ik,kj->ij'
+    enode.in_connectors = {'a': None, 'b': None}
+    enode.out_connectors = {'out': None}
+    state.add_node(enode)
+    state.add_edge(state.add_read('A'), None, enode, 'a', dace.Memlet('A'))
+    state.add_edge(state.add_read('B'), None, enode, 'b', dace.Memlet('B'))
+    state.add_edge(enode, 'out', state.add_write('__return'), None, dace.Memlet('__return'))
+
+    anchor = state.add_access('anchor')
+    state.add_edge(state.add_tasklet('t', {}, {'o': None}, 'o = 1.0'), 'o', anchor, None, dace.Memlet('anchor[0]'))
+    state.add_nedge(anchor, enode, dace.Memlet())
+    sdfg.validate()
+
+    A = np.random.rand(20, 21)
+    B = np.random.rand(21, 22)
+    assert np.allclose(sdfg(A, B), A @ B)
+
+
 if __name__ == '__main__':
     test_general_einsum()
     test_matmul()

@@ -205,6 +205,10 @@ class MapFission(transformation.SingleStateTransformation):
                 if ndesc.transient is False:
                     return False
 
+                # A View owns no storage, so fission cannot widen it by the map extent.
+                if isinstance(ndesc, dt.View):
+                    return False
+
             # In subgraphs, make sure transients are not used/allocated
             # in other scopes or states
             if expr_index == 0:
@@ -289,13 +293,15 @@ class MapFission(transformation.SingleStateTransformation):
                 external_edges_entry = list(state.out_edges(map_entry))
                 external_edges_exit = list(state.in_edges(map_exit))
             else:
+                # Ordering edges cross no boundary; counted as one, a happens-before edge into
+                # an INPUT connector node reads as a write leaving the nested SDFG.
                 external_edges_entry = [
-                    e for e in subgraph.edges()
-                    if (isinstance(e.src, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.src.data].transient)
+                    e for e in subgraph.edges() if (isinstance(e.src, nodes.AccessNode) and not e.data.is_empty()
+                                                    and not nsdfg_node.sdfg.arrays[e.src.data].transient)
                 ]
                 external_edges_exit = [
-                    e for e in subgraph.edges()
-                    if (isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
+                    e for e in subgraph.edges() if (isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty()
+                                                    and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
                 ]
 
             # Enclosing scope of the fissioned map (``None`` if top-level).
@@ -524,7 +530,10 @@ class MapFission(transformation.SingleStateTransformation):
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
                         if isinstance(desc, dt.Scalar):
-                            parent.arrays[node.data] = dcpy(outer_desc)
+                            # A connector inside the nested SDFG has no binding edge, so keep the
+                            # outer View's layout but not its View-ness.
+                            inner_desc = outer_desc.as_array() if isinstance(outer_desc, dt.View) else dcpy(outer_desc)
+                            parent.arrays[node.data] = inner_desc
                             desc = parent.arrays[node.data]
                             desc.transient = False
                         elif isinstance(desc, dt.Array):
@@ -537,6 +546,8 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
+                                if e.data.is_empty():
+                                    continue  # ordering edge: no subset
                                 e.data.subset.offset(desc.offset, False)
                                 e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is

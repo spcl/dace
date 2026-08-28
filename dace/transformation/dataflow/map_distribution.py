@@ -75,6 +75,8 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -283,6 +285,8 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -604,6 +608,8 @@ class StencilOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -688,6 +694,8 @@ class OuterProductOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
+from dace import data
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
@@ -32,6 +33,16 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
 
         # Make sure that the removal candidates are transient
         if not (in_array.desc(sdfg).transient and med_array.desc(sdfg).transient):
+            return False
+
+        # ``apply`` redirects the writers of ``in_array`` it finds IN THIS STATE; a write from
+        # another state would lose its copy.
+        for node in (in_array, med_array):
+            if len([n for n in sdfg.data_nodes() if n.data == node.data]) > 1:
+                return False
+
+        # A View owns no storage: its binding edge IS the copy this fold deletes.
+        if any(isinstance(n.desc(sdfg), data.View) for n in (in_array, med_array, out_array)):
             return False
 
         # Make sure that both arrays are using the same storage location
@@ -88,6 +99,11 @@ class RedundantArrayCopying(pm.SingleStateTransformation):
 
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
+            return False
+
+        # A View owns no storage; folding the chain moves its 'views' binding connector
+        # onto a node that does not view anything.
+        if any(isinstance(n.desc(sdfg), data.View) for n in (in_array, med_array, out_array)):
             return False
 
         # Make sure that the removal candidate is a transient variable

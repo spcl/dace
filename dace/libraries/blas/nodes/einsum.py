@@ -47,6 +47,8 @@ class SpecializeEinsum(xf.ExpandTransformation):
         inputs = []
         output = None
         for e in parent_state.in_edges(node):
+            if e.data.is_empty():
+                continue
             inputs.append(e.dst_conn)
             desc = parent_sdfg.arrays[e.data.data]
             insubset = deepcopy(e.data.src_subset)
@@ -58,6 +60,8 @@ class SpecializeEinsum(xf.ExpandTransformation):
                            storage=desc.storage)
 
         for e in parent_state.out_edges(node):
+            if e.data.is_empty():
+                continue
             output = e.src_conn
             desc = parent_sdfg.arrays[e.data.data]
             outsubset = deepcopy(e.data.dst_subset)

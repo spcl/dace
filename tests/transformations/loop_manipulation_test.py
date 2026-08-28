@@ -82,6 +82,34 @@ def test_peeling_end():
     assert np.allclose(B, reg)
 
 
+@dace.program
+def unroll_view_rows(A: dace.float64[6, 8]):
+    for i in range(6):
+        v = A[i, :]
+        v[:] = v + 1.0
+
+
+def test_unroll_gives_each_copy_its_own_view():
+    """ A View owns no storage: codegen emits its binding once, at the descriptor's allocation site.
+        Unrolled copies that share one View descriptor therefore share the FIRST iteration's binding
+        and every copy reads and writes row 0 -- silent wrong numbers on a graph that validates. """
+    sdfg = unroll_view_rows.to_sdfg(simplify=False)
+    before = {n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.View)}
+    assert sdfg.apply_transformations(LoopUnroll, validate=False) == 1
+    sdfg.validate()
+
+    after = {n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.View)}
+    assert len(after) == 6 * len(before)
+    for state in sdfg.states():
+        named = {n.data for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)}
+        assert len(named) <= len(before)
+
+    A = np.arange(48, dtype=np.float64).reshape(6, 8).copy()
+    expected = A + 1.0
+    sdfg(A=A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_unroll()
     test_peeling_start()

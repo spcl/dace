@@ -783,6 +783,34 @@ def test_scalar_index_regression(memlet_volume_n):
     assert np.allclose(a, ref)
 
 
+def test_scalar_bound_to_a_view_is_not_promoted():
+    """A View owns no storage: the binding edge is what gives it one. Promoting the scalar it is
+       bound to rewrites that edge as a symbol-assignment tasklet, which is not a legal binding."""
+    sdfg = dace.SDFG('viewed_scalar')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_transient('s', [1], dace.int32)
+    sdfg.add_view('Vs', [1], dace.int32)
+
+    state = sdfg.add_state()
+    producer = state.add_tasklet('produce', {}, {'o'}, 'o = 2')
+    scalar = state.add_access('s')
+    view = state.add_access('Vs')
+    consumer = state.add_tasklet('consume', {'i'}, {'o'}, 'o = i * 10.0')
+    state.add_edge(producer, 'o', scalar, None, dace.Memlet('s[0]'))
+    state.add_edge(scalar, None, view, 'views', dace.Memlet('s[0] -> [0]'))
+    state.add_edge(view, None, consumer, 'i', dace.Memlet('Vs[0]'))
+    state.add_edge(consumer, 'o', state.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.zeros(4)
+    sdfg(A=A)
+    assert A[0] == 20.0
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()

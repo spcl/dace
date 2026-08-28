@@ -350,16 +350,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             )
 
         assert pure_outputs == set(graph.out_edges(first_map_exit))
-        if len(pure_outputs) != 0:
-            mfhelper.relocate_nodes(
-                from_node=first_map_exit,
-                to_node=second_map_exit,
-                state=graph,
-                sdfg=sdfg,
-                scope_dict=scope_dict,
-                never_consolidate_edges=self.never_consolidate_edges,
-                consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
-            )
+        mfhelper.relocate_nodes(
+            from_node=first_map_exit,
+            to_node=second_map_exit,
+            state=graph,
+            sdfg=sdfg,
+            scope_dict=scope_dict,
+            never_consolidate_edges=self.never_consolidate_edges,
+            consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
+        )
 
         # Now move the input of the second Map, that has no connection to the first
         #  Map, to the first Map. This is needed because we will later delete the
@@ -562,7 +561,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  data dependency checks. Thus we have to check them separately here.
                 for final_producer_edge in state.memlet_tree(producer_edge).leaves():
                     assert not final_producer_edge.data.is_empty()
-                    final_producer = final_producer_edge.dst
+                    final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
                                 state=state,
@@ -652,6 +651,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  layout of the intermediate can be handled.
                     for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
                         final_consumer = final_consumer_edge.dst
+                        # Shrinking the intermediate under a View leaves it addressing more
+                        #  elements than the container holds.
+                        if isinstance(final_consumer, nodes.AccessNode) and self.is_view(final_consumer, sdfg):
+                            return None
                         if isinstance(final_consumer, nodes.NestedSDFG):
                             if not self._check_if_nested_sdfg_can_be_handled(
                                     state=state,
@@ -1251,8 +1254,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             })
             # If the resolved and unresolved names do not have the same length.
             #  Then different views point to the same location, which we forbid
+            # Different views onto one location: forbid. This reports a HAZARD, so `True`.
             if len(unresolved_set) != len(resolved_sets[-1]):
-                return False
+                return True
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second Map each write to the same data.
@@ -1590,9 +1594,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # An empty Memlet transfers no data, so the node it connects is not accessed here.
         access_set: Set[nodes.AccessNode] = {
             node
-            for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            for node, edge in ((other_node(e), e) for e in get_edges(scope_node))
+            if isinstance(node, nodes.AccessNode) and not edge.data.is_empty()
         }
 
         return access_set
@@ -1620,13 +1626,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         """
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
+        # Only edges bound to a scope connector describe a data access; an ordering edge and a
+        #  dynamic Map range carry none.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [
+                e for e in state.in_edges(scope_node)
+                if e.src == node and e.dst_conn is not None and e.dst_conn.startswith("IN_")
+            ]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:]))
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [
+                e for e in state.out_edges(scope_node)
+                if e.dst == node and e.src_conn is not None and e.src_conn.startswith("OUT_")
+            ]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:]))

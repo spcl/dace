@@ -133,6 +133,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 candidates.remove(candidate)
                 continue
 
+            # A View bound to this candidate loses its binding: promotion rebuilds the edge from
+            # the assignment tasklet.
+            if (any(e.dst_conn == 'views' for e in state.out_edges(node))
+                    or any(e.src_conn == 'views' for e in state.in_edges(node))):
+                candidates.remove(candidate)
+                continue
+
             # Candidate may only be written to once within a state
             if candidate in candidates_in_state:
                 if state.in_degree(node) == 1:
@@ -148,6 +155,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # Edge must not be empty
             if edge.data.is_empty():
+                candidates.remove(candidate)
                 continue
 
             # Edge must not be WCR

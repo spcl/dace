@@ -32,6 +32,15 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+def read_only_data_nodes(state: SDFGState) -> Set[nodes.AccessNode]:
+    """Top-level access nodes nothing writes; an empty in-edge only orders, it carries no write."""
+    return {
+        node
+        for node in state.scope_children()[None]
+        if isinstance(node, nodes.AccessNode) and all(e.data.is_empty() for e in state.in_edges(node))
+    }
+
+
 @transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
@@ -253,13 +262,13 @@ class StateFusion(transformation.MultiStateTransformation):
             second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
 
             # Find source/sink (data) nodes
-            first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            first_input = read_only_data_nodes(first_state)
             first_output = {
                 node
                 for node in first_state.scope_children()[None]
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
-            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            second_input = read_only_data_nodes(second_state)
             second_output = {
                 node
                 for node in second_state.scope_children()[None]

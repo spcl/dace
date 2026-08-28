@@ -812,6 +812,11 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     for e in inner_edges(scope_node):
         if e.data.is_empty():
             continue
+        # A source node a write produced is its own program point; folding it would move the read
+        # in front of that write. The exit side has the disjointness guard below instead.
+        if isinstance(scope_node, nd.EntryNode) and any(not ie.data.is_empty()
+                                                        for ie in state.in_edges(state.memlet_path(e)[0].src)):
+            continue
         conn = inner_conn(e)
         edges_by_connector[conn].append(e)
         odata = get_outer_data(e)
@@ -1097,10 +1102,9 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     :see: ``dace.data.View``
     """
 
-    in_edges = state.in_edges(view)
-    # We should ignore empty synchronization edges
-    in_edges = [e for e in in_edges if not e.data.is_empty()]
-    out_edges = state.out_edges(view)
+    # Ordering edges carry no binding, on either side
+    in_edges = [e for e in state.in_edges(view) if not e.data.is_empty()]
+    out_edges = [e for e in state.out_edges(view) if not e.data.is_empty()]
 
     # Invalid case: No data to view
     if len(in_edges) == 0 and len(out_edges) == 0:
@@ -1124,6 +1128,12 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edges[0]
     if len(out_edges) == len(in_edges) and len(out_edges) != 1:
         return None
+
+    # No in-edges, several out-edges: the viewed data must be on the side that has edges, so the
+    # view is well formed only when exactly one of them reaches an access node.
+    if not in_edges:
+        viewed = [e for e in out_edges if isinstance(state.memlet_path(e)[-1].dst, nd.AccessNode)]
+        return viewed[0] if len(viewed) == 1 else None
 
     in_edge = in_edges[0]
     out_edge = out_edges[0] if len(out_edges) > 0 else None

@@ -286,6 +286,11 @@ class LoopToMap(xf.MultiStateTransformation):
             # Simple case: read and write are in the same subset
             read = src_subset
             write = candidate.dst_subset
+            # A WCR write is a read-modify-write of its destination, and the write tests above
+            # exempt it -- sound only for a reduction whose accumulator the loop never reads back.
+            if (candidate.wcr is not None and not _check_range(write, a, itersym, b, step)
+                    and subsets.intersects(read, write) is not False):
+                return False
             if read == write:
                 continue
             ridx = _dependent_indices(itervar, read)

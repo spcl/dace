@@ -5,14 +5,39 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import dtypes, sdfg as sd, symbolic
+from dace import data, dtypes, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.sdfg import InterstateEdge, utils as sdutil
+from dace.sdfg import InterstateEdge, SDFG, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from ordered_set import OrderedSet
+
+
+def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:
+    """Views only ``loop`` binds, so each unrolled copy can own one.
+
+    Codegen emits a View's binding once per allocation scope, so copies sharing a descriptor all use
+    the first one's binding. A view an outer block also names must keep its own.
+
+    :param loop: The loop about to be unrolled.
+    :param sdfg: The SDFG holding ``loop``.
+    :returns: The view names safe to uniquify per unrolled copy.
+    """
+    body = set(loop.all_states())
+    names = OrderedSet()
+    for state in body:
+        for node in state.data_nodes():
+            if isinstance(sdfg.arrays[node.data], data.View):
+                names.add(node.data)
+    for state in sdfg.all_states():
+        if state in body:
+            continue
+        for node in state.data_nodes():
+            names.discard(node.data)
+    return names
 
 
 @make_properties
@@ -85,12 +110,17 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
+        local_views = loop_local_view_names(self.loop, sdfg)
         unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
         for position, i in enumerate(offsets):
             # `position`, not `i`: for a negative stride `i` itself walks 0, -1, -2, ... and is
             # just as unsafe in a label. See instantiate_loop_iteration.
             current_index = start + i
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, position)
+            if position > 0 and local_views:
+                # Copy 0 keeps the originals; later copies need one binding each.
+                repl = {v: sdfg.add_datadesc(v, sdfg.arrays[v].clone(), find_new_name=True) for v in local_views}
+                iteration_region.replace_dict(repl)
             iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
             iteration_region.replace_meta_accesses({self.loop.loop_variable: symbolic.symstr(current_index)})
 

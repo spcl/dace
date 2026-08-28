@@ -2,6 +2,7 @@
 
 from typing import Tuple
 import dace
+import numpy as np
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import consolidate_edges
@@ -319,6 +320,38 @@ def test_multi_use_value_output(
         use_non_standard_memlet=use_non_standard_memlet,
         use_inner_access_node=use_inner_access_node,
     )
+
+
+def test_consolidate_edges_refuses_reads_from_two_access_nodes():
+    """Two access nodes of one container are two program points; the second is what
+    sequences its read after the write feeding it."""
+    sdfg = dace.SDFG('read_merge')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    state = sdfg.add_state()
+
+    src = state.add_access('A')
+    me, mx = state.add_map('m', dict(i='1:8'))
+    tasklet = state.add_tasklet('t', {'x': None, 'y': None}, {'z': None}, 'z = x + y')
+    state.add_memlet_path(src, me, tasklet, dst_conn='x', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, mx, state.add_access('B'), src_conn='z', memlet=dace.Memlet('B[i]'))
+
+    # The write feeding 'written' is what orders the A[0] read after it.
+    written = state.add_access('A')
+    state.add_edge(state.add_tasklet('w', {}, {'o': None}, 'o = 100.0'), 'o', written, None, dace.Memlet('A[0]'))
+    state.add_memlet_path(written, me, tasklet, dst_conn='y', memlet=dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    ref = np.arange(8, dtype=np.float64)
+    expected = np.zeros(8)
+    sdfg(A=ref.copy(), B=expected)
+
+    assert consolidate_edges(sdfg, propagate=False) in (None, 0)
+    sdfg.validate()
+
+    got = np.zeros(8)
+    sdfg(A=ref.copy(), B=got)
+    assert np.array_equal(expected, got)
 
 
 if __name__ == '__main__':
