@@ -161,7 +161,6 @@ def test_trsv_openblas():
     np.fill_diagonal(L, 1.0 + np.abs(np.diag(L)))
     b = rng.standard_normal(n)
     expected = np.linalg.solve(L, b)
-    L_cm = np.asfortranarray(L)
     sdfg = dace.SDFG('trsv_obs')
     sdfg.add_array('A', [n, n], dace.float64)
     sdfg.add_array('x', [n], dace.float64)
@@ -174,7 +173,7 @@ def test_trsv_openblas():
     s.add_memlet_path(s.add_read('x'), node, dst_conn='_xin', memlet=Memlet(f'x[0:{n}]'))
     s.add_memlet_path(node, s.add_write('x_out'), src_conn='_xout', memlet=Memlet(f'x_out[0:{n}]'))
     x_out = np.zeros(n)
-    _run(sdfg, A=L_cm, x=b, x_out=x_out)
+    _run(sdfg, A=L, x=b, x_out=x_out)
     np.testing.assert_allclose(x_out, expected, rtol=1e-10, atol=1e-10)
 
 
@@ -185,7 +184,6 @@ def test_trmv_openblas():
     L = np.tril(rng.standard_normal((n, n)))
     x = rng.standard_normal(n)
     expected = L @ x
-    L_cm = np.asfortranarray(L)
     sdfg = dace.SDFG('trmv_obs')
     sdfg.add_array('A', [n, n], dace.float64)
     sdfg.add_array('x', [n], dace.float64)
@@ -198,7 +196,7 @@ def test_trmv_openblas():
     s.add_memlet_path(s.add_read('x'), node, dst_conn='_xin', memlet=Memlet(f'x[0:{n}]'))
     s.add_memlet_path(node, s.add_write('x_out'), src_conn='_xout', memlet=Memlet(f'x_out[0:{n}]'))
     x_out = np.zeros(n)
-    _run(sdfg, A=L_cm, x=x, x_out=x_out)
+    _run(sdfg, A=L, x=x, x_out=x_out)
     np.testing.assert_allclose(x_out, expected, rtol=_RTOL, atol=_ATOL)
 
 

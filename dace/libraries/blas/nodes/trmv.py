@@ -25,9 +25,8 @@ def _cblas_flags(node):
 
 
 def _gpu_flags(node, dialect):
-    """(side, uplo, trans, diag) in one vendor's spelling; the node's own booleans decide which."""
-    return (dialect.side(node.side), dialect.fill(node.uplo), dialect.op('T' if node.transA else 'N'),
-            dialect.diag(node.unit_diag))
+    """(uplo, trans, diag): a column-major library reads the row-major A as A^T, so both flip."""
+    return dialect.fill(not node.uplo), dialect.op('N' if node.transA else 'T'), dialect.diag(node.unit_diag)
 
 
 @dace.library.expansion
@@ -44,7 +43,7 @@ class ExpandTrmvOpenBLAS(ExpandTransformation):
         uplo, trans, diag = _cblas_flags(node)
         code = f"""
         cblas_{prefix}copy({n}, _xin, {sx_in}, _xout, {sx_out});
-        cblas_{prefix}trmv(CblasColMajor, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
+        cblas_{prefix}trmv(CblasRowMajor, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
@@ -77,7 +76,7 @@ class ExpandTrmvGPUBLAS(ExpandTransformation):
         code = cls.environments[0].handle_setup_code(node)
         code += f"""
         {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _xin, {sx_in}, _xout, {sx_out});
-        {cls.dialect.func(func, 'trmv')}({cls.dialect.handle}, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
+        {cls.dialect.check_error}({cls.dialect.func(func, 'trmv')}({cls.dialect.handle}, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out}));
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,

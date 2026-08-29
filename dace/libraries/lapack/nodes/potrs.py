@@ -16,6 +16,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from dace.symbolic import equal_valued
 from dace.ordered import OrderedSet
 
 
@@ -65,11 +66,17 @@ class ExpandPotrsGPUSolver(ExpandTransformation):
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
         func = func + 'potrs'
-        uplo = cls.fill_enum(node.lower)
+        # Both vendor solvers are column-major only, so a row-major lower factor is the
+        # column-major UPPER one, and the leading dimension of B is its row count.
+        uplo = cls.fill_enum(not node.lower)
+        if not equal_valued(1, nrhs):
+            raise NotImplementedError("POTRS on a vendor GPU solver needs a column-major right-hand side. A "
+                                      "row-major (n, nrhs) B has ldb = nrhs, and the solver requires ldb >= n. "
+                                      "Stage a Transpose around the node, as linalg.Solve does.")
         code = cls.environments[0].handle_setup_code(node) + f"""
             gpuMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            """ + cls.call(func, uplo, n_A, nrhs, lda, ldb_out)
+            """ + cls.call(func, uplo, n_A, nrhs, lda, n_A)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

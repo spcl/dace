@@ -373,6 +373,36 @@ def nest_sdfg_control_flow(sdfg: SDFG):
             sdfg.reset_cfg_list()
 
 
+def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge, kept: MultiConnectorEdge) -> None:
+    """Remove ``edge`` and its scope plumbing once ``kept`` owns the nested connector they share.
+
+    :func:`nest_state_subgraph` gives the nested SDFG one descriptor -- hence one connector -- per
+    data name, so several boundary edges fold onto the same connector and only the first is
+    reconnected. Dropping the rest by simply not reconnecting them strands the ``IN_x``/``OUT_x``
+    pair each entered the enclosing scope through: nothing feeds it once the subgraph is removed,
+    and validation rejects the dangling connector. :func:`~dace.sdfg.utils.consolidate_edges` folds
+    such pairs away up front where it can, but it refuses to fold a read whose source access node is
+    written in the same state (that would move the read in front of the write), which is exactly the
+    case reaching here.
+
+    The nested connector carries the union of every folded subset, so ``kept``'s outer memlets are
+    widened to cover ``edge``'s before its path goes away.
+
+    :param sdfg: SDFG holding the descriptors the union falls back to.
+    :param state: State holding both edges.
+    :param edge: Boundary edge being folded away.
+    :param kept: Boundary edge already reconnected to the shared nested connector.
+    """
+    kept_level, level = state.memlet_tree(kept).parent, state.memlet_tree(edge).parent
+    while kept_level is not None and level is not None and kept_level.edge is not level.edge:
+        kept_memlet, memlet = kept_level.edge.data, level.edge.data
+        if kept_memlet.data == memlet.data and kept_memlet.subset is not None and memlet.subset is not None:
+            widened = union(kept_memlet.subset, memlet.subset)
+            kept_memlet.subset = widened if widened is not None else Range.from_array(sdfg.arrays[kept_memlet.data])
+        kept_level, level = kept_level.parent, level.parent
+    utils.remove_edge_and_dangling_path(state, edge)
+
+
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
@@ -637,9 +667,11 @@ def nest_state_subgraph(sdfg: SDFG,
     nested_sdfg = state.add_nested_sdfg(nsdfg, dict.fromkeys([*input_names.values(), *input_arrays]),
                                         dict.fromkeys([*output_names.values(), *output_arrays]))
 
-    # Reconnect memlets to nested SDFG
-    reconnected_in = {}
-    reconnected_out = {}
+    # Reconnect memlets to nested SDFG. Each map holds the boundary edge that CLAIMED the nested
+    # connector, not a bare marker: every later edge folding onto the same connector is dropped, and
+    # ``drop_folded_boundary_edge`` needs the claimant to widen and the scope pair to strip.
+    reconnected_in: Dict[str, MultiConnectorEdge] = {}
+    reconnected_out: Dict[str, MultiConnectorEdge] = {}
     # An edge carrying an EMPTY memlet is a happens-before constraint, not a data
     # transfer: it is how a state orders two accesses that dataflow alone would leave
     # concurrent. Every one of them must survive the nesting, so collect them all --
@@ -653,6 +685,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
         name = input_names[edge]
         if name in reconnected_in:
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_in[name])
             continue
         if full_data:
             memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
@@ -660,7 +693,7 @@ def nest_state_subgraph(sdfg: SDFG,
             memlet = copy.deepcopy(edge.data)
             memlet.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, memlet)
-        reconnected_in[name] = None
+        reconnected_in[name] = edge
 
     for edge in outputs:
         if edge.data.data is None:
@@ -669,6 +702,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
         name = output_names[edge]
         if name in reconnected_out:
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_out[name])
             continue
         if full_data:
             memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
@@ -677,7 +711,7 @@ def nest_state_subgraph(sdfg: SDFG,
             memlet.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         memlet.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, memlet)
-        reconnected_out[name] = None
+        reconnected_out[name] = edge
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
@@ -713,13 +747,13 @@ def nest_state_subgraph(sdfg: SDFG,
     for transient in (t for t in subgraph_transients if t not in other_nodes):
         del sdfg.arrays[transient]
 
-    # Remove newly isolated nodes due to memlet consolidation
-    for edge in inputs:
-        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
-            state.remove_node(edge.src)
-    for edge in outputs:
-        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
-            state.remove_node(edge.dst)
+    # Remove newly isolated nodes due to memlet consolidation. Deduplicated (one node is the
+    # endpoint of several boundary edges) and membership-guarded: ``degree`` raises on a node
+    # ``drop_folded_boundary_edge`` already took away as the isolated root of a folded path.
+    present = dict.fromkeys(state.nodes())
+    for node in dict.fromkeys([*(edge.src for edge in inputs), *(edge.dst for edge in outputs)]):
+        if node in present and state.degree(node) == 0:
+            state.remove_node(node)
 
     sdfg.reset_cfg_list()
 

@@ -23,8 +23,8 @@ def _cblas_flags(node):
 
 
 def _gpu_flags(node, dialect):
-    """(side, uplo, trans, diag) in one vendor's spelling; the node's own booleans decide which."""
-    return (dialect.side(node.side), dialect.fill(node.uplo), dialect.op('T' if node.transA else 'N'),
+    """(side, uplo, trans, diag): column-major sees A^T and B^T, and (op(A) B)^T = B^T op(A)^T."""
+    return (dialect.side(not node.side), dialect.fill(not node.uplo), dialect.op('T' if node.transA else 'N'),
             dialect.diag(node.unit_diag))
 
 
@@ -75,10 +75,11 @@ class ExpandTrmmGPUBLAS(ExpandTransformation):
         side, uplo, trans, diag = _gpu_flags(node, cls.dialect)
         a = node.alpha
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         {dt.ctype} __alpha = ({dt.ctype})({a});
-        {cls.dialect.func(func, 'trmm')}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {m}, {n}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out});
-        """
+        {cls.dialect.check_error}({cls.dialect.func(func, 'trmm')}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {n}, {m}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out}));
+        """)
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,

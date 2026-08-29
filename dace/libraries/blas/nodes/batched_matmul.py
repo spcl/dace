@@ -364,14 +364,14 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
                 {dtype.ctype} alpha = {alpha};
                 {dtype.ctype} beta = 0;
                 '''
-            call_suffix += '''
+            call_suffix += f'''
     {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
                 '''
             beta = f'({cdtype} *)&beta'
             alpha = f'({cdtype} *)&alpha'
         else:
             alpha = constants[node.alpha]
-            beta = "__state->{cls.dialect.handle_field}.Constants().%sZero()" % factort
+            beta = f"__state->{cls.dialect.handle_field}.Constants().{factort}Zero()"
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -379,15 +379,15 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-            call = '''{cls.dialect.check_error}({cls.dialect.strided_batched(func)}({cls.dialect.handle},
-                {cls.dialect.op(ta)}, {cls.dialect.op(tb)},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
-                ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
-                {beta},
-                ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
-                {BATCH}));'''.format_map(opt)
+            call = f'''{cls.dialect.check_error}({cls.dialect.strided_batched(func)}({cls.dialect.handle},
+                {cls.dialect.op(opt['ta'])}, {cls.dialect.op(opt['tb'])},
+                {opt['M']}, {opt['N']}, {opt['K']},
+                {opt['alpha']},
+                ({opt['dtype']}*){opt['array_prefix']}{opt['x']}, {opt['lda']}, {opt['stride_a']},
+                ({opt['dtype']}*){opt['array_prefix']}{opt['y']}, {opt['ldb']}, {opt['stride_b']},
+                {opt['beta']},
+                ({opt['dtype']}*){opt['array_prefix']}_c, {opt['ldc']}, {opt['stride_c']},
+                {opt['BATCH']}));'''
         else:
             # The mixed-precision path names cuBLAS COMPUTE and ALGO enums and the CUDA-wide
             # `cudaDataType`. rocBLAS spells all three differently (`rocblas_datatype_*`), and this

@@ -19,7 +19,7 @@
 #define __DACE_CUDA_SCAN_AFFINE_CUH
 
 #include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
-#include <cub/cub.cuh>
+#include "gpucub.cuh"     // ::gpucub -- cub on CUDA, hipCUB on HIP
 
 #include "../cub_scratch.cuh"
 

@@ -111,6 +111,12 @@ class ExpandGPUTensor(ExpandTransformation):
 
     environments = []
 
+    #: The v2 descriptor says where the elements are, so the listing order should not matter, and for
+    #: cuTENSOR it does not. hipTensor's permute reads A's strides but IGNORES C's and packs C densely
+    #: in the order its modes are listed (measured, ROCm 7.2.3 / gfx90a), so its subclass lists every
+    #: descriptor fastest-mode-first and refuses a non-packed output.
+    fastest_mode_first = False
+
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
@@ -141,12 +147,27 @@ class ExpandGPUTensor(ExpandTransformation):
         # Output modes: the permutation   [axes[0], axes[1], ...]
         modes_c = list(node.axes)
 
+        extent_a = [sym2cpp(s) for s in inp_tensor.shape]
+        extent_c = [sym2cpp(s) for s in out_tensor.shape]
+        stride_a = [sym2cpp(s) for s in inp_tensor.strides]
+        stride_c = [sym2cpp(s) for s in out_tensor.strides]
+
+        if cls.fastest_mode_first:
+            if not out_tensor.is_packed_c_strides():
+                warnings.warn(f"{cls.vendor} permute ignores the output tensor's strides and would pack a "
+                              "non-packed output, falling back to the pure implementation (still a GPU map "
+                              "on GPU-resident data)")
+                return ExpandPure.expansion(node, parent_state, parent_sdfg)
+            modes_a, modes_c = modes_a[::-1], modes_c[::-1]
+            extent_a, extent_c = extent_a[::-1], extent_c[::-1]
+            stride_a, stride_c = stride_a[::-1], stride_c[::-1]
+
         modes_a_str = ', '.join(str(m) for m in modes_a)
         modes_c_str = ', '.join(str(m) for m in modes_c)
-        extent_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.shape)
-        extent_c_str = ', '.join(sym2cpp(s) for s in out_tensor.shape)
-        stride_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.strides)
-        stride_c_str = ', '.join(sym2cpp(s) for s in out_tensor.strides)
+        extent_a_str = ', '.join(extent_a)
+        extent_c_str = ', '.join(extent_c)
+        stride_a_str = ', '.join(stride_a)
+        stride_c_str = ', '.join(stride_c)
 
         code = f"""\
 {cls.environments[0].handle_setup_code(node)}
@@ -233,6 +254,7 @@ class ExpandHipTensor(ExpandGPUTensor):
     handle = "__dace_hiptensor_handle"
     check = "dace::linalg::CheckHipTensorError"
     op_identity = "HIPTENSOR_OP_IDENTITY"
+    fastest_mode_first = True
     algo_default = "HIPTENSOR_ALGO_DEFAULT"
     #: NOT the literal translation of cuTENSOR's ``JIT_MODE_DEFAULT``. hipTensor accepts that name
     #: and then refuses the plan at execution with ``HIPTENSOR_STATUS_NOT_SUPPORTED``, for every

@@ -64,14 +64,15 @@ class ExpandSymvGPUBLAS(ExpandTransformation):
         (desc_A, lda), (_, sx), (_, syi), syo, n = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = '{cls.dialect.fill(True)}' if node.uplo else '{cls.dialect.fill(False)}'
+        uplo = cls.dialect.fill(not node.uplo)
         a, b = node.alpha, node.beta
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         {dt.ctype} __alpha = ({dt.ctype})({a}); {dt.ctype} __beta = ({dt.ctype})({b});
         {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
         {cls.dialect.func(func, 'symv')}({cls.dialect.handle}, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
-        """
+        """)
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,

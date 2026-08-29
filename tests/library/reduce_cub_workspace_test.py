@@ -78,13 +78,13 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     """The work call is the only site holding CUB's status for the reduction that produces the output."""
     code = generated_code_for(in_shape, axes, out_shape)
     assert re.search(
-        r'cudaError_t __dace_reduce_\w+\(',
+        r'gpuError_t __dace_reduce_\w+\(',
         code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
     # experimental_readable (the default CPU codegen) inlines the tasklet's _in/_out connectors to
     # the actual pointers they read/write; legacy keeps the literal connector names in the call. The
     # call site is the line that is not a declaration either way, and how the offloading pass spells
     # its device copy (``gpu_a``, ``a_gpu``) is that pass's business rather than this test's.
-    call = re.search(r'^(?!.*cudaError_t).*__dace_reduce_\w+\(\w+, \w+,.*$', code, re.MULTILINE)
+    call = re.search(r'^(?!.*gpuError_t).*__dace_reduce_\w+\(\w+, \w+,.*$', code, re.MULTILINE)
     assert call, 'no call to the reduce helper was emitted'
     assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
 
@@ -109,9 +109,9 @@ def test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failu
     rather than a stale pointer.
     """
     source = cub_scratch_source()
-    floor = re.search(r'cudaMalloc\(&e\.storage, bytes_needed \? bytes_needed : 1\);', source)
+    floor = re.search(r'gpuMalloc\(&e\.storage, bytes_needed \? bytes_needed : 1\);', source)
     assert floor, 'get_scratch no longer floors a zero-byte request to 1 byte'
-    failure = re.search(r'if \(err != cudaSuccess\) \{(?:.|\n)*?return nullptr;\n\s*\}', source)
+    failure = re.search(r'if \(err != gpuSuccess\) \{(?:.|\n)*?return nullptr;\n\s*\}', source)
     assert failure, 'get_scratch does not handle a failed allocation'
     assert 'if (status) *status = err;' in failure.group(0), (
         'a failed allocation does not report its error through status')

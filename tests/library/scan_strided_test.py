@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.codegen import generate_code
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
 
 
@@ -320,3 +321,58 @@ def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():
     arr_out = np.zeros_like(arr_in)
     _scan_in_nested_sdfg_in_map_sdfg(n, rows)(arr_in=arr_in.copy(), arr_out=arr_out)
     assert np.allclose(arr_out, np.cumsum(arr_in, axis=1))
+
+
+def gpu_strided_scan(stride: int, op: ScanOp, dtype=dace.float64) -> dace.SDFG:
+    """Single strided ``Scan`` over device-global memory, lowered by the ``CUDA`` key."""
+    sdfg = dace.SDFG(f'strided_gpu_{op.value}_s{stride}')
+    sdfg.add_array('A', [64], dtype, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [64], dtype, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Scan('scan', op=op)
+    node.stride = stride
+    node.implementation = 'CUDA'
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('A[0:64]'))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, dace.Memlet('B[0:64]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_the_gpu_key_is_cuda_for_every_stride():
+    """There is ONE GPU implementation name. A caller asking for the device must not also have to
+    know the stride, and the fast-library priority lists only ever name ``CUDA``."""
+    assert 'CUDA_strided' not in Scan('scan').implementations, (
+        'the strided GPU lowering is reachable under its own key again; auto_optimize and '
+        'canonicalize only ever ask for CUDA, so a strided scan would refuse instead of lowering')
+    assert 'CUDA' in Scan('scan').implementations
+
+
+@pytest.mark.parametrize('backend', ['cuda', 'hip'])
+@pytest.mark.parametrize('stride', [1, 8])
+def test_the_strided_launch_lands_in_the_cuda_translation_unit(backend: str, stride: int):
+    """The kernel launch is nvcc/hipcc-only syntax, so it cannot sit in the host ``.cpp``.
+
+    This is what the deleted ``auxiliary_sources`` field never achieved: it was declared by the
+    old ``ScanStrided`` environment and consumed nowhere in codegen, so the wrappers it named were
+    never compiled and ``Scan`` could not link on either backend.
+    """
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+        codes = generate_code(gpu_strided_scan(stride, ScanOp.SUM))
+    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
+    host = '\n'.join(c.code for c in codes if c.title != 'CUDA')
+    wanted = 'strided_inclusive_sum' if stride != 1 else 'DeviceScan::InclusiveScan'
+    assert wanted in cuda, f'{wanted} is not in the CUDA translation unit under the {backend} backend'
+    assert wanted not in host, f'{wanted} leaked into the host translation unit'
+    assert '__dace_scan' in host, 'the host tasklet does not call the emitted wrapper'
+
+
+@pytest.mark.parametrize('dtype', [dace.float32, dace.int32, dace.int16])
+def test_the_strided_lowering_is_not_limited_to_a_fixed_dtype_set(dtype):
+    """The wrapper is templated where it is emitted, so there is no pre-instantiated dtype list.
+
+    ``int16`` in particular was outside the old ``f64 / f32 / i64 / i32`` set and raised.
+    """
+    codes = generate_code(gpu_strided_scan(4, ScanOp.MAX, dtype))
+    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
+    assert f'strided_inclusive_max<{dtype.ctype}>' in cuda

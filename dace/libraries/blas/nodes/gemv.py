@@ -207,7 +207,7 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''
+            call_suffix += f'''
 {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
             '''
             alpha = f'({ctype} *)&alpha'

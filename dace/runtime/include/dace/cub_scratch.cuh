@@ -61,7 +61,9 @@ inline void *get_scratch(std::size_t bytes_needed, gpuStream_t stream = 0, gpuEr
     // reduction into a silent no-op rather than an error. A zero-byte request hits that twice --
     // ``0 > 0`` skips the allocation, and gpuMalloc(0) hands back null anyway.
     if (bytes_needed > e.bytes || !e.storage) {
-        if (e.storage) gpuFree(e.storage);
+        // Discarded on purpose, and explicitly: the buffer is being replaced either way, and
+        // the backend's free is [[nodiscard]] (warnings are errors).
+        if (e.storage) (void)gpuFree(e.storage);
         gpuError_t err = gpuMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
         if (err != gpuSuccess) {
             // The entry has to go back to empty: gpuMalloc leaves the pointer unspecified on
@@ -83,7 +85,7 @@ template<typename Tag>
 inline void release_scratch() {
     auto &m = _detail::pool_map<Tag>();
     for (auto &kv : m) {
-        if (kv.second.storage) gpuFree(kv.second.storage);
+        if (kv.second.storage) (void)gpuFree(kv.second.storage);  // finalize: nothing to report to
     }
     m.clear();
 }

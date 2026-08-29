@@ -20,6 +20,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes, memlet as mm, properties, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -275,7 +276,7 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
     def expansion(cls, node: "Symm", state: SDFGState, sdfg: SDFG):
         (ad, ashape, astrides), (bd, bshape, bstrides), (cd, cshape, cstrides) = _symm_operands(node, state, sdfg)
         dtype = cd.dtype.base_type
-        func = cls.backend + "blas" + to_blastype(dtype.type) + "symm"
+        func = cls.dialect.func(to_blastype(dtype.type), "symm")
         # Column-major transpose trick: swap side + uplo, and m=cols(C), n=rows(C).
         flip_side = "R" if node.side == "L" else "L"
         flip_uplo = "U" if node.uplo == "L" else "L"
@@ -299,6 +300,7 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandSymmCuBLAS(_ExpandSymmGPUBLAS):
     environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
     backend = "cu"
     set_pointer_mode = "cublasSetPointerMode"
     pointer_host = "CUBLAS_POINTER_MODE_HOST"
@@ -316,6 +318,7 @@ class ExpandSymmCuBLAS(_ExpandSymmGPUBLAS):
 @dace.library.expansion
 class ExpandSymmRocBLAS(_ExpandSymmGPUBLAS):
     environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
     backend = "roc"
     set_pointer_mode = "rocblas_set_pointer_mode"
     pointer_host = "rocblas_pointer_mode_host"

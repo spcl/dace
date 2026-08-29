@@ -21,7 +21,6 @@ import pytest
 
 import dace
 import dace.libraries.sort  # noqa: F401  (registers the CUB environments)
-import dace.libraries.standard.environments.scan_strided  # noqa: F401  (registers ScanStrided)
 from dace import dtypes
 from dace.codegen.compiler import get_environment_flags
 from dace.library import get_environments_and_dependencies
@@ -42,7 +41,6 @@ GPU_ENVIRONMENTS = (
     'dace.libraries.sort.environments.cub.ScanScratch',
     'dace.libraries.sort.environments.cub.ReduceScratch',
     'dace.libraries.sort.environments.cub.DetectScratch',
-    'dace.libraries.standard.environments.scan_strided.ScanStrided',
 )
 
 TILE_OPS_GPU_HEADER = pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'tile_ops' / 'cuda.h'
