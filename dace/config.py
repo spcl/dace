@@ -22,12 +22,21 @@ def set_temporary(*path, value):
             print(Config.get("compiler", "build_type")
         print(Config.get("compiler", "build_type")
     """
+    if len(path) == 1 and '.' in path[0]:
+        path = tuple(path[0].split('.'))
+    # A ``DACE_*`` variable outranks the stored configuration in ``Config.get``, so leaving one in
+    # place made this context manager a silent no-op for exactly the keys an ambient environment
+    # pins -- the caller asked for a value and read back the environment's.
+    envvar = 'DACE_' + '_'.join(path)
+    old_envvalue = os.environ.pop(envvar, None)
     old_value = Config.get(*path)
     Config.set(*path, value=value)
     try:
         yield Config
     finally:
         Config.set(*path, value=old_value)
+        if old_envvalue is not None:
+            os.environ[envvar] = old_envvalue
 
 
 @contextlib.contextmanager
