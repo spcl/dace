@@ -114,6 +114,13 @@ if(DACE_ENABLE_CUDA)
   endif()
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
+
+  # The CUDA target forwards the same host compiler the CPU target pins as CMAKE_CXX_COMPILER.
+  # nvcc only honors one chosen BEFORE the language is enabled, so this cannot move below.
+  if(CUDA_HOST_COMPILER)
+    set(CMAKE_CUDA_HOST_COMPILER "${CUDA_HOST_COMPILER}")
+  endif()
+
   enable_language(CUDA)
   list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
   add_definitions(-DWITH_CUDA)

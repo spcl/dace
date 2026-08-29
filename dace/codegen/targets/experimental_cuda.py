@@ -1179,9 +1179,9 @@ int __dace_gpu_last_error({sdfg_state_name} *__state) {{
             flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + _forwarded_host_args())
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
-        if Config.get('compiler', 'cpu', 'executable'):
-            host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
-            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
+        # Unconditional, like the CPU target's CMAKE_CXX_COMPILER: nvcc otherwise falls back to its
+        # own default host compiler, and host and device objects then disagree on the ABI.
+        options.append('-DCUDA_HOST_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
         return options
 
