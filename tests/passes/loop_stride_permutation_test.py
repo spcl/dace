@@ -14,6 +14,7 @@ reference, applies the pass, and re-runs to confirm the interchange preserved
 the result.
 """
 
+import re
 import time
 
 import numpy as np
@@ -38,6 +39,25 @@ def _loop_nest_order(sdfg: dace.SDFG):
 
     walk(sdfg)
     return order
+
+
+def _loop_control_tokens(sdfg: dace.SDFG, variable: str):
+    """Identifiers appearing anywhere in the loop control of the loop owning ``variable``."""
+    found = []
+
+    def walk(region):
+        for blk in region.nodes():
+            if isinstance(blk, LoopRegion):
+                if blk.loop_variable == variable:
+                    text = ' '.join(code.as_string
+                                    for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
+                                    if code is not None)
+                    found.append(set(re.findall(r'\b[A-Za-z_]\w*\b', text)))
+                walk(blk)
+
+    walk(sdfg)
+    assert len(found) == 1, f'expected exactly one loop over {variable}, found {len(found)}'
+    return found[0]
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +106,16 @@ def test_trapezoidal_nest_is_interchanged_by_bound_rewrite():
     """TSVC s1232: the inner loop STARTS at 8*j, so the unit-stride axis (j) is the outer one.
        A metadata swap alone would change the iteration set; the bounds are rebuilt instead."""
     sdfg = trapezoid_lower_bound.to_sdfg(simplify=True)
+    assert _loop_nest_order(sdfg) == ['j', 'i']
+    assert 'j' in _loop_control_tokens(sdfg, 'i'), 'the i bound must start out referencing j'
+
     assert LoopStridePermutation().apply_pass(sdfg, {}) == 1
     assert _loop_nest_order(sdfg) == ['i', 'j']
+    # The trapezoid REWRITE, asserted on the bounds rather than on a stopwatch: the dependence
+    # between the two bounds has to change direction with the loops. A metadata swap that left
+    # `i in range(8 * j, N)` under a j loop would enumerate a different iteration set.
+    assert 'j' not in _loop_control_tokens(sdfg, 'i'), 'the i bound must no longer reference j'
+    assert 'i' in _loop_control_tokens(sdfg, 'j'), 'the rebuilt j bound must be capped by i'
     sdfg.validate()
 
     n = 64

@@ -14,13 +14,20 @@ them (leaving the nest untouched), because the ``LoopToMap`` oracle only trusts 
 cross-iteration disjointness proof drawn from dimensions indexed purely by the
 iteration variable -- so a read/write pair that is non-aliasing only through a
 bubbled-past axis's dimension is conservatively refused, which is exactly the
-interchange-illegal set. ``_bounds_independent`` likewise rejects a triangular
-bound on a bubbled-past iterator.
+interchange-illegal set.
+
+A triangular bound on a bubbled-past iterator is a separate matter: it fails
+``_bounds_independent``, so a plain metadata swap would change the iteration SET,
+but ``_swap_trapezoid`` rebuilds both loops' bounds to enumerate the same set and
+the interchange is then legal. That case is asserted on the rewritten bounds, not
+only on the numbers.
 
 Each scenario compares the post-pass SDFG bit-exact against a numpy sequential
 reference that mirrors the exact loop order. Each ``@dace.program`` is compiled
 exactly once (no same-name double build) to avoid the shared-cache build race.
 """
+
+import re
 
 import numpy as np
 import pytest
@@ -126,8 +133,9 @@ def test_reject_mixed_direction_interchange_3d():
 # ---------------------------------------------------------------------------
 #  Triangular between the moved axis and a non-adjacent bubbled-past axis:
 #  unit-stride i is DOALL (recurrence lives in j), but the innermost loop k has
-#  a bound k in range(i, N) that references i. Bubbling i past k would change the
-#  iteration SET -> _bounds_independent must reject the i-k swap.
+#  a bound k in range(i, N) that references i. A metadata swap of the i-k pair
+#  would change the iteration SET, so `_bounds_independent` refuses it and
+#  `_swap_trapezoid` rebuilds both bounds to enumerate the same set instead.
 # ---------------------------------------------------------------------------
 @dace.program
 def triangular_i_k(a: dace.float64[N, N, N], b: dace.float64[N, N, N]):
@@ -144,7 +152,27 @@ def _ref_triangular_i_k(a, b, n):
                 a[k, j, i] = a[k, j - 1, i] + b[k, j, i]
 
 
-def test_reject_triangular_bound_on_bubbled_axis():
+def _control_tokens(sdfg, variable):
+    """Identifiers appearing anywhere in the loop control of the loop owning ``variable``."""
+    found = []
+
+    def walk(region):
+        for blk in region.nodes():
+            if isinstance(blk, LoopRegion):
+                if blk.loop_variable == variable:
+                    text = ' '.join(code.as_string
+                                    for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
+                                    if code is not None)
+                    found.append(set(re.findall(r'\b[A-Za-z_]\w*\b', text)))
+                walk(blk)
+
+    walk(sdfg)
+    assert len(found) == 1, f'expected exactly one loop over {variable}, found {len(found)}'
+    return found[0]
+
+
+def test_trapezoid_bound_on_bubbled_axis_is_interchanged():
+    """The i-k pair is triangular, so the swap must rebuild the bounds rather than relabel them."""
     n = 8
     rng = np.random.default_rng(2)
     a0 = rng.standard_normal((n, n, n))
@@ -153,11 +181,34 @@ def test_reject_triangular_bound_on_bubbled_axis():
     _ref_triangular_i_k(a_ref, bb, n)
 
     sdfg = triangular_i_k.to_sdfg(simplify=True)
-    before = _order(sdfg)
-    applied = LoopStridePermutation().apply_pass(sdfg, {})
-    assert not applied, "a bound depending on a bubbled-past iterator must reject the swap"
-    assert _order(sdfg) == before
+    assert _order(sdfg) == ['i', 'j', 'k']
+    assert 'i' in _control_tokens(sdfg, 'k'), 'the k bound must start out referencing i'
 
+    applied = LoopStridePermutation().apply_pass(sdfg, {})
+    assert applied, 'a trapezoidal pair is interchangeable and must not be refused'
+    # Unit-stride i innermost, and the j-carried recurrence pushed outermost, where it is safe.
+    assert _order(sdfg) == ['j', 'k', 'i']
+    # The dependence between the two bounds must have MOVED, not merely been renamed: a metadata
+    # swap that left `k in range(i, N)` under an i loop would enumerate a different set.
+    assert 'i' not in _control_tokens(sdfg, 'k'), 'the k bound must no longer reference i'
+    assert 'k' in _control_tokens(sdfg, 'i'), 'the rebuilt i bound must be capped by k'
+
+    a_got = a0.copy()
+    sdfg(a=a_got, b=bb.copy(), N=n)
+    assert np.array_equal(a_ref, a_got)
+
+
+@pytest.mark.parametrize('n', [1, 2, 5, 13])
+def test_trapezoid_interchange_preserves_the_iteration_set(n):
+    """The rewritten bounds must enumerate the same set at sizes the N=8 case cannot distinguish."""
+    rng = np.random.default_rng(n)
+    a0 = rng.standard_normal((n, n, n))
+    bb = rng.standard_normal((n, n, n))
+    a_ref = a0.copy()
+    _ref_triangular_i_k(a_ref, bb, n)
+
+    sdfg = triangular_i_k.to_sdfg(simplify=True)
+    assert LoopStridePermutation().apply_pass(sdfg, {})
     a_got = a0.copy()
     sdfg(a=a_got, b=bb.copy(), N=n)
     assert np.array_equal(a_ref, a_got)

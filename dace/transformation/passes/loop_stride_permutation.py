@@ -186,6 +186,9 @@ class LoopStridePermutation(ppl.Pass):
         if not self._is_doall(sdfg, chain[pos]):
             return False
 
+        # How many levels of the nest are parallel before the move, to compare against after.
+        doall_before = sum(1 for lr in chain if self._is_doall(sdfg, lr))
+
         done: List[Tuple[LoopRegion, LoopRegion]] = []
         snapshot = [{attr: getattr(lr, attr) for attr in _LOOP_META_ATTRS} for lr in chain]
 
@@ -206,13 +209,19 @@ class LoopStridePermutation(ppl.Pass):
                 revert()
                 return False
             done.append((chain[k], chain[k + 1]))
-        if self._is_doall(sdfg, chain[-1]):
-            return True
-        # Not provably safe/beneficial -- revert and leave a TODO.
-        revert()
-        # TODO(loop-stride-permutation): the unit-stride loop is not DOALL once
-        # innermost (carries a dependence, or a multi-statement body pre-fission).
-        return False
+        if not self._is_doall(sdfg, chain[-1]):
+            # Not provably safe/beneficial -- revert and leave a TODO.
+            revert()
+            # TODO(loop-stride-permutation): the unit-stride loop is not DOALL once
+            # innermost (carries a dependence, or a multi-statement body pre-fission).
+            return False
+        # A LEGAL interchange can still cost a parallel level: `_swap_trapezoid` leaves the new
+        # outer loop a `min`/`int_floor` bound that `LoopToMap` will not take, trading two Maps
+        # for one Map plus a sequential loop. Unit stride is not worth that.
+        if sum(1 for lr in chain if self._is_doall(sdfg, lr)) < doall_before:
+            revert()
+            return False
+        return True
 
     @staticmethod
     def _bounds_independent(outer: LoopRegion, inner: LoopRegion) -> bool:
