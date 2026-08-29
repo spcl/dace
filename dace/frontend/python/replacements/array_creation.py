@@ -6,7 +6,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, broadcast_together, step_state, sym_type
 from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.operators import result_type
 from dace.sdfg.type_inference import infer_expr_type
@@ -492,6 +492,7 @@ def logspace(pv: ProgramVisitor,
 
     outname, _ = sdfg.add_transient(pv.get_target_name(), expdesc.shape, dtype, find_new_name=True)
     index = ', '.join(f'__i{d}' for d in range(len(expdesc.shape)))
+    state = step_state(pv, state)
     state.add_mapped_tasklet(name='logspace',
                              map_ranges={
                                  f'__i{d}': f'0:{symbolic.symstr(s)}'
@@ -549,6 +550,7 @@ def geomspace(pv: ProgramVisitor,
         body = f'-({body})'
 
     outname, _ = sdfg.add_transient(pv.get_target_name(), [num], dtype, find_new_name=True)
+    state = step_state(pv, state)
     state.add_mapped_tasklet(name='geomspace',
                              map_ranges={'__i0': f'0:{symbolic.symstr(num)}'},
                              inputs={'__exp': Memlet(f'{exponents}[__i0]')},

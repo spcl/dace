@@ -91,6 +91,20 @@ def simple_call(pv: 'ProgramVisitor',
     return outname
 
 
+def step_state(pv: 'ProgramVisitor', state: SDFGState) -> SDFGState:
+    """The state that the next step of a lowering built from several maps has to be emitted into.
+
+    Two maps dropped into one state carry no ordering between them, so a step reading what the
+    previous step wrote gets a second, unconnected access node for that transient. Nothing then
+    stops map fusion from joining the two maps and leaving the read pointed at a transient the
+    fused map has not written yet. A state boundary is the dependency; simplification fuses the
+    states back together once it has linked the access nodes.
+    """
+    if pv is None:
+        return state
+    return pv._add_state(f'{state.label}_step')
+
+
 ########################################################################
 # Shape utilities
 ########################################################################

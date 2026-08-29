@@ -3,7 +3,7 @@
 Contains replacements of Python mathematical operations.
 """
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
+from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call, step_state
 from dace import dtypes, symbolic, SDFG, SDFGState
 
 from numbers import Integral, Number
@@ -173,7 +173,7 @@ def real_result_type(dtype: dtypes.typeclass) -> dtypes.typeclass:
 def ufunc_call(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, name: str, args: list[Any]) -> str:
     """One native ufunc application, with NumPy broadcasting and result-type rules."""
     from dace.frontend.python.replacements.ufunc import implement_ufunc  # Avoid import loop
-    return implement_ufunc(pv, None, sdfg, state, name, args, {})[0]
+    return implement_ufunc(pv, None, sdfg, step_state(pv, state), name, args, {})[0]
 
 
 def magnitude(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> Any:
@@ -224,7 +224,7 @@ def select(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, cond: str | bool, o
     from dace.frontend.python.replacements.filtering import _array_array_where  # Avoid import loop
     if isinstance(cond, bool):
         return on_true if cond else on_false
-    return _array_array_where(pv, sdfg, state, cond, on_true, on_false)
+    return _array_array_where(pv, sdfg, step_state(pv, state), cond, on_true, on_false)
 
 
 def all_true(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, mask: str) -> str:
@@ -233,7 +233,7 @@ def all_true(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, mask: str) -> str
     from dace.frontend.python.replacements.reduction import reduce  # Avoid import loop
     if list(sdfg.arrays[mask].shape) == [1]:
         return mask
-    return reduce(pv, sdfg, state, 'lambda x, y: x and y', mask, axis=None, identity=1)
+    return reduce(pv, sdfg, step_state(pv, state), 'lambda x, y: x and y', mask, axis=None, identity=1)
 
 
 @oprepo.replaces('numpy.isclose')
