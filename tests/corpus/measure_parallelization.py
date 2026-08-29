@@ -166,16 +166,20 @@ def count(sdfg) -> List[int]:
     return [loops, inmap, maps, reduces, scans, libnodes, len(all_states), guards]
 
 
-def guarded_fallback_loops(sdfg) -> int:
-    """Number of LoopRegions that are the sequential FALLBACK of a
-    conditional-parallelization guard ``if cond: <Map> else: <seq loop>``.
+def guarded_fallback_loop_set(sdfg) -> List[LoopRegion]:
+    """The LoopRegions that are the sequential FALLBACK of a conditional-parallelization guard
+    ``if cond: <Map> else: <seq loop>``.
 
-    Such a loop means the kernel WAS parallelized under a runtime predicate, so
-    it must count as a parallelized map, not a residual sequential loop. A
-    fallback is a LoopRegion in a ``ConditionalBlock`` branch that holds no Map,
-    where a sibling branch DOES hold a Map (the parallel form).
+    Such a loop means the kernel WAS parallelized under a runtime predicate, so it must count as a
+    parallelized map, not a residual sequential loop. A fallback is a LoopRegion in a
+    ``ConditionalBlock`` branch that holds no Map, where a sibling branch DOES hold a Map (the
+    parallel form).
+
+    The SET rather than the count, because a caller assigning each loop to exactly one bucket has
+    to know WHICH loops these are; :func:`guarded_fallback_loops` is its length. One predicate, so
+    a bucketing caller and a counting caller cannot drift on what a fallback is.
     """
-    n = 0
+    found: List[LoopRegion] = []
     for cfr in sdfg.all_control_flow_regions():
         if not isinstance(cfr, ConditionalBlock):
             continue
@@ -187,8 +191,13 @@ def guarded_fallback_loops(sdfg) -> int:
         for has_map, (_, br) in zip(branch_has_map, cfr.branches):
             if has_map:
                 continue
-            n += sum(1 for sub in br.all_control_flow_regions(recursive=True) if isinstance(sub, LoopRegion))
-    return n
+            found.extend(sub for sub in br.all_control_flow_regions(recursive=True) if isinstance(sub, LoopRegion))
+    return found
+
+
+def guarded_fallback_loops(sdfg) -> int:
+    """How many :func:`guarded_fallback_loop_set` loops ``sdfg`` has."""
+    return len(guarded_fallback_loop_set(sdfg))
 
 
 # --------------------------------------------------------------------------- #
