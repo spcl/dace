@@ -3590,13 +3590,25 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         ``ceiling`` overload returns ``FLT_MAX``/``DBL_MAX`` for floating arguments (it exists for
         the integer case, where it is the identity), so printing the sympy name unchanged would
         emit a poison value rather than a rounding. Emit the math-library call instead.
+
+        ``ceil`` returns a DOUBLE, and an all-integer argument means this ceiling is index
+        arithmetic -- an extent, a range end, a shape. Left floating it is not merely slow: as a
+        map's range end it makes ``for (auto i = 0; i < ceil(...); ...)`` compare an integer
+        induction variable against a double, which is not OpenMP's canonical loop form, and the
+        compiler rejects the ``omp for`` with "invalid controlling predicate". Give the integer
+        case an integer type. Sympy has already folded away the cases it can prove integral
+        (``ceiling(N)`` -> ``N``), so what arrives here is the argument it could not, such as
+        ``R**(K - 1)`` with a symbolic exponent whose sign is unknown.
         """
         if not self.cpp_mode:
             return super()._print_Function(expr)
         lowered = self._mpr_call('ceiling', [self._print(expr.args[0])])
         if lowered is not None:
             return lowered
-        return 'ceil(%s)' % self._print(expr.args[0])
+        rounded = 'ceil(%s)' % self._print(expr.args[0])
+        if not integral_index_expression(expr.args[0]):
+            return rounded  # a genuinely floating quantity keeps its floating type
+        return '((int64_t)%s)' % rounded
 
     def _print_Rational(self, expr):
         """A sympy ``Rational`` in C++.
@@ -3760,6 +3772,37 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return "dace::math::pow({f}, {s})".format(f=base, s=exponent)
             else:
                 return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
+
+
+#: Node types an index expression is built from. A whitelist, not a list of floating functions to
+#: avoid: ``sin(n)`` over an integer symbol is a double, and so is any function added later, so
+#: anything unrecognized has to count as floating.
+INTEGRAL_INDEX_OPS = (sympy.Add, sympy.Mul, sympy.Pow, sympy.Min, sympy.Max)
+
+
+def integral_index_expression(expr) -> bool:
+    """Whether ``expr`` is integer arithmetic -- an extent, a range end, a shape.
+
+    Not the same question as :func:`infer_fp_ctype`, which reads the ATOMS: every atom of
+    ``sin(n)`` is an integer symbol, and the value is a double. Answered from the operations
+    instead, so an unrecognized function is floating by default.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return False
+    if expr.is_integer:
+        return True
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, (symbol, TypedConstant)):
+            if node.dtype not in dtypes.INTEGER_TYPES:
+                return False
+        elif isinstance(node, sympy.Integer):
+            continue
+        elif isinstance(node, sympy.Symbol):
+            if node.is_integer is not True:
+                return False
+        elif not isinstance(node, INTEGRAL_INDEX_OPS):
+            return False
+    return True
 
 
 def infer_fp_ctype(expr) -> Optional[str]:

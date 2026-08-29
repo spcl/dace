@@ -9,7 +9,8 @@ folded back to ``N``. Both functions now share the unit-denominator and exact-di
 import pytest
 import sympy
 
-from dace.symbolic import int_ceil, int_floor, pystr_to_symbolic, symstr, sympy_intdiv_fix
+from dace import dtypes
+from dace.symbolic import (int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix)
 
 N = pystr_to_symbolic('N')
 M = pystr_to_symbolic('M')
@@ -67,6 +68,31 @@ def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, 
     assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
 
 
+def test_ceiling_of_index_arithmetic_is_integer_typed():
+    """A ceiling over integer symbols is an extent, and must reach C++ with an integer type.
+
+    ``ceil`` returns a double. As a map's range end that makes the emitted loop compare an integer
+    induction variable against a double, which is not OpenMP's canonical form, and the compiler
+    rejects the enclosing ``omp for`` outright with "invalid controlling predicate" -- npbench's
+    ``stockham_fft``, whose radix extent is ``R ** (K - 1)``.
+    """
+    r = symbol('R', dtype=dtypes.int64)
+    k = symbol('K', dtype=dtypes.int64)
+    emitted = symstr(sympy.ceiling(r**(k - 1)), cpp_mode=True)
+    assert '(int64_t)' in emitted, emitted
+    assert 'ceil(' in emitted, emitted
+
+
+def test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating():
+    """Integrality is decided by the OPERATIONS, not the operands.
+
+    Every atom of ``sin(n)`` is an integer symbol and the value is a double, so reading the atoms
+    would type this one as an index and truncate it.
+    """
+    n = symbol('n', dtype=dtypes.int64)
+    assert symstr(sympy.ceiling(sympy.sin(n)), cpp_mode=True) == '(ceil(sin(n)))'
+
+
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
 def test_division_by_an_integer_still_rewrites(rounding, name):
     """The integer-division rewrite is unchanged where a real denominator is present."""
@@ -85,3 +111,5 @@ if __name__ == '__main__':
         test_inexact_division_is_left_symbolic(fn)
     for args in [(17, 8, 3), (16, 8, 2), (1, 8, 1), (0, 8, 0)]:
         test_numeric_operands_fold(*args)
+    test_ceiling_of_index_arithmetic_is_integer_typed()
+    test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating()
