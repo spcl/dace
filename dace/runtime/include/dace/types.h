@@ -63,7 +63,6 @@
     #include <cuda_fp8.h>
     #include <thrust/complex.h>
     #define DACE_THRUST_COMPLEX
-    #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that the native low-precision types are scalars (for reductions)
     namespace std {
