@@ -166,37 +166,41 @@ def count(sdfg) -> List[int]:
     return [loops, inmap, maps, reduces, scans, libnodes, len(all_states), guards]
 
 
-def guarded_fallback_loop_set(sdfg) -> List[LoopRegion]:
-    """The LoopRegions that are the sequential FALLBACK of a conditional-parallelization guard
-    ``if cond: <Map> else: <seq loop>``.
+def guarded_fallback_loop_set(sdfg) -> list[LoopRegion]:
+    """The LoopRegions that are the sequential FALLBACK of a conditional-parallelization
+    guard ``if cond: <Map> else: <seq loop>``.
 
-    Such a loop means the kernel WAS parallelized under a runtime predicate, so it must count as a
-    parallelized map, not a residual sequential loop. A fallback is a LoopRegion in a
-    ``ConditionalBlock`` branch that holds no Map, where a sibling branch DOES hold a Map (the
-    parallel form).
+    Such a loop means the kernel WAS parallelized under a runtime predicate, so it must
+    count as a parallelized map, not a residual sequential loop. A fallback is a
+    LoopRegion in a ``ConditionalBlock`` branch that holds no Map, where a sibling branch
+    DOES hold a Map (the parallel form).
 
-    The SET rather than the count, because a caller assigning each loop to exactly one bucket has
-    to know WHICH loops these are; :func:`guarded_fallback_loops` is its length. One predicate, so
-    a bucketing caller and a counting caller cannot drift on what a fallback is.
+    Walks nested SDFGs, the SAME scope :func:`count` counts loops in. Restricted to the
+    top-level SDFG this charged a guard inside a nested SDFG as a residual sequential
+    loop while its Map still counted, which understates the parallelization rate.
+
+    The objects and not just their number, so a consumer that buckets loops one by one
+    (the MPR artifact's per-loop taxonomy) asks this predicate instead of restating it.
     """
-    found: List[LoopRegion] = []
-    for cfr in sdfg.all_control_flow_regions():
-        if not isinstance(cfr, ConditionalBlock):
-            continue
-        branch_has_map = [
-            any(isinstance(x, nd.MapEntry) for x, _ in br.all_nodes_recursive()) for _, br in cfr.branches
-        ]
-        if not any(branch_has_map):
-            continue
-        for has_map, (_, br) in zip(branch_has_map, cfr.branches):
-            if has_map:
+    out: list[LoopRegion] = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for cfr in sd.all_control_flow_regions():
+            if not isinstance(cfr, ConditionalBlock):
                 continue
-            found.extend(sub for sub in br.all_control_flow_regions(recursive=True) if isinstance(sub, LoopRegion))
-    return found
+            branch_has_map = [
+                any(isinstance(x, nd.MapEntry) for x, _ in br.all_nodes_recursive()) for _, br in cfr.branches
+            ]
+            if not any(branch_has_map):
+                continue
+            for has_map, (_, br) in zip(branch_has_map, cfr.branches):
+                if has_map:
+                    continue
+                out += [sub for sub in br.all_control_flow_regions(recursive=True) if isinstance(sub, LoopRegion)]
+    return out
 
 
 def guarded_fallback_loops(sdfg) -> int:
-    """How many :func:`guarded_fallback_loop_set` loops ``sdfg`` has."""
+    """Number of guarded sequential fallbacks -- see :func:`guarded_fallback_loop_set`."""
     return len(guarded_fallback_loop_set(sdfg))
 
 

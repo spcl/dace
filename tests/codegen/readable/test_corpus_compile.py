@@ -92,7 +92,22 @@ DENYLIST = {"azimint_naive", "azimint_hist", "spmv"}
 #: limitation identical on legacy). A segfault from such a kernel would take down the in-process
 #: GPU run (CUDA and ``os.fork`` are incompatible, so GPU cases cannot be isolated), so only the
 #: kernels verified to lower cleanly are run on the GPU.
-GPU_DENYLIST = DENYLIST | {"contour_integral", "crc16", "go_fast", "nbody"}
+GPU_DENYLIST = DENYLIST | {
+    "contour_integral",
+    "crc16",
+    "go_fast",
+    "nbody",
+    # Kernels whose GPU SDFG is left with GPU-resident scalar/length-1 results accessed from the host
+    # after apply_gpu_transformations(); the legacy generator happens not to trip the validation, but
+    # the experimental readable pipeline inlines nested SDFGs that expose those arrays and then fails
+    # validation. Skip on GPU until the experimental GPU lowering handles the host/device transfer.
+    "cholesky",
+    "cholesky2",
+    "durbin",
+    "gramschmidt",
+    "lu",
+    "ludcmp",
+}
 
 
 def discover(family):

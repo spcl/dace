@@ -228,3 +228,54 @@ def test_numerical_correctness_nested_map_program():
     sdfg_pass(a=a, b=b_post, N=16)
 
     np.testing.assert_allclose(b_post, b_ref)
+
+
+def stencil_over_written_access_node() -> tuple[dace.SDFG, dace.nodes.MapEntry]:
+    """A stencil whose three reads all pass through the ONE access node the previous map wrote."""
+    sdfg = dace.SDFG('stencil_over_written')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64, transient=True)
+    sdfg.add_array('C', [8], dace.float64)
+    state = sdfg.add_state()
+
+    b = state.add_access('B')
+    fill_entry, fill_exit = state.add_map('fill', dict(j='0:8'))
+    fill = state.add_tasklet('fill', {'a': None}, {'o': None}, 'o = a * 2.0')
+    state.add_memlet_path(state.add_read('A'), fill_entry, fill, dst_conn='a', memlet=Memlet('A[j]'))
+    state.add_memlet_path(fill, fill_exit, b, src_conn='o', memlet=Memlet('B[j]'))
+
+    me, mx = state.add_map('stencil', dict(i='1:7'))
+    tasklet = state.add_tasklet('t', {'l': None, 'm': None, 'r': None}, {'z': None}, 'z = l + m + r')
+    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
+        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=Memlet(f'B[{index}]'))
+    state.add_memlet_path(tasklet, mx, state.add_write('C'), src_conn='z', memlet=Memlet('C[i]'))
+    sdfg.validate()
+    return sdfg, me
+
+
+def test_reads_of_one_written_access_node_leave_no_dangling_connector():
+    """Nesting routes the whole body through ONE connector per container, so the map entry must
+    not keep the other reads' connectors behind -- they would dangle with no edge to carry."""
+    sdfg, map_entry = stencil_over_written_access_node()
+    assert len([c for c in map_entry.out_connectors if c.startswith('OUT_')]) == 3, \
+        'test setup: expected the three stencil reads on separate connectors'
+
+    ref = np.arange(8, dtype=np.float64)
+    expected = np.zeros(8)
+    sdfg(A=ref.copy(), C=expected)
+
+    assert NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
+
+    for state in sdfg.states():
+        for node in state.nodes():
+            for conn in node.out_connectors:
+                assert any(e.src_conn == conn for e in state.out_edges(node)), \
+                    f'dangling out-connector {conn} on {node}'
+            for conn in node.in_connectors:
+                assert any(e.dst_conn == conn for e in state.in_edges(node)), \
+                    f'dangling in-connector {conn} on {node}'
+    sdfg.validate()
+
+    got = np.zeros(8)
+    sdfg(A=ref.copy(), C=got)
+    np.testing.assert_allclose(got, expected)

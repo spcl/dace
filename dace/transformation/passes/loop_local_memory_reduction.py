@@ -230,8 +230,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         read_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                                 for e in st.out_edges(an) if not e.data.is_empty())
         uncond_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes()
-                                        if an.data == array_name and an not in self.cond_unique
-                                        for e in st.in_edges(an) if not e.data.is_empty())
+                                        if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an)
+                                        if not e.data.is_empty())
         all_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                                      for e in st.in_edges(an) if not e.data.is_empty())
 

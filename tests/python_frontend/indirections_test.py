@@ -2,6 +2,8 @@
 import dace as dc
 import numpy as np
 
+from dace import subsets
+
 
 @dc.program
 def indirection_scalar(A: dc.float64[10]):
@@ -196,8 +198,9 @@ def test_indirection_scalar_range_nsdfg():
             B[i] = np.sum(A[i0:i1])
         return B
 
-    A = np.random.randn(10).astype(np.float64)
-    x = np.random.randint(0, 9, size=(11, ), dtype=np.int32)
+    rng = np.random.default_rng(0)
+    A = rng.random(10).astype(np.float64)
+    x = rng.integers(0, 9, size=(11, ), dtype=np.int32)
     res = indirection_scalar_range_nsdfg(A, x)
     for i in range(10):
         i0 = min(x[i], x[i + 1])
@@ -408,6 +411,48 @@ def test_indirection_size_1():
     assert arr[0, 1, 0] == 1
 
 
+def test_materialized_slice_is_written_from_zero():
+    """A materialized slice is a buffer of its own extent, so the copy into it must start at 0.
+
+    Carrying the source start into the destination subset wrote ``i0`` elements past the end of the
+    transient. It stayed numerically invisible because the reader carried the same offset back, and
+    only surfaced much later, when glibc walked the smashed chunk header.
+    """
+
+    @dc.program
+    def sliced_sum(A: dc.float64[10], x: dc.int32[11], B: dc.float64[10]):
+        for i in dc.map[0:10]:
+            i0 = min(x[i], x[i + 1])
+            i1 = max(x[i], x[i + 1]) + 1
+            B[i] = np.sum(A[i0:i1])
+
+    sdfg = sliced_sum.to_sdfg(simplify=False)
+
+    copies = 0
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for edge in state.edges():
+                if edge.data.other_subset is None or not isinstance(edge.dst, dc.nodes.AccessNode):
+                    continue
+                desc = nested.arrays[edge.dst.data]
+                if not desc.transient:
+                    continue
+                copies += 1
+                assert edge.data.other_subset == subsets.Range.from_array(desc), (
+                    f'copy into {edge.dst.data} writes {edge.data.other_subset} of a buffer shaped {desc.shape}')
+    assert copies, 'no slice materialized -- this test no longer covers what it claims'
+
+    rng = np.random.default_rng(0)
+    A = rng.random(10).astype(np.float64)
+    x = rng.integers(0, 9, size=(11, ), dtype=np.int32)
+    B = np.zeros(10, dtype=np.float64)
+    sliced_sum(A, x, B)
+    for i in range(10):
+        i0 = min(x[i], x[i + 1])
+        i1 = max(x[i], x[i + 1]) + 1
+        assert np.allclose(B[i], np.sum(A[i0:i1]))
+
+
 if __name__ == "__main__":
     test_indirection_scalar()
     test_indirection_scalar_assign()
@@ -434,3 +479,4 @@ if __name__ == "__main__":
     test_indirection_array_nested_nsdfg()
     test_spmv()
     test_indirection_size_1()
+    test_materialized_slice_is_written_from_zero()

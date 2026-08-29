@@ -784,8 +784,13 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
 
         def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
             mpath = state.memlet_path(e)
-            assert isinstance(mpath[0].src, nd.AccessNode)
-            return mpath[0].src.data
+            src = mpath[0].src
+            assert isinstance(src, nd.AccessNode)
+            # A written access node is its own program point: folding a read taken through it into
+            # a read of the same container taken elsewhere would move it across that write.
+            if any(not ie.data.is_empty() for ie in state.in_edges(src)):
+                return (src.data, src)
+            return (src.data, None)
 
         def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
             return e.data.get_src_subset(e, state)
@@ -818,11 +823,6 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     connectors_to_remove = OrderedSet()
     for e in inner_edges(scope_node):
         if e.data.is_empty():
-            continue
-        # A source node a write produced is its own program point; folding it would move the read
-        # in front of that write. The exit side has the disjointness guard below instead.
-        if isinstance(scope_node, nd.EntryNode) and any(not ie.data.is_empty()
-                                                        for ie in state.in_edges(state.memlet_path(e)[0].src)):
             continue
         conn = inner_conn(e)
         edges_by_connector[conn].append(e)

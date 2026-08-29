@@ -165,7 +165,11 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             # Demote small, WCR-free, literal-shape transients to per-thread
             # Register storage (see the two helpers for why each condition is
             # required); anything else falls through to ``MoveArrayOutOfKernel``.
-            if (_is_register_demotable(desc, self.register_demotion_max_elements)
+            # Persistent / external transients must not be demoted to Register;
+            # the combination is rejected by validation and cannot be allocated
+            # as a per-thread variable across SDFG invocations anyway.
+            if (desc.lifetime not in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+                    and _is_register_demotable(desc, self.register_demotion_max_elements)
                     and not _has_wcr_incoming(sdfg, data_name)):
                 desc.storage = dtypes.StorageType.Register
                 continue
