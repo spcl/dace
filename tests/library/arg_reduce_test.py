@@ -132,9 +132,14 @@ def test_the_cuda_expansion_calls_cub_and_brings_the_answer_back(op):
 
     compat = (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'cub_compat.cuh').read_text()
     kind = 'ArgMax' if op == 'max' else 'ArgMin'
-    assert f'DeviceReduce::{kind}' in compat, f'::dace::cub::{tag} does not reach gpucub::DeviceReduce::{kind}'
+    # The gpu* spellings are the backend-neutral aliases, so one expansion serves CUDA and HIP.
+    assert f'gpucub::DeviceReduce::{kind}' in compat, (
+        f'::dace::cub::{tag} does not reach gpucub::DeviceReduce::{kind}')
     assert 'get_scratch<ReduceTag>' in compat, 'the workspace does not come from the scratch pool'
-    assert 'gpuMemcpyDeviceToHost' in compat, 'the answer is never copied back, so the outputs read device memory'
+    assert 'gpuMemcpyAsync' in compat and 'gpuMemcpyDeviceToHost' in compat, \
+        'the answer is never copied back, so the outputs read device memory'
+    assert 'gpuStreamSynchronize' in compat, \
+        'the copy back is asynchronous, so without a sync the host reads the answer before it lands'
     assert ArgReduce.host_connectors == frozenset(
         {'_out_val',
          '_out_idx'}), ('both answers are written by host code, so an offloader must be told to leave them there')

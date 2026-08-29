@@ -597,13 +597,13 @@ def _postorder_traversal(root: SDFGState, loop_nest_tree: Dict[SDFGState, Set[SD
     return post_order_list
 
 
-def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> Set[SDFGState]:
+def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> OrderedSet[SDFGState]:
     """
     Given the loop nest trees in an SDFG in the form of a dictionary, returns the root nodes of
     all loop nest trees in that SDFG.
     """
-    all_nodes = set()
-    child_nodes = set()
+    all_nodes = OrderedSet()
+    child_nodes = OrderedSet()
 
     for parent, children in loop_nest_tree.items():
         all_nodes.add(parent)

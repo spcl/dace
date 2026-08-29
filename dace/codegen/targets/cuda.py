@@ -628,9 +628,9 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
-        if Config.get('compiler', 'cpu', 'executable'):
-            host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
-            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
+        # Unconditional, like the CPU target's CMAKE_CXX_COMPILER: nvcc otherwise falls back to its
+        # own default host compiler, and host and device objects then disagree on the ABI.
+        options.append('-DCUDA_HOST_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
         return options
 
