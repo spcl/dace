@@ -57,7 +57,8 @@ class FullMapFusion(ppl.Pass):
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
         default=True,
-        desc="If `True`, the default, then allow vertical Map fusion, see `MapFusionVertical`.",
+        desc="If `True`, the default, then allow vertical Map fusion: `MapReduceFusion` for a Map "
+        "feeding a Reduce, then `MapFusionVertical` for a Map feeding a Map.",
     )
     perform_horizontal_map_fusion = properties.Property(
         dtype=bool,
@@ -184,6 +185,11 @@ class FullMapFusion(ppl.Pass):
 
         fusion_transforms = []
         if self.perform_vertical_map_fusion:
+            # First in the vertical phase: the Map feeding the Reduce is this pattern's first node,
+            # so folding it into a neighbour leaves the reduction reading a materialized array that
+            # nothing removes afterwards.
+            fusion_transforms.append(dftrans.MapReduceFusion())
+
             # We have to pass the single use data at construction. This is because that
             #  `fusion._pipeline_results` is only defined, i.e., not `None` during `apply()`
             #  but during `can_be_applied()` it is not available. Thus we have to set it here.
