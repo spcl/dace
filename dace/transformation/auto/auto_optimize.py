@@ -11,6 +11,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
+from dace.ordered import OrderedSet
 from typing import Any, Callable, Dict, List, Set, Tuple, Union
 
 # Transformations
@@ -229,7 +230,12 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         raise TypeError('Graph must be a state, an SDFG, a control flow region, or a subgraph of either')
     sdfg = graph.parent
 
-    edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
+    # Ordered, not plain sets: every one of these is ITERATED to decide which map is tiled and in
+    # what order, and a plain set of unhashable-by-value graph objects iterates by id(), which
+    # tracks allocation history. Two runs of the same program then transform in different orders --
+    # and for a partially-conflicted 2-D reduction that is the difference between a right and a
+    # wrong answer, not just different code.
+    edges_to_consider: OrderedSet[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = OrderedSet()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
             if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry)):
@@ -258,22 +264,22 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     if prefer_partial_parallelism is None:
         prefer_partial_parallelism = config.Config.get_bool('optimizer', 'autotile_partial_parallelism')
 
-    maps_to_consider: Set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
+    maps_to_consider: OrderedSet[nodes.MapEntry] = OrderedSet(me for _, me in edges_to_consider)
 
-    transformed: Set[nodes.MapEntry] = set()
+    transformed: OrderedSet[nodes.MapEntry] = OrderedSet()
 
     # Heuristic: If the map is only partially conflicted, extract
     # parallel dimensions instead of tiling
     if prefer_partial_parallelism:
         for mapentry in maps_to_consider:
             # Check the write-conflicts of all WCR edges in map
-            conflicts: Set[str] = set()
+            conflicts: OrderedSet[str] = OrderedSet()
             for edge, me in edges_to_consider:
                 if me is not mapentry:
                     continue
-                conflicts |= set(cpp.write_conflicted_map_params(mapentry, edge))
+                conflicts |= OrderedSet(cpp.write_conflicted_map_params(mapentry, edge))
 
-            nonconflicted_dims = set(mapentry.params) - conflicts
+            nonconflicted_dims = OrderedSet(mapentry.params) - conflicts
             if nonconflicted_dims:
                 dims = [i for i, p in enumerate(mapentry.params) if p in nonconflicted_dims]
                 if ((dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True):
@@ -310,6 +316,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
 
         # MapTiling -> AccumulateTransient / AccumulateStream
         outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
+
+        # The tile body accumulates into the per-tile transient one element after another -- that
+        # accumulation is what removes the atomics, and it is sequential by construction. MapTiling
+        # copies the original schedule onto both halves, so on GPU the body stayed GPU_Device: a
+        # kernel inside a kernel, which the codegen refuses and NestedGPUDeviceMapLowering then has
+        # to flatten by hoisting a range naming the outer map's own parameter. Sequential here is a
+        # device-side loop, not the host loop the small-map branch above has to guard against,
+        # because this map now sits inside the outer kernel's scope.
+        mapentry.map.schedule = dtypes.ScheduleType.Sequential
 
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
