@@ -11,7 +11,7 @@ from dace import data, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 
 import copy
-from numbers import Integral
+from numbers import Integral, Number
 from typing import Any, Optional, List, Sequence, Tuple, Union
 
 import numpy as np
@@ -382,6 +382,262 @@ def broadcast_to(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str,
     # so the error names the numpy call instead of surfacing at expansion time.
     node.validate(sdfg, state)
     return out
+
+
+@oprepo.replaces('numpy.ravel')
+def ravel(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, order: StringLiteral = StringLiteral('C')) -> str:
+    """``np.ravel`` is the free-function spelling of the ``.ravel()`` method."""
+    return flat(pv, sdfg, state, arr, order)
+
+
+@oprepo.replaces('numpy.squeeze')
+def squeeze(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis=None) -> str:
+    """``np.squeeze``: drop length-1 axes.
+
+    Dropping is what the call asks for, so it is not the blind
+    :meth:`~dace.subsets.Range.squeeze` that cannot tell an indexed axis from a sliced one -- an
+    axis named here that is not provably 1 is an error, exactly as in NumPy.
+    """
+    shape = list(sdfg.arrays[arr].shape)
+    if axis is None:
+        keep = [i for i, extent in enumerate(shape) if symbolic.equal(extent, 1) is not True]
+    else:
+        axes = normalize_axes(axis, len(shape), 'axis')
+        for ax in axes:
+            if symbolic.equal(shape[ax], 1) is not True:
+                raise ValueError(f'numpy.squeeze: axis {ax} has extent {shape[ax]}, which is not 1')
+        keep = [i for i in range(len(shape)) if i not in axes]
+    newshape = [shape[i] for i in keep] or [1]
+    return reshape(pv, sdfg, state, arr, newshape)
+
+
+@oprepo.replaces('numpy.expand_dims')
+def expand_dims(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis) -> str:
+    """``np.expand_dims``: insert length-1 axes. A reshape, not a replication."""
+    shape = list(sdfg.arrays[arr].shape)
+    # The inserted axes are positions in the RESULT, so the range is one wider than the source.
+    axes = sorted(normalize_axes(axis, len(shape) + 1, 'axis'))
+    for ax in axes:
+        shape.insert(ax, 1)
+    return reshape(pv, sdfg, state, arr, shape)
+
+
+@oprepo.replaces('numpy.swapaxes')
+def swapaxes(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis1: int, axis2: int) -> str:
+    """``np.swapaxes`` is a transpose whose permutation swaps two entries."""
+    ndim = len(sdfg.arrays[arr].shape)
+    ax1 = normalize_axes(axis1, ndim, 'axis1')[0]
+    ax2 = normalize_axes(axis2, ndim, 'axis2')[0]
+    perm = list(range(ndim))
+    perm[ax1], perm[ax2] = perm[ax2], perm[ax1]
+    return _transpose(pv, sdfg, state, arr, axes=perm)
+
+
+@oprepo.replaces('numpy.rollaxis')
+def rollaxis(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis: int, start: int = 0) -> str:
+    """``np.rollaxis`` in terms of ``moveaxis``, with NumPy's own start adjustment."""
+    ndim = len(sdfg.arrays[arr].shape)
+    ax = normalize_axes(axis, ndim, 'axis')[0]
+    dst = int(start) + ndim + 1 if int(start) < 0 else int(start)
+    if dst > ax:  # numpy: the axis is removed before it is re-inserted
+        dst -= 1
+    return _moveaxis(pv, sdfg, state, arr, ax, dst)
+
+
+@oprepo.replaces('numpy.fliplr')
+def fliplr(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    if len(sdfg.arrays[arr].shape) < 2:
+        raise ValueError('numpy.fliplr needs an array of at least rank 2')
+    return _numpy_flip(pv, sdfg, state, arr, axis=1)
+
+
+@oprepo.replaces('numpy.flipud')
+def flipud(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    if len(sdfg.arrays[arr].shape) < 1:
+        raise ValueError('numpy.flipud needs an array of at least rank 1')
+    return _numpy_flip(pv, sdfg, state, arr, axis=0)
+
+
+@oprepo.replaces('numpy.asarray')
+@oprepo.replaces('numpy.ascontiguousarray')
+def asarray(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype: dtypes.typeclass = None) -> str:
+    """``np.asarray`` / ``np.ascontiguousarray`` on data already inside the SDFG.
+
+    Every DaCe array is contiguous in its own strides, so both are a copy -- and a copy rather than
+    a no-op because NumPy's caller is entitled to write the result without touching the source.
+    """
+    from dace.frontend.python.replacements.array_creation import _numpy_copy  # Avoid import loop
+
+    out = _numpy_copy(pv, sdfg, state, arr)
+    if dtype is not None and dtype != sdfg.arrays[out].dtype:
+        return _ndarray_astype(pv, sdfg, state, out, dtype)
+    return out
+
+
+@oprepo.replaces('numpy.atleast_1d')
+def atleast_1d(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    return _atleast_nd(pv, sdfg, state, arr, 1)
+
+
+@oprepo.replaces('numpy.atleast_2d')
+def atleast_2d(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    return _atleast_nd(pv, sdfg, state, arr, 2)
+
+
+@oprepo.replaces('numpy.atleast_3d')
+def atleast_3d(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    return _atleast_nd(pv, sdfg, state, arr, 3)
+
+
+def _atleast_nd(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, rank: int) -> str:
+    """Shared body of ``atleast_{1,2,3}d``: pad the shape to ``rank`` the way NumPy does."""
+    shape = list(sdfg.arrays[arr].shape)
+    if len(shape) >= rank:
+        return arr
+    if rank == 1:
+        shape = [1]
+    elif rank == 2:
+        shape = [1] * (2 - len(shape)) + shape
+    else:  # atleast_3d puts the NEW trailing axis last, and a 1-D input becomes (1, n, 1)
+        shape = ([1] + shape if len(shape) == 1 else shape) + [1] * (3 - max(len(shape), 2))
+    return reshape(pv, sdfg, state, arr, shape)
+
+
+@oprepo.replaces('numpy.copyto')
+def copyto(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dst: str, src: str) -> str:
+    """``np.copyto(dst, src)``: an in-place copy edge, so the caller's array is the one written."""
+    if dst not in sdfg.arrays or src not in sdfg.arrays:
+        raise ValueError('numpy.copyto expects two arrays')
+    dst_desc, src_desc = sdfg.arrays[dst], sdfg.arrays[src]
+    if not symbolic.shapes_equal(list(src_desc.shape), list(dst_desc.shape)):
+        raise ValueError(f'numpy.copyto: shapes {tuple(src_desc.shape)} and {tuple(dst_desc.shape)} do not match')
+    state.add_edge(state.add_read(src), None, state.add_write(dst), None, Memlet.from_array(src, src_desc))
+    return dst
+
+
+@oprepo.replaces('numpy.diagonal')
+def diagonal(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, offset: int = 0) -> str:
+    """The ``offset``-th diagonal of a rank-2 array, as a Map rather than a strided view.
+
+    NumPy returns a read-only view with stride ``rows + 1``; DaCe materializes, because a strided
+    operand handed to a library node is read with that node's own leading dimension.
+    """
+    desc = sdfg.arrays[arr]
+    if len(desc.shape) != 2:
+        raise ValueError('numpy.diagonal is supported for rank-2 arrays')
+    if not isinstance(offset, Integral):
+        raise ValueError('numpy.diagonal needs a compile-time offset')
+    rows, cols = desc.shape
+    off = int(offset)
+    # A positive offset starts on row 0 and column `off`; a negative one starts on row `-off`.
+    length = symbolic.pystr_to_symbolic(f'min({rows}, {cols} - {off})' if off >= 0 else f'min({rows} + {off}, {cols})')
+    row0, col0 = (0, off) if off >= 0 else (-off, 0)
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), [length], desc.dtype, desc.storage, find_new_name=True)
+    state.add_mapped_tasklet(f'diagonal_{off}', {'__d': f'0:{length}'},
+                             {'__inp': Memlet(f'{arr}[__d + {row0}, __d + {col0}]')},
+                             '__out = __inp', {'__out': Memlet(f'{out}[__d]')},
+                             external_edges=True)
+    return out
+
+
+@oprepo.replaces('numpy.diag')
+def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0) -> str:
+    """``np.diag``: extract the diagonal of a matrix, or build a matrix from a vector."""
+    from dace.frontend.python.replacements.array_creation import _numpy_full  # Avoid import loop
+
+    desc = sdfg.arrays[arr]
+    if len(desc.shape) == 2:
+        return diagonal(pv, sdfg, state, arr, k)
+    if len(desc.shape) != 1:
+        raise ValueError('numpy.diag takes a rank-1 or rank-2 array')
+    if not isinstance(k, Integral):
+        raise ValueError('numpy.diag needs a compile-time k')
+    n = desc.shape[0] + abs(int(k))
+    out = _numpy_full(pv, sdfg, state, [n, n], 0, desc.dtype)
+    row0, col0 = (0, int(k)) if k >= 0 else (-int(k), 0)
+    # The zero fill and the diagonal write are two statements on one array: the fill has to be
+    # complete before the diagonal lands, which the state boundary is what guarantees.
+    state = pv.last_block
+    state.add_mapped_tasklet(f'diag_{k}', {'__d': f'0:{desc.shape[0]}'}, {'__inp': Memlet(f'{arr}[__d]')},
+                             '__out = __inp', {'__out': Memlet(f'{out}[__d + {row0}, __d + {col0}]')},
+                             external_edges=True)
+    return out
+
+
+@oprepo.replaces('numpy.tile')
+def tile(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, reps) -> str:
+    """``np.tile`` for a rank-1 array repeated a whole number of times.
+
+    Tiling REPEATS THE ARRAY (``a b a b``), where :func:`repeat` repeats each element
+    (``a a b b``); both are one ``Broadcast`` plus a reshape, differing only in which side of the
+    source axis the new one is inserted.
+    """
+    from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
+
+    desc = sdfg.arrays[arr]
+    if isinstance(reps, (list, tuple)):
+        if len(reps) != 1:
+            raise ValueError('numpy.tile is supported for a single repetition count')
+        reps = reps[0]
+    if len(desc.shape) != 1:
+        raise ValueError('numpy.tile is supported for rank-1 arrays')
+    count = symbolic.pystr_to_symbolic(reps) if isinstance(reps, str) else reps
+
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), [count, desc.shape[0]],
+                                       desc.dtype,
+                                       desc.storage,
+                                       find_new_name=True)
+    node = Broadcast('tile', dim=1)  # the copies axis goes FIRST, so the source repeats whole
+    state.add_node(node)
+    state.add_edge(state.add_read(arr), None, node, '_src', Memlet.from_array(arr, desc))
+    state.add_edge(node, '_dst', state.add_write(out), None, Memlet.from_array(out, out_desc))
+    node.validate(sdfg, state)
+    return reshape(pv, sdfg, state, out, [desc.shape[0] * count])
+
+
+@oprepo.replaces('numpy.repeat')
+def repeat(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, repeats: Any, axis: Optional[int] = None) -> str:
+    """``np.repeat``: SPREAD a new axis of length ``repeats`` next to the repeated one, then merge
+    the pair back with a reshape.
+
+    ``repeats`` is one count for the whole array. A per-element count makes the result extent
+    data-dependent, which no static descriptor can carry, so it is refused rather than lowered to a
+    callback that only appears to work.
+    """
+    from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
+
+    if isinstance(arr, (list, tuple)) and len(arr) == 1:
+        arr = arr[0]
+    if not isinstance(arr, str) or arr not in sdfg.arrays:
+        raise ValueError('numpy.repeat expects an array to repeat')
+    if isinstance(repeats, str) and repeats in sdfg.arrays:
+        raise ValueError('numpy.repeat with a per-element repeats array is unsupported: the result '
+                         'extent would be data-dependent')
+    count = symbolic.pystr_to_symbolic(repeats) if isinstance(repeats, str) else repeats
+
+    if axis is None:
+        arr = flat(pv, sdfg, state, arr)
+        axis = 0
+    desc = sdfg.arrays[arr]
+    ndim = len(desc.shape)
+    if not isinstance(axis, Integral):
+        raise ValueError('numpy.repeat needs a compile-time axis')
+    ax = int(axis) + ndim if axis < 0 else int(axis)
+    if not 0 <= ax < ndim:
+        raise ValueError(f'numpy.repeat: axis {axis} is out of range for a rank-{ndim} array')
+
+    spread_shape = list(desc.shape)
+    spread_shape.insert(ax + 1, count)
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), spread_shape, desc.dtype, desc.storage, find_new_name=True)
+    node = Broadcast('repeat', dim=ax + 2)  # 1-based position of the axis SPREAD inserts
+    state.add_node(node)
+    state.add_edge(state.add_read(arr), None, node, '_src', Memlet.from_array(arr, desc))
+    state.add_edge(node, '_dst', state.add_write(out), None, Memlet.from_array(out, out_desc))
+    node.validate(sdfg, state)
+
+    merged = list(desc.shape)
+    merged[ax] = desc.shape[ax] * count
+    return reshape(pv, sdfg, state, out, merged)
 
 
 @oprepo.replaces('numpy.reshape')
@@ -786,6 +1042,20 @@ def _concat(visitor: ProgramVisitor,
             offset += desc.shape[axis]
 
     return name
+
+
+@oprepo.replaces('numpy.append')
+def append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, values: Any, axis: Optional[int] = None) -> str:
+    """``np.append`` is ``np.concatenate`` over two operands; the default ``axis=None`` flattens both.
+
+    A scalar ``values`` is materialized as a length-1 array first, which is what NumPy's own
+    ``append`` does before concatenating.
+    """
+    from dace.frontend.python.replacements.array_creation import _numpy_full  # Avoid import loop
+
+    if isinstance(values, (Number, np.bool_)) or symbolic.issymbolic(values):
+        values = _numpy_full(pv, sdfg, state, [1], values, sdfg.arrays[arr].dtype)
+    return _concat(pv, sdfg, state, (arr, values), axis=axis)
 
 
 @oprepo.replaces('numpy.stack')
