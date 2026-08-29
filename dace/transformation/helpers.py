@@ -835,7 +835,7 @@ def state_fission(
         else:
             # There are non first state consumer and `node_to_scan` does not qualify to be a boundary
             #  node. Thus we have to add all its consumer and their producer, to the first state as well.
-            new_first_nodes: Set[nodes.Node] = set()
+            new_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
             for new_first_state_node_seed in non_first_state_consumer:
                 utils.find_upstream_nodes(
                     node_to_start=new_first_state_node_seed,
@@ -854,9 +854,7 @@ def state_fission(
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
     assert boundary_nodes.isdisjoint(pure_first_nodes)
-    # ``set()`` on both sides: OrderedSet is a Sequence, so ``OrderedSet == OrderedSet`` compares ORDER,
-    # and the two halves are collected in a different order than the scan that produced ``first_nodes``.
-    assert set(boundary_nodes) | set(pure_first_nodes) == set(first_nodes)
+    assert (boundary_nodes | pure_first_nodes) == first_nodes
 
     if len(first_nodes) == 1:
         warnings.warn(
