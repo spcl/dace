@@ -5,6 +5,7 @@ Contains replacements for N-dimensional array transformations.
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.nested_call import NestedCall
 from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
@@ -562,6 +563,15 @@ def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0)
                              '__out = __inp', {'__out': Memlet(f'{out}[__d + {row0}, __d + {col0}]')},
                              external_edges=True)
     return out
+
+
+@oprepo.replaces('numpy.trace')
+def trace(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, offset: int = 0) -> str:
+    """``np.trace`` is the sum of :func:`diagonal`."""
+    from dace.frontend.python.replacements.reduction import _sum  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    return nest, nest(_sum)(nest(diagonal)(arr, offset))
 
 
 @oprepo.replaces('numpy.tile')

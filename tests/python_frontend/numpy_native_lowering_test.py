@@ -213,3 +213,132 @@ if __name__ == '__main__':
         if name.startswith('test_'):
             fn()
             print(name, 'ok')
+
+
+def test_prod_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[4], out: dace.float64[1]):
+        out[0] = np.prod(a)
+
+    a = np.random.rand(4) + 0.5
+    check(prog, np.prod(a), a=a, out=np.zeros(1))
+
+
+def test_var_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[1]):
+        out[0] = np.var(a)
+
+    a = np.random.rand(8)
+    check(prog, np.var(a), a=a, out=np.zeros(1))
+
+
+def test_var_over_an_axis_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[4, 5], out: dace.float64[4]):
+        out[:] = np.var(a, axis=1)
+
+    a = np.random.rand(4, 5)
+    check(prog, np.var(a, axis=1), a=a, out=np.zeros(4))
+
+
+def test_var_is_two_pass_not_the_cancelling_form():
+    """A large mean over a small spread: ``E[x^2] - E[x]^2`` loses every digit here."""
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[1]):
+        out[0] = np.var(a)
+
+    a = 1e8 + np.arange(8.0)
+    out = np.zeros(1)
+    prog(a=a, out=out)
+    assert np.allclose(out[0], np.var(a), rtol=1e-10)
+
+
+def test_std_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[1]):
+        out[0] = np.std(a)
+
+    a = np.random.rand(8)
+    check(prog, np.std(a), a=a, out=np.zeros(1))
+
+
+def test_ptp_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[1]):
+        out[0] = np.ptp(a)
+
+    a = np.random.rand(8)
+    check(prog, np.ptp(a), a=a, out=np.zeros(1))
+
+
+def test_count_nonzero_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.int64[1]):
+        out[0] = np.count_nonzero(a)
+
+    a = np.array([0.0, 1.0, 0.0, 2.0, 3.0, 0.0, 0.0, 4.0])
+    check(prog, np.count_nonzero(a), a=a, out=np.zeros(1, dtype=np.int64))
+
+
+def test_average_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[1]):
+        out[0] = np.average(a)
+
+    a = np.random.rand(8)
+    check(prog, np.average(a), a=a, out=np.zeros(1))
+
+
+def test_nansum_skips_the_nans():
+
+    @dace.program
+    def prog(a: dace.float64[6], out: dace.float64[1]):
+        out[0] = np.nansum(a)
+
+    a = np.array([1.0, np.nan, 2.0, 3.0, np.nan, 4.0])
+    check(prog, np.nansum(a), a=a, out=np.zeros(1))
+
+
+def test_nanmax_and_nanmin_skip_the_nans():
+
+    @dace.program
+    def prog_mx(a: dace.float64[6], out: dace.float64[1]):
+        out[0] = np.nanmax(a)
+
+    @dace.program
+    def prog_mn(a: dace.float64[6], out: dace.float64[1]):
+        out[0] = np.nanmin(a)
+
+    a = np.array([1.0, np.nan, 2.0, -3.0, np.nan, 4.0])
+    check(prog_mx, np.nanmax(a), a=a, out=np.zeros(1))
+    check(prog_mn, np.nanmin(a), a=a, out=np.zeros(1))
+
+
+def test_nanmean_divides_by_the_present_count():
+    """The NaNs must leave the denominator too, which a filled plain mean would not do."""
+
+    @dace.program
+    def prog(a: dace.float64[6], out: dace.float64[1]):
+        out[0] = np.nanmean(a)
+
+    a = np.array([1.0, np.nan, 2.0, 3.0, np.nan, 4.0])
+    check(prog, np.nanmean(a), a=a, out=np.zeros(1))
+
+
+def test_trace_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[4, 4], out: dace.float64[1]):
+        out[0] = np.trace(a)
+
+    a = np.random.rand(4, 4)
+    check(prog, np.trace(a), a=a, out=np.zeros(1))
