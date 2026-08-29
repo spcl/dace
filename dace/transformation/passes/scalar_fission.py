@@ -530,6 +530,13 @@ class ScalarFission(ppl.Pass):
             if not changed:
                 break
         no_ue = all(not self._block_ue(b, name, defn[b]) for b in blocks)
+        # An interstate edge naming ``name`` in its condition or an assignment READS it, right
+        # after its source block. ``_block_ue`` walks blocks only, so without this a region whose
+        # ONLY read is such an edge -- ``if I[i]:`` inside a loop lowers to exactly that -- reports
+        # no upward-exposed use, and ``_carrier_free`` then lets the reader be privatized away from
+        # its writer into a container nobody writes.
+        no_ue = no_ue and all(defn[e.src] or bdef[e.src]
+                              for e in region.edges() if any(str(sym) == name for sym in e.data.free_symbols))
         sinks = [b for b in blocks if region.out_degree(b) == 0]
         must_def_exit = bool(sinks) and all(defn[b] or bdef[b] for b in sinks)
         return must_def_exit, no_ue

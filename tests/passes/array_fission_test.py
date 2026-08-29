@@ -516,5 +516,78 @@ def test_zero_beta_libnode_is_still_a_full_overwrite():
     assert 'tmp' in fully_overwritten_arrays(sdfg)
 
 
+@dace.program
+def interstate_masked_read(A: dace.float64[M], out: dace.float64[M]):
+    """``tmp`` is written by one loop and read by a data-dependent ``if`` in the next.
+
+    ``if tmp[i]:`` does not lower to an access node -- it lowers to an interstate-edge assignment
+    ``tmp_index = tmp[i]`` plus a conditional on that symbol. The producer's trip count is
+    symbolic, so it may run zero times and is not a dominating write; every access of ``tmp``
+    therefore lands in the undominated write scope, which is where per-loop privatization decides
+    whether the groups are independent.
+    """
+    for _ in range(K):
+        tmp = A > 0.5
+        for i in range(M):
+            if tmp[i]:
+                out[i] = 1.0
+    for _ in range(K):
+        for i in range(M):
+            if tmp[i]:
+                out[i] = 2.0
+
+
+def tmp_family_reads_and_writes(sdfg: dace.SDFG, base: str):
+    """``(names read, names written)`` over the ``base`` version family, counting interstate reads.
+
+    An interstate-edge assignment is a read of every container it names, and it is the only kind
+    of read this shape has -- an access-node-only survey would report the readers as unused.
+    """
+    family = {n for n in sdfg.arrays if n == base or n.startswith(base + '_')}
+    read, written = set(), set()
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data in family:
+                (written if state.in_degree(node) else read).add(node.data)
+    for edge in sdfg.all_interstate_edges():
+        read |= {str(sym) for sym in edge.data.free_symbols} & family
+    return read, written
+
+
+def test_interstate_read_blocks_per_loop_privatization():
+    """Negative: a reader that reads only through an interstate edge is still a reader.
+
+    The per-loop privatization of the undominated scope groups accesses by enclosing loop and gives
+    each group its own container, which is value-preserving only when no group observes another's
+    value. The legality test for that walked BLOCKS, so a region whose only read of ``tmp`` sits on
+    an interstate edge reported no upward-exposed use -- and the two readers were then versioned
+    into ``tmp_0`` / ``tmp_1`` while the writer became ``tmp_2``. npbench's ``mandelbrot1`` emitted
+    exactly that: C++ referencing an ``I_0`` no scope declares.
+    """
+    sdfg = interstate_masked_read.to_sdfg(simplify=True)
+    sdfg.reset_cfg_list()
+    renamed = PrivatizeArrays().apply_pass(sdfg, {})['ArrayFission']
+    assert not renamed, f'an interstate-edge-read array was versioned per loop: {dict(renamed)}'
+
+    read, written = tmp_family_reads_and_writes(sdfg, 'tmp')
+    assert read and written, 'the probe found no accesses of tmp at all'
+    assert read <= written, f'containers read but never written: {sorted(read - written)}'
+
+
+def test_interstate_masked_read_value_preserving():
+    rng = np.random.default_rng(21)
+    A = rng.random(M)
+    want = np.zeros(M)
+    want[A > 0.5] = 2.0
+
+    sdfg = interstate_masked_read.to_sdfg(simplify=True)
+    sdfg.name = 'array_fission_interstate_masked_value'
+    sdfg.reset_cfg_list()
+    PrivatizeArrays().apply_pass(sdfg, {})
+    got = np.zeros(M)
+    sdfg.compile()(A=A, out=got, K=1)
+    assert np.allclose(got, want, rtol=1e-12, atol=1e-12)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
