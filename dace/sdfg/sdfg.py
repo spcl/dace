@@ -1671,13 +1671,24 @@ class SDFG(ControlFlowRegion):
 
         These belong to the ABI rather than to the body, so they must not come and go as passes
         rewrite the code that happens to mention them.
+
+        Only a top-level SDFG has an ABI. A nested one is called through its symbol mapping, which
+        the parent resolves from its own defined symbols, so a name that only its shapes mention is
+        nothing a caller could pass. A compile-time constant and the undefined placeholder are no
+        arguments either: the first is baked into the code, the second has no value to pass.
         """
+        if self.parent_sdfg is not None:
+            return set()
         found: Set[str] = set()
         for desc in self.arrays.values():
             if desc.transient:
                 continue
             found |= {str(s) for s in desc.free_symbols}
-        return {name for name in found if name in self.symbols and not name.startswith('__dace')}
+        return {
+            name
+            for name in found if name in self.symbols and name not in self.constants_prop
+            and name != symbolic.UNDEFINED_NAME and not name.startswith('__dace')
+        }
 
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
