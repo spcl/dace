@@ -87,18 +87,19 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     dtype = in_dtype
     # cuSOLVER writes ``devInfo`` through a raw pointer; the host-checkable status scalar must live in
     # host-accessible (pinned) memory when the operand is GPU-resident.
-    info_storage = host_accessible_info_storage(input_operand_storage(node, parent_state, parent_sdfg))
+    operand_storage = input_operand_storage(node, parent_state, parent_sdfg)
+    info_storage = host_accessible_info_storage(operand_storage)
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array('_ainout', [n, n], dtype=in_dtype, transient=True)
+        a_arr = sdfg.add_array('_ainout', [n, n], dtype=in_dtype, transient=True, storage=operand_storage)
         b_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
     else:
-        b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True)
-    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
+        b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True, storage=operand_storage)
+    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True, storage=operand_storage)
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=info_storage)
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
@@ -125,7 +126,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bout = state.add_access('_aout')
 
     _, _, mx = state.add_mapped_tasklet('_eye_',
-                                        dict(__i0="0:n", __i1="0:n"), {},
+                                        dict(__i0=f"0:{n}", __i1=f"0:{n}"), {},
                                         '_out = (__i0 == __i1) ? 1 : 0;',
                                         dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
                                         language=dace.dtypes.Language.CPP,

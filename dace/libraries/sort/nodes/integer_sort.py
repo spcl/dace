@@ -173,15 +173,26 @@ class ExpandCUDA(ExpandTransformation):
         # natural defaults for full-range key sort.
         in_dtype = _in_desc.dtype.ctype
         bit_args = f"0, sizeof({in_dtype}) * 8"
-        code = (f"size_t _ks_needed = 0;\n"
-                f"::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, "
-                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), "
-                f"{bit_args}, __dace_current_stream);\n"
-                f"void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>("
-                f"_ks_needed, __dace_current_stream);\n"
-                f"::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, "
-                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), "
-                f"{bit_args}, __dace_current_stream);")
+        # The CUB call goes into the CUDA translation unit behind a wrapper, the same shape the
+        # Scan libnode uses: this tasklet is at host schedule, and the host compiler gets only the
+        # scratch header -- hipCUB in particular does not parse under g++.
+        state_id = state.parent_graph.node_id(state)
+        wrapper = f'__dace_isort_{sdfg.name}_{state_id}_{state.node_id(node)}'
+        params = f'const {in_dtype}* __ks_in, {in_dtype}* __ks_out, long long __ks_n, gpuStream_t __ks_stream'
+        prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
+        args = f'__ks_in, __ks_out, __ks_n, {bit_args}, __ks_stream'
+        sdfg.append_global_code(prototype + '\n')
+        sdfg.append_global_code(
+            f'{prototype}\n'
+            f'gpuError_t {wrapper}({params}) {{\n'
+            f'    size_t _ks_needed = 0;\n'
+            f'    ::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, {args});\n'
+            f'    void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>('
+            f'_ks_needed, __ks_stream);\n'
+            f'    return ::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, {args});\n'
+            f'}}\n', 'cuda')
+        code = (f"DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
+                f"({n_expr}), __dace_current_stream));")
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME},

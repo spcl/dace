@@ -17,6 +17,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, memlet as mm, properties, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (add_coeff_arrays, add_triangular_tasklet, beta_scale_state,
                                                       blas_inplace, coeff_decl, operand_info, render_scalar,
@@ -148,7 +149,7 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
         info = operand_info(node, state, sdfg, OPERANDS)
         (_, ashape, astrides), (cd, cshape, cstrides) = info["_a"], info["_c"]
         dtype = cd.dtype.base_type
-        func = cls.backend + "blas" + to_blastype(dtype.type) + "syrk"
+        func = cls.dialect.func(to_blastype(dtype.type), "syrk")
         n, k = syrk_dims(node, ashape, cshape)
         flip_uplo = "U" if node.uplo == "L" else "L"
         flip_trans = "T" if node.trans == "N" else "N"
@@ -172,6 +173,7 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandSyrkCuBLAS(ExpandSyrkGPUBLAS):
     environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
     backend = "cu"
     set_pointer_mode = "cublasSetPointerMode"
     pointer_host = "CUBLAS_POINTER_MODE_HOST"
@@ -189,6 +191,7 @@ class ExpandSyrkCuBLAS(ExpandSyrkGPUBLAS):
 @dace.library.expansion
 class ExpandSyrkRocBLAS(ExpandSyrkGPUBLAS):
     environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
     backend = "roc"
     set_pointer_mode = "rocblas_set_pointer_mode"
     pointer_host = "rocblas_pointer_mode_host"

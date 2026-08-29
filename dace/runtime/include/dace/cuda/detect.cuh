@@ -19,11 +19,9 @@
 //
 // This header belongs in the ``.cu`` translation unit. A libnode reaches it the way the
 // CUB libnodes do: a ``DACE_EXPORTED`` wrapper appended to the device global code, declared
-// in the host global code and called from the tasklet. The CUDA spelling of the runtime API
-// is deliberate and matches ``cub_scratch.cuh``, which this builds on: HIP is supported
-// through the NVIDIA platform, where nvcc is the compiler underneath.
+// in the host global code and called from the tasklet.
 
-#include <cub/cub.cuh>
+#include "gpucub.cuh"  // ::gpucub -- cub on CUDA, hipCUB on HIP
 
 #include "../cub_scratch.cuh"
 

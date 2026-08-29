@@ -327,7 +327,7 @@ class ExpandCSRMVGPUSparse(ExpandTransformation):
                          for desc in (arows, acols, avals, bdesc, cdesc))
 
         dtype = avals.dtype.base_type
-        func = "{d.prefix}SpMV"
+        func = f"{d.prefix}SpMV"
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'
@@ -346,7 +346,7 @@ class ExpandCSRMVGPUSparse(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        call_prefix = environments.cuSPARSE.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Deal with complex input constants
@@ -364,14 +364,14 @@ class ExpandCSRMVGPUSparse(ExpandTransformation):
         {dtype.ctype} alpha = {alpha};
         {dtype.ctype} beta = {beta};
         '''
-        call_suffix += '''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);'''
+        call_suffix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);'''
         alpha = f'({cdtype} *)&alpha'
         beta = f'({cdtype} *)&beta'
 
         # Set up options for code formatting
         # opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
 
-        opt = {}
+        opt = {'d': d}
 
         opt['arr_prefix'] = arr_prefix = ''
         if needs_copy:
@@ -379,10 +379,10 @@ class ExpandCSRMVGPUSparse(ExpandTransformation):
 
         opt['func'] = func
 
-        opt['opA'] = '{d.upper}_OPERATION_NON_TRANSPOSE'
+        opt['opA'] = f'{d.upper}_OPERATION_NON_TRANSPOSE'
 
-        opt['compute'] = f'CUDA_R_{to_cublas_computetype(dtype)}'
-        opt['handle'] = '{d.handle}'
+        opt['compute'] = f'{d.datatype_prefix}_R_{to_cublas_computetype(dtype)}'
+        opt['handle'] = f'{d.handle}'
 
         opt['alpha'] = alpha
         opt['beta'] = beta

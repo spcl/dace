@@ -81,3 +81,14 @@ ROCBLAS = GpuBlasDialect(
     side=lambda right: "rocblas_side_right" if right else "rocblas_side_left",
     diag=lambda unit: "rocblas_diagonal_unit" if unit else "rocblas_diagonal_non_unit",
 )
+
+
+def host_scalar_mode(dialect: GpuBlasDialect, body: str) -> str:
+    """Wrap ``body`` so the vendor reads its scalar arguments from the HOST.
+
+    Both handles are created in DEVICE pointer mode (``dace_cublas.h`` / ``dace_rocblas.h``), so a
+    call passing ``&alpha`` from the host stack has the GPU dereference a host address and fault.
+    """
+    return (f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_host}));\n"
+            f"{body}\n"
+            f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_device}));\n")

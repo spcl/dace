@@ -259,7 +259,7 @@ class ExpandTTGT(ExpandTransformation):
 @library.expansion
 class ExpandGPUTensorDot(ExpandTransformation):
     """
-    Implements the TensorDot library node using cuTENSOR v2 ({cls.vendor_lower}Contract)
+    Implements the TensorDot library node using the vendor tensor library (``Contract``)
     for CUDA-compatible GPUs. Requires cuTENSOR >= 2.0.
 
     The contraction expresses:
@@ -353,7 +353,7 @@ class ExpandGPUTensorDot(ExpandTransformation):
                 {compute_desc}));
         """
 
-        workspace = """
+        workspace = f"""
             {cls.vendor_lower}PlanPreference_t planPref;
             {cls.check}({cls.vendor_lower}CreatePlanPreference(
                 {cls.handle}, &planPref,
@@ -366,7 +366,7 @@ class ExpandGPUTensorDot(ExpandTransformation):
             if (worksize > 0) gpuMalloc(&work, worksize);
         """
 
-        execute = """
+        execute = f"""
             {cls.vendor_lower}Plan_t plan;
             {cls.check}({cls.vendor_lower}CreatePlan(
                 {cls.handle}, &plan, opDesc, planPref, worksize));
@@ -375,9 +375,9 @@ class ExpandGPUTensorDot(ExpandTransformation):
                 (const void*)&alpha, _left_tensor, _right_tensor,
                 (const void*)&beta,  _out_tensor,  _out_tensor,
                 work, worksize, __dace_current_stream);
-            if (err != CUTENSOR_STATUS_SUCCESS) {
+            if (err != {cls.status_success}) {{
                 printf("ERROR: %s\\n", {cls.vendor_lower}GetErrorString(err));
-            }
+            }}
             {cls.vendor_lower}DestroyPlan(plan);
             {cls.vendor_lower}DestroyPlanPreference(planPref);
             {cls.vendor_lower}DestroyOperationDescriptor(opDesc);
@@ -487,6 +487,7 @@ class ExpandCuTensor(ExpandGPUTensorDot):
     algo_default = "CUTENSOR_ALGO_DEFAULT"
     jit_default = "CUTENSOR_JIT_MODE_DEFAULT"
     workspace_default = "CUTENSOR_WORKSPACE_DEFAULT"
+    status_success = "CUTENSOR_STATUS_SUCCESS"
 
 
 @dace.library.expansion
@@ -502,6 +503,7 @@ class ExpandHipTensorDot(ExpandGPUTensorDot):
     #: execution, measured for every rank and dtype (see the ttranspose node).
     jit_default = "HIPTENSOR_JIT_MODE_NONE"
     workspace_default = "HIPTENSOR_WORKSPACE_DEFAULT"
+    status_success = "HIPTENSOR_STATUS_SUCCESS"
 
 
 @library.node

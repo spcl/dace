@@ -127,11 +127,12 @@ class ExpandScalGPUBLAS(ExpandTransformation):
         a = node.a
 
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
         {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _x, {stride_x}, _res, {stride_res});
         {cls.dialect.func(func, 'scal')}({cls.dialect.handle}, {n}, &__alpha, _res, {stride_res});
-        """
+        """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

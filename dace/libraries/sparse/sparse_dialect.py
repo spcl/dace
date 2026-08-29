@@ -9,7 +9,7 @@ expansion body is shared, rather than a second copy of the body per vendor.
 Not rocSPARSE: that is the NATIVE library, spelled differently throughout, and hipSPARSE dispatches
 to it anyway -- so targeting it would mean maintaining a second body for the same work.
 """
-from typing import Dict, NamedTuple
+from typing import NamedTuple
 
 
 class GpuSparseDialect(NamedTuple):
@@ -23,9 +23,9 @@ class GpuSparseDialect(NamedTuple):
     handle: str
     #: Error-check function wrapping every call.
     check: str
-    #: dtype name -> the vendor's scalar-type enum. cuSPARSE takes the CUDA-wide ``cudaDataType``;
-    #: hipSPARSE takes HIP's, which is a different spelling of the same set.
-    datatype: Dict[str, str]
+    #: Scalar-type enum prefix: cuSPARSE takes the CUDA-wide ``cudaDataType`` (``CUDA_R_64F``),
+    #: hipSPARSE takes HIP's, which is the same set under a different spelling (``HIP_R_64F``).
+    datatype_prefix: str
 
 
 CUSPARSE = GpuSparseDialect(
@@ -33,10 +33,7 @@ CUSPARSE = GpuSparseDialect(
     upper="CUSPARSE",
     handle="__dace_cusparse_handle",
     check="dace::sparse::CheckCusparseError",
-    datatype={
-        "float": "CUDA_R_32F",
-        "double": "CUDA_R_64F"
-    },
+    datatype_prefix="CUDA",
 )
 
 HIPSPARSE = GpuSparseDialect(
@@ -44,8 +41,5 @@ HIPSPARSE = GpuSparseDialect(
     upper="HIPSPARSE",
     handle="__dace_hipsparse_handle",
     check="dace::sparse::CheckHipsparseError",
-    datatype={
-        "float": "HIP_R_32F",
-        "double": "HIP_R_64F"
-    },
+    datatype_prefix="HIP",
 )

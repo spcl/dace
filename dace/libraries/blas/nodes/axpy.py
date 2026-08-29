@@ -174,11 +174,12 @@ class ExpandAxpyGPUBLAS(ExpandTransformation):
         sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
         n, a = node.n, node.a
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
         {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _y, {sy}, _res, {sy});
         {cls.dialect.func(func, 'axpy')}({cls.dialect.handle}, {n}, &__alpha, _x, {sx}, _res, {sy});
-        """
+        """)
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,

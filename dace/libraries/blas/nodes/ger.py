@@ -173,12 +173,13 @@ class ExpandGerGPUBLAS(ExpandTransformation):
         alpha = node.alpha
         cfunc = func + 'ger' if dtype not in (dace.complex64, dace.complex128) else func + 'gerc'
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         {dtype.ctype} __alpha = {dtype.ctype}({alpha});
         gpuMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
                         gpuMemcpyDeviceToDevice, __dace_current_stream);
-        {cls.dialect.routine(cfunc)}({cls.dialect.handle}, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
-        """
+        {cls.dialect.check_error}({cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, {m}, &__alpha, _y, {sy}, _x, {sx}, _res, {lda}));
+        """)
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,

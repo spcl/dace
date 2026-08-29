@@ -104,3 +104,31 @@ def test_a_dialect_never_leaks_the_other_vendor(name: str) -> None:
             {c
              for c in re.findall(r"\b(?:cublas|rocblas)[A-Za-z_0-9]*", code) if c.lower().startswith(foreign)})
         assert not leaked, f"{name}/{implementation} leaks {leaked} from the other backend"
+
+
+#: The host locals an expansion hands the vendor by address.
+HOST_SCALARS = ("&__alpha", "&__beta", "&__tmp_idx")
+
+#: How each dialect spells "read my scalar arguments from the host".
+POINTER_HOST = {"cuBLAS": "CUBLAS_POINTER_MODE_HOST", "rocBLAS": "rocblas_pointer_mode_host"}
+
+
+@pytest.mark.parametrize("name", sorted(SPECS))
+@pytest.mark.parametrize("implementation", sorted(VENDOR_SYMBOL))
+def test_a_host_scalar_is_only_passed_under_host_pointer_mode(name: str, implementation: str) -> None:
+    """Both handles are created in DEVICE pointer mode, so ``&alpha`` on the stack is a GPU fault.
+
+    ``dace_cublas.h`` / ``dace_rocblas.h`` set the mode once at handle creation. Every expansion
+    that hands the vendor the address of a local -- an alpha, or the integer ``iamax`` writes back
+    -- has to flip to host mode around the call. Passing one without flipping does not fail to
+    compile: the GPU dereferences a host stack address at run time, which is how ``scal``, ``axpy``
+    and ``iamax`` all faulted on gfx90a while ``asum`` and ``nrm2`` beside them were fine.
+    """
+    code = emitted_code(name, implementation)
+    taken = min((code.find(local) for local in HOST_SCALARS if local in code), default=-1)
+    if taken < 0:
+        pytest.skip(f"{name} passes no host scalar by address")
+    mode = code.find(POINTER_HOST[implementation])
+    assert 0 <= mode < taken, (f"{name}/{implementation} passes a host address to the vendor without first setting "
+                               f"{POINTER_HOST[implementation]}. The handle is in device pointer mode, so the GPU "
+                               "dereferences a host stack address. Wrap the call in gpu_dialect.host_scalar_mode.")

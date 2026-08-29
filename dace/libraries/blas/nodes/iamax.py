@@ -130,10 +130,19 @@ class ExpandIamaxGPUBLAS(ExpandTransformation):
         cfunc = 'I' + func.lower() + 'amax'
         n = n or node.n or sz
         code = cls.environments[0].handle_setup_code(node)
-        code += f"""
+        # The vendor returns a 1-based index; ``_result`` is device memory, so the converted value
+        # goes back with a copy rather than a host store.
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
         int __tmp_idx;
-        {cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, &__tmp_idx);
-        *_result = __tmp_idx - 1;
+        {cls.dialect.check_error}({cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x},
+                                                              &__tmp_idx));
+        """)
+        code += f"""
+        __tmp_idx -= 1;
+        DACE_GPU_CHECK(gpuMemcpyAsync(_result, &__tmp_idx, sizeof(int), gpuMemcpyHostToDevice,
+                                      __dace_current_stream));
+        DACE_GPU_CHECK(gpuStreamSynchronize(__dace_current_stream));
         """
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
