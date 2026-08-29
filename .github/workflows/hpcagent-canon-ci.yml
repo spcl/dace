@@ -1,0 +1,87 @@
+name: HPCAgent-Bench Canonicalize
+
+# The canonicalize CPU path over the HPCAgent-Bench corpus, which lives in its own PUBLIC repo and
+# is cloned rather than vendored. The GPU half of the same gate runs on the CSCS pipeline
+# (``ci/cscs_gpu.yml``), which is the only place with a device.
+on:
+  push:
+    branches: [ main, extended ]
+  pull_request:
+    branches: [ main, extended ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  hpcagent-canon-cpu:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two tags that fit a CI slot: 56 and 40 kernels. Separate cells so one tag's timeout
+        # does not hide the other's result.
+        tag: [ npbench, llr-focus40 ]
+
+    name: canon-cpu-${{ matrix.tag }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        extras: testing
+
+    - name: Check out HPCAgent-Bench
+      uses: actions/checkout@v7
+      with:
+        repository: spcl/HPCAgent-Bench
+        path: hpcagent-bench
+
+    - name: Install HPCAgent-Bench
+      # No dace pin: the bench must measure the checkout above, not a released wheel.
+      run: pip install -e ./hpcagent-bench
+
+    - name: Canonicalize CPU correctness
+      working-directory: hpcagent-bench
+      env:
+        PYTHONHASHSEED: '0'
+        MPI4PY_RC_INITIALIZE: '0'
+        OMPI_MCA_pml: ob1
+        OMPI_MCA_btl: self,vader,tcp
+        PMIX_MCA_gds: hash
+        UCX_VFS_ENABLE: n
+        HWLOC_COMPONENTS: '-gl'
+        DACE_cache: unique
+        DACE_compiler_cpu_implementation: experimental_readable
+        OMP_NUM_THREADS: '4'
+      # ``-r 1``: a correctness gate, not a measurement -- a timing repeat on a shared runner
+      # measures the runner. ``|| true`` so every kernel is reported before the gate below reads
+      # the CSV.
+      run: |
+        python -m hpcagent_bench.cli run-framework \
+          -b all@${{ matrix.tag }} -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_${{ matrix.tag }}.csv || true
+
+    - name: Gate on the CSV
+      working-directory: hpcagent-bench
+      # Exits with the number of rows that crashed, failed to build, or disagreed with numpy.
+      # ``continue-on-error`` until those are fixed; drop it once a run comes back clean.
+      continue-on-error: true
+      run: python -m hpcagent_bench.cli run-framework --summarize canon_cpu_${{ matrix.tag }}.csv
+
+    - name: Keep the verdicts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: canon-cpu-${{ matrix.tag }}
+        path: hpcagent-bench/canon_cpu_${{ matrix.tag }}.csv

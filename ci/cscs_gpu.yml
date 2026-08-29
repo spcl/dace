@@ -93,3 +93,49 @@ test_cscs_gh200_experimental:
   variables:
     DACE_compiler_cuda_implementation: experimental
     DACE_compiler_cpu_implementation: experimental_readable
+
+# HPCAgent-Bench numerical correctness on the canonicalize-then-offload GPU path. The corpus lives
+# in a separate PUBLIC repo, so it is cloned here rather than vendored; the kernels are numpy and
+# the harness compares every output against the numpy reference it computes itself.
+#
+# Only the two tags that fit a CI slot: @npbench (56 kernels) and @llr-focus40 (40). ``-r 1``
+# because this is a correctness gate -- a timing repeat on a shared node measures the node.
+test_cscs_gh200_hpcagent_canon_gpu:
+  stage: test
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
+  variables:
+    SLURM_GPUS_PER_NODE: 4
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_TIMELIMIT: 60
+    DACE_compiler_cuda_cuda_arch: '90'
+    DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
+    HPCAGENT_BENCH_REF: main
+  needs:
+    - build_cscs_gh200
+  interruptible: true
+  # Until the kernels this currently reports are fixed, a red here must not block the pipeline.
+  # Flip to ``false`` once a run comes back with an exit status of 0.
+  allow_failure: true
+  script:
+    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install -e ".[testing]"
+    # The bench pins no dace: it must measure the checkout above, not a released wheel.
+    - git clone --depth 1 --branch "${HPCAGENT_BENCH_REF}" https://github.com/spcl/HPCAgent-Bench.git "${WORKDIR}/hpcagent-bench"
+    - cd "${WORKDIR}/hpcagent-bench"
+    - uv pip install -e .
+    - export DACE_cache=unique
+    - export PYTHONHASHSEED=0
+    - export MPI4PY_RC_INITIALIZE=0
+    # Written out rather than looped: every list entry is its own shell, so a `for`/`done` pair
+    # split across entries is two broken commands, not a loop.
+    - python -m hpcagent_bench.cli run-framework -b all@npbench -f dace_gpu_canonicalize -p S -r 1 -t 900 --csv canon_gpu_npbench.csv || true
+    - python -m hpcagent_bench.cli run-framework -b all@llr-focus40 -f dace_gpu_canonicalize -p S -r 1 -t 900 --csv canon_gpu_llr-focus40.csv || true
+    # summarize is the gate: it exits with the number of rows that crashed, failed to build, or
+    # disagreed with numpy. The sweep above is allowed to keep going so every kernel is reported.
+    - python -m hpcagent_bench.cli run-framework --summarize canon_gpu_npbench.csv canon_gpu_llr-focus40.csv
