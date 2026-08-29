@@ -1121,12 +1121,15 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{
             {atomic};
         }}
-            """.format(id=idstr,
-                       type=output_type,
-                       numthreads=num_threads,
-                       input=input_edge.data.data,
-                       redop=redop,
-                       atomic=atomic % ('&(%s)' % out_ref, '__block_result_%s' % idstr)))
+            """.format(
+            id=idstr,
+            type=output_type,
+            numthreads=num_threads,
+            # One value per thread: the Register partial is length 1 by the guard above, and
+            # no BlockReduce::Reduce overload takes it as the ``const T[1]`` the frame emits.
+            input='*(%s)' % input_edge.data.data,
+            redop=redop,
+            atomic=atomic % ('&(%s)' % out_ref, '__block_result_%s' % idstr)))
 
         tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
                                    {'_out': dace.pointer(output_data.dtype)},

@@ -177,7 +177,8 @@ public:
      */
     virtual ~GridBarrierLifetime()
     {
-        HostReset();
+        // A destructor has nowhere to report to, and hipCUB's error type is [[nodiscard]].
+        (void) HostReset();
     }
 
 
