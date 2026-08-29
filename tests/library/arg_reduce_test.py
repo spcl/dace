@@ -119,9 +119,13 @@ def test_the_cuda_expansion_calls_cub_and_brings_the_pair_back(op):
     code = '\n'.join(c.clean_code for c in sdfg.generate_code())
 
     kind = 'ArgMax' if op == 'max' else 'ArgMin'
-    assert f'cub::DeviceReduce::{kind}' in code, f'the CUDA expansion did not call cub::DeviceReduce::{kind}'
+    # The gpu* spellings are the backend-neutral aliases, so one expansion serves CUDA and HIP.
+    assert f'gpucub::DeviceReduce::{kind}' in code, f'the CUDA expansion did not call gpucub::DeviceReduce::{kind}'
     assert 'get_scratch<::dace::cub::ReduceTag>' in code, 'the workspace does not come from the scratch pool'
-    assert 'cudaMemcpyDeviceToHost' in code, 'the KeyValuePair is never copied back, so the outputs read device memory'
+    assert 'gpuMemcpyAsync' in code and 'gpuMemcpyDeviceToHost' in code, \
+        'the KeyValuePair is never copied back, so the outputs read device memory'
+    assert 'gpuStreamSynchronize' in code, \
+        'the copy back is asynchronous, so without a sync the host reads the pair before it lands'
     assert ArgReduce.host_connectors == frozenset(
         {'_out_val',
          '_out_idx'}), ('both answers are written by host code, so an offloader must be told to leave them there')
