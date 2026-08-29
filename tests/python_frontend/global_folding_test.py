@@ -190,6 +190,26 @@ def test_lambda_args():
     assert np.allclose(b, expected)
 
 
+def test_subscripted_call_is_hoisted_under_a_valid_name():
+    """A subscript applied straight to a call: the hoisted name comes from the whole EXPRESSION.
+
+    Parentheses, spaces and operators survived the old punctuation-only substitution, so the name
+    failed validation; and the value hoisted out of an expression is a numpy VIEW, which the calling
+    convention refuses.
+    """
+    M = dace.symbol('M', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64)
+
+    @dace.program
+    def subscripted_call(base: dace.int64[K], out: dace.int64[K, 3]):
+        out[:] = base[:, None] + np.arange(3 * M // M, dtype=np.int64)[None, :]
+
+    base = np.array([10, 20, 30, 40], dtype=np.int64)
+    out = np.zeros((4, 3), dtype=np.int64)
+    subscripted_call(base=base, out=out, K=4, M=1)
+    assert np.array_equal(out, base[:, None] + np.arange(3, dtype=np.int64)[None, :])
+
+
 if __name__ == '__main__':
     test_instantiated_global()
     test_instantiated_global_resolve_functions()
@@ -199,3 +219,4 @@ if __name__ == '__main__':
     test_dead_code_elimination_noelse()
     test_dead_code_elimination_unreachable()
     test_lambda_args()
+    test_subscripted_call_is_hoisted_under_a_valid_name()

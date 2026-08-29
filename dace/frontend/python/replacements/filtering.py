@@ -5,9 +5,27 @@ NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
-from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
+from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState, nodes
 
 from typing import List, Optional, Set
+
+
+def branch_type(operand, arr: Optional[data.Data]) -> dtypes.typeclass:
+    """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
+
+    A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
+    ``sympy.Mul`` and friends -- is in no dtype map.
+    """
+    if arr is not None:
+        return arr.dtype
+    if symbolic.issymbolic(operand):
+        return symbolic.symtype(operand)
+    return dtypes.dtype_to_typeclass(type(operand))
+
+
+def branch_code(operand) -> str:
+    """The branch spelled for the tasklet: sympy prints ``**`` and ``/``, C++ needs neither."""
+    return symbolic.symstr(operand) if symbolic.issymbolic(operand) else operand
 
 
 @oprepo.replaces('numpy.where')
@@ -35,12 +53,15 @@ def _array_array_where(visitor: ProgramVisitor,
     except KeyError:
         right_arr = None
 
-    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
-    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
+    left_type = branch_type(left_operand, left_arr)
+    right_type = branch_type(right_operand, right_arr)
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    tasklet_args = [
+        '__incond', '__in1' if left_arr else branch_code(left_operand),
+        '__in2' if right_arr else branch_code(right_operand)
+    ]
     result_type, casting = result_type(arguments[1:])
     left_cast = casting[0]
     right_cast = casting[1]

@@ -2671,8 +2671,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 for atom in symrng.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         astr = str(atom)
-                        # Check for undefined variables
-                        if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+                        # Check for undefined variables. A symbol already DECLARED on the SDFG counts
+                        # as defined: scalar-to-symbol promotion mints ``__sym_<scalar>`` straight
+                        # into ``sdfg.symbols`` without touching the visitor's scope, so a range over
+                        # the promoted slice's own shape read as undefined.
+                        if (astr not in self.defined and astr not in self.sdfg.symbols
+                                and not ('.' in astr and astr in self.sdfg.arrays)):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):

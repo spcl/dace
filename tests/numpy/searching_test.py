@@ -151,8 +151,27 @@ def test_numpy_where_cast_stays_a_tasklet():
     assert np.allclose(where_mixed(A, B, C), np.where(C, A, B))
 
 
+def test_where_with_a_symbolic_branch():
+    """A branch that is a symbolic scalar, not an array or a Python number.
+
+    ``2 * S`` arrives as a sympy expression whose ``type()`` -- ``sympy.Mul`` -- is in no dtype map,
+    so the dtype lookup raised ``KeyError`` before the tasklet was ever built.
+    """
+    S = dace.symbol('S', dtype=dace.int64)
+
+    @dace.program
+    def where_sym(a: dace.float64[S], out: dace.float64[S]):
+        out[:] = np.where(a > 0.0, a, 2 * S)
+
+    a = np.array([1.0, -1.0, 3.0, -4.0], dtype=np.float64)
+    out = np.zeros(4, dtype=np.float64)
+    where_sym(a=a, out=out, S=4)
+    assert np.allclose(out, np.where(a > 0.0, a, 2.0 * 4))
+
+
 if __name__ == "__main__":
     test_numpy_where()
+    test_where_with_a_symbolic_branch()
     test_numpy_select()
     test_numpy_where_scalar_operands()
     test_numpy_where_scalar_operands_int()

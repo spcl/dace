@@ -437,6 +437,13 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     return make_cb(keywords, poscount, unflatten_instructions)
 
 
+def own_buffer(value: Any) -> Any:
+    """Materialize a numpy view so it owns its buffer; anything else passes through."""
+    if isinstance(value, numpy.ndarray) and value.base is not None:
+        return numpy.copy(value)
+    return value
+
+
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
@@ -469,8 +476,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
     def _qualname_to_array_name(self, qualname: str, prefix: str = '__g_') -> str:
         """ Converts a Python qualified attribute name to an SDFG array name. """
-        # We only support attributes and subscripts for now
-        sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
+        # Every non-identifier character, not just the attribute/subscript punctuation: a qualname
+        # can be a whole call EXPRESSION -- ``numpy.arange(3 * M // M, dtype=np.int64)[None, :]`` --
+        # whose parentheses, spaces and operators survived the narrower substitution and then failed
+        # validation. An empty prefix can also leave a leading digit, which is not a valid name.
+        sanitized = re.sub(r'\W', '_', qualname)
+        if sanitized and sanitized[0].isdigit():
+            sanitized = '_' + sanitized
         if not dtypes.validate_name(sanitized):
             raise NameError(f'Variable name "{sanitized}" is not sanitized '
                             'properly during parsing. Please report this issue.')
@@ -546,7 +558,12 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 if keep_object:
                     self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
                 else:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
+                    # A value hoisted out of an EXPRESSION (``np.arange(...)[None, :]``) evaluates to
+                    # a numpy VIEW, which the calling convention refuses. The hoist re-evaluates the
+                    # source text anyway, so nothing observes the copy. ``keep_object`` is left alone
+                    # -- that path exists to hand back the identical object.
+                    self.closure.closure_arrays[arrname] = (qualname, desc,
+                                                            lambda: own_buffer(eval(qualname, self.globals)), False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
