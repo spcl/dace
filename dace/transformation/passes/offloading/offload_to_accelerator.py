@@ -241,6 +241,7 @@ class OffloadToAccelerator(ppl.Pass):
         self.find_taskloops(sdfg)
         self.assign_schedules(sdfg)
 
+        self.place_single_sided_data(sdfg)
         self.place_and_copy(sdfg)
         self.offload_host_level_bodies(sdfg)
         self.scalarize_locals_of_removed_trivial_maps(sdfg)
@@ -357,6 +358,107 @@ class OffloadToAccelerator(ppl.Pass):
         freed = before - self.kernel_local_len1_arrays(sdfg)
         if freed:
             ConvertLengthOneArraysToScalars(recursive=True, filter=freed).apply_pass(sdfg, {})
+            self.cache_scopes(sdfg)
+
+    def touches_device_code(self, scopes: dict, node: nodes.Node) -> bool:
+        """Whether ``node`` is device code, or the boundary of a scope that is."""
+        if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+            return self.get_schedule(node) in dtypes.GPU_SCHEDULES
+        # A nested SDFG holds its own scopes, so answer for it the way that cannot be wrong in the
+        # direction that matters: calling it device keeps its containers out of the host staging.
+        if isinstance(node, nodes.NestedSDFG):
+            return True
+        if isinstance(node, nodes.LibraryNode):
+            return self.has_GPU_schedule(node)
+        return self.enclosing_kernel(scopes, node) is not None
+
+    def data_sides(self, sdfg: SDFG) -> tuple[OrderedSet[str], OrderedSet[str], OrderedSet[str]]:
+        """Which side of the machine touches each top-level container, and what is written.
+
+        Read off the graph rather than off the IR: the per-state analysis answers for one state at
+        a time and its hybrid resolution rewrites the answer, so by the time the IR exists a
+        container that only host code touches already reads as a device one.
+        """
+        host: OrderedSet[str] = OrderedSet()
+        device: OrderedSet[str] = OrderedSet()
+        written: OrderedSet[str] = OrderedSet()
+        for state in sdfg.states():
+            scopes = state.scope_dict()
+            # A fallback arm's host reads are conditional, and the arm already copies what it needs
+            # inside itself. Counting them here would answer a rarely-taken read with a copy every
+            # execution pays for -- the exact cost the arm-local copies exist to avoid.
+            fallback = in_sequential_specialization_arm(state)
+            for node in state.data_nodes():
+                if node.data not in sdfg.arrays:
+                    continue
+                if state.in_degree(node) > 0:
+                    written.add(node.data)
+                for edge in state.all_edges(node):
+                    other = edge.dst if edge.src is node else edge.src
+                    if self.touches_device_code(scopes, other):
+                        device.add(node.data)
+                    elif not fallback:
+                        host.add(node.data)
+        return host, device, written
+
+    def stage_on_host(self, sdfg: SDFG, name: str, write_back: bool) -> bool:
+        """Give ``name`` a host copy, point every use at it, and copy at the SDFG's boundary.
+
+        Declines rather than stage a written container it cannot write back: the host copy would
+        hold the answer and the caller's array would not, which is a wrong number rather than a
+        broken graph, so it has to be refused where it can still be seen.
+        """
+        sinks = sdfg.sink_nodes() if write_back else []
+        if write_back and not sinks:
+            return False
+
+        existing = OrderedSet(sdfg.all_control_flow_blocks())
+        self.create_interstate_copy(sdfg, None, sdfg.start_block, OrderedSet([name]), to_gpu=False)
+
+        rename = {name: self._get_host_name(name)}
+        for block in existing:
+            if isinstance(block, SDFGState):
+                self._insert_copy_names_in_state(block, rename)
+            else:
+                block.replace_meta_accesses(rename)
+        for edge in sdfg.all_interstate_edges():
+            edge.data.replace(name, self._get_host_name(name))
+
+        # Every exit needs the write-back, not just one: a sink each side of a branch is two ways out.
+        for sink in sinks:
+            self.create_interstate_copy(sdfg, sink, None, OrderedSet([name]), to_gpu=True)
+        return True
+
+    def place_single_sided_data(self, sdfg: SDFG) -> None:
+        """Give a container ONE home before the per-state placement runs.
+
+        A signature array is put on the device wholesale so the caller can hand one down, but that
+        is an ABI decision, not a placement: a container only host code touches is then device
+        memory the host writes, and the per-state analysis cannot undo it because it sees one state
+        at a time and its hybrid resolution answers by moving the whole state onto the device --
+        which for npbench nbody's ``PE`` means wrapping a scalar accumulation into one kernel launch
+        per iteration. Staging it on the host instead is both correct and free.
+
+        Only the single-sided case is decided here. A container both sides WRITE needs coherence and
+        stays with the per-state copies; one both sides only read needs none, so a single copy at
+        entry serves every host read for the rest of the run.
+        """
+        host, device, written = self.data_sides(sdfg)
+        for name in list(sdfg.arrays):
+            desc = sdfg.arrays[name]
+            if desc.transient or desc.storage != dtypes.StorageType.GPU_Global or name not in host:
+                continue
+            if name in device and name in written:
+                continue
+
+            if name in device:
+                # Read on both sides and written by neither, so the two copies can never disagree:
+                # one copy at entry, and the per-state renaming already points the host reads at it.
+                self.create_interstate_copy(sdfg, None, sdfg.start_block, OrderedSet([name]), to_gpu=False)
+            elif not self.stage_on_host(sdfg, name, write_back=name in written):
+                continue
+
+            # The copy states are new blocks; every later step reads scopes from the cache.
             self.cache_scopes(sdfg)
 
     def place_and_copy(self, sdfg: SDFG) -> None:

@@ -588,6 +588,92 @@ def test_apply_gpu_storage_leaves_every_scalar_on_the_host():
     assert sdfg.arrays['A'].storage is dace.StorageType.GPU_Global
 
 
+def copy_blocks_for(sdfg: dace.SDFG, name: str):
+    """The copy states the pass inserted for ``name``, by the label ``create_interstate_copy`` gives."""
+    return [
+        block.label for block in sdfg.all_control_flow_blocks()
+        if block.label.startswith('copy_') and f'copy_{name}_' in block.label
+    ]
+
+
+def indirect_read_only_sdfg() -> dace.SDFG:
+    """``idx`` read by a parallel map AND by a sequential data-dependent loop, and written by neither.
+
+    The map is the parallel consumer: it reads ``idx[i]`` to place its result, which is the indirect
+    access an index array exists for. The loop is the sequential one: each step's index is the
+    PREVIOUS step's value, so it cannot be a map and it is host code. Nothing writes ``idx``, so the
+    two sides can never disagree about it -- which is the whole reason one copy is enough.
+    """
+    sdfg = dace.SDFG('indirect_read_only')
+    sdfg.add_array('idx', [16], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('data', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('out', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_scalar('cursor', dace.int64, transient=True)
+    sdfg.add_symbol('k', dace.int64)
+
+    parallel = sdfg.add_state('parallel', is_start_block=True)
+    entry, exit_ = parallel.add_map('gather', {'i': '0:16'}, schedule=dace.ScheduleType.GPU_Device)
+    gather = parallel.add_tasklet('gather', {'j': None, 'd': None}, {'o': None}, 'o = d * float(j)')
+    parallel.add_memlet_path(parallel.add_read('idx'), entry, gather, dst_conn='j', memlet=dace.Memlet('idx[i]'))
+    parallel.add_memlet_path(parallel.add_read('data'), entry, gather, dst_conn='d', memlet=dace.Memlet('data[i]'))
+    parallel.add_memlet_path(gather, exit_, parallel.add_write('out'), src_conn='o', memlet=dace.Memlet('out[i]'))
+
+    # The pointer chase: sequential by construction, and host code. Not a guarded fallback -- there
+    # is no ConditionalBlock above it, so its reads of `idx` are reads every execution performs.
+    chase = LoopRegion('chase', 'k < 16', 'k', 'k = 0', 'k = k + 1')
+    sdfg.add_node(chase)
+    sdfg.add_edge(parallel, chase, dace.InterstateEdge())
+    step = chase.add_state('step', is_start_block=True)
+    hop = step.add_tasklet('hop', {'j': None}, {'c': None}, 'c = j')
+    step.add_edge(step.add_read('idx'), None, hop, 'j', dace.Memlet('idx[k]'))
+    step.add_edge(hop, 'c', step.add_write('cursor'), None, dace.Memlet('cursor[0]'))
+    return sdfg
+
+
+def test_a_read_only_array_both_sides_read_is_copied_exactly_once():
+    """The duplicate is made once at entry, not once per crossing.
+
+    ``idx`` is read on both sides and written by neither, so the host copy can never go stale: one
+    copy at entry serves every host read for the rest of the run. Counting is the assertion that
+    separates this from the read-write placement, which has to copy on every crossing to stay
+    coherent -- and the loop here would make that one copy per iteration.
+    """
+    sdfg = indirect_read_only_sdfg()
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+
+    copies = copy_blocks_for(sdfg, 'idx')
+    assert len(copies) == 1, f'expected one copy of a read-only array, got {copies}'
+    assert copies[0].endswith('_to_host'), f'the copy must bring idx down to the host: {copies[0]}'
+    assert sdfg.arrays['idx'].storage == dace.StorageType.GPU_Global, 'the device side keeps the original'
+    assert sdfg.arrays['idx_host'].storage != dace.StorageType.GPU_Global, 'the host side must be host memory'
+
+
+def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
+    """A container only host code touches gets a home, not a kernel.
+
+    The alternative the pass reaches for -- declaring the state hybrid and lifting the tasklet into
+    a size-1 map -- is correct but pays a kernel launch per iteration for a scalar accumulation.
+    Staging it costs one copy each way for the whole run, and the write-back is what makes the
+    caller's array hold the answer.
+    """
+    sdfg = indirect_read_only_sdfg()
+    # `total` is touched by the host loop alone: no map, no library node, nothing on the device.
+    sdfg.add_array('total', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    step = next(state for state in sdfg.all_states() if state.label == 'step')
+    accumulate = step.add_tasklet('accumulate', {}, {'t': None}, 't = 1.0')
+    step.add_edge(accumulate, 't', step.add_write('total'), None, dace.Memlet('total[k]'))
+
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+
+    copies = copy_blocks_for(sdfg, 'total')
+    assert len(copies) == 2, f'expected one copy each way for a written host-only array, got {copies}'
+    assert sorted(c.split('_')[-2] + '_' + c.split('_')[-1] for c in copies) == ['to_gpu', 'to_host']
+
+
 def test_the_sequential_arm_of_a_guarded_loop_keeps_its_host_copies():
     """The exception to the rule above: a fallback arm is host code that OWNS its copies.
 
