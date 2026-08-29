@@ -53,6 +53,33 @@ CLANG_TIDY_CHECKS = ('readability-*,'
                      '-readability-avoid-const-params-in-decls,-readability-non-const-parameter')
 
 
+def discard_stale_build(out_path: str) -> None:
+    """Drop the compiled artifacts of whichever program used this folder before.
+
+    A build folder is named after the program by default, so two ``@dace.program`` functions that
+    share a name -- in one module, or in two modules of the same name -- share a folder, and only
+    the build system's timestamp comparison stands between them. That comparison is not sound here:
+    a filesystem stamping mtimes at one-second granularity (Lustre and NFS do) leaves a program
+    regenerated within the same second as the previous link reading as up to date, so the build is
+    skipped and the PREVIOUS program's library is what gets loaded. The symptom is a wrong answer,
+    not a build error, and it comes and goes with how fast the two compiles happen.
+
+    Called only when the folder's recorded hash says the program changed, so an unchanged rerun
+    still reuses everything.
+    """
+    build_path = os.path.join(out_path, 'build')
+    for root, _, files in os.walk(build_path):
+        for filename in files:
+            # The stub is the same code for every program; rebuilding it would cost a compile a run.
+            if 'dacestub' in filename:
+                continue
+            if os.path.splitext(filename)[1] in ('.o', '.obj', '.so', '.dylib', '.dll', '.a', '.lib'):
+                try:
+                    os.remove(os.path.join(root, filename))
+                except OSError:
+                    continue  # already gone, or not ours to remove; the build will overwrite it
+
+
 def generate_program_folder(
     sdfg,
     code_objects: List[CodeObject],
@@ -164,6 +191,10 @@ def generate_program_folder(
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
+            # The folder already held a DIFFERENT program, so its artifacts cannot be reused and
+            # the build system may not notice on its own.
+            if os.path.isfile(filepath):
+                discard_stale_build(out_path)
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
