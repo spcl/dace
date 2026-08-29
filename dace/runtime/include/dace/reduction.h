@@ -635,7 +635,12 @@ struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
 //
 // SEMANTICS GUARANTEED. FP association: the parallel form reassociates (the team splits the range,
 // the runtime combines partials), so a floating-point result MOVES WITH ``OMP_NUM_THREADS``, while
-// the sequential form is a fixed left-to-right fold and is bit-reproducible. min/max and NaN: both
+// the sequential form associates the same way at every thread count and is bit-reproducible. That
+// fixed association is PAIRWISE for ``sum`` and ``product`` over a rounding accumulator -- a binary
+// tree over blocks of ``detail::PAIRWISE_BLOCK``, the shape numpy's own reduction uses -- because a
+// left-to-right fold stops moving once the accumulator outgrows the addend, and a long single
+// precision sum then answers with a visibly wrong number. Reproducible, not left-to-right: code
+// that needs a specific summation order has to spell it out itself. min/max and NaN: both
 // forms compare with ``std::min``/``std::max``, ``(b < a) ? b : a`` with the accumulator on the left,
 // so a NaN in the DATA never wins and the result is the min/max over the non-NaN elements at every
 // thread count; a NaN ``seed`` propagates through the SEQUENTIAL form but goes through the runtime's
@@ -741,6 +746,76 @@ inline T fold(const U *in, long n, long s, T seed, Op op) {
     for (long i = 0; i < n; ++i) acc = op(acc, in[i * s]);
   }
   return acc;
+}
+
+/// Elements below which the pairwise walk stops splitting and folds the block through the lanes
+/// below. numpy's own block size, and for the same reason: large enough that the recursion is
+/// amortised over real work, small enough that the block's error stays under the tree's.
+constexpr long PAIRWISE_BLOCK = 128;
+
+/// The bottom of the pairwise walk: ``n >= 1`` elements of ``in`` taken ``s`` apart, folded through
+/// eight independent chains and combined as a tree.
+///
+/// Eight because the additions within one chain are then the only ones that wait on each other, so
+/// the block runs at the adder's throughput rather than its latency -- and because eight partials
+/// each grow eight times slower than one running total would, which is the accuracy half of the
+/// same choice. numpy's reduction has this shape.
+template <typename T, typename U, typename Op, typename Merge>
+inline T fold_block(const U *in, long n, long s, Op op, Merge merge) {
+  if (n < 8) {
+    T acc = static_cast<T>(operand<T, U>(in[0]));
+    for (long i = 1; i < n; ++i) acc = op(acc, in[i * s]);
+    return acc;
+  }
+  T r0 = static_cast<T>(operand<T, U>(in[0]));
+  T r1 = static_cast<T>(operand<T, U>(in[s]));
+  T r2 = static_cast<T>(operand<T, U>(in[2 * s]));
+  T r3 = static_cast<T>(operand<T, U>(in[3 * s]));
+  T r4 = static_cast<T>(operand<T, U>(in[4 * s]));
+  T r5 = static_cast<T>(operand<T, U>(in[5 * s]));
+  T r6 = static_cast<T>(operand<T, U>(in[6 * s]));
+  T r7 = static_cast<T>(operand<T, U>(in[7 * s]));
+  long i = 8;
+  for (; i + 7 < n; i += 8) {
+    r0 = op(r0, in[i * s]);
+    r1 = op(r1, in[(i + 1) * s]);
+    r2 = op(r2, in[(i + 2) * s]);
+    r3 = op(r3, in[(i + 3) * s]);
+    r4 = op(r4, in[(i + 4) * s]);
+    r5 = op(r5, in[(i + 5) * s]);
+    r6 = op(r6, in[(i + 6) * s]);
+    r7 = op(r7, in[(i + 7) * s]);
+  }
+  for (; i < n; ++i) r0 = op(r0, in[i * s]);
+  return merge(merge(merge(r0, r1), merge(r2, r3)), merge(merge(r4, r5), merge(r6, r7)));
+}
+
+/// Pairwise (binary tree) fold of ``n >= 1`` elements of ``in`` taken ``s`` apart, with no seed --
+/// the leftmost element IS the seed, so no identity is needed and the caller's seed is merged once
+/// at the top. Sequential and deterministic like ``fold``, but the rounding error of a floating
+/// point accumulation grows as O(log n) rather than O(n): a left-to-right fold stops moving as soon
+/// as the accumulator outgrows the addend, and a tree keeps the partials the same size as each
+/// other. ``op`` combines the accumulator with an element, ``merge`` two accumulators.
+template <typename T, typename U, typename Op, typename Merge>
+inline T pairwise(const U *in, long n, long s, Op op, Merge merge) {
+  if (n <= PAIRWISE_BLOCK) return fold_block<T, U>(in, n, s, op, merge);
+  const long half = n / 2;
+  return merge(pairwise<T, U>(in, half, s, op, merge), pairwise<T, U>(in + half * s, n - half, s, op, merge));
+}
+
+/// ``pairwise`` for an accumulator that rounds, ``fold`` for one that does not.
+///
+/// An integral accumulator reassociates exactly, so the tree would buy it nothing and cost it the
+/// recursion. Everything else -- float, double, complex, the low-precision structs -- is where the
+/// association is the whole question.
+template <typename T, typename U, typename Op, typename Merge>
+inline T associative_fold(const U *in, long n, long s, T seed, Op op, Merge merge) {
+  if constexpr (std::is_integral<T>::value) {
+    return fold(in, n, s, seed, op);
+  } else {
+    if (n <= 0) return seed;
+    return merge(seed, pairwise<T, U>(in, n, s, op, merge));
+  }
 }
 
 }  // namespace detail
@@ -875,14 +950,18 @@ namespace seq {
 
 template <typename T, typename U>
 inline T sum(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::checked_seed<T, U>(seed),
-                      [](T a, U b) { return static_cast<T>(a + detail::operand<T, U>(b)); });
+  return detail::associative_fold(
+      in, n, s, detail::checked_seed<T, U>(seed),
+      [](T a, U b) { return static_cast<T>(a + detail::operand<T, U>(b)); },
+      [](T a, T b) { return static_cast<T>(a + b); });
 }
 
 template <typename T, typename U>
 inline T product(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::checked_seed<T, U>(seed),
-                      [](T a, U b) { return static_cast<T>(a * detail::operand<T, U>(b)); });
+  return detail::associative_fold(
+      in, n, s, detail::checked_seed<T, U>(seed),
+      [](T a, U b) { return static_cast<T>(a * detail::operand<T, U>(b)); },
+      [](T a, T b) { return static_cast<T>(a * b); });
 }
 
 template <typename T, typename U>

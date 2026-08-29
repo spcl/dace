@@ -9,9 +9,9 @@ outside it must be refused where it can be seen -- a named ``static_assert`` in 
 
 Each reduce cell is run through BOTH entry points, which are different code: ``dace::reduce::<op>``
 (an OpenMP ``reduction`` clause, reassociating) for a node that is the outermost parallel work, and
-``dace::reduce::seq::<op>`` (a fixed left-to-right fold) for one re-entered by an enclosing parallel
-map -- the ``libnode_is_sequential`` path. Both run at 64 and at 100000 elements off one compiled
-SDFG with a symbolic length.
+``dace::reduce::seq::<op>`` (a fixed, thread-count independent association) for one re-entered by an
+enclosing parallel map -- the ``libnode_is_sequential`` path. Both run at 64 and at 100000 elements off
+one compiled SDFG with a symbolic length.
 
 TOLERANCES are the dtype's epsilon times a small factor, and the inputs are built so the fold is
 EXACT in every dtype under test (see :func:`_input`), so the tolerance is headroom rather than a
@@ -188,7 +188,7 @@ def test_reduce_parallel_entry_matches_numpy(op, dtype):
 @pytest.mark.parametrize('dtype', _LOWP + _COMPLEX, ids=lambda d: d.to_string())
 @pytest.mark.parametrize('op', list(_OPS))
 def test_reduce_sequential_entry_matches_numpy(op, dtype):
-    """The same matrix through the ``libnode_is_sequential`` path (fixed left-to-right fold)."""
+    """The same matrix through the ``libnode_is_sequential`` path (one thread, fixed association)."""
     if op in _REAL_ONLY and dtype in _COMPLEX:
         with pytest.raises(ValueError, match='not defined for complex data type'):
             _sequential_sdfg(dtype, op).generate_code()

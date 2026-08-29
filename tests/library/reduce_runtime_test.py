@@ -125,6 +125,20 @@ int main(int argc, char **argv) {
   printf("empty par %.17g\n", dace::reduce::sum(d.data(), 0L, 1L, 17.5));
   printf("empty seq %.17g\n", dace::reduce::seq::min(d.data(), 0L, 1L, 17.5));
 
+  // Association, the reason the sequential sum is a tree and not a running total. One huge element
+  // ahead of many small ones: a left-to-right fold has outgrown every later addend by its second
+  // step and returns the huge element unchanged, while a tree adds the small ones to each other
+  // first and carries their total up at a magnitude the final addition can still represent.
+  std::vector<double> stiff(1 << 16, 1.0);
+  stiff[0] = 1e16;
+  double running = 0.0;
+  for (double x : stiff) running += x;
+  printf("stiff running %.17g\n", running);
+  printf("stiff seq %.17g\n", dace::reduce::seq::sum(stiff.data(), static_cast<long>(stiff.size()), 1L, 0.0));
+  // Same shape strided, so the tree's index walk is exercised on the non-contiguous path too.
+  printf("stiff seq3 %.17g\n",
+         dace::reduce::seq::sum(stiff.data(), static_cast<long>(stiff.size()) / 3, 3L, 0.0));
+
   // No entry point carries a nesting check; an external caller already inside a team gets
   // OpenMP's nested default (one thread). Still the RIGHT value, which is what this pins.
   int wrong = 0;
@@ -273,6 +287,37 @@ def test_reduce_min_max_nan_and_empty_semantics(threads, tmp_path):
     # An empty range returns the seed untouched, which is what makes an identity unnecessary.
     assert got[('empty', 'par')] == 17.5
     assert got[('empty', 'seq')] == 17.5
+
+
+def test_the_sequential_sum_associates_pairwise(tmp_path):
+    """The sequential sum is a tree, and the tree is why it still answers on a stiff range.
+
+    A running total is the obvious spelling and the wrong one: once the accumulator is 1e16 the
+    next 65535 additions of 1.0 each round back to where they started, and the reduction returns
+    the first element. The assertion is on the ERROR, not on a bit pattern -- any association that
+    keeps the partials comparable in size passes, a running total cannot.
+    """
+    if _cxx('g++') is None:
+        pytest.skip('g++ not installed')
+    _reals, _ints, real_path, int_path = _make_data(tmp_path)
+    got = _run_driver(_build_driver('g++', tmp_path), real_path, int_path, 1)
+
+    exact = 1e16 + float((1 << 16) - 1)
+    running_error = abs(got[('stiff', 'running')] - exact)
+    tree_error = abs(got[('stiff', 'seq')] - exact)
+    assert got[('stiff', 'running')] == 1e16, ('the running total was expected to swallow every addend; if it no '
+                                               'longer does, this data no longer separates the two associations')
+    # What the tree still loses, and why the bound is not zero: 1e16 sits in one of the block's eight
+    # chains, and the addends that land in THAT chain -- one in eight of its 128 -- are added to a
+    # number too large to move. Everything else is summed among peers and arrives intact.
+    assert tree_error <= 16.0, f'sequential sum lost more than the block it had to: got {got[("stiff", "seq")]!r}'
+    assert tree_error * 1000 < running_error, (f'tree error {tree_error} is not decisively better than the running '
+                                               f'total error {running_error}')
+    assert got[('stiff', 'seq')] == pytest.approx(np.sum(np.concatenate([[1e16], np.ones((1 << 16) - 1)])), abs=2.0), (
+        'the shape is numpy pairwise; a difference here means the block or the lane count drifted apart from it')
+
+    strided_exact = 1e16 + float((1 << 16) // 3 - 1)
+    assert abs(got[('stiff', 'seq3')] - strided_exact) <= 16.0, 'the strided walk did not reach the same answer'
 
 
 def _sum_loop_sdfg():
