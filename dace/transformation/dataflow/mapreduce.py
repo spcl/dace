@@ -2,6 +2,7 @@
 """ Contains classes and functions that implement the map-reduce-fusion
     transformation. """
 
+from dace import data as dt
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -44,6 +45,17 @@ class MapReduceFusion(pm.SingleStateTransformation):
         in_array = self.in_array
         reduce_node = self.reduce
         tasklet = self.tasklet
+        out_array = self.out_array
+
+        # `shared_transients()` below only ever reports transients, so a non-transient `in_array`
+        # passes every remaining check and silently loses the producer this fusion deletes.
+        if not sdfg.arrays[in_array.data].transient:
+            return False
+
+        # The init state below cannot write a View: the edge binding it to the viewed data lives in
+        # this state, and its subset may name symbols that only this state's scopes define.
+        if reduce_node.identity is not None and not self.no_init and isinstance(sdfg.arrays[out_array.data], dt.View):
+            return False
 
         # Make sure that the array is only accessed by the map and the reduce
         if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
