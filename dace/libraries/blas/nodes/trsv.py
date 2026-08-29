@@ -45,7 +45,7 @@ class ExpandTrsvOpenBLAS(ExpandTransformation):
         uplo, trans, diag = _cblas_flags(node)
         code = f"""
         cblas_{prefix}copy({n}, _xin, {sx_in}, _xout, {sx_out});
-        cblas_{prefix}trsv(CblasColMajor, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
+        cblas_{prefix}trsv(CblasRowMajor, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
