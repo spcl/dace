@@ -8,6 +8,7 @@ means anything: the chain is one Hamiltonian cycle, the chase compiles to a bare
 triad vectorizes and is not turned into memcpy, and the triad computes the right answer."""
 import ctypes
 import os
+import pathlib
 import subprocess
 
 import numpy
@@ -90,12 +91,29 @@ def test_chase_body_is_a_bare_dependent_load(lib):
     assert "mov    (%rax),%rax" in _disassemble("chase_run_timed")
 
 
+def widest_vector_register() -> str:
+    """The register class ``-march=native`` is expected to reach on THIS host.
+
+    The assertion below is about the flag doing its job, not about the box being a particular
+    Xeon: a runner without AVX-512 still has to vectorize, just into ``%ymm``. Pinning ``%zmm``
+    unconditionally tests the hardware instead of the build, and fails on every AVX2-only machine.
+    """
+    flags = pathlib.Path("/proc/cpuinfo").read_text()
+    if "avx512f" in flags:
+        return "%zmm"
+    if "avx2" in flags or " avx " in flags:
+        return "%ymm"
+    return "%xmm"
+
+
 def test_triad_vectorizes_and_is_not_rewritten_to_memcpy(lib):
-    """-march=native must actually engage AVX-512 (plain -O3 gives SSE2), and -O3 must not turn the
-    loop into a memcpy call -- glibc's memcpy switches to non-temporal stores past a size threshold,
-    which would make the benchmark measure glibc's strategy rather than the memory system."""
+    """-march=native must actually engage the host's widest vectors (plain -O3 gives SSE2), and -O3
+    must not turn the loop into a memcpy call -- glibc's memcpy switches to non-temporal stores past
+    a size threshold, which would make the benchmark measure glibc's strategy rather than the memory
+    system."""
     text = _disassemble()
-    assert "%zmm" in text, "triad did not vectorize to AVX-512"
+    register = widest_vector_register()
+    assert register in text, f"triad did not vectorize to {register}"
     assert "call" not in text or "memcpy" not in text, "loop was rewritten into memcpy"
 
 

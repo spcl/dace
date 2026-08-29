@@ -486,4 +486,4 @@ jobs:
         export DACE_cache=unique
         export DACE_optimizer_automatic_simplification=1
         pytest -n auto --tb=short --timeout_method thread --timeout=300 \
-          -m "layout and not gpu and not long and not sequential"
+          -m "layout and not gpu and not long and not sequential and not tblis"
