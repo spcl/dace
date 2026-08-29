@@ -429,6 +429,50 @@ def test_consolidate_edges_refuses_reads_from_two_access_nodes():
     assert np.array_equal(expected, got)
 
 
+def test_consolidate_edges_folds_reads_of_one_written_access_node():
+    """Reads taken through the SAME written access node share its program point, so they fold.
+
+    Refusing them (every read of a written container, regardless of which node it came from)
+    left one scope connector per read, and the next pass to route the whole body through a single
+    connector -- ``nest_state_subgraph`` -- stranded the rest as dangling out-connectors.
+    """
+    sdfg = dace.SDFG('read_fold')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64, transient=True)
+    sdfg.add_array('C', [8], dace.float64)
+    state = sdfg.add_state()
+
+    # 'b' is written here, so every read below is ordered after that write by this one node.
+    b = state.add_access('B')
+    fill_entry, fill_exit = state.add_map('fill', dict(j='0:8'))
+    fill = state.add_tasklet('fill', {'a': None}, {'o': None}, 'o = a * 2.0')
+    state.add_memlet_path(state.add_read('A'), fill_entry, fill, dst_conn='a', memlet=dace.Memlet('A[j]'))
+    state.add_memlet_path(fill, fill_exit, b, src_conn='o', memlet=dace.Memlet('B[j]'))
+
+    me, mx = state.add_map('stencil', dict(i='1:7'))
+    tasklet = state.add_tasklet('t', {'l': None, 'm': None, 'r': None}, {'z': None}, 'z = l + m + r')
+    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
+        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=dace.Memlet(f'B[{index}]'))
+    state.add_memlet_path(tasklet, mx, state.add_write('C'), src_conn='z', memlet=dace.Memlet('C[i]'))
+    sdfg.validate()
+
+    assert len([c for c in me.out_connectors if c.startswith('OUT_')]) == 3, 'test setup: expected three reads'
+
+    ref = np.arange(8, dtype=np.float64)
+    expected = np.zeros(8)
+    sdfg(A=ref.copy(), C=expected)
+
+    assert consolidate_edges(sdfg, propagate=False) == 2
+    sdfg.validate()
+    assert [c for c in me.out_connectors if c.startswith('OUT_')] == ['OUT_B']
+    assert len(state.in_edges(me)) == 1
+    assert state.in_edges(me)[0].data.subset == dace_sbs.Range.from_string('0:8')
+
+    got = np.zeros(8)
+    sdfg(A=ref.copy(), C=got)
+    assert np.array_equal(expected, got)
+
+
 if __name__ == '__main__':
     test_consolidate_edges()
     for use_non_standard_memlet in [True, False]:

@@ -595,8 +595,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                             helpers.redirect_edge(state, e, nview)
                         arr, mem = views[node.data]
                         narr = state.add_access(arr)
-                        state.add_nedge(node, narr, dc(mem))
-                        state.add_nedge(narr, nview, dc(mem))
+                        # `views` connectors, not plain copies: a View descriptor yields one pointer per
+                        # state, so an unbound duplicate access node silently rebinds the whole container.
+                        state.add_edge(node, 'views', narr, None, dc(mem))
+                        state.add_edge(narr, None, nview, 'views', dc(mem))
 
                     # NOTE: Node is destination
                     for edge in state.in_edges(node):
