@@ -10,6 +10,8 @@ value-preserving. A no-op when the body has a single group.
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ordered_set import OrderedSet
+
 from dace import SDFG
 from dace import symbolic
 from dace.sdfg import nodes
@@ -17,6 +19,7 @@ from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 
 def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
@@ -63,6 +66,56 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
     return saw_loop_var
 
 
+def _subsets_at_node(node: nodes.AccessNode, state: SDFGState):
+    """Yield every (subset, is_write) pair that touches ``node`` on ``node``'s side.
+
+    Copy edges and view edges may carry the other container's name as the
+    memlet's ``.data``; the src/dst subset helpers still return the slice that
+    belongs to ``node.data``.
+    """
+    for e in list(state.in_edges(node)) + list(state.out_edges(node)):
+        if e.data is None or e.data.is_empty():
+            continue
+        if e.src is node:
+            sub = e.data.get_src_subset(e, state)
+            is_write = False
+        else:
+            sub = e.data.get_dst_subset(e, state)
+            is_write = True
+        if sub is not None:
+            yield sub, is_write
+
+
+def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b) -> bool:
+    """``True`` unless z3 proves the two loop-body subsets never alias across iterations.
+
+    Conservative: any exception, missing bound, or inconclusive solver result is
+    treated as a real dependence, so the caller keeps the two accesses in the same
+    fission group.
+    """
+    if loop is None or not loop.loop_variable or not smt_dependence.has_z3():
+        return True
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    step = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or step is None:
+        return True
+    nd_a = list(subset_a.ndrange())
+    nd_b = list(subset_b.ndrange())
+    if len(nd_a) != len(nd_b) or not nd_a:
+        return True
+    try:
+        box_a = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd_a]
+        box_b = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd_b]
+    except Exception:
+        return True
+    try:
+        disjoint = smt_dependence.prove_disjoint_access_boxes(box_a, box_b, loop.loop_variable, start, end, step)
+    except Exception:
+        return True
+    return disjoint is not True
+
+
 def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
     """Whether ``loop``'s body splits into >= 2 independent groups once its per-iter bridges are rewritten.
 
@@ -81,7 +134,7 @@ def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
     if probe_compute is None:
         return False
     _rewrite_per_iter_bridges(probe_compute, probe.loop_variable, sdfg)
-    return len(_independent_groups(probe_compute, probe.loop_variable, sdfg)) >= 2
+    return len(_independent_groups(probe_compute, probe, sdfg)) >= 2
 
 
 def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str]) -> bool:
@@ -89,10 +142,7 @@ def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str
     for n in state.nodes():
         if not (isinstance(n, nodes.AccessNode) and n.data == data):
             continue
-        for e in list(state.in_edges(n)) + list(state.out_edges(n)):
-            if e.data is None:
-                continue
-            sub = e.data.get_dst_subset(e, state) if e.data.subset is None else e.data.subset
+        for sub, _ in _subsets_at_node(n, state):
             if not _is_per_iter_subset(sub, loop_var):
                 return False
     return True
@@ -129,7 +179,7 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str], sdfg: S
     """
     if loop_var is None:
         return
-    written = {n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
+    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
     for data in list(written):
         desc = sdfg.arrays.get(data)
         if desc is None or getattr(desc, 'transient', False):
@@ -160,7 +210,7 @@ def _has_self_path(state: SDFGState, data: str) -> bool:
     if len(starts) < 2 and not any(state.out_degree(n) > 0 and state.in_degree(n) > 0 for n in starts):
         return False
     for start in starts:
-        seen = set()
+        seen = OrderedSet()
         stack = [start]
         while stack:
             cur = stack.pop()
@@ -262,7 +312,7 @@ def _merge_side_write_groups(groups: List[List[nodes.Node]],
 
 
 def _independent_groups(state: SDFGState,
-                        loop_var: Optional[str],
+                        loop: Optional[LoopRegion],
                         sdfg: SDFG,
                         sibling_check: bool = True) -> List[List[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
@@ -275,29 +325,33 @@ def _independent_groups(state: SDFGState,
     returned group also carries the input nodes feeding it, so cloning then
     pruning to a group keeps a self-contained body.
 
-    When ``loop_var`` is provided and a non-transient container is accessed
+    When the loop variable is known and a non-transient container is accessed
     *only* per-iteration (``a[loop_var]`` everywhere) the producer/consumer
     bridge through that container is severed in both the dataflow union and
     the container-shared merge: sequential loop fission preserves the value
     in that case. TSVC s221 (``a[i] = a[i] + c[i] * d[i]; b[i] = b[i-1] +
     a[i] + d[i]``) fissions into two loops under this rule.
 
+    Two chains that touch the same written container are merged only when the
+    SMT oracle cannot prove their live ranges are disjoint across loop
+    iterations. Renaming a chain (giving it a different container name) is no
+    longer the only way to make it fissionable.
+
     :param state: The loop body state.
-    :param loop_var: The enclosing loop's iteration variable. ``None`` keeps
-        the legacy strict-merge behaviour.
+    :param loop: The enclosing ``LoopRegion``. ``None`` keeps the legacy
+        strict-merge behaviour.
     :param sdfg: The SDFG owning ``state``'s data descriptors, passed in rather
         than read off ``state``: a detached copy of a loop (what the fission
         probe reasons about) has no ``.sdfg``.
     :returns: A list of node lists, one per independent group, deterministic.
     """
     order = {n: i for i, n in enumerate(state.nodes())}
-    written = {n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
-    is_input = {
-        n
-        for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written
-    }
+    written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
+    is_input = OrderedSet(n for n in state.nodes()
+                          if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written)
     core = [n for n in state.nodes() if n not in is_input]
     parent: Dict[nodes.Node, nodes.Node] = {n: n for n in core}
+    loop_var = loop.loop_variable if loop is not None else None
 
     def find(x):
         while parent[x] != x:
@@ -321,28 +375,62 @@ def _independent_groups(state: SDFGState,
         return [find(node)]
 
     for data in written:
-        # Skip per-iter non-transient containers: write-then-read at the same
-        # loop index can be safely sequenced into sibling loops (the producer
-        # finishes all writes before the consumer reads). The bridges are
-        # rewritten in :func:`_fission` to give each clone its own reader.
+        # Skip per-iter non-transient containers for the dependence-aware merge:
+        # write-then-read at the same loop index can be safely sequenced into
+        # sibling loops (the producer finishes all writes before the consumer
+        # reads). The bridges are rewritten in :func:`_fission` to give each clone
+        # its own reader. Keep the legacy name-based merge for the *write* nodes
+        # of such a container: two overwrites to ``A[i]`` in the same body must
+        # stay in one group even after the bridge rewrite severs their ordering
+        # edge.
+        per_iter_non_transient = False
         if loop_var is not None:
             desc = sdfg.arrays.get(data)
-            if (desc is not None and not getattr(desc, 'transient', False)
-                    and _container_per_iter_only(state, data, loop_var)):
-                continue
-        reps = []
-        for n in state.nodes():
-            if isinstance(n, nodes.AccessNode) and n.data == data:
+            per_iter_non_transient = (desc is not None and not getattr(desc, 'transient', False)
+                                      and _container_per_iter_only(state, data, loop_var))
+        if per_iter_non_transient:
+            write_nodes = [
+                n for n in state.nodes()
+                if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0
+            ]
+            reps = []
+            for n in write_nodes:
                 reps += group_of(n)
-        for r in reps[1:]:
-            union(reps[0], r)
+            for r in reps[1:]:
+                union(reps[0], r)
+            continue
+
+        access_nodes = sorted((n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data),
+                              key=lambda n: order[n])
+        for i, n1 in enumerate(access_nodes):
+            reps1 = group_of(n1)
+            if not reps1:
+                continue
+            subs1 = list(_subsets_at_node(n1, state))
+            for n2 in access_nodes[i + 1:]:
+                reps2 = group_of(n2)
+                if not reps2:
+                    continue
+                subs2 = list(_subsets_at_node(n2, state))
+                dependent = False
+                for sub1, is_w1 in subs1:
+                    for sub2, is_w2 in subs2:
+                        if is_w1 or is_w2:
+                            if _accesses_interfere_across_iterations(loop, sub1, sub2):
+                                dependent = True
+                                break
+                    if dependent:
+                        break
+                if dependent:
+                    for r in reps2:
+                        union(reps1[0], r)
 
     classes: Dict[nodes.Node, List[nodes.Node]] = {}
     for n in core:
         classes.setdefault(find(n), []).append(n)
     groups = []
     for members in classes.values():
-        member_set = set(members)
+        member_set = OrderedSet(members)
         feeders = [n for n in is_input if any(e.dst in member_set for e in state.out_edges(n))]
         groups.append(sorted(members + feeders, key=lambda n: order[n]))
     groups = sorted(groups, key=lambda g: order[g[0]])
@@ -596,8 +684,7 @@ class LoopFission(ppl.Pass):
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
         cidx = list(loop.nodes()).index(compute)
-        loop_var = loop.loop_variable
-        ngroups = len(_independent_groups(compute, loop_var, sdfg, sibling_check=False))
+        ngroups = len(_independent_groups(compute, loop, sdfg, sibling_check=False))
 
         clones: List[LoopRegion] = []
         for gi in range(ngroups):
@@ -605,7 +692,7 @@ class LoopFission(ppl.Pass):
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             cstate = list(clone.nodes())[cidx]
-            keep = set(_independent_groups(cstate, loop_var, sdfg, sibling_check=False)[gi])
+            keep = set(_independent_groups(cstate, clone, sdfg, sibling_check=False)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:
                 cstate.remove_node(n)
             clones.append(clone)

@@ -860,3 +860,75 @@ def test_unfissionable_per_iter_bridge_is_value_preserving():
     got = {k: v.copy() for k, v in ins.items()}
     sdfg(**got, N=n)
     assert all(np.allclose(got[k], ref[k]) for k in ref), f"ref d={ref['d'][:4]} got d={got['d'][:4]}"
+
+
+# -----------------------------------------------------------------------------
+# Dependence-aware grouping regression tests.
+# -----------------------------------------------------------------------------
+
+
+@dace.program
+def loop_carried_transient_chain(A: dace.float64[N], B: dace.float64[N]):
+    """A single transient chain with a loop-carried dependence: ``tmp[i]`` is
+    produced and ``tmp[i - 1]`` is consumed in the same iteration. The two
+    statements must stay in one loop."""
+    tmp = dace.define_local([N], dtype=dace.float64)
+    for i in range(1, N):
+        tmp[i] = A[i] + 1.0
+        B[i] = tmp[i - 1] * 2.0
+
+
+def test_carried_transient_chain_stays_together():
+    n = 16
+    rng = np.random.default_rng(20260830)
+    A = rng.random(n)
+    B = np.zeros_like(A)
+
+    ref_sdfg = loop_carried_transient_chain.to_sdfg(simplify=True)
+    refB = B.copy()
+    copy.deepcopy(ref_sdfg)(A=A, B=refB, N=n)
+
+    sdfg = loop_carried_transient_chain.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _loop_count(sdfg) == 1, f"expected 1 loop, got {_loop_count(sdfg)}"
+
+    gotB = B.copy()
+    sdfg(A=A, B=gotB, N=n)
+    assert np.allclose(gotB, refB)
+
+
+def test_dependence_aware_grouping_disjoint_same_data():
+    """Two independent statement chains that touch the same transient at disjoint
+    ranges must be allowed to fission once the grouping uses dependence distance
+    instead of container-name equality."""
+    from dace.transformation.passes.loop_fission import _independent_groups
+    from dace import SDFG, dtypes, symbolic
+    from dace.memlet import Memlet
+    from dace.sdfg.state import SDFGState, LoopRegion
+    from dace.subsets import Range
+
+    sdfg = SDFG('disjoint_same_data')
+    sdfg.add_array('tmp', [20], dtypes.float64, transient=True)
+    state: SDFGState = SDFGState(sdfg, 'body')
+    sdfg.add_node(state)
+
+    def make_chain(write_range: str, read_range: str):
+        t = state.add_tasklet('t', {'a'}, {'b'}, 'b = a + 1.0')
+        write_node = state.add_access('tmp')
+        read_node = state.add_access('tmp')
+        state.add_edge(t, 'b', write_node, None, Memlet(data='tmp', subset=Range.from_string(write_range)))
+        state.add_edge(read_node, None, t, 'a', Memlet(data='tmp', subset=Range.from_string(read_range)))
+        return t
+
+    make_chain('0:10', '0:10')
+    make_chain('10:20', '10:20')
+
+    loop = LoopRegion('loop', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    symbolic.symbol('i')  # ensure the symbol exists for the SMT oracle
+    groups = _independent_groups(state, loop, sdfg, sibling_check=False)
+    assert len(groups) == 2, f"expected 2 independent groups, got {len(groups)}"
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])
