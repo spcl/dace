@@ -1041,15 +1041,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         """
         allocated_at: dict[str, int] = {}
         for index, (_, _, node, _, allocate, _) in enumerate(entries):
-            if allocate and node.data not in allocated_at:
+            # A scope entry also lands here, and it names no data.
+            if allocate and isinstance(node, nodes.AccessNode) and node.data not in allocated_at:
                 allocated_at[node.data] = index
 
         def source_of(index: int) -> int | None:
             tsdfg, state, node, _, allocate, _ = entries[index]
-            if not allocate or state is None or not isinstance(node.desc(tsdfg), data.View):
+            if not allocate or state is None or not isinstance(node, nodes.AccessNode):
                 return None
+            if not isinstance(node.desc(tsdfg), data.View):
+                return None
+            # A view bound through a scope resolves to the scope node, which names no data.
             viewed = utils.get_view_node(state, node)
-            if viewed is None or viewed.data == node.data:
+            if not isinstance(viewed, nodes.AccessNode) or viewed.data == node.data:
                 return None
             source = allocated_at.get(viewed.data)
             return None if source == index else source
