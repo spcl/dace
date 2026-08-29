@@ -146,8 +146,16 @@ def blocked_nest_reference(A: np.ndarray) -> np.ndarray:
 
 
 def offloaded(sdfg: dace.SDFG, heuristics: bool) -> dace.SDFG:
+    """The offloading pass's own output, which is what every assertion below is about.
+
+    ``simplify`` is left off deliberately. It runs after the offloading and is free to fuse the
+    copy states into the body and to drop an upload the kernel overwrites before reading -- both
+    correct, both invisible to a caller, and both of which rename or remove the very states these
+    tests name. Simplification has its own tests; asking for it here would only make them assert
+    its shape instead of the offloader's.
+    """
     with dace.config.set_temporary('optimizer', 'gpu_taskloop_heuristics', value=heuristics):
-        sdfg.apply_gpu_transformations()
+        sdfg.apply_gpu_transformations(simplify=False)
     return sdfg
 
 
