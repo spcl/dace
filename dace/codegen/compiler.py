@@ -52,9 +52,12 @@ CLANG_TIDY_CHECKS = ('readability-*,'
                      '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
                      '-readability-avoid-const-params-in-decls,-readability-non-const-parameter')
 
+#: Compiled artifacts, as opposed to the sources and build-system files beside them in the folder.
+BUILD_ARTIFACT_EXTENSIONS = ('.o', '.obj', '.so', '.dylib', '.dll', '.a', '.lib')
 
-def discard_stale_build(out_path: str) -> None:
-    """Drop the compiled artifacts of whichever program used this folder before.
+
+def discard_stale_build(out_path: str, sdfg_name: str) -> None:
+    """Drop the compiled artifacts of whichever program held THIS program's slot before.
 
     A build folder is named after the program by default, so two ``@dace.program`` functions that
     share a name -- in one module, or in two modules of the same name -- share a folder, and only
@@ -64,16 +67,24 @@ def discard_stale_build(out_path: str) -> None:
     skipped and the PREVIOUS program's library is what gets loaded. The symptom is a wrong answer,
     not a build error, and it comes and goes with how fast the two compiles happen.
 
+    Only the artifacts carrying ``sdfg_name`` go: every one is named after the program it belongs
+    to -- ``lib<name>`` and ``CMakeFiles/<name>.dir/`` -- and a folder legitimately holds several
+    programs at once, whose libraries a caller may still be holding open. Dropping those too would
+    make one program's rebuild unload another's, which is what the collision cannot do.
+
     Called only when the folder's recorded hash says the program changed, so an unchanged rerun
     still reuses everything.
     """
     build_path = os.path.join(out_path, 'build')
     for root, _, files in os.walk(build_path):
+        # The stub is the same code for every program; rebuilding it would cost a compile a run.
+        owned_directory = f'{sdfg_name}.dir' in os.path.relpath(root, build_path).split(os.sep)
         for filename in files:
-            # The stub is the same code for every program; rebuilding it would cost a compile a run.
             if 'dacestub' in filename:
                 continue
-            if os.path.splitext(filename)[1] in ('.o', '.obj', '.so', '.dylib', '.dll', '.a', '.lib'):
+            if not owned_directory and sdfg_name not in filename:
+                continue
+            if os.path.splitext(filename)[1] in BUILD_ARTIFACT_EXTENSIONS:
                 try:
                     os.remove(os.path.join(root, filename))
                 except OSError:
@@ -194,7 +205,7 @@ def generate_program_folder(
             # The folder already held a DIFFERENT program, so its artifacts cannot be reused and
             # the build system may not notice on its own.
             if os.path.isfile(filepath):
-                discard_stale_build(out_path)
+                discard_stale_build(out_path, sdfg.name)
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
