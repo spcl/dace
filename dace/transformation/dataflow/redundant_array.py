@@ -2028,10 +2028,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
         """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
 
         Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the edge
-        subset's own STEP and re-derives the end as ``offset + size - 1``, which turns a strided
-        window into a contiguous one of the same element count: dwt2d's ``b[:, 0:2*h:2]`` folded
-        into ``out[:, 0:h]``, reading the first half of every row instead of its even columns. It
-        also dropped ``rs`` from the offset, so a strided view of a strided view was wrong twice.
+        subset's own STEP and re-derives the end as ``offset + size - 1``, turning a strided window
+        into a contiguous one holding the same number of elements: ``a[0:N, 0:N][:, 0:N:2]`` folded
+        into ``a[0:N, 0:N//2]``, so the program read the first half of every row instead of its even
+        columns. The step is also missing from the offset, so a strided view of a strided view came
+        out wrong twice over.
         """
         new_subset: List[Tuple[int, int, int]] = subset.ndrange()
         for vdim, adim in mapping.items():
