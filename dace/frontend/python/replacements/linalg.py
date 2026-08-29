@@ -10,6 +10,7 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
 from numbers import Integral
+from string import ascii_letters
 from typing import Optional, Sequence, Union
 import warnings
 
@@ -402,3 +403,221 @@ def _einsum(pv: ProgramVisitor,
                               output_name=pv.get_target_name(),
                               alpha=alpha,
                               beta=beta)
+
+
+EINSUM_LETTERS = ascii_letters
+
+
+def einsum_subscripts(ranks: Sequence[int], contracted: int, funcname: str) -> list[str]:
+    """Hands out one distinct einsum letter per tensor mode, sharing the LAST ``contracted`` modes.
+
+    :param ranks: Rank of each operand.
+    :param contracted: Number of trailing modes the operands contract over pairwise.
+    :param funcname: Name reported in the refusal.
+    :return: One subscript string per operand.
+    :raise ValueError: If the operands together need more modes than einsum has letters.
+    """
+    free = sum(r - contracted for r in ranks)
+    if free + contracted > len(EINSUM_LETTERS):
+        raise ValueError(f'{funcname} of rank-{ranks} operands needs more modes than einsum has letters')
+    shared = EINSUM_LETTERS[:contracted]
+    subs, pos = [], contracted
+    for rank in ranks:
+        subs.append(EINSUM_LETTERS[pos:pos + rank - contracted] + shared)
+        pos += rank - contracted
+    return subs
+
+
+@oprepo.replaces('numpy.outer')
+def outer(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, out=None) -> str:
+    """``np.outer(a, b)``: both operands are FLATTENED first, then multiplied against each other.
+
+    That is exactly the ``outer`` method of the ``multiply`` ufunc, which already lowers to a pair
+    of nested maps around an elementwise product, so this is the flattening plus a delegation.
+    """
+    from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
+    from dace.frontend.python.replacements.ufunc import implement_ufunc_outer  # Avoid import loop
+
+    if out is not None:
+        raise ValueError('numpy.outer(out=...) is not supported; assign the result instead')
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.outer is not an SDFG array')
+
+    flat_a = flat(pv, sdfg, state, op_a)
+    flat_b = flat(pv, sdfg, state, op_b)
+    return implement_ufunc_outer(pv, ast.Call(), sdfg, state, 'multiply', [flat_a, flat_b], {})[0]
+
+
+@oprepo.replaces('numpy.inner')
+def inner(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """``np.inner(a, b)``: a contraction over the LAST mode of BOTH operands.
+
+    That differs from :func:`dot`, which contracts the last mode of ``a`` against the second-to-last
+    of ``b``; the two agree only when ``b`` is 1-D. The result keeps ``a``'s leading modes followed
+    by ``b``'s, which is what the einsum subscripts below spell out.
+    """
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.inner is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        from dace.frontend.python.replacements.ufunc import implement_ufunc  # Avoid import loop
+        return implement_ufunc(pv, ast.Call(), sdfg, state, 'multiply', [op_a, op_b])[0]
+
+    rank_a, rank_b = len(desc_a.shape), len(desc_b.shape)
+    if symbolic.inequal_symbols(desc_a.shape[-1], desc_b.shape[-1]):
+        raise ValueError(f'numpy.inner: last modes {desc_a.shape[-1]} and {desc_b.shape[-1]} must match')
+    if rank_a == 1 and rank_b == 1:
+        return dot(pv, sdfg, state, op_a, op_b)
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    sub_a, sub_b = einsum_subscripts([rank_a, rank_b], 1, 'numpy.inner')
+    spec = f'{sub_a},{sub_b}->{sub_a[:-1]}{sub_b[:-1]}'
+    return _einsum(pv, sdfg, state, StringLiteral(spec), op_a, op_b, dtype=restype)
+
+
+@oprepo.replaces('numpy.kron')
+def kron(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """``np.kron(a, b)``: the outer product with the two operands' modes INTERLEAVED, then merged
+    pairwise by a reshape -- ``out[i*P + k, j*Q + l] = a[i, j] * b[k, l]``.
+
+    The interleaving is the whole content of the operation, so it is spelled directly as the einsum
+    output subscript ``ikjl``; a rank-1 pair needs no interleaving and is the plain outer product.
+    NumPy right-aligns operands of unequal rank by PREPENDING length-1 modes, reproduced here by a
+    reshape (which keeps every existing mode, unlike a squeeze).
+    """
+    from dace.frontend.python.replacements.array_manipulation import reshape  # Avoid import loop
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.kron is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        raise ValueError('numpy.kron of a 0-D operand is not supported; multiply instead')
+
+    shape_a, shape_b = list(desc_a.shape), list(desc_b.shape)
+    ndim = max(len(shape_a), len(shape_b))
+    if len(shape_a) < ndim:
+        op_a = reshape(pv, sdfg, state, op_a, [1] * (ndim - len(shape_a)) + shape_a)
+        shape_a = list(sdfg.arrays[op_a].shape)
+    if len(shape_b) < ndim:
+        op_b = reshape(pv, sdfg, state, op_b, [1] * (ndim - len(shape_b)) + shape_b)
+        shape_b = list(sdfg.arrays[op_b].shape)
+
+    merged = [da * db for da, db in zip(shape_a, shape_b)]
+    if ndim == 1:
+        return reshape(pv, sdfg, state, outer(pv, sdfg, state, op_a, op_b), merged)
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    sub_a, sub_b = einsum_subscripts([ndim, ndim], 0, 'numpy.kron')
+    interleaved = ''.join(a + b for a, b in zip(sub_a, sub_b))
+    spec = f'{sub_a},{sub_b}->{interleaved}'
+    return reshape(pv, sdfg, state, _einsum(pv, sdfg, state, StringLiteral(spec), op_a, op_b, dtype=restype), merged)
+
+
+# out[k] = a[i] * b[j] - a[m] * b[n], one row per component of the 3-vector result.
+CROSS_TERMS = ((1, 2, 2, 1), (2, 0, 0, 2), (0, 1, 1, 0))
+
+
+def cross_component_code(comp: int, dim_a: int, dim_b: int) -> str:
+    """Body of one output component of :func:`cross`, with out-of-range 2-vector reads as zero."""
+    i, j, m, n = CROSS_TERMS[comp]
+    plus = f'__a{i} * __b{j}' if i < dim_a and j < dim_b else ''
+    minus = f'__a{m} * __b{n}' if m < dim_a and n < dim_b else ''
+    if plus and minus:
+        return f'{plus} - {minus}'
+    if minus:
+        return f'-({minus})'
+    return plus or '0'
+
+
+@oprepo.replaces('numpy.cross')
+def cross(pv: ProgramVisitor,
+          sdfg: SDFG,
+          state: SDFGState,
+          op_a: str,
+          op_b: str,
+          axisa: int = -1,
+          axisb: int = -1,
+          axisc: int = -1,
+          axis: int | None = None) -> str:
+    """``np.cross(a, b)`` over the LAST mode, broadcasting the leading modes.
+
+    The cross product is a fixed three-term expression, not a contraction, so it lowers to one
+    data-parallel map over the broadcast leading modes whose tasklet reads the components directly.
+    A 2-vector operand is the deprecated NumPy special case with an implied zero third component;
+    two of them yield the single ``z`` component and therefore an output with NO trailing mode --
+    that mode is INDEXED away, which is why it disappears where a length-1 slice would have stayed.
+    """
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+    from dace.frontend.python.replacements.ufunc import _broadcast  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.cross is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+    rank_a, rank_b = len(desc_a.shape), len(desc_b.shape)
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        raise ValueError('numpy.cross needs operands of rank >= 1')
+    if axis is not None:
+        axisa = axisb = axisc = axis
+    if axisa not in (-1, rank_a - 1) or axisb not in (-1, rank_b - 1):
+        raise ValueError('numpy.cross is supported for vectors along the LAST mode only')
+
+    dims = []
+    for op, desc in ((op_a, desc_a), (op_b, desc_b)):
+        dim = desc.shape[-1]
+        if not isinstance(dim, Integral) and not (symbolic.issymbolic(dim) and dim.is_Integer):
+            raise ValueError(f'numpy.cross needs a compile-time last mode on "{op}", got {dim}')
+        dims.append(int(dim))
+        if dims[-1] not in (2, 3):
+            raise ValueError(f'numpy.cross needs a last mode of 2 or 3 on "{op}", got {dims[-1]}')
+    dim_a, dim_b = dims
+    ncomp = 1 if dim_a == 2 and dim_b == 2 else 3
+    if ncomp == 3 and axisc not in (-1, rank_a - 1, rank_b - 1):
+        raise ValueError('numpy.cross is supported for a result along the LAST mode only')
+
+    lead_a, lead_b = list(desc_a.shape[:-1]), list(desc_b.shape[:-1])
+    if lead_a or lead_b:
+        out_lead, map_range, out_idx, (idx_a, idx_b) = _broadcast([lead_a, lead_b])
+        map_range = dict(map_range)
+    else:
+        out_lead, map_range, out_idx, idx_a, idx_b = (), {}, '', '', ''
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    out_shape = list(out_lead) + ([3] if ncomp == 3 else [])
+    if out_shape:
+        out, _ = sdfg.add_transient(pv.get_target_name(), out_shape, restype, desc_a.storage, find_new_name=True)
+    else:
+        out, _ = sdfg.add_scalar(pv.get_target_name(),
+                                 restype,
+                                 transient=True,
+                                 storage=desc_a.storage,
+                                 find_new_name=True)
+
+    def indexed(name: str, lead: str, comp: str) -> Memlet:
+        return Memlet.simple(name, ', '.join([p for p in (lead, comp) if p]) or '0')
+
+    inputs = {f'__a{i}': indexed(op_a, idx_a, str(i)) for i in range(dim_a)}
+    inputs.update({f'__b{i}': indexed(op_b, idx_b, str(i)) for i in range(dim_b)})
+    # A 2x2 cross yields only the z component, whose terms are the third row of CROSS_TERMS.
+    comps = range(3) if ncomp == 3 else (2, )
+    outputs = {f'__c{k}': indexed(out, out_idx, str(k) if ncomp == 3 else '') for k in comps}
+    code = '\n'.join(f'__c{k} = {cross_component_code(k, dim_a, dim_b)}' for k in comps)
+
+    if map_range:
+        state.add_mapped_tasklet('cross', map_range, inputs, code, outputs, external_edges=True)
+        return out
+
+    tasklet = state.add_tasklet('cross', {k: None for k in inputs}, {k: None for k in outputs}, code)
+    read_a, read_b, write = state.add_read(op_a), state.add_read(op_b), state.add_write(out)
+    for conn, memlet in inputs.items():
+        state.add_edge(read_a if conn.startswith('__a') else read_b, None, tasklet, conn, memlet)
+    for conn, memlet in outputs.items():
+        state.add_edge(tasklet, conn, write, None, memlet)
+    return out
