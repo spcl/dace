@@ -17,7 +17,7 @@ import dace.sdfg.nodes
 
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @library.expansion

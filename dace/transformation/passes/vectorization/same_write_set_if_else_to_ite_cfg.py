@@ -25,7 +25,7 @@ from dace.sdfg.construction_utils import (
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def free_names_outside_subscript_indices(code: str) -> set:

@@ -90,7 +90,7 @@ import re
 import copy as _copy
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic

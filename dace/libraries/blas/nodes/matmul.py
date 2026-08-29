@@ -6,7 +6,7 @@ from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
 from math import prod
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _matrix_subset_size(subset):

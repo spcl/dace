@@ -19,7 +19,7 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
                                                 SingleStateTransformation)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 try:
     from numpy.typing import ArrayLike

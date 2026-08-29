@@ -7,7 +7,7 @@ from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import properties
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @transformation.explicit_cf_compatible

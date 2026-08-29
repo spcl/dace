@@ -20,7 +20,7 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.transformation import helpers as xfh
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @transformation.explicit_cf_compatible

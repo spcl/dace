@@ -4,7 +4,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import blas_helpers
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

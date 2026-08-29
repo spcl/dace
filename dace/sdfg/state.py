@@ -31,7 +31,7 @@ from dace.sdfg import propagation as sdprop
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 if TYPE_CHECKING:
     import dace.sdfg.scope

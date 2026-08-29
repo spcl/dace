@@ -19,7 +19,7 @@ from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):

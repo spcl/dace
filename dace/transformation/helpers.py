@@ -6,7 +6,7 @@ import itertools
 import warnings
 import dace
 from dace.graphlib import MultiDiGraph
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock

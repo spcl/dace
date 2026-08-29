@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG, SDFGState, Memlet, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils

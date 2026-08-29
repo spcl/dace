@@ -17,7 +17,7 @@ from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRe
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _align_itersym(expr, itersym):

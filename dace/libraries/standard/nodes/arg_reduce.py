@@ -34,7 +34,7 @@ import dace
 from dace import library, properties, symbolic
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 _OP_CPP = {'max': '>', 'min': '<'}
 _OP_CUB = {'max': 'ArgMax', 'min': 'ArgMin'}

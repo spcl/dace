@@ -44,7 +44,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _is_single_element(size) -> bool:

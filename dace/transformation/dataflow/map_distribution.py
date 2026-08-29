@@ -11,7 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):

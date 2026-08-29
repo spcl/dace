@@ -9,7 +9,7 @@ from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 class NodeNotFoundError(Exception):

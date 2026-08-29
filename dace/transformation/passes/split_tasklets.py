@@ -3,7 +3,7 @@ import copy
 import functools
 import re
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import graphlib as nx
 

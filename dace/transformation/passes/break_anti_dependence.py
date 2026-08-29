@@ -55,7 +55,7 @@ import zlib
 from functools import lru_cache
 from typing import Any, Dict, Optional, Set
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 import sympy
 
 from dace import data, dtypes, properties, subsets, symbolic, Memlet

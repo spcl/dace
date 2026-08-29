@@ -12,7 +12,7 @@ from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 import copy
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @transformation.explicit_cf_compatible

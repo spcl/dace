@@ -3,7 +3,7 @@
 ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps."""
 from typing import Dict, Optional
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import symbolic
 from dace.sdfg import nodes, SDFG

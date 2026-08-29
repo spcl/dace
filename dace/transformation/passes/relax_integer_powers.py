@@ -14,7 +14,7 @@ ranges (``K - i - 1`` with ``for i in range(K)``.
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 import numpy
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG, data, subsets, symbolic, symbolic_engine
 from dace.sdfg import nodes

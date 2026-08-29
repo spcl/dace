@@ -5,7 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.pblas import environments
 from dace import dtypes
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

@@ -6,7 +6,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
 from dace.libraries.mpi.nodes.node import MPINode
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

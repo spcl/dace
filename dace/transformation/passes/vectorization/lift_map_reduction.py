@@ -38,7 +38,7 @@ from dace.transformation.passes.vectorization.utils.reductions import (
     MapReductionInfo,
     recognize_map_reduction,
 )
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 #: Reduction-op token for each ``add_reduce``-friendly ``ReductionType``. Mirrors
 #: the ``+`` / ``*`` restriction of :data:`_WCR_LAMBDA` (see its docstring).

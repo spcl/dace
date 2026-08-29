@@ -8,7 +8,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties

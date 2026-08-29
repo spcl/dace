@@ -8,7 +8,7 @@ from .. import environments
 from dace import dtypes
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

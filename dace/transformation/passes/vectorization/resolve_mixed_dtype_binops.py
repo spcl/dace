@@ -33,7 +33,7 @@ frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.Bin
 import ast
 from typing import Optional, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 import dace
 from dace import dtypes

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import graphlib as nx
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import data as dt, Memlet
 from dace import dtypes, registry, symbolic, subsets

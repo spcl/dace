@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple, Union
 
 import astunparse
 import sympy as sp
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 # DaCe imports
 import dace

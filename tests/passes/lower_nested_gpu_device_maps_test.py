@@ -12,7 +12,7 @@ import dace
 import pytest
 
 from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:

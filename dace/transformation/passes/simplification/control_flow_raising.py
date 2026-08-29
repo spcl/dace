@@ -6,7 +6,7 @@ import warnings
 
 from dace import graphlib as nx
 import sympy
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import properties
 from dace.frontend.python import astutils

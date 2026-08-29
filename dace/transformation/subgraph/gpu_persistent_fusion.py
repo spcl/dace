@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 import dace
 from dace import nodes, Memlet

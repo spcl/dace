@@ -840,7 +840,7 @@ from typing import Set
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 _TOKEN_SPLIT_RE = re.compile(r'[()\[\]\s,+\-*/%<>!=&|^~?:]+')
 

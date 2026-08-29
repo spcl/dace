@@ -34,7 +34,7 @@ import copy
 import re
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import data as dt, dtypes, mpr_lowering
 from dace.codegen import codegen

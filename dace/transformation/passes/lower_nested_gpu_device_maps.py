@@ -12,7 +12,7 @@ from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties

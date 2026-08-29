@@ -45,7 +45,7 @@ numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 import dace.frontend.python.replacements
 
 from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]

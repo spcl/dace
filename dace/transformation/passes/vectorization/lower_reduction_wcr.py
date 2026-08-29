@@ -20,7 +20,7 @@ from dace import SDFG, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:

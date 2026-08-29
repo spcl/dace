@@ -17,7 +17,7 @@ from dace.sdfg.propagation import align_memlet
 from typing import Dict, Iterable, List, Set, Tuple, Any, Optional, Union
 from dace import graphlib as nx
 from dace import graphlib as nxsp
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace.transformation.passes.analysis import loop_analysis
 

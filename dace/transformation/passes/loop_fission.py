@@ -10,7 +10,7 @@ value-preserving. A no-op when the body has a single group.
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG
 from dace import symbolic

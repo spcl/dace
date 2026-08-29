@@ -13,7 +13,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRe
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:

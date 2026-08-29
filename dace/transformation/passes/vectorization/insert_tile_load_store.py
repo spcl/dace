@@ -35,7 +35,7 @@ from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsup
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
                                                                         build_symbol_definition_map)
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:

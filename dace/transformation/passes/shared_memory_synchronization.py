@@ -8,7 +8,7 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:

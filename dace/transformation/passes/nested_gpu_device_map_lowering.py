@@ -11,7 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties

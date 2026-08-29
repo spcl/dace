@@ -16,7 +16,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @library.expansion

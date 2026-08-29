@@ -11,7 +11,7 @@ from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):

@@ -14,7 +14,7 @@ from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def gesv_core_program(dtype, n, rhs):

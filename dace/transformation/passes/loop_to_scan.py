@@ -58,7 +58,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME,
                                                 INIT_CONNECTOR_NAME, COEF_CONNECTOR_NAME, in_connector, out_connector,
                                                 init_connector)
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {

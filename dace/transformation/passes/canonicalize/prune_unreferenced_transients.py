@@ -3,7 +3,7 @@
 import re
 from typing import Any, Dict, Optional, Set
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG, data, properties
 from dace.sdfg import nodes

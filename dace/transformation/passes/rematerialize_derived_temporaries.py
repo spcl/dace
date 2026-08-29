@@ -28,7 +28,7 @@ reads the container that value was also stored to.
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.memlet import Memlet

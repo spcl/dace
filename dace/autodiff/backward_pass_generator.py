@@ -3,7 +3,7 @@ import copy
 from typing import Union, Optional
 from collections.abc import Sequence
 import sympy as sp
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 # DaCe imports
 import dace

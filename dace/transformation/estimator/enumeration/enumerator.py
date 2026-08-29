@@ -11,7 +11,7 @@ import dace.sdfg.nodes as nodes
 from collections import defaultdict
 from typing import Callable
 import itertools
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @make_properties

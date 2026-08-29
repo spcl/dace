@@ -10,7 +10,7 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _is_complex(dtype):

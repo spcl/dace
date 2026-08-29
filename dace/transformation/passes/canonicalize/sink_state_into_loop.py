@@ -17,7 +17,7 @@ Everything the state reads from the first loop is fine: the state stays after it
 from typing import Any, Dict, Optional, Tuple
 
 import sympy
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import SDFG, Memlet, symbolic
 from dace.sdfg.sdfg import InterstateEdge

@@ -20,7 +20,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @make_properties

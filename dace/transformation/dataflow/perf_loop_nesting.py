@@ -83,7 +83,7 @@ nests (no intervening nodes) keep their original fast path unchanged.
 import copy as _copy
 from typing import Dict, List, Set, Tuple
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import memlet as mm, nodes, properties
 from dace.sdfg import SDFG, SDFGState

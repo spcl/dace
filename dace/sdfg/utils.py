@@ -23,7 +23,7 @@ from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 
 

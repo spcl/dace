@@ -6,7 +6,7 @@ from .. import environments
 from dace import dtypes
 from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, expanded_input_connectors,
                                            validate_integer_descriptor)
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

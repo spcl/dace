@@ -15,7 +15,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _cblas_flags(node):

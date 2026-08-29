@@ -12,7 +12,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
 import numpy as np
 import warnings
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def zero_extent_may_occur(extent) -> bool:

@@ -11,7 +11,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy, fill
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties

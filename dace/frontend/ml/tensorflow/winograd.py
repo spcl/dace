@@ -5,7 +5,7 @@ import re
 from dace.memlet import Memlet
 from dace import dtypes
 from math import ceil
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):

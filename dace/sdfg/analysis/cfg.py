@@ -8,7 +8,7 @@ import sympy as sp
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def collect_enclosing_conditions(block: ControlFlowBlock, stop: Optional[ControlFlowRegion] = None) -> sp.Basic:

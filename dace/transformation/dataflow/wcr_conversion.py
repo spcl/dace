@@ -12,7 +12,7 @@ from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.sdfg import utils as sdutil
 from dace import Memlet, SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def connect_through_scalar(state: SDFGState, sdfg: SDFG, src: nodes.Node, src_conn: str, dst: nodes.Node, dst_conn: str,

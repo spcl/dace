@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 # DaCe imports
 import dace
 import dace.sdfg.nodes as nodes
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 from dace import dtypes
 from dace.data import Reference, Structure
 from dace.sdfg import SDFGState

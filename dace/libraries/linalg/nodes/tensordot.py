@@ -8,7 +8,7 @@ from dace import library, nodes, properties
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @library.expansion

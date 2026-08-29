@@ -14,7 +14,7 @@ from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, Re
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _state_has_read_write_sibling_carrier(state: SDFGState, exclude_data: str) -> bool:

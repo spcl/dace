@@ -3,7 +3,7 @@
 
 import copy
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import data, sdfg as sd, subsets, symbolic
 from dace.sdfg import nodes

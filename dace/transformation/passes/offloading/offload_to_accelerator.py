@@ -9,7 +9,7 @@ changes rather than around every kernel.
 from copy import deepcopy
 from typing import Any, Optional
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import dtypes, properties, data, Memlet, subsets
 from dace.config import Config

@@ -9,7 +9,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion

@@ -20,7 +20,7 @@ import warnings
 
 from collections import defaultdict
 from itertools import chain
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @make_properties

@@ -22,7 +22,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:

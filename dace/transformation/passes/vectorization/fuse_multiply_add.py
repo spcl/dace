@@ -22,7 +22,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
 from dace.transformation import pass_pipeline as ppl
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> Optional[Tuple[str, List[str]]]:

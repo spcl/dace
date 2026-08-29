@@ -25,7 +25,7 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.pass_pipeline import Modifies
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @registry.make_registry
