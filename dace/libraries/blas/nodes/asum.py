@@ -12,6 +12,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
@@ -88,12 +89,12 @@ class ExpandAsumMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandAsumCuBLAS(ExpandTransformation):
+class ExpandAsumGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
 
@@ -111,14 +112,26 @@ class ExpandAsumCuBLAS(ExpandTransformation):
             cfunc = func + 'asum'
 
         n = n or node.n or sz
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
-        code += f"cublas{cfunc}(__dace_cublas_handle, {n}, _x, {stride_x}, _result);"
+        code = cls.environments[0].handle_setup_code(node)
+        code += f"{cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, _result);"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors, {'_result': dtypes.pointer(desc_res.dtype.base_type)},
                                           code,
                                           language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@dace.library.expansion
+class ExpandAsumCuBLAS(ExpandAsumGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandAsumRocBLAS(ExpandAsumGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @dace.library.node
@@ -133,6 +146,7 @@ class Asum(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandAsumOpenBLAS,
         "MKL": ExpandAsumMKL,
         "cuBLAS": ExpandAsumCuBLAS,
+        "rocBLAS": ExpandAsumRocBLAS,
     }
     default_implementation = None
 

@@ -13,13 +13,13 @@
 // axis (the LoopToScan composite-body rewrite emits buffers in exactly
 // that shape, so this is the common case).
 //
-// Falls back to ``cub::DeviceScan::InclusiveScan`` whenever ``s == 1``; the
+// Falls back to ``gpucub::DeviceScan::InclusiveScan`` whenever ``s == 1``; the
 // libnode expansion picks the right path.
 
 #ifndef __DACE_CUDA_SCAN_CUH
 #define __DACE_CUDA_SCAN_CUH
 
-#include <cuda_runtime.h>
+#include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
 #include <algorithm>
 
 namespace dace {
@@ -86,28 +86,28 @@ inline dim3 launch_dims(long s) {
 }  // namespace detail
 
 template <typename T>
-inline void strided_inclusive_sum(const T* in, T* out, long n, long s, cudaStream_t stream) {
+inline void strided_inclusive_sum(const T* in, T* out, long n, long s, gpuStream_t stream) {
     if (s <= 0) return;
     dim3 grid = detail::launch_dims(s);
     detail::strided_inclusive_sum_kernel<T><<<grid, dim3(256, 1u, 1u), 0, stream>>>(in, out, n, s);
 }
 
 template <typename T>
-inline void strided_inclusive_product(const T* in, T* out, long n, long s, cudaStream_t stream) {
+inline void strided_inclusive_product(const T* in, T* out, long n, long s, gpuStream_t stream) {
     if (s <= 0) return;
     dim3 grid = detail::launch_dims(s);
     detail::strided_inclusive_product_kernel<T><<<grid, dim3(256, 1u, 1u), 0, stream>>>(in, out, n, s);
 }
 
 template <typename T>
-inline void strided_inclusive_min(const T* in, T* out, long n, long s, cudaStream_t stream) {
+inline void strided_inclusive_min(const T* in, T* out, long n, long s, gpuStream_t stream) {
     if (s <= 0) return;
     dim3 grid = detail::launch_dims(s);
     detail::strided_inclusive_min_kernel<T><<<grid, dim3(256, 1u, 1u), 0, stream>>>(in, out, n, s);
 }
 
 template <typename T>
-inline void strided_inclusive_max(const T* in, T* out, long n, long s, cudaStream_t stream) {
+inline void strided_inclusive_max(const T* in, T* out, long n, long s, gpuStream_t stream) {
     if (s <= 0) return;
     dim3 grid = detail::launch_dims(s);
     detail::strided_inclusive_max_kernel<T><<<grid, dim3(256, 1u, 1u), 0, stream>>>(in, out, n, s);

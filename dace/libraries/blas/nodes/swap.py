@@ -15,6 +15,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
@@ -84,29 +85,41 @@ class ExpandSwapMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandSwapCuBLAS(ExpandTransformation):
+class ExpandSwapGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_x, sxi), (desc_y, syi), sxo, syo, n = node.validate(parent_sdfg, parent_state)
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(desc_x.dtype.base_type)
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandSwapPure.expansion(node, parent_state, parent_sdfg, **kwargs)
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
-        cublas{func}copy(__dace_cublas_handle, {n}, _xin, {sxi}, _xout, {sxo});
-        cublas{func}copy(__dace_cublas_handle, {n}, _yin, {syi}, _yout, {syo});
-        cublas{func}swap(__dace_cublas_handle, {n}, _xout, {sxo}, _yout, {syo});
+        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _xin, {sxi}, _xout, {sxo});
+        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
+        {cls.dialect.func(func, 'swap')}({cls.dialect.handle}, {n}, _xout, {sxo}, _yout, {syo});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,
                                        code,
                                        language=dace.dtypes.Language.CPP)
+
+
+@dace.library.expansion
+class ExpandSwapCuBLAS(ExpandSwapGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandSwapRocBLAS(ExpandSwapGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @dace.library.node
@@ -123,6 +136,7 @@ class Swap(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandSwapOpenBLAS,
         "MKL": ExpandSwapMKL,
         "cuBLAS": ExpandSwapCuBLAS,
+        "rocBLAS": ExpandSwapRocBLAS,
     }
     default_implementation = None
 

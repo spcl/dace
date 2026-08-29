@@ -29,7 +29,7 @@
 
 /**
  * \file
- * cub::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA grid
+ * gpucub::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA grid
  * Implemented over CUB's GridBarrier
  */
 
@@ -165,12 +165,12 @@ public:
     /**
      * DeviceFrees and resets the progress counters
      */
-    cudaError_t HostReset()
+    gpuError_t HostReset()
     {
-        cudaError_t retval = cudaSuccess;
+        gpuError_t retval = gpuSuccess;
         if (d_sync)
         {
-            CubDebug(retval = cudaFree(d_sync));
+            CubDebug(retval = gpuFree(d_sync));
             d_sync = NULL;
         }
         sync_bytes = 0;
@@ -191,23 +191,23 @@ public:
      * Sets up the progress counters for the next kernel launch (lazily
      * allocating and initializing them if necessary)
      */
-    cudaError_t Setup(int sweep_grid_size)
+    gpuError_t Setup(int sweep_grid_size)
     {
-        cudaError_t retval = cudaSuccess;
+        gpuError_t retval = gpuSuccess;
         do {
             size_t new_sync_bytes = sweep_grid_size * sizeof(SyncFlag);
             if (new_sync_bytes > sync_bytes)
             {
                 if (d_sync)
                 {
-                    if (CubDebug(retval = cudaFree(d_sync))) break;
+                    if (CubDebug(retval = gpuFree(d_sync))) break;
                 }
 
                 sync_bytes = new_sync_bytes;
 
                 // Allocate and initialize to zero
-                if (CubDebug(retval = cudaMalloc((void**) &d_sync, sync_bytes))) break;
-                if (CubDebug(retval = cudaMemset(d_sync, 0, new_sync_bytes))) break;
+                if (CubDebug(retval = gpuMalloc((void**) &d_sync, sync_bytes))) break;
+                if (CubDebug(retval = gpuMemset(d_sync, 0, new_sync_bytes))) break;
             }
         } while (0);
 

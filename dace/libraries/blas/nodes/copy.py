@@ -17,6 +17,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
@@ -82,12 +83,12 @@ class ExpandCopyMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandCopyCuBLAS(ExpandTransformation):
+class ExpandCopyGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x), (desc_y, stride_y), sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
 
@@ -99,8 +100,8 @@ class ExpandCopyCuBLAS(ExpandTransformation):
 
         n = n or node.n or sz
         cfunc = func + 'copy'
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
-        code += f"cublas{cfunc}(__dace_cublas_handle, {n}, _x, {stride_x}, _y, {stride_y});"
+        code = cls.environments[0].handle_setup_code(node)
+        code += f"{cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, _y, {stride_y});"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -108,6 +109,18 @@ class ExpandCopyCuBLAS(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@dace.library.expansion
+class ExpandCopyCuBLAS(ExpandCopyGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandCopyRocBLAS(ExpandCopyGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @dace.library.node
@@ -119,6 +132,7 @@ class Copy(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandCopyOpenBLAS,
         "MKL": ExpandCopyMKL,
         "cuBLAS": ExpandCopyCuBLAS,
+        "rocBLAS": ExpandCopyRocBLAS,
     }
     default_implementation = None
 

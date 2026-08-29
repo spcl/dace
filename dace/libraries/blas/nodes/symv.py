@@ -14,6 +14,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
@@ -54,22 +55,22 @@ class ExpandSymvMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandSymvCuBLAS(ExpandTransformation):
+class ExpandSymvGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_A, lda), (_, sx), (_, syi), syo, n = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = 'CUBLAS_FILL_MODE_UPPER' if node.uplo else 'CUBLAS_FILL_MODE_LOWER'
+        uplo = '{cls.dialect.fill(True)}' if node.uplo else '{cls.dialect.fill(False)}'
         a, b = node.alpha, node.beta
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
         {dt.ctype} __alpha = ({dt.ctype})({a}); {dt.ctype} __beta = ({dt.ctype})({b});
-        cublas{func}copy(__dace_cublas_handle, {n}, _yin, {syi}, _yout, {syo});
-        cublas{func}symv(__dace_cublas_handle, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
+        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
+        {cls.dialect.func(func, 'symv')}({cls.dialect.handle}, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
@@ -78,11 +79,28 @@ class ExpandSymvCuBLAS(ExpandTransformation):
                                        language=dace.dtypes.Language.CPP)
 
 
+@dace.library.expansion
+class ExpandSymvCuBLAS(ExpandSymvGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandSymvRocBLAS(ExpandSymvGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @dace.library.node
 class Symv(dace.sdfg.nodes.LibraryNode):
     """BLAS ``?SYMV``: symmetric matrix-vector multiply, ``_yout := alpha A _x + beta _yin``."""
 
-    implementations = {"OpenBLAS": ExpandSymvOpenBLAS, "MKL": ExpandSymvMKL, "cuBLAS": ExpandSymvCuBLAS}
+    implementations = {
+        "OpenBLAS": ExpandSymvOpenBLAS,
+        "MKL": ExpandSymvMKL,
+        "cuBLAS": ExpandSymvCuBLAS,
+        "rocBLAS": ExpandSymvRocBLAS
+    }
     default_implementation = None
 
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of A is referenced")

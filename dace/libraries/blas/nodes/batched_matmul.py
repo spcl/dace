@@ -9,6 +9,7 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 import warnings
 from dace.ordered import OrderedSet
 
@@ -292,12 +293,12 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
+class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, state, sdfg):
+    @classmethod
+    def expansion(cls, node, state, sdfg):
         node.validate(sdfg, state)
         refuse_broadcast_batches(node, state, sdfg)
 
@@ -343,12 +344,12 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants().{factort}Pone()",
-            0.0: f"__state->cublas_handle.Constants().{factort}Zero()",
+            1.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Pone()",
+            0.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Zero()",
         }
         if node.alpha not in constants:
             # Deal with complex input constants
@@ -358,19 +359,19 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 alpha = f'{dtype.ctype}({node.alpha})'
 
             # Set pointer mode to host
-            call_prefix += f'''dace::blas::CheckCublasError(
-                cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
+            call_prefix += f'''{cls.dialect.check_error}(
+                {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
                 {dtype.ctype} alpha = {alpha};
                 {dtype.ctype} beta = 0;
                 '''
             call_suffix += '''
-    dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
+    {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
                 '''
             beta = f'({cdtype} *)&beta'
             alpha = f'({cdtype} *)&alpha'
         else:
             alpha = constants[node.alpha]
-            beta = "__state->cublas_handle.Constants().%sZero()" % factort
+            beta = "__state->{cls.dialect.handle_field}.Constants().%sZero()" % factort
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -378,8 +379,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-            call = '''dace::blas::CheckCublasError(cublas{func}StridedBatched(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+            call = '''{cls.dialect.check_error}({cls.dialect.strided_batched(func)}({cls.dialect.handle},
+                {cls.dialect.op(ta)}, {cls.dialect.op(tb)},
                 {M}, {N}, {K},
                 {alpha},
                 ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
@@ -388,6 +389,15 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
                 {BATCH}));'''.format_map(opt)
         else:
+            # The mixed-precision path names cuBLAS COMPUTE and ALGO enums and the CUDA-wide
+            # `cudaDataType`. rocBLAS spells all three differently (`rocblas_datatype_*`), and this
+            # module has no mapping for them, so a rocBLAS build must REFUSE here rather than emit
+            # cuBLAS identifiers that no ROCm toolchain can resolve.
+            if cls.dialect is not gpu_dialect.CUBLAS:
+                raise NotImplementedError(
+                    f"{cls.dialect.name} has no mixed-precision batched GEMM in this expansion: the "
+                    "compute type, the algorithm and the operand data types are all named with cuBLAS "
+                    "enums here. Use a uniform dtype, or the 'pure' expansion.")
             if node.compute_type is not None:
                 acctype = node.compute_type
             elif node.accumulator_type is not None:
@@ -401,8 +411,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 algorithm = node.algorithm
 
             call = f'''
-            dace::blas::CheckCublasError(cublasGemmStridedBatchedEx(__dace_cublas_handle,
-                CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+            {cls.dialect.check_error}(cublasGemmStridedBatchedEx({cls.dialect.handle},
+                {cls.dialect.op(opt['ta'])}, {cls.dialect.op(opt['tb'])},
                 {opt['M']}, {opt['N']}, {opt['K']},
                 {alpha},
                 {opt['array_prefix']}{opt['x']},
@@ -469,6 +479,18 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandBatchedMatMulCuBLAS(ExpandBatchedMatMulGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandBatchedMatMulRocBLAS(ExpandBatchedMatMulGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @dace.library.node
 class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
 
@@ -477,7 +499,8 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandBatchedMatMulPure,
         "MKL": ExpandBatchedMatMulMKL,
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
-        "cuBLAS": ExpandBatchedMatMulCuBLAS
+        "cuBLAS": ExpandBatchedMatMulCuBLAS,
+        "rocBLAS": ExpandBatchedMatMulRocBLAS
     }
     transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")

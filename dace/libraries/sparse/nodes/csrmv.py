@@ -9,6 +9,7 @@ import dace.sdfg.utils
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
+from dace.libraries.sparse import sparse_dialect
 import numpy as np
 from dace.ordered import OrderedSet
 
@@ -305,12 +306,13 @@ class ExpandCSRMVMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandCSRMVCuSPARSE(ExpandTransformation):
+class ExpandCSRMVGPUSparse(ExpandTransformation):
 
     environments = [environments.cuSPARSE]
 
-    @staticmethod
-    def expansion(node: dace.sdfg.nodes.LibraryNode, state: SDFGState, sdfg: SDFG):
+    @classmethod
+    def expansion(cls, node: dace.sdfg.nodes.LibraryNode, state: SDFGState, sdfg: SDFG):
+        d = cls.dialect
         node.validate(sdfg, state)
 
         operands = _get_csrmv_operands(node, state, sdfg)
@@ -325,7 +327,7 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
                          for desc in (arows, acols, avals, bdesc, cdesc))
 
         dtype = avals.dtype.base_type
-        func = "cusparseSpMV"
+        func = "{d.prefix}SpMV"
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'
@@ -358,11 +360,11 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             beta = f'{dtype.ctype}({node.beta})'
 
         # Set pointer mode to host
-        call_prefix += f'''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_HOST);
+        call_prefix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_HOST);
         {dtype.ctype} alpha = {alpha};
         {dtype.ctype} beta = {beta};
         '''
-        call_suffix += '''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_DEVICE);'''
+        call_suffix += '''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);'''
         alpha = f'({cdtype} *)&alpha'
         beta = f'({cdtype} *)&beta'
 
@@ -377,10 +379,10 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
 
         opt['func'] = func
 
-        opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+        opt['opA'] = '{d.upper}_OPERATION_NON_TRANSPOSE'
 
         opt['compute'] = f'CUDA_R_{to_cublas_computetype(dtype)}'
-        opt['handle'] = '__dace_cusparse_handle'
+        opt['handle'] = '{d.handle}'
 
         opt['alpha'] = alpha
         opt['beta'] = beta
@@ -391,40 +393,40 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
         opt['annz'] = avals.shape[0]
 
         call = """
-            cusparseSpMatDescr_t matA;
-            cusparseDnVecDescr_t vecB, vecC;
+            {d.prefix}SpMatDescr_t matA;
+            {d.prefix}DnVecDescr_t vecB, vecC;
             void*                dBuffer    = NULL;
             size_t               bufferSize = 0;
             // Create sparse matrix A in CSR format
-            dace::sparse::CheckCusparseError( cusparseCreateCsr(&matA, {arows}, {acols}, {annz},
+            {d.check}( {d.prefix}CreateCsr(&matA, {arows}, {acols}, {annz},
                                                 {arr_prefix}_a_rows, {arr_prefix}_a_cols, {arr_prefix}_a_vals,
-                                                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                                CUSPARSE_INDEX_BASE_ZERO, {compute}) );
+                                                {d.upper}_INDEX_32I, {d.upper}_INDEX_32I,
+                                                {d.upper}_INDEX_BASE_ZERO, {compute}) );
             // Create dense vector B
-            dace::sparse::CheckCusparseError( cusparseCreateDnVec(&vecB, {bsize}, {arr_prefix}_b,
+            {d.check}( {d.prefix}CreateDnVec(&vecB, {bsize}, {arr_prefix}_b,
                                                 {compute}) );
             // Create dense vector C
-            dace::sparse::CheckCusparseError( cusparseCreateDnVec(&vecC, {csize}, {arr_prefix}_c,
+            {d.check}( {d.prefix}CreateDnVec(&vecC, {csize}, {arr_prefix}_c,
                                                 {compute}) );
             // allocate an external buffer if needed
-            dace::sparse::CheckCusparseError( cusparseSpMV_bufferSize(
+            {d.check}( {d.prefix}SpMV_bufferSize(
                                             {handle},
                                             {opA},
                                             {alpha}, matA, vecB, {beta}, vecC, {compute},
-                                            CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize) );
-            cudaMalloc(&dBuffer, bufferSize);
+                                            {d.upper}_SPMV_ALG_DEFAULT, &bufferSize) );
+            gpuMalloc(&dBuffer, bufferSize);
 
             // execute SpMV
-            dace::sparse::CheckCusparseError( cusparseSpMV({handle},
+            {d.check}( {d.prefix}SpMV({handle},
                                             {opA},
                                             {alpha}, matA, vecB, {beta}, vecC, {compute},
-                                            CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
+                                            {d.upper}_SPMV_ALG_DEFAULT, dBuffer) );
 
             // destroy matrix/vector descriptors
-            dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnVec(vecB) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnVec(vecC) );
-            cudaFree(dBuffer);
+            {d.check}( {d.prefix}DestroySpMat(matA) );
+            {d.check}( {d.prefix}DestroyDnVec(vecB) );
+            {d.check}( {d.prefix}DestroyDnVec(vecC) );
+            gpuFree(dBuffer);
         """.format_map(opt)
 
         code = (call_prefix + call + call_suffix)
@@ -494,6 +496,18 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandCSRMVCuSPARSE(ExpandCSRMVGPUSparse):
+    environments = [environments.cusparse.cuSPARSE]
+    dialect = sparse_dialect.CUSPARSE
+
+
+@dace.library.expansion
+class ExpandCSRMVHipSPARSE(ExpandCSRMVGPUSparse):
+    environments = [environments.hipsparse.hipSPARSE]
+    dialect = sparse_dialect.HIPSPARSE
+
+
 @dace.library.node
 class CSRMV(dace.sdfg.nodes.LibraryNode):
     """
@@ -502,7 +516,12 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandCSRMVPure, "MKL": ExpandCSRMVMKL, "cuSPARSE": ExpandCSRMVCuSPARSE}
+    implementations = {
+        "pure": ExpandCSRMVPure,
+        "MKL": ExpandCSRMVMKL,
+        "cuSPARSE": ExpandCSRMVCuSPARSE,
+        "hipSPARSE": ExpandCSRMVHipSPARSE
+    }
     # The ``sparse`` library has no config-schema entry, so an unset node resolved to nothing and
     # raised "No implementation or default implementation specified" at codegen. ``pure`` is the
     # dependency-free CPU lowering (row map over an nnz map).

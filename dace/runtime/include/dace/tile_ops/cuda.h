@@ -4,7 +4,7 @@
 // ``dace::tileops::tile_<op>`` signatures as the scalar / avx512 / ... sibling
 // headers, but every function is ``__device__`` (the tile ops run inside a GPU
 // kernel) and the fp16 elementwise ops use the native ``half2`` (FP16x2) SIMD
-// intrinsics from <cuda_fp16.h> -- ``__hadd2`` / ``__hsub2`` / ``__hmul2`` /
+// intrinsics from <cuda_fp16.h> / <hip/hip_fp16.h> -- ``__hadd2`` / ``__hsub2`` / ``__hmul2`` /
 // ``__h2div`` / ``__hmin2`` / ``__hmax2`` / ``__hneg2``. The GPU vectorizer only
 // targets fp16 (and fp8) -- see the design note in vectorize_cpu_multi_dim.
 //
@@ -17,9 +17,17 @@
 // Op-code legend and masked semantics are identical to scalar.h (the reference).
 #pragma once
 
+// The device paths below are guarded on the DEVICE COMPILER, not on the vendor: guarding on
+// __CUDACC__ alone made every tile op vanish under HIP and fall back to the scalar path, which is
+// a silent performance loss rather than an error. The two spots where the vendors genuinely differ
+// -- the fp16/fp8 header names and the missing FP16x2 min/max -- are handled where they occur.
+
 #include <cstdint>
 
-#if defined(__CUDACC__)
+#if defined(__HIPCC__)
+#include <hip/hip_fp16.h>
+#include <hip/hip_fp8.h>
+#elif defined(__CUDACC__)
 #include <cuda_fp16.h>
 #if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 890) || !defined(__CUDA_ARCH__)
 #include <cuda_fp8.h>
@@ -27,7 +35,7 @@
 #endif
 
 #ifndef DACE_DFI
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #define DACE_DFI __device__ __forceinline__
 #else
 #define DACE_DFI inline
@@ -115,7 +123,7 @@ DACE_DFI T tile_unop_apply(T a) {
   return _cuda_from_compute<T>(r);
 }
 
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
 // half2 (FP16x2) fast path for the arithmetic binops on ``__half`` tiles. The
 // comparison / logical ops keep the scalar path (their half2 forms return a
 // mask, not a 1.0/0.0 element). ``Op`` is restricted at the call site below.
@@ -130,6 +138,24 @@ DACE_DFI constexpr bool _is_half2_binop() {
          Op == '>' || Op == 'g' || Op == '=' || Op == '!';
 }
 
+// ROCm 7.2.3 ships the scalar ``__hmin`` / ``__hmax`` but no FP16x2 pair, so the two lanes fold
+// through the scalar ones there; CUDA keeps its single native instruction.
+DACE_DFI __half2 _half2_min(__half2 a, __half2 b) {
+#if defined(__HIPCC__)
+  return __halves2half2(__hmin(__low2half(a), __low2half(b)), __hmin(__high2half(a), __high2half(b)));
+#else
+  return __hmin2(a, b);
+#endif
+}
+
+DACE_DFI __half2 _half2_max(__half2 a, __half2 b) {
+#if defined(__HIPCC__)
+  return __halves2half2(__hmax(__low2half(a), __low2half(b)), __hmax(__high2half(a), __high2half(b)));
+#else
+  return __hmax2(a, b);
+#endif
+}
+
 template <char Op>
 DACE_DFI __half2 _half2_apply(__half2 a, __half2 b) {
   if constexpr (Op == '+')
@@ -141,9 +167,9 @@ DACE_DFI __half2 _half2_apply(__half2 a, __half2 b) {
   else if constexpr (Op == '/')
     return __h2div(a, b);
   else if constexpr (Op == 'm')
-    return __hmin2(a, b);
+    return _half2_min(a, b);
   else if constexpr (Op == 'M')
-    return __hmax2(a, b);
+    return _half2_max(a, b);
   else if constexpr (Op == '<')
     return __hlt2(a, b);
   else if constexpr (Op == 'l')
@@ -302,7 +328,7 @@ DACE_DFI void half_read_shifted(__half* __restrict__ dst, const __half* __restri
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                          const bool* __restrict__ mask) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   // FP16x2 path: __half tile, even width, a half2-capable op, unmasked. Two lanes
   // per half2 intrinsic (arithmetic, min/max, and the six comparisons).
   // ``else`` rather than an early ``return``: the scalar loop has to be DISCARDED, not merely
@@ -341,7 +367,7 @@ DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* 
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                        const bool* __restrict__ mask) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   // FP16x2 path: __half tile, even width, unmasked. Two lanes per __hfma2.
   // ``else`` and not an early ``return`` -- see the note in tile_binop (nvcc #128-D).
   if constexpr (__is_same(T, __half) && (VLEN % 2 == 0) && !Masked) {
@@ -373,7 +399,7 @@ DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __
 // ----------------------------- tile_unop ------------------------------
 template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
 DACE_DFI void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   // FP16x2 path for every unop with a native half2 intrinsic (negate / abs /
   // exp / log / sqrt / sin / cos / floor / ceil). Two lanes per intrinsic.
   // ``else`` and not an early ``return`` -- see the note in tile_binop (nvcc #128-D).
@@ -423,7 +449,7 @@ DACE_DFI void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, cons
 template <typename T, int VLEN, bool Masked, int Align = alignof(T), int Shift = 0>
 DACE_DFI void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
                         std::int64_t stride = 1) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   // A mask makes the lanes divergent and a non-unit stride is not contiguous; both keep the loop.
   if constexpr (__is_same(T, __half) && !Masked && Align >= 4 && VLEN % 2 == 0) {
     if (stride == 1) {
@@ -449,7 +475,7 @@ DACE_DFI void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bo
 template <typename T, int VLEN, bool Masked, int Align = alignof(T)>
 DACE_DFI void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
                          std::int64_t stride = 1) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   // A masked store must skip its off lanes one at a time, and a non-unit stride is not contiguous.
   if constexpr (__is_same(T, __half) && !Masked && Align >= 4 && VLEN % 2 == 0) {
     if (stride == 1) {
@@ -518,7 +544,7 @@ DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub, IdxT str
 // loop unrolls.
 template <typename T, int VLEN, char Op>
 DACE_DFI T tile_reduce(const T* __restrict__ src) {
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
   if constexpr (__is_same(T, __half) && VLEN >= 2 && (VLEN % 2 == 0) && _is_half2_reduce<Op>()) {
     constexpr int H = VLEN / 2;
     __half2 buf[H];
@@ -589,7 +615,7 @@ DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_binop(Out&& out, A&
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked, typename Out,
           typename A, typename B, typename C>
 DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_fma(Out&& out, A&& a, B&& b, C&& c,
-                                                                const bool* __restrict__ mask) {
+                                                                 const bool* __restrict__ mask) {
   const float af = _cuda_to_compute<T>(tile_load_value<T>(a));
   const float bf = _cuda_to_compute<T>(tile_load_value<T>(b));
   const float cf = _cuda_to_compute<T>(tile_load_value<T>(c));

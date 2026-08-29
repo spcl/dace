@@ -812,17 +812,17 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # right after it is what actually stops a failed query from reaching CUB with a null workspace.
         state_t = mangle_dace_state_struct_name(sdfg)
         cuda_globalcode.write("""
-DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state);
-cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state)
+DACE_EXPORTED gpuError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, gpuStream_t stream, {state_t} *__state);
+gpuError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, gpuStream_t stream, {state_t} *__state)
 {{
     size_t _cub_needed = 0;
-    cudaError_t _cub_status;
-    DACE_GPU_CHECK(_cub_status = cub::{reduce_type}::{kname}(nullptr, _cub_needed,
+    gpuError_t _cub_status;
+    DACE_GPU_CHECK(_cub_status = gpucub::{reduce_type}::{kname}(nullptr, _cub_needed,
                                 input, output, {reduce_range_use}{redop}, stream));
-    if (_cub_status != cudaSuccess) return _cub_status;
+    if (_cub_status != gpuSuccess) return _cub_status;
     void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream, &_cub_status);
-    if (_cub_scratch == nullptr) return _cub_status != cudaSuccess ? _cub_status : cudaErrorMemoryAllocation;
-    return cub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
+    if (_cub_scratch == nullptr) return _cub_status != gpuSuccess ? _cub_status : gpuErrorMemoryAllocation;
+    return gpucub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
                                 input, output, {reduce_range_use}{redop}, stream);
 }}
         """.format(id=idstr,
@@ -838,7 +838,7 @@ cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range
         # Write reduction function definition in caller file
         host_globalcode.write(
             """
-DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream, {state_t} *__state);
+DACE_EXPORTED gpuError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, gpuStream_t stream, {state_t} *__state);
         """.format(id=idstr,
                    reduce_range_def=reduce_range_def,
                    intype=input_data.dtype.ctype,
@@ -1011,7 +1011,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
         # Allocate shared memory for block reduce
         localcode.write("""
-        typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
+        typedef gpucub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
         __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
             """.format(id=idstr, type=output_data.dtype.ctype, numthreads=block_threads))
 
@@ -1043,7 +1043,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
     """Thread-block reduce committing ONE atomic per block to a global output.
 
-    ``cub::BlockReduce`` folds the block to a single value (thread 0); thread 0 does one
+    ``gpucub::BlockReduce`` folds the block to a single value (thread 0); thread 0 does one
     ``reduce_atomic`` into the length-1 global output. Grid-of-blocks shape for the GPU
     tile path: many blocks → one output, one atomic each (vs device-wide CUB scratch).
     Unlike :class:`ExpandReduceCUDABlock` (register output, one block per output), output
@@ -1115,7 +1115,7 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         # ``_out`` addresses the global length-1 output element; take its address for the atomic.
         out_ref = cpp_array_expr(sdfg, output_memlet)
         localcode.write("""
-        typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
+        typedef gpucub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
         __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
         {type} __block_result_{id} = BlockReduce_{id}(temp_storage_{id}).Reduce({input}, {redop});
         if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{

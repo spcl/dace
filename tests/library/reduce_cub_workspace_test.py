@@ -42,7 +42,10 @@ def generated_code_for(in_shape, axes, out_shape) -> str:
     rednode.implementation = 'CUDA (device)'
 
     generated = sdfg.generate_code()
-    assert any(code.language == 'cu' for code in generated), 'the reduction did not lower to a CUDA file'
+    # Keyed on the code object's TITLE, not its extension: the GPU object is emitted as `.cu` under
+    # CUDA and `.cpp` under HIP, and asserting `cpp` would also match the host file and pass even
+    # when nothing lowered to the GPU at all.
+    assert any(code.title == 'CUDA' for code in generated), 'the reduction did not lower to a GPU file'
     return '\n'.join(code.clean_code for code in generated)
 
 

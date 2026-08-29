@@ -239,6 +239,16 @@ class ExpandInvCuSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandInvRocSolver(ExpandTransformation):
+
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "rocSOLVER")
+
+
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
 
@@ -247,7 +257,8 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandInvPure,
         "OpenBLAS": ExpandInvOpenBLAS,
         "MKL": ExpandInvMKL,
-        "cuSolverDn": ExpandInvCuSolverDn
+        "cuSolverDn": ExpandInvCuSolverDn,
+        "rocSOLVER": ExpandInvRocSolver
     }
     default_implementation = None
 

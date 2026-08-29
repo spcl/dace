@@ -12,7 +12,7 @@ sweeps to compute what one cancelling sweep already knows.
 The CPU expansions call :cpp:func:`dace::find_first_index` (``dace/runtime/include/dace/detect.h``)
 and differ only in whether the chunks go to OpenMP; the CUDA expansion calls
 :cpp:func:`dace::find_first_index_device` (``dace/runtime/include/dace/cuda/detect.cuh``), a
-cancelling block-per-tile argmin folded by ``cub::BlockReduce``. Each runtime function owns its
+cancelling block-per-tile argmin folded by ``gpucub::BlockReduce``. Each runtime function owns its
 chunking, its shared cancellation state and its reduction, so there is one implementation per
 machine to tune rather than a copy per expansion.
 
@@ -143,7 +143,7 @@ def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
 
 @library.expansion
 class ExpandFindFirstCUDA(ExpandTransformation):
-    """Device lowering: :cpp:func:`dace::find_first_index_device`, one ``cub::BlockReduce`` argmin
+    """Device lowering: :cpp:func:`dace::find_first_index_device`, one ``gpucub::BlockReduce`` argmin
     per tile and one ``atomicMin`` per firing tile.
 
     The predicate becomes a device FUNCTOR struct appended to the device global code, not a device
@@ -169,8 +169,8 @@ class ExpandFindFirstCUDA(ExpandTransformation):
         members = '\n'.join(f'    {decl};' for _conn, decl in signature)
         params = ', '.join(decl for _conn, decl in signature)
         args = ', '.join(conn for conn, _decl in signature)
-        prototype = (f'DACE_EXPORTED cudaError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, '
-                     f'long long __ff_end, long long *__ff_out, cudaStream_t __ff_stream);')
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, '
+                     f'long long __ff_end, long long *__ff_out, gpuStream_t __ff_stream);')
 
         sdfg.append_global_code(prototype + '\n')
         sdfg.append_global_code(
@@ -180,8 +180,8 @@ class ExpandFindFirstCUDA(ExpandTransformation):
             f'{{ return ({node.predicate}); }}\n'
             f'}};\n'
             f'{prototype}\n'
-            f'cudaError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, long long __ff_end, '
-            f'long long *__ff_out, cudaStream_t __ff_stream) {{\n'
+            f'gpuError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, long long __ff_end, '
+            f'long long *__ff_out, gpuStream_t __ff_stream) {{\n'
             f'    __ff_pred_{idstr} __ff_pred{{{args}}};\n'
             f'    return ::dace::find_first_index_device(__ff_begin, __ff_end, __ff_pred, __ff_out, __ff_stream);\n'
             f'}}\n', 'cuda')

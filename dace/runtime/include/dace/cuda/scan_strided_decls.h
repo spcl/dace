@@ -14,7 +14,7 @@
 #ifndef __DACE_CUDA_SCAN_STRIDED_DECLS_H
 #define __DACE_CUDA_SCAN_STRIDED_DECLS_H
 
-#include <cuda_runtime.h>
+#include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,13 +22,13 @@ extern "C" {
 
 #define _DACE_DECL_STRIDED_SCAN(SUFFIX, T)                                                                  \
     void dace_cuda_strided_inclusive_sum_##SUFFIX(const T* in, T* out, long n, long s,                      \
-                                                  cudaStream_t stream);                                     \
+                                                  gpuStream_t stream);                                     \
     void dace_cuda_strided_inclusive_product_##SUFFIX(const T* in, T* out, long n, long s,                  \
-                                                      cudaStream_t stream);                                 \
+                                                      gpuStream_t stream);                                 \
     void dace_cuda_strided_inclusive_min_##SUFFIX(const T* in, T* out, long n, long s,                      \
-                                                  cudaStream_t stream);                                     \
+                                                  gpuStream_t stream);                                     \
     void dace_cuda_strided_inclusive_max_##SUFFIX(const T* in, T* out, long n, long s,                      \
-                                                  cudaStream_t stream);
+                                                  gpuStream_t stream);
 
 _DACE_DECL_STRIDED_SCAN(f64, double)
 _DACE_DECL_STRIDED_SCAN(f32, float)

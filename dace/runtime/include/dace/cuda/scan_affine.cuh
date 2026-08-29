@@ -18,7 +18,7 @@
 #ifndef __DACE_CUDA_SCAN_AFFINE_CUH
 #define __DACE_CUDA_SCAN_AFFINE_CUH
 
-#include <cuda_runtime.h>
+#include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
 #include <cub/cub.cuh>
 
 #include "../cub_scratch.cuh"
@@ -76,38 +76,38 @@ __global__ void affine_unpack_kernel(const affine_map<E>* __restrict__ m, E* __r
 /// ``out[k] = c[k]*out[k-1] + d[k]`` over ``k in [0, n)``, on ``stream``.
 ///
 /// The map buffer and cub's workspace come from ONE block of the ``ScanTag`` scratch pool, laid
-/// out maps-first; the scan runs in place over the maps, which ``cub::DeviceScan`` supports.
+/// out maps-first; the scan runs in place over the maps, which ``gpucub::DeviceScan`` supports.
 template <typename E, typename C, typename D, typename S>
-inline cudaError_t inclusive_affine(const C* coef, const D* delta, const S* seed_ptr, E seed_val, E* out, long long n,
-                                    cudaStream_t stream) {
+inline gpuError_t inclusive_affine(const C* coef, const D* delta, const S* seed_ptr, E seed_val, E* out, long long n,
+                                    gpuStream_t stream) {
     using M = affine_map<E>;
-    if (n <= 0) return cudaSuccess;
+    if (n <= 0) return gpuSuccess;
 
     affine_compose<E> op;
     std::size_t cub_bytes = 0;
-    cudaError_t err = ::cub::DeviceScan::InclusiveScan(nullptr, cub_bytes, static_cast<M*>(nullptr),
+    gpuError_t err = ::gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, static_cast<M*>(nullptr),
                                                        static_cast<M*>(nullptr), op, n, stream);
-    if (err != cudaSuccess) return err;
+    if (err != gpuSuccess) return err;
 
     // 256-byte alignment for the workspace that follows: cub's temporary layout assumes an
-    // allocation at least as aligned as cudaMalloc's, and the pool hands back exactly that.
+    // allocation at least as aligned as gpuMalloc's, and the pool hands back exactly that.
     const std::size_t map_bytes = ((static_cast<std::size_t>(n) * sizeof(M)) + 255u) & ~static_cast<std::size_t>(255u);
     void* scratch = ::dace::cub::get_scratch< ::dace::cub::ScanTag>(map_bytes + cub_bytes, stream, &err);
-    if (scratch == nullptr) return (err != cudaSuccess) ? err : cudaErrorMemoryAllocation;
+    if (scratch == nullptr) return (err != gpuSuccess) ? err : gpuErrorMemoryAllocation;
     M* maps = reinterpret_cast<M*>(scratch);
     void* workspace = static_cast<char*>(scratch) + map_bytes;
 
     const int threads = 256;
     const unsigned blocks = static_cast<unsigned>((n + threads - 1) / threads);
     detail::affine_pack_kernel<E, C, D, S><<<blocks, threads, 0, stream>>>(coef, delta, maps, seed_ptr, seed_val, n);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) return err;
+    err = gpuGetLastError();
+    if (err != gpuSuccess) return err;
 
-    err = ::cub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);
-    if (err != cudaSuccess) return err;
+    err = ::gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);
+    if (err != gpuSuccess) return err;
 
     detail::affine_unpack_kernel<E><<<blocks, threads, 0, stream>>>(maps, out, n);
-    return cudaGetLastError();
+    return gpuGetLastError();
 }
 
 }  // namespace cuda_scan

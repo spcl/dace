@@ -10,6 +10,7 @@ from dace import data as dt, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace.ordered import OrderedSet
 
 
@@ -155,13 +156,13 @@ class ExpandAxpyMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandAxpyCuBLAS(ExpandTransformation):
+class ExpandAxpyGPUBLAS(ExpandTransformation):
     """cuBLAS ``cublas?axpy(handle, n, &alpha, X, incX, Y, incY)`` with a prior ``copy`` into ``_res``."""
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
         dtype = x_outer.dtype.base_type
@@ -172,17 +173,29 @@ class ExpandAxpyCuBLAS(ExpandTransformation):
             return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
         sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
         n, a = node.n, node.a
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
-        cublas{func}copy(__dace_cublas_handle, {n}, _y, {sy}, _res, {sy});
-        cublas{func}axpy(__dace_cublas_handle, {n}, &__alpha, _x, {sx}, _res, {sy});
+        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _y, {sy}, _res, {sy});
+        {cls.dialect.func(func, 'axpy')}({cls.dialect.handle}, {n}, &__alpha, _x, {sx}, _res, {sy});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,
                                        code,
                                        language=dace.dtypes.Language.CPP)
+
+
+@dace.library.expansion
+class ExpandAxpyCuBLAS(ExpandAxpyGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandAxpyRocBLAS(ExpandAxpyGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @dace.library.node
@@ -199,6 +212,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandAxpyOpenBLAS,
         "MKL": ExpandAxpyMKL,
         "cuBLAS": ExpandAxpyCuBLAS,
+        "rocBLAS": ExpandAxpyRocBLAS,
     }
     default_implementation = None
 

@@ -12,7 +12,7 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
+#include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
 
 namespace dace {
 namespace cuda_transpose {
@@ -91,22 +91,22 @@ __global__ void symmetrize_kernel(T *__restrict__ x, int n, int ld, int col_offs
 }
 
 template <typename T>
-cudaError_t transpose(const T *in, T *out, int rows, int cols, int ld_in, int ld_out, cudaStream_t stream) {
-    if (rows <= 0 || cols <= 0) return cudaSuccess;
+gpuError_t transpose(const T *in, T *out, int rows, int cols, int ld_in, int ld_out, gpuStream_t stream) {
+    if (rows <= 0 || cols <= 0) return gpuSuccess;
     const dim3 grid(tiles_along(cols), tiles_along(rows), 1);
     const dim3 block(TILE, BLOCK_ROWS, 1);
     transpose_kernel<T><<<grid, block, 0, stream>>>(in, out, rows, cols, ld_in, ld_out);
-    return cudaPeekAtLastError();
+    return gpuPeekAtLastError();
 }
 
 template <typename T>
-cudaError_t symmetrize(T *x, int n, int ld, int col_offset, bool source_upper, cudaStream_t stream) {
-    if (n <= 0) return cudaSuccess;
+gpuError_t symmetrize(T *x, int n, int ld, int col_offset, bool source_upper, gpuStream_t stream) {
+    if (n <= 0) return gpuSuccess;
     const int nt = tiles_along(n);
     const dim3 grid(nt, nt, 1);
     const dim3 block(TILE, BLOCK_ROWS, 1);
     symmetrize_kernel<T><<<grid, block, 0, stream>>>(x, n, ld, col_offset, source_upper ? 1 : 0);
-    return cudaPeekAtLastError();
+    return gpuPeekAtLastError();
 }
 
 }  // namespace cuda_transpose

@@ -170,6 +170,17 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         candidates.remove(candidate)
                         removed = True
                         break
+                    # Step 3.3 of remove_scalar_reads writes the promoted value into an AccessNode
+                    # destination with a HOST tasklet. When that destination lives in device memory
+                    # the tasklet is a host write to a GPU container, which validation rejects
+                    # ("stored as StorageType.GPU_Global but accessed on host"). Declining to
+                    # promote leaves the scalar copy, which is correct on either device.
+                    if (isinstance(e.dst, nodes.AccessNode) and e.dst.data in sdfg.arrays
+                            and sdfg.arrays[e.dst.data].storage
+                            in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
                     # An outgoing WCR edge makes this scalar a reduction SOURCE
                     # (``x -(wcr)-> arr``): promoting ``x`` to a symbol rewrites
                     # ``arr = wcr(arr, x)`` into a plain ``arr = x`` overwrite, silently

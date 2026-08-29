@@ -55,29 +55,20 @@ class ExpandGeqrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGeqrfCuSolverDn(ExpandTransformation):
+class ExpandGeqrfGPUSolver(ExpandTransformation):
 
-    environments = [environments.cusolverdn.cuSolverDn]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_A, lda_in, lda_out, m, n), _ = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dt)
         func = func + 'geqrf'
-        code = environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-            cudaMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
-                            cudaMemcpyDeviceToDevice, __dace_current_stream);
-            int __dace_workspace_size = 0;
-            {cuda_type}* __dace_workspace;
-            cusolverDn{func}_bufferSize(
-                __dace_cusolverDn_handle, {m}, {n}, _aout, {lda_out}, &__dace_workspace_size);
-            cudaMalloc<{cuda_type}>(&__dace_workspace, sizeof({cuda_type}) * __dace_workspace_size);
-            cusolverDn{func}(
-                __dace_cusolverDn_handle, {m}, {n}, _aout, {lda_out}, _tau,
-                __dace_workspace, __dace_workspace_size, _res);
-            cudaFree(__dace_workspace);
-            """
+        code = cls.environments[0].handle_setup_code(node) + f"""
+            gpuMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
+                            gpuMemcpyDeviceToDevice, __dace_current_stream);
+            """ + cls.call(func, cuda_type, m, n, lda_out)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -88,6 +79,40 @@ class ExpandGeqrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGeqrfCuSolverDn(ExpandGeqrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, m, n, lda) -> str:
+        return f"""
+            int __dace_workspace_size = 0;
+            {ctype}* __dace_workspace;
+            cusolverDn{func}_bufferSize(
+                __dace_cusolverDn_handle, {m}, {n}, _aout, {lda}, &__dace_workspace_size);
+            gpuMalloc<{ctype}>(&__dace_workspace, sizeof({ctype}) * __dace_workspace_size);
+            cusolverDn{func}(
+                __dace_cusolverDn_handle, {m}, {n}, _aout, {lda}, _tau,
+                __dace_workspace, __dace_workspace_size, _res);
+            gpuFree(__dace_workspace);
+            """
+
+
+@dace.library.expansion
+class ExpandGeqrfRocSolver(ExpandGeqrfGPUSolver):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @classmethod
+    def call(cls, func, ctype, m, n, lda) -> str:
+        # rocSOLVER manages its own workspace and reports no info code, so the status the caller
+        # reads is written here rather than by the solver.
+        return f"""
+            dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
+                __dace_rocblas_handle, {m}, {n}, _aout, {lda}, _tau));
+            DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
+            """
+
+
 @dace.library.node
 class Geqrf(dace.sdfg.nodes.LibraryNode):
     """LAPACK ``?GEQRF``: QR factorization, ``A := QR``.
@@ -96,7 +121,12 @@ class Geqrf(dace.sdfg.nodes.LibraryNode):
     ``_tau`` (scalar vector of length ``min(m, n)``), ``_res`` (info).
     """
 
-    implementations = {"OpenBLAS": ExpandGeqrfOpenBLAS, "MKL": ExpandGeqrfMKL, "cuSolverDn": ExpandGeqrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGeqrfOpenBLAS,
+        "MKL": ExpandGeqrfMKL,
+        "cuSolverDn": ExpandGeqrfCuSolverDn,
+        "rocSOLVER": ExpandGeqrfRocSolver
+    }
     default_implementation = None
 
     def __init__(self, name, **kwargs):

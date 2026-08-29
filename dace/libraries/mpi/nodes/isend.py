@@ -29,7 +29,7 @@ class ExpandIsendMPI(ExpandTransformation):
 
         if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
             code += f"""
-            cudaStreamSynchronize(__dace_current_stream);
+            gpuStreamSynchronize(__dace_current_stream);
             """
 
         if ddt is not None:

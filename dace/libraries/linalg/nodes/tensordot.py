@@ -257,9 +257,9 @@ class ExpandTTGT(ExpandTransformation):
 
 
 @library.expansion
-class ExpandCuTensor(ExpandTransformation):
+class ExpandGPUTensorDot(ExpandTransformation):
     """
-    Implements the TensorDot library node using cuTENSOR v2 (cutensorContract)
+    Implements the TensorDot library node using cuTENSOR v2 ({cls.vendor_lower}Contract)
     for CUDA-compatible GPUs. Requires cuTENSOR >= 2.0.
 
     The contraction expresses:
@@ -268,17 +268,17 @@ class ExpandCuTensor(ExpandTransformation):
     (i.e. D = alpha * A * B with beta = 0).
     """
 
-    environments = [environments.cuTensor]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        if dtype not in environments.cuTensor.TYPE_MAP:
-            raise NotImplementedError(f"cuTENSOR TensorDot does not support dtype {dtype}; supported: "
-                                      f"{sorted(str(t) for t in environments.cuTensor.TYPE_MAP)}")
-        cutensor_dtype, compute_desc, scalar_type = environments.cuTensor.TYPE_MAP[dtype]
+        if dtype not in cls.environments[0].TYPE_MAP:
+            raise NotImplementedError(f"{cls.vendor} TensorDot does not support dtype {dtype}; supported: "
+                                      f"{sorted(str(t) for t in cls.environments[0].TYPE_MAP)}")
+        tensor_dtype, compute_desc, scalar_type = cls.environments[0].TYPE_MAP[dtype]
 
         alpha = f"({scalar_type})1.0"
         beta = f"({scalar_type})0.0"
@@ -329,65 +329,65 @@ class ExpandCuTensor(ExpandTransformation):
         # cuTENSOR v2: descriptors take an alignment hint (bytes) instead of
         # a per-pointer query; 256 is safe for all CUDA allocations.
         tdesc = f"""
-            cutensorTensorDescriptor_t descA, descB, descC;
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descA, modeA.size(),
-                extentA.data(), stridesA.data(), {cutensor_dtype}, 256));
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descB, modeB.size(),
-                extentB.data(), stridesB.data(), {cutensor_dtype}, 256));
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descC, modeC.size(),
-                extentC.data(), stridesC.data(), {cutensor_dtype}, 256));
+            {cls.vendor_lower}TensorDescriptor_t descA, descB, descC;
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descA, modeA.size(),
+                extentA.data(), stridesA.data(), {tensor_dtype}, 256));
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descB, modeB.size(),
+                extentB.data(), stridesB.data(), {tensor_dtype}, 256));
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descC, modeC.size(),
+                extentC.data(), stridesC.data(), {tensor_dtype}, 256));
         """
 
         # Contraction descriptor: D = alpha * A * B + beta * C; here D == C.
         cdesc = f"""
-            cutensorOperationDescriptor_t opDesc;
-            dace::linalg::CheckCuTensorError(cutensorCreateContraction(
-                __dace_cutensor_handle, &opDesc,
-                descA, modeA.data(), CUTENSOR_OP_IDENTITY,
-                descB, modeB.data(), CUTENSOR_OP_IDENTITY,
-                descC, modeC.data(), CUTENSOR_OP_IDENTITY,
+            {cls.vendor_lower}OperationDescriptor_t opDesc;
+            {cls.check}({cls.vendor_lower}CreateContraction(
+                {cls.handle}, &opDesc,
+                descA, modeA.data(), {cls.op_identity},
+                descB, modeB.data(), {cls.op_identity},
+                descC, modeC.data(), {cls.op_identity},
                 descC, modeC.data(),
                 {compute_desc}));
         """
 
         workspace = """
-            cutensorPlanPreference_t planPref;
-            dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
-                __dace_cutensor_handle, &planPref,
-                CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
+            {cls.vendor_lower}PlanPreference_t planPref;
+            {cls.check}({cls.vendor_lower}CreatePlanPreference(
+                {cls.handle}, &planPref,
+                {cls.algo_default}, {cls.jit_default}));
             uint64_t worksize = 0;
-            dace::linalg::CheckCuTensorError(cutensorEstimateWorkspaceSize(
-                __dace_cutensor_handle, opDesc, planPref,
-                CUTENSOR_WORKSPACE_DEFAULT, &worksize));
+            {cls.check}({cls.vendor_lower}EstimateWorkspaceSize(
+                {cls.handle}, opDesc, planPref,
+                {cls.workspace_default}, &worksize));
             void *work = nullptr;
-            if (worksize > 0) cudaMalloc(&work, worksize);
+            if (worksize > 0) gpuMalloc(&work, worksize);
         """
 
         execute = """
-            cutensorPlan_t plan;
-            dace::linalg::CheckCuTensorError(cutensorCreatePlan(
-                __dace_cutensor_handle, &plan, opDesc, planPref, worksize));
-            cutensorStatus_t err = cutensorContract(
-                __dace_cutensor_handle, plan,
+            {cls.vendor_lower}Plan_t plan;
+            {cls.check}({cls.vendor_lower}CreatePlan(
+                {cls.handle}, &plan, opDesc, planPref, worksize));
+            {cls.vendor_lower}Status_t err = {cls.vendor_lower}Contract(
+                {cls.handle}, plan,
                 (const void*)&alpha, _left_tensor, _right_tensor,
                 (const void*)&beta,  _out_tensor,  _out_tensor,
                 work, worksize, __dace_current_stream);
             if (err != CUTENSOR_STATUS_SUCCESS) {
-                printf("ERROR: %s\\n", cutensorGetErrorString(err));
+                printf("ERROR: %s\\n", {cls.vendor_lower}GetErrorString(err));
             }
-            cutensorDestroyPlan(plan);
-            cutensorDestroyPlanPreference(planPref);
-            cutensorDestroyOperationDescriptor(opDesc);
-            cutensorDestroyTensorDescriptor(descC);
-            cutensorDestroyTensorDescriptor(descB);
-            cutensorDestroyTensorDescriptor(descA);
-            if (work) cudaFree(work);
+            {cls.vendor_lower}DestroyPlan(plan);
+            {cls.vendor_lower}DestroyPlanPreference(planPref);
+            {cls.vendor_lower}DestroyOperationDescriptor(opDesc);
+            {cls.vendor_lower}DestroyTensorDescriptor(descC);
+            {cls.vendor_lower}DestroyTensorDescriptor(descB);
+            {cls.vendor_lower}DestroyTensorDescriptor(descA);
+            if (work) gpuFree(work);
         """
 
-        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+        code = f"{cls.environments[0].handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -476,11 +476,45 @@ class ExpandTBLIS(ExpandTransformation):
                                        side_effects=True)
 
 
+@dace.library.expansion
+class ExpandCuTensor(ExpandGPUTensorDot):
+    environments = [environments.cuTensor]
+    vendor = "cuTENSOR"
+    vendor_lower = "cutensor"
+    handle = "__dace_cutensor_handle"
+    check = "dace::linalg::CheckCuTensorError"
+    op_identity = "CUTENSOR_OP_IDENTITY"
+    algo_default = "CUTENSOR_ALGO_DEFAULT"
+    jit_default = "CUTENSOR_JIT_MODE_DEFAULT"
+    workspace_default = "CUTENSOR_WORKSPACE_DEFAULT"
+
+
+@dace.library.expansion
+class ExpandHipTensorDot(ExpandGPUTensorDot):
+    environments = [environments.hipTensor]
+    vendor = "hipTensor"
+    vendor_lower = "hiptensor"
+    handle = "__dace_hiptensor_handle"
+    check = "dace::linalg::CheckHipTensorError"
+    op_identity = "HIPTENSOR_OP_IDENTITY"
+    algo_default = "HIPTENSOR_ALGO_DEFAULT"
+    #: NONE, not DEFAULT -- hipTensor accepts the DEFAULT name and then refuses the plan at
+    #: execution, measured for every rank and dtype (see the ttranspose node).
+    jit_default = "HIPTENSOR_JIT_MODE_NONE"
+    workspace_default = "HIPTENSOR_WORKSPACE_DEFAULT"
+
+
 @library.node
 class TensorDot(nodes.LibraryNode):
     """ Implements tensor dot-product. """
 
-    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor, "TBLIS": ExpandTBLIS}
+    implementations = {
+        "pure": ExpandPure,
+        "TTGT": ExpandTTGT,
+        "cuTENSOR": ExpandCuTensor,
+        "hipTENSOR": ExpandHipTensorDot,
+        "TBLIS": ExpandTBLIS
+    }
     # Deliberately None: the ``library.linalg.default_implementation`` config knob must stay able to
     # select this node's TTGT / cuTENSOR / pure lowering, and a node-class default would shadow it.
     # The library-wide default (``OpenBLAS``, meant for the LAPACK-backed Cholesky/Solve/Inv) is not

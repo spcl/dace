@@ -26,7 +26,7 @@ from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import SDFGState
 from dace.libraries.blas.environments import openblas
-from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage,
+from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
@@ -78,23 +78,26 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     * CPU: ``OpenBLAS`` (if installed), ``HPTT`` (tensor transpose, if ``HPTT_ROOT`` is set),
       ``TTGT`` (tensor contraction via transpose+GEMM, no external dependency), ``OpenMP`` (``Reduce``),
       ``CPU`` (OpenMP-5 ``Scan``, radix ``IntegerSort``, ``ska_sort`` ``ScatterConflictCheck``).
-    * GPU: ``cuBLAS``, ``cuSolverDn``, ``GPUAuto``, ``cuTENSOR``, ``CUB``, ``CUDA`` (``cub::DeviceScan``
-      / device sort / ``DeviceReduce::ArgMax`` / the bounding-box ``Symmetrize``).
+    * GPU: taken straight from ``auto_optimize``, so the per-backend rows cannot drift -- cuBLAS /
+      cuSolverDn / cuTENSOR on CUDA, rocBLAS / rocSOLVER / hipTENSOR on HIP, plus ``GPUAuto``,
+      ``CUB`` and ``CUDA`` (``gpucub::DeviceScan`` / device sort / ``DeviceReduce::ArgMax`` / the
+      bounding-box ``Symmetrize``) on both.
 
     Both lists are the SAME ORDER as ``auto_optimize``'s :func:`~dace.transformation.auto.
     auto_optimize.find_fast_library`, deliberately and for the reason stated there: the two pipelines
     are compared column against column, so a node that lowers to a tuned expansion under one and to
     the serial ``pure`` loop under the other measures the priority list rather than the pipeline.
-    ``CUDA`` is appended to BOTH, because it is the key every CUB-backed node this tree adds
-    registers under.
+    Naming the GPU row here a second time is what let it keep the CUDA vendors on a ROCm host, where
+    every rocBLAS-lowered node fell back to ``pure``.
 
     Only impls whose environment is available on this host are listed, so forcing a pick never selects
     an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``rowwise`` override in
     :func:`canonicalize_set_fast_implementations`.
     """
     if device == dtypes.DeviceType.GPU:
-        # GPU perf runs where these are present; each node's own environment gates the actual build.
-        return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA']
+        # Each node's own environment gates the actual build. ``pure`` is auto_optimize's terminal
+        # fallback rather than a forced pick, so it is the one entry dropped here.
+        return [impl for impl in find_fast_library(device) if impl != 'pure']
     prio = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')

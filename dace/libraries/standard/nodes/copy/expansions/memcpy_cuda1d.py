@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Contiguous device copy through ``cudaMemcpyAsync``.
+"""Contiguous device copy through ``gpuMemcpyAsync``.
 """
 from typing import TYPE_CHECKING
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 @library.register_expansion(CopyLibraryNode, 'MemcpyCUDA1D')
 class ExpandMemcpyCUDA1D(ExpandTransformation):
-    """One ``cudaMemcpyAsync`` for a contiguous copy; direction (H2D/D2H/D2D/H2H) inferred from
+    """One ``gpuMemcpyAsync`` for a contiguous copy; direction (H2D/D2H/D2D/H2H) inferred from
     endpoint storages."""
     environments = [environments.CUDA]
 
