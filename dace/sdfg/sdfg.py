@@ -1665,6 +1665,20 @@ class SDFG(ControlFlowRegion):
 
         return read_set, write_set
 
+    def interface_symbols(self) -> Set[str]:
+        """Symbols the SDFG's own signature is described in: those in the shape, strides or offset
+        of a non-transient descriptor, and registered in :attr:`symbols`.
+
+        These belong to the ABI rather than to the body, so they must not come and go as passes
+        rewrite the code that happens to mention them.
+        """
+        found: Set[str] = set()
+        for desc in self.arrays.values():
+            if desc.transient:
+                continue
+            found |= {str(s) for s in desc.free_symbols}
+        return {name for name in found if name in self.symbols and not name.startswith('__dace')}
+
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
@@ -1696,6 +1710,18 @@ class SDFG(ControlFlowRegion):
         # Add global free symbols used in the generated code to scalar arguments
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
+
+        # A symbol in a NON-TRANSIENT descriptor's shape is part of the interface, so it stays in the
+        # signature whether or not the generated code still mentions it. Deriving the signature from
+        # the code alone made it depend on which passes ran: canonicalize removed the last use of an
+        # extent symbol and dropped it, then offloading reintroduced a use (the host-to-device copy
+        # needs the length) and brought it back, so one program had two signatures at two points in
+        # the same pipeline and a caller holding the earlier one could not call the later graph.
+        # An argument the code ignores costs nothing; a signature that moves under optimization does.
+        scalar_args.update({
+            name: dt.Scalar(self.symbols[name])
+            for name in self.interface_symbols() if name not in scalar_args and name not in data_args
+        })
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -2376,8 +2402,18 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
-                    sdfg.add_symbol(sym.name, sym.dtype)
+                if sym.name in sdfg.symbols or sym.name in sdfg.arg_names:
+                    continue
+                if sym.name in sdfg.arrays:
+                    # The bare "name is used by a data descriptor" from ``add_symbol`` says nothing
+                    # about WHY a symbol was wanted. Here the reason is known -- an extent of the
+                    # descriptor being added -- and naming both sides turns the raise into the fix.
+                    raise FileExistsError(f'Cannot create symbol "{sym.name}" for shape {tuple(desc.shape)} of data '
+                                          f'descriptor "{name}": "{sym.name}" is already a data descriptor '
+                                          f'({sdfg.arrays[sym.name]}). An extent must be symbolic at parse time, so '
+                                          f'declare "{sym.name}" as a dace.symbol instead of passing it as a scalar '
+                                          f'argument.')
+                sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

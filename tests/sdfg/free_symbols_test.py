@@ -236,6 +236,30 @@ def test_used_array_keeps_symbolic_extent():
     assert 's' in sdfg.arglist()
 
 
+def test_non_transient_shape_symbol_stays_in_the_signature():
+    """A symbol in a NON-transient shape is part of the ABI and must not depend on code use.
+
+    The counterpart of the transient case above. ``arglist`` used to name only the symbols the
+    generated code still mentions, so the signature moved as passes ran: canonicalization removed
+    the last use of an extent symbol and dropped it, then offloading reintroduced one (the
+    host-to-device copy needs the length) and brought it back. A caller holding the earlier
+    signature could not call the later graph -- ``Missing program argument "LEN_1D"``.
+    """
+    sdfg = dace.SDFG('interface_symbol')
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_array('a', ('n', ), dace.float64, transient=False)
+    sdfg.add_array('b', ('n', ), dace.float64, transient=False)
+    state = sdfg.add_state()
+    # A fixed trip count, so nothing in the BODY mentions ``n``; only the shapes do.
+    state.add_mapped_tasklet('map', {'__i': '0:10'}, {'__in': dace.Memlet('a[__i]')},
+                             '__out = __in + 1.0', {'__out': dace.Memlet('b[__i]')},
+                             external_edges=True)
+
+    assert 'n' not in sdfg.used_symbols(all_symbols=False), 'the body must not use it, or the test is vacuous'
+    assert 'n' in sdfg.interface_symbols()
+    assert 'n' in sdfg.arglist()
+
+
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
