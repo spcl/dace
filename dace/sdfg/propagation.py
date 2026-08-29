@@ -518,7 +518,10 @@ class GenericSMemlet(SeparableMemletPattern):
         b = sympy.Wild('b', exclude=self.params)
         match = expr.match(a * self.params[idx] + b)
 
-        return match is not None and match[a] < 0 == True
+        # Parenthesised: ``match[a] < 0 == True`` is a CHAINED comparison, which Python reads as
+        # ``(match[a] < 0) and (0 == True)`` -- and ``0 == True`` is False, so it never once
+        # reported a negative multiplier.
+        return match is not None and (match[a] < 0) == True
 
 
 def _maybe_affine_transform(expr: sympy.Basic) -> bool:
@@ -526,8 +529,11 @@ def _maybe_affine_transform(expr: sympy.Basic) -> bool:
 
     Used as a guard before actually trying to sympy.match() affine transformation
     coefficients. Matching is kind of slow compared to checking a couple
-    properties."""
-    return expr.is_Add and expr.args[0].is_Mul
+    properties.
+
+    Any argument may carry the multiplier: sympy orders an Add canonically, so ``N - i`` comes out
+    as ``(N, -i)`` and testing only the first one answered False for an expression that is affine."""
+    return expr.is_Add and any(arg.is_Mul for arg in expr.args)
 
 
 def _subexpr(dexpr, repldict):
