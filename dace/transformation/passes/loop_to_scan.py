@@ -14,7 +14,7 @@ This pass detects that shape and replaces the loop with three sibling states:
    into a fresh 1-D transient ``_scan_in_<out>`` (size = trip count).
 2. **scan** -- a :class:`~dace.libraries.standard.nodes.scan.Scan` libnode that
    computes ``_scan_out_<out>`` from ``_scan_in_<out>`` (CPU expansion = OpenMP 5.0
-   parallel scan; CUDA expansion = ``cub::DeviceScan``).
+   parallel scan; CUDA expansion = ``gpucub::DeviceScan``).
 3. **seed-add** -- a ``Map`` that writes ``out[i+1, jl, ...] = seed + _scan_out_<out>[i]``
    where ``seed = out[start, jl, ...]`` (the pre-loop value at the read end of the chain).
 

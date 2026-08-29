@@ -164,7 +164,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         if device == dtypes.DeviceType.CPU and apply_cpu_library_parallelism(node, state, sdfg):
             continue
         # GPU ``Scan``: a scan INSIDE a kernel must stay ``pure`` -- ``ExpandCUDA`` emits a HOST-side
-        # ``cub::DeviceScan`` call, which device code cannot issue. Everything else is host code and
+        # ``gpucub::DeviceScan`` call, which device code cannot issue. Everything else is host code and
         # takes the device expansion, a host loop around it included: there the ``pure`` lowering is
         # a host loop indexing ``GPU_Global`` operands, which is not slow but wrong (tsvc s256, an
         # affine scan under the outer loop). Decide by SCOPE, as the generic rule below does; the

@@ -979,7 +979,7 @@ class OffloadToAccelerator(ppl.Pass):
             cpu_set |= c
 
         # A name a host-issued call reads BY VALUE cannot be moved, whatever the state around it
-        # does -- ``cub::DeviceScan``'s seed (tsvc_2_5 fission_dep_then_indep).
+        # does -- ``gpucub::DeviceScan``'s seed (tsvc_2_5 fission_dep_then_indep).
         pinned = self.host_pinned_arrays_in_state(sdfg, state)
         if pinned:
             cpu_set |= gpu_set & pinned
