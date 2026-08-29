@@ -556,6 +556,23 @@ def test_index_array_with_integer_index_write_is_refused():
         scatter_row.to_sdfg()
 
 
+def test_index_array_followed_by_integer_index_write_is_allowed():
+    """A dropped axis AFTER the index array leaves its numbering alone, so this one stands."""
+
+    @dace.program
+    def scatter_column(A: dace.float64[4, 8], idx: dace.int64[3], out: dace.float64[4, 8]):
+        out[idx, 0] = A[0:3, 0]
+
+    A = np.random.rand(4, 8)
+    idx = np.array([3, 0, 2], dtype=np.int64)
+    out = np.zeros((4, 8))
+    reference = np.zeros((4, 8))
+    reference[idx, 0] = A[0:3, 0]
+
+    scatter_column(A=A, idx=idx, out=out)
+    assert np.allclose(out, reference)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -595,3 +612,4 @@ if __name__ == '__main__':
     test_combining_basic_and_advanced_indexing_with_newaxes()
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
     test_index_array_with_integer_index_write_is_refused()
+    test_index_array_followed_by_integer_index_write_is_allowed()
