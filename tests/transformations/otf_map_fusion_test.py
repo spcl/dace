@@ -786,6 +786,50 @@ def test_read_ahead_write_is_not_fused():
     assert np.allclose(got, ref)
 
 
+@dace.program
+def seidel_2d_like_war(A: dace.float64[N, N]):
+    """polybench seidel_2d reduced to the OTF hazard: the producer map reads
+    ``A[i, j + 2]`` and the consumer map writes ``A[i, j + 1]``. The intermediate
+    transient orders them, but fusing into one map creates a lane-crossing WAR."""
+    tmp = dace.define_local([N, N], dtype=A.dtype)
+    for i, j in dace.map[1:N - 1, 0:N - 3]:
+        with dace.tasklet:
+            a << A[i, j + 2]
+            t >> tmp[i, j]
+
+            t = a
+
+    for i, j in dace.map[1:N - 1, 0:N - 3]:
+        with dace.tasklet:
+            t << tmp[i, j]
+            a >> A[i, j + 1]
+
+            a = t
+
+
+def test_seidel_2d_like_war_refuses_fusion():
+    """The canonical seidel_2d pattern is a self-array WAR: fusing the producer
+    and consumer maps lets lane ``(i, j)`` read the value lane ``(i, j + 1)`` just
+    wrote, so OTFMapFusion must refuse."""
+    sdfg = seidel_2d_like_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'seidel_2d WAR must refuse fusion'
+    assert count_maps(sdfg) == 2
+
+    n = 8
+    A = np.random.default_rng(20260829).random((n, n))
+    ref = A.copy()
+    for i in range(1, n - 1):
+        for j in range(0, n - 3):
+            ref[i, j + 1] = ref[i, j + 2]
+
+    got = A.copy()
+    sdfg(A=got, N=n)
+    assert np.allclose(got, ref)
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
