@@ -6207,13 +6207,19 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.dtype,
                                                   arrobj.storage,
                                                   find_new_name=True)
+            # The slice lands in a buffer of its own, sized to the extent, so it is filled from
+            # index 0 with unit stride. Carrying the source's start (or stride) instead wrote past
+            # the end of that buffer -- silently, because the reader carried the same offset back.
+            other_subset = subsets.Range([(0, s - 1, 1) for s in other_subset.size()])
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
             # ``Memlet.simple`` keeps the subset by reference, but ``rng`` may be a
             # cached Range shared by sibling slice reads, so give this edge its own copy.
             self.current_state.add_nedge(
                 rnode, wnode,
-                Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
-                              other_subset_str=other_subset))
+                Memlet.simple(array,
+                              copy.deepcopy(rng),
+                              num_accesses=rng.num_elements(),
+                              other_subset_str=copy.deepcopy(other_subset)))
         return tmp, other_subset
 
     def _index_literal_to_constant(self, aname: str, indices: Union[List[Any], Tuple[Any, ...]]) -> numpy.ndarray:
