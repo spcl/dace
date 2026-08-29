@@ -51,6 +51,12 @@ SPECS = {
                                                                            ("_xout", "x", False),
                                                                            ("_yout", "y", False)]),
     "copy": (lambda: blas.copy.Copy("n"), [("x", [N], F), ("r", [N], F)], [("_x", "x", True), ("_y", "r", False)]),
+    "ger": (lambda: blas.ger.Ger("n", alpha=1.0), [("x", [N], F), ("y", [N], F), ("a", [N, N], F),
+                                                   ("r", [N, N], F)], [("_x", "x", True), ("_y", "y", True),
+                                                                       ("_A", "a", True), ("_res", "r", False)]),
+    "gemv": (lambda: blas.gemv.Gemv("n", alpha=1.0, beta=0.0), [("a", [N, N], F), ("x", [N], F),
+                                                                ("y", [N], F)], [("_A", "a", True), ("_x", "x", True),
+                                                                                 ("_y", "y", False)]),
 }
 
 
@@ -65,7 +71,9 @@ def emitted_code(name: str, implementation: str) -> str:
     node = factory()
     node.implementation = implementation
     for conn, arr, is_input in wiring:
-        subset = f"0:{shapes[arr][0]}" if shapes[arr][0] != 1 else "0"
+        # Any rank, not just vectors: a matrix operand written as `a[0:N]` is a rank-1 subset and
+        # the node rejects it as "A must be a matrix" long before any code is emitted.
+        subset = ", ".join("0" if extent == 1 else f"0:{extent}" for extent in shapes[arr])
         if is_input:
             state.add_memlet_path(state.add_read(arr), node, dst_conn=conn, memlet=Memlet(f"{arr}[{subset}]"))
         else:

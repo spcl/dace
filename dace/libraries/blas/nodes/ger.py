@@ -17,6 +17,7 @@ import dace.sdfg.nodes
 
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from ordered_set import OrderedSet
 
 
@@ -152,13 +153,13 @@ class ExpandGerMKL(ExpandTransformation):
 
 
 @library.expansion
-class ExpandGerCuBLAS(ExpandTransformation):
+class ExpandGerGPUBLAS(ExpandTransformation):
     """cuBLAS ``cublas?ger(handle, m, n, &alpha, x, incx, y, incy, A, lda)``; works on the in-place ``_res`` after copy."""
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, '_A')).data.data]
         dtype = a_desc.dtype.base_type
@@ -171,18 +172,30 @@ class ExpandGerCuBLAS(ExpandTransformation):
         m, n = node.m, node.n
         alpha = node.alpha
         cfunc = func + 'ger' if dtype not in (dace.complex64, dace.complex128) else func + 'gerc'
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
         {dtype.ctype} __alpha = {dtype.ctype}({alpha});
         gpuMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
                         gpuMemcpyDeviceToDevice, __dace_current_stream);
-        cublas{cfunc}(__dace_cublas_handle, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
+        {cls.dialect.routine(cfunc)}({cls.dialect.handle}, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
                                        node.out_connectors,
                                        code,
                                        language=dace.dtypes.Language.CPP)
+
+
+@dace.library.expansion
+class ExpandGerCuBLAS(ExpandGerGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGerRocBLAS(ExpandGerGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @library.node
@@ -201,6 +214,7 @@ class Ger(LibraryNode):
         "OpenBLAS": ExpandGerOpenBLAS,
         "MKL": ExpandGerMKL,
         "cuBLAS": ExpandGerCuBLAS,
+        "rocBLAS": ExpandGerRocBLAS,
     }
     default_implementation = None
 

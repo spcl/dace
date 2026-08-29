@@ -10,6 +10,7 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.libraries.blas import gpu_dialect
 import numpy as np
 import warnings
 from ordered_set import OrderedSet
@@ -130,12 +131,12 @@ class ExpandGemvPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemvCuBLAS(ExpandTransformation):
+class ExpandGemvGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
@@ -166,7 +167,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                           'one dimension. Falling back to pure expansion.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
-        trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
+        trans = cls.dialect.op('N' if transA else 'T')
         if not node.transA:
             m, n = n, m
 
@@ -181,13 +182,13 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         scal_func = func + 'scal'
         func += 'gemv'
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants().{runtimetype}Pone()",
-            0.0: f"__state->cublas_handle.Constants().{runtimetype}Zero()",
+            1.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Pone()",
+            0.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -201,13 +202,13 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''dace::blas::CheckCublasError(
-            cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
+            call_prefix += f'''{cls.dialect.check_error}(
+            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
             call_suffix += '''
-dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
+{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
             '''
             alpha = f'({ctype} *)&alpha'
             beta = f'({ctype} *)&beta'
@@ -216,16 +217,16 @@ dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_P
             beta = constants[node.beta]
 
         call = f"""
-dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
+{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {m}, {n}, {alpha}, _A, {lda},
              _x, {strides_x[0]}, {beta}, _y, {strides_y[0]}));
                 """
         # Same empty-contraction hazard as the cblas path, scaled on the device: cuBLAS also
         # returns early for a zero dimension and leaves ``_y`` unwritten. ``scal`` applies the
         # ``beta`` the skipped call owed, under whichever pointer mode this branch set up.
-        y_len, contracted = (n, m) if trans == 'CUBLAS_OP_T' else (m, n)
+        y_len, contracted = (n, m) if trans == cls.dialect.op('T') else (m, n)
         if zero_extent_may_occur(contracted):
             scal = f"""
-dace::blas::CheckCublasError(cublas{scal_func}(__dace_cublas_handle, {y_len}, {beta}, _y, {strides_y[0]}));
+{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {y_len}, {beta}, _y, {strides_y[0]}));
                 """
             call = f"if (({contracted}) <= 0) {{{scal}}} else {{{call}}}"
         code = (call_prefix + call + call_suffix)
@@ -410,6 +411,18 @@ class ExpandGemvPBLAS(ExpandTransformation):
         return sdfg
 
 
+@dace.library.expansion
+class ExpandGemvCuBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGemvRocBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
@@ -419,6 +432,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
+        "rocBLAS": ExpandGemvRocBLAS,
         "PBLAS": ExpandGemvPBLAS
     }
     default_implementation = None
