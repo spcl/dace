@@ -12,6 +12,7 @@ None of this needs a GPU: the CMake flags, the header lists and the implementati
 decided in Python, and the one header question that is not (does the tile-op GPU header reach a
 CUDA-toolkit-only include under hipcc?) the C preprocessor answers on its own.
 """
+import contextlib
 import os
 import pathlib
 import re
@@ -42,6 +43,9 @@ GPU_ENVIRONMENTS = (
     'dace.libraries.sort.environments.cub.ReduceScratch',
     'dace.libraries.sort.environments.cub.DetectScratch',
 )
+
+#: The one shape symbol the lowering fixtures below share.
+SIZE_SYMBOL = dace.symbol('N_portability', dtype=dace.int64)
 
 TILE_OPS_GPU_HEADER = pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'tile_ops' / 'cuda.h'
 
@@ -273,3 +277,81 @@ def test_the_cuda_only_check_sees_real_text(node_name: str) -> None:
     the check above is matching nothing and would pass on any code at all."""
     found = sorted(set(CUDA_ONLY_SYMBOL.findall(generated_code(DEVICE_PRIMITIVE_NODES[node_name], 'cuda'))))
     assert found, f'{node_name} names no CUDA symbol even under CUDA, so the HIP assertion is vacuous'
+
+
+#: A bare ``cub::`` in generated code. ``gpucub::`` (the alias that follows the backend) and
+#: ``dace::cub::`` (DaCe's own scratch-pool namespace) are deliberately not matched: only the
+#: unqualified vendor namespace is, because under HIP nothing defines it.
+BARE_CUB_NAMESPACE = re.compile(r'(?<![\w:])cub::\w+')
+
+#: Everything ``dace.h`` can pull into a GPU translation unit.
+RUNTIME_INCLUDE_DIR = pathlib.Path(dace.__file__).parent / 'runtime' / 'include'
+
+
+def test_no_runtime_header_reaches_the_vendored_nvidia_cub() -> None:
+    """The vendored NVIDIA CUB under ``dace/external/cub`` is unbuildable by hipcc -- it needs
+    ``cuda.h`` and ``cudaError_t``. A header that reaches it, even through an ``__has_include``
+    fallback that only fires when the toolkit's CUB is absent, takes down every HIP build at once,
+    because ``dace.h`` includes the GPU headers for ``__HIPCC__`` too. The backend belongs to
+    ``gpucub.cuh`` and nowhere else."""
+    offenders = sorted(f'{path.relative_to(RUNTIME_INCLUDE_DIR)}:{n}' for path in RUNTIME_INCLUDE_DIR.rglob('*')
+                       if path.is_file() and path.suffix in ('.h', '.cuh', '.hpp')
+                       for n, line in enumerate(path.read_text().splitlines(), 1) if 'external/cub' in line)
+    assert not offenders, f'these headers reach the vendored NVIDIA CUB: {offenders}'
+
+
+def generated_gpu_code(program, backend: str, mutate=None, implementation: str = None) -> str:
+    """Code for ``program`` lowered to the GPU under ``backend``, without compiling it."""
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend))
+        if implementation is not None:
+            stack.enter_context(dace.config.set_temporary('compiler', 'cuda', 'implementation', value=implementation))
+        sdfg = program.to_sdfg(simplify=True)
+        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+        if mutate is not None:
+            mutate(sdfg)
+        return '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+
+
+@dace.program
+def wcr_map_exit(a: dace.float64[SIZE_SYMBOL], s: dace.float64[1]):
+    for i in dace.map[0:SIZE_SYMBOL]:
+        with dace.tasklet:
+            x << a[i]
+            o >> s(1, lambda p, q: p + q)[0]
+            o = x
+
+
+def test_the_map_exit_wcr_fold_is_backend_neutral() -> None:
+    """A map-exit WCR accumulator folds through a block reduction before its one atomic. That fold
+    is emitted by the CPU frame (it is the same code on both GPU backends), and it named the vendor
+    namespace directly, so it compiled only where NVIDIA's CUB happened to be reachable."""
+    code = generated_gpu_code(wcr_map_exit, 'hip')
+    assert 'gpucub::BlockReduce' in code, 'the block-reduce fold did not appear; the test lowers nothing'
+    assert not BARE_CUB_NAMESPACE.findall(code), BARE_CUB_NAMESPACE.findall(code)
+
+
+@dace.program
+def persistent_kernel(x: dace.float32[SIZE_SYMBOL], b: dace.float32[SIZE_SYMBOL]):
+    for ignore in dace.map[0:1]:  # the persistent grid; 0:1 rather than 0, which lowers to a no-op
+        for i in dace.map[0:SIZE_SYMBOL]:
+            with dace.tasklet:
+                a << x[i]
+                o >> b[i]
+                o = a * 2.0
+
+
+def make_outermost_map_persistent(sdfg) -> None:
+    for state in sdfg.states():
+        for scope in state.nodes():
+            if isinstance(scope, dace.sdfg.nodes.EntryNode) and state.entry_node(scope) is None:
+                scope.map.schedule = dtypes.ScheduleType.GPU_Persistent
+
+
+def test_the_grid_barrier_is_named_in_dace_s_own_namespace() -> None:
+    """A persistent kernel takes a grid barrier as an argument. The barrier is DaCe's own class --
+    it only borrows CUB's ``ThreadLoad`` -- but it was declared by reopening CUB's namespace, which
+    an alias cannot do, so it could never follow the backend. It lives in ``dace::`` now."""
+    code = generated_gpu_code(persistent_kernel, 'hip', make_outermost_map_persistent, implementation='legacy')
+    assert 'dace::GridBarrier' in code, 'no grid barrier was emitted; the test lowers nothing'
+    assert not BARE_CUB_NAMESPACE.findall(code), BARE_CUB_NAMESPACE.findall(code)

@@ -14,4 +14,12 @@ namespace gpucub = hipcub;
 namespace gpucub = cub;
 #endif
 
+// CUB's error-check macro is named after its backend, so the one spelling a caller writes has to be
+// selected here alongside the namespace.
+#if defined(__HIPCC__) || defined(WITH_HIP)
+#define DACE_GPUCUB_DEBUG(e) HipcubDebug(e)
+#else
+#define DACE_GPUCUB_DEBUG(e) CubDebug(e)
+#endif
+
 #endif  // __DACE_GPUCUB_CUH

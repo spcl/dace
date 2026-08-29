@@ -133,7 +133,7 @@ def _vectorized(prog, name=None, assume_even=False, fuse=False):
 
 
 def _device_code(sdfg) -> str:
-    return "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    return "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
 
 
 def _run_isolated(body: str) -> int:

@@ -112,7 +112,7 @@ def pick_gpu_block_size(gpu_map: nodes.Map) -> Optional[List[int]]:
 
 def is_block_reduce(node) -> bool:
     """True iff ``node`` is a ``Reduce`` library node whose reduction folds ACROSS the thread
-    block (``cub::BlockReduce``, sized by the block) rather than sequentially per thread. A
+    block (``gpucub::BlockReduce``, sized by the block) rather than sequentially per thread. A
     ``Sequential`` Reduce is a per-thread loop -- its block size does not deepen any tree."""
     from dace.libraries.standard.nodes.reduce import Reduce
     return isinstance(node, Reduce) and node.schedule != dtypes.ScheduleType.Sequential
@@ -120,7 +120,7 @@ def is_block_reduce(node) -> bool:
 
 def scope_contains_block_reduce(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff ``map_entry``'s scope (incl. nested SDFGs) holds a block-level ``Reduce`` (see
-    :func:`is_block_reduce`), which the CUDA-block expansion lowers to a ``cub::BlockReduce<T,
+    :func:`is_block_reduce`), which the CUDA-block expansion lowers to a ``gpucub::BlockReduce<T,
     N>`` whose ``N`` is this map's flattened block size (via :func:`devicelevel_block_size`) --
     so a bigger block deepens the block-reduce directly."""
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
@@ -137,7 +137,7 @@ def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff this device map's reduction is lowered as an in-block tree-reduce whose depth
     is this map's thread-block size -- either a WCR accumulator write out of the map exit (where the
     active CUDA codegen tree-reduces, it emits the inline warp/block reduce) or a ``Reduce``
-    library node in the map's scope (``cub::BlockReduce`` sized by the block, see
+    library node in the map's scope (``gpucub::BlockReduce`` sized by the block, see
     :func:`scope_contains_block_reduce`). Such a map benefits from a larger thread block (see
     :data:`TREE_REDUCTION_BLOCK_SIZE`); a plain elementwise / scatter map does not."""
     if cuda_emits_tree_reductions():

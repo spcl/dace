@@ -555,7 +555,7 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
 
     A prefix scan is NOT a reduction: every partial result stays visible, so ``Reduce`` cannot
     express it. The libnode already carries the implementations that matter -- the blocked OpenMP
-    header on CPU, ``cub::DeviceScan`` on GPU, a portable loop -- so the frontend's whole job is to
+    header on CPU, ``gpucub::DeviceScan`` on GPU, a portable loop -- so the frontend's whole job is to
     name the op and wire the memlets. Lowering the recurrence into an explicit loop here would hand
     every backend the shape only one of them wants.
 

@@ -31,7 +31,7 @@ def test_clang_tidy_excludes_unsafe_checks():
     * ``readability-non-const-parameter`` const-qualifies a written pointer parameter that is
       only forwarded to a nested-SDFG function, producing a const/non-const clash.
     * the whole ``modernize-*`` family: ``modernize-use-using`` emitted an empty type alias for
-      an unresolved ``cub::BlockReduce<...>``, and ``modernize-loop-convert`` turned a reduction
+      an unresolved ``gpucub::BlockReduce<...>``, and ``modernize-loop-convert`` turned a reduction
       index loop into a range-for that used the value where an index was expected.
     """
     assert '-readability-non-const-parameter' in CLANG_TIDY_CHECKS, (

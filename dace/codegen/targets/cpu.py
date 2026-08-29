@@ -241,7 +241,7 @@ def gpu_block_reduction_write_slot(subset, base, length):
 
 
 def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, block_dims, frame) -> list:
-    """Scalar/array map-exit WCR accumulators under ``scope_entry`` that fold via ``cub::BlockReduce``
+    """Scalar/array map-exit WCR accumulators under ``scope_entry`` that fold via ``gpucub::BlockReduce``
     + one atomic per block -- the GPU mirror of an OpenMP ``reduction(op:var)`` clause. Shared by both
     the legacy and the experimental CUDA code generators so the two emit one tree reduction.
 
@@ -262,7 +262,7 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         map_exit = state.exit_node(scope_entry)
     except (KeyError, StopIteration):
         return out
-    # cub::BlockReduce templates on the block dimensions, which must be compile-time constants.
+    # gpucub::BlockReduce templates on the block dimensions, which must be compile-time constants.
     if any(symbolic.issymbolic(b, sdfg.constants) for b in block_dims):
         return out
     # cub reduces over the whole block and must be told each dimension; the 1-D BlockReduce<T, N> form
@@ -337,7 +337,7 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
 
 
 def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
-    """For each of the ``m`` reduced elements, ``cub::BlockReduce`` over each thread's register partial,
+    """For each of the ``m`` reduced elements, ``gpucub::BlockReduce`` over each thread's register partial,
     then one ``reduce_atomic`` from thread 0 into that accumulator element; then un-cover it. Emit the
     returned C after the bounds guard closes so every thread reaches the barrier-using cub call; the
     ``__syncthreads`` between iterations lets the single shared ``TempStorage`` be reused. Caveman: fold
@@ -347,7 +347,8 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
     base_cpp = sym2cpp(red['base'])
     return ('{{\n'
-            'typedef cub::BlockReduce<{ctype}, {block_x}, cub::BLOCK_REDUCE_WARP_REDUCTIONS, {block_y}, {block_z}> '
+            'typedef gpucub::BlockReduce<{ctype}, {block_x}, gpucub::BLOCK_REDUCE_WARP_REDUCTIONS, '
+            '{block_y}, {block_z}> '
             '__brt_{id};\n'
             '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
             'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
@@ -579,7 +580,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # tree reduction. Maps ``data-name -> {'partial', 'credtype', 'ctype'}``: while a name is
         # present, ``write_and_resolve_expr`` redirects the per-thread atomic into a register
         # accumulate on the named partial (``partial = op(partial, value)``) instead, which the
-        # CUDA codegen then folds across the block with ``cub::BlockReduce`` (one atomic/block).
+        # CUDA codegen then folds across the block with ``gpucub::BlockReduce`` (one atomic/block).
         # The CUDA codegen adds/removes the entries around the thread-block body.
         self._gpu_block_reduction_covered = {}
 
@@ -1645,7 +1646,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         redtype = operations.detect_reduction_type(memlet.wcr)
         # Enclosing GPU thread-block map folds this target via a tree reduction: accumulate the
-        # value into this thread's private register partial (no atomic) and let ``cub::BlockReduce``
+        # value into this thread's private register partial (no atomic) and let ``gpucub::BlockReduce``
         # at the map exit drain it (one atomic per block). Emitting the per-thread atomic here would
         # both contend and, with the block fold, double-count. The partial is a register array whose
         # index is the accumulator offset relative to the reduced range base, so a single scalar

@@ -144,7 +144,7 @@ def test_gpu_half2_emits_tile_ops_in_device_tu():
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()  # default defers expansion; lower for codegen
-    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert "dace/tile_ops/cuda.h" in cu, "cuda.h not included in the device TU"
     assert "dace::tileops::tile_binop<dace::float16, 2" in cu
     assert "dace::tileops::tile_load<dace::float16, 2" in cu

@@ -371,7 +371,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
 
         if backend == 'cuda':
             # ``CUDA`` for the same reason the CPU branch below carries everything past the vendor
-            # BLAS: it is the key the CUB-backed nodes register under (``Scan``'s ``cub::DeviceScan``,
+            # BLAS: it is the key the CUB-backed nodes register under (``Scan``'s ``gpucub::DeviceScan``,
             # ``IntegerSort``'s ``DeviceRadixSort``, ``ArgReduce``'s ``DeviceReduce::ArgMax``,
             # ``FindFirst``, ``ScatterConflictCheck``, ``Symmetrize``'s parallel bounding box). Without
             # it every one of them fell through to the serial ``pure`` loop here while canonicalize

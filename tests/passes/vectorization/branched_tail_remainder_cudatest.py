@@ -222,7 +222,7 @@ def test_default_gpu_emits_widened_load_and_no_scalar_tail():
     sdfg = _prep(_stencil16_2d)
     VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
-    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert cu.count("__global__ void") == 1, "the default must emit exactly ONE kernel"
     assert "dace::tileops::tile_load<dace::float16, 2, false, 4" in cu, \
         "the mask-free arm must carry a WIDENED (Align >= 4) fp16 load"
@@ -334,7 +334,7 @@ def test_branched_tail_emits_single_kernel():
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
-    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert cu.count("__global__ void") == 1, "branched_tail must emit exactly ONE kernel for the tiled region"
     # The vectorized tile contract survives inside the single kernel.
     assert "dace::tileops::tile_binop<dace::float16, 8" in cu
@@ -357,7 +357,7 @@ def test_branched_tail_elementwise_bitexact(width):
         sdfg.name = f"bt_add16_w{width}"
         VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
         sdfg.expand_library_nodes()
-        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         csr = sdfg.compile()
@@ -388,7 +388,7 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
         sdfg.name = f"bt_neighbor16_w{width}"
         VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
         sdfg.expand_library_nodes()
-        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         csr = sdfg.compile()
@@ -423,7 +423,7 @@ def test_branched_tail_outer_param_bitexact(width):
         assert len(_top_maps(sdfg)) == 1, "the prefix-param pair must fuse to a single map"
         assert len(_conditionals(sdfg)) == 1, "the fused body must be one if(full-tile)/else(tail)"
         sdfg.expand_library_nodes()
-        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         csr = sdfg.compile()
@@ -458,7 +458,7 @@ def test_default_masked_tail_stencil_bitexact(width):
         assert len(_top_maps(sdfg)) == 1, "the default must fuse to a single map"
         assert len(_conditionals(sdfg)) == 1, "the fused body must be one if(full-tile)/else(masked)"
         sdfg.expand_library_nodes()
-        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
         assert "__rem_" not in cu, "no scalar remainder lane loop may be emitted"
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)

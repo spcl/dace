@@ -11,7 +11,9 @@ kernel whose body uses if-guards to fan out to each original inner kernel's rang
 import dace
 import pytest
 
-from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+import sympy
+
+from dace.transformation.passes.lower_nested_gpu_device_maps import (NestedGPUDeviceMapLowering, combine_bound)
 from dace.ordered import OrderedSet
 
 
@@ -168,6 +170,33 @@ def test_inner_kernel_with_internal_inout_node_lowers_clean():
                     for conn in list(n.in_connectors) + list(n.out_connectors):
                         assert isinstance(conn, str), conn
     sdfg.validate()
+
+
+def test_a_bound_carrying_an_overapproximation_survives_the_union() -> None:
+    """The union of the inner ranges runs ``Min``/``Max`` over the bounds, and a bound is not always
+    a plain expression: a non-trivial subset gives a ``SymExpr``, a ``(main, overapproximation)``
+    pair. sympy refuses to sympify one, which took down every GPU lowering that produced one --
+    ``np.argmax`` under ``auto_optimize(GPU)`` is the shortest program that does."""
+    lo = dace.symbolic.SymExpr('n', 'n + 1')
+    hi = dace.symbolic.SymExpr('2 * n', '2 * n + 3')
+
+    widest = combine_bound(sympy.Max, hi, lo)
+
+    assert isinstance(widest, dace.symbolic.SymExpr), 'the overapproximation was dropped'
+    # Each facet is combined with its own counterpart -- never the main against the approximation,
+    # which is what reading only ``.expr`` (or only ``.approx``) would amount to.
+    assert widest.expr == sympy.Max(hi.expr, lo.expr)
+    assert widest.approx == sympy.Max(hi.approx, lo.approx)
+    assert widest.approx != widest.expr, 'the two facets collapsed, so the pair carries nothing'
+
+
+def test_a_plain_bound_stays_plain() -> None:
+    """``SymExpr`` collapses when the two facets agree, so a bound that never carried an
+    overapproximation must not grow one -- every consumer downstream reads a bare expression."""
+    combined = combine_bound(sympy.Min, dace.symbolic.pystr_to_symbolic('n'), dace.symbolic.pystr_to_symbolic('n + 4'))
+
+    assert not isinstance(combined, dace.symbolic.SymExpr), combined
+    assert combined == dace.symbolic.pystr_to_symbolic('n')
 
 
 if __name__ == '__main__':

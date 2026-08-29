@@ -12,21 +12,17 @@
 #include "math.h"  // for ::min, ::max
 #include "vector.h"
 
-#ifdef __CUDACC__
-#if __has_include(<cub/cub.cuh>)
+#if defined(__CUDACC__) || defined(__HIPCC__)
+// Which CUB this is, and whether it is reachable at all, is answered once in gpucub.cuh. Asking for
+// <cub/cub.cuh> here instead selected the vendored NVIDIA copy on every HIP build, where the header
+// is not visible -- and that copy needs cuda.h.
+#include "cuda/gpucub.cuh"
+// The cub iterators are deprecated in favour of thrust's, and warn from CCCL 2.8 on (CUDA 12.8).
+// rocThrust ships the same two, so this is not a CUDA-only preference.
+#if __has_include(<thrust/iterator/counting_iterator.h>)
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
-
-#include <cub/cub.cuh>
-// The cub iterators are deprecated in favour of these, and warn from CCCL 2.8 on (CUDA 12.8).
-// Only the bundled cub predates thrust here, so that fallback keeps the cub spelling.
 #define DACE_THRUST_ITERATORS
-#else
-#include "../../../external/cub/cub/block/block_reduce.cuh"
-#include "../../../external/cub/cub/device/device_reduce.cuh"
-#include "../../../external/cub/cub/device/device_segmented_reduce.cuh"
-#include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
-#include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
 #endif
 
@@ -927,7 +923,9 @@ inline T logical_or(const U *in, long n, long s, T seed) {
 }  // namespace seq
 }  // namespace reduce
 
-#ifdef __CUDACC__
+// Not CUDA-only: ``Reduce``'s device expansion emits ``dace::stridedIterator`` for a strided
+// segmented reduce, and that expansion serves both backends.
+#if defined(__CUDACC__) || defined(__HIPCC__)
 struct StridedIteratorHelper {
   explicit StridedIteratorHelper(size_t stride) : stride(stride) {}
   size_t stride;

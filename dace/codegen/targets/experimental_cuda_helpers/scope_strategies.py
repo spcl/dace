@@ -179,7 +179,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
-            # Fold this block's map-exit WCR accumulators through cub::BlockReduce (one atomic per
+            # Fold this block's map-exit WCR accumulators through gpucub::BlockReduce (one atomic per
             # block, not per thread) -- the GPU mirror of an OpenMP reduction clause. Unconditional:
             # this target always tree-reduces, so ``compiler.emit_tree_reductions`` (legacy-only)
             # is not consulted. Partials are declared BEFORE the bounds guard so out-of-range
