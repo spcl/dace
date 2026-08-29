@@ -131,6 +131,126 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return nest, nest(elementwise)("lambda x: x / ({})".format(div_amount), sum)
 
 
+@oprepo.replaces('numpy.prod')
+def _prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return reduce(pv, sdfg, state, "lambda x, y: x * y", a, axis=axis, identity=1)
+
+
+def reduced_axes(shape, axis) -> list:
+    """The axes a reduction over ``axis`` consumes, ``axis=None`` meaning all of them."""
+    if axis is None:
+        return list(range(len(shape)))
+    return normalize_axes(axis if isinstance(axis, (tuple, list)) else [axis], len(shape))
+
+
+@oprepo.replaces('numpy.var')
+def _var(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, ddof: int = 0):
+    """``np.var``, as the TWO-PASS mean-then-deviation NumPy computes.
+
+    The one-pass ``E[x^2] - E[x]^2`` form is one reduction cheaper and loses every significant
+    digit once the mean dominates the spread, which is the regime a normalization kernel runs in.
+    """
+    from dace.frontend.python.replacements.array_manipulation import reshape  # Avoid import loop
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+    from dace.frontend.python.replacements.operators import _array_array_binop  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    shape = list(sdfg.arrays[a].shape)
+    axes = reduced_axes(shape, axis)
+
+    mean = nest(_mean)(a, axis=axis)
+    # Keep the reduced axes at extent 1 so the deviation broadcasts back over ANY axis, not just
+    # the trailing one a right-aligned binop would accept.
+    keepdims = [1 if i in axes else extent for i, extent in enumerate(shape)]
+    deviation = nest(_array_array_binop)(a, nest(reshape)(mean, keepdims), 'Sub', '-')
+    total = nest(_sum)(nest(elementwise)("lambda x: x * x", deviation), axis=axis)
+    count = functools.reduce(lambda x, y: x * y, (shape[i] for i in axes))
+    return nest, nest(elementwise)("lambda x: x / ({})".format(count - ddof), total)
+
+
+@oprepo.replaces('numpy.std')
+def _std(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, ddof: int = 0):
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    return nest, nest(elementwise)("lambda x: sqrt(x)", nest(_var)(a, axis=axis, ddof=ddof))
+
+
+@oprepo.replaces('numpy.ptp')
+def _ptp(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    from dace.frontend.python.replacements.operators import _array_array_binop  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    return nest, nest(_array_array_binop)(nest(_max)(a, axis=axis), nest(_min)(a, axis=axis), 'Sub', '-')
+
+
+@oprepo.replaces('numpy.average')
+def _average(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, weights=None):
+    if weights is not None:
+        raise NotImplementedError('numpy.average with weights is not supported; write the weighted sum out')
+    return _mean(pv, sdfg, state, a, axis=axis)
+
+
+@oprepo.replaces('numpy.count_nonzero')
+def _count_nonzero(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    from dace.frontend.python.replacements.array_manipulation import _ndarray_astype  # Avoid import loop
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    flags = nest(elementwise)("lambda x: 1 if x != 0 else 0", a)
+    # NumPy counts in an integer; the flags carry the operand's dtype, so the cast is the last step.
+    return nest, nest(_ndarray_astype)(nest(_sum)(flags, axis=axis), dtypes.int64)
+
+
+def nan_filled(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, fill: str) -> str:
+    """``a`` with every NaN replaced by ``fill``. ``x != x`` is the NaN test that needs no header."""
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
+    if not isinstance(sdfg.arrays[a].dtype,
+                      dtypes.typeclass) or sdfg.arrays[a].dtype not in (dtypes.float16, dtypes.float32, dtypes.float64):
+        raise NotImplementedError('the nan-aware reductions are supported for floating-point arrays')
+    return elementwise(pv, sdfg, state, "lambda x: x if x == x else ({})".format(fill), a)
+
+
+@oprepo.replaces('numpy.nansum')
+def _nansum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    nest = NestedCall(pv, sdfg, state)
+    return nest, nest(_sum)(nest(nan_filled)(a, '0'), axis=axis)
+
+
+@oprepo.replaces('numpy.nanprod')
+def _nanprod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    nest = NestedCall(pv, sdfg, state)
+    return nest, nest(_prod)(nest(nan_filled)(a, '1'), axis=axis)
+
+
+@oprepo.replaces('numpy.nanmax')
+def _nanmax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    nest = NestedCall(pv, sdfg, state)
+    fill = dtypes.min_value(sdfg.arrays[a].dtype)
+    return nest, nest(_max)(nest(nan_filled)(a, str(fill)), axis=axis)
+
+
+@oprepo.replaces('numpy.nanmin')
+def _nanmin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    nest = NestedCall(pv, sdfg, state)
+    fill = dtypes.max_value(sdfg.arrays[a].dtype)
+    return nest, nest(_min)(nest(nan_filled)(a, str(fill)), axis=axis)
+
+
+@oprepo.replaces('numpy.nanmean')
+def _nanmean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    """Sum of the non-NaN entries over the count of them -- NOT the plain mean of a filled array,
+    which would divide by the NaNs too."""
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+    from dace.frontend.python.replacements.operators import _array_array_binop  # Avoid import loop
+
+    nest = NestedCall(pv, sdfg, state)
+    total = nest(_sum)(nest(nan_filled)(a, '0'), axis=axis)
+    present = nest(_sum)(nest(elementwise)("lambda x: 1 if x == x else 0", a), axis=axis)
+    return nest, nest(_array_array_binop)(total, present, 'Div', '/')
+
+
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
 def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, initial=None):
@@ -492,6 +612,7 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
 
 @oprepo.replaces('dace.cumsum')
 @oprepo.replaces('numpy.cumsum')
+@oprepo.replaces('numpy.cumulative_sum')
 def _cumsum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, dtype=None, out=None):
     from dace.libraries.standard.nodes.scan import ScanOp  # Avoid import loop
     if out is not None:
@@ -501,6 +622,7 @@ def _cumsum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None,
 
 @oprepo.replaces('dace.cumprod')
 @oprepo.replaces('numpy.cumprod')
+@oprepo.replaces('numpy.cumulative_prod')
 def _cumprod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, dtype=None, out=None):
     from dace.libraries.standard.nodes.scan import ScanOp  # Avoid import loop
     if out is not None:
