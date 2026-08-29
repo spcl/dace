@@ -284,12 +284,14 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     #
     # The readable generator runs the same lowering itself, further down and deliberately later: its
     # scalar normalization has to precede the lift so the copy sees the final descriptor. So this
-    # site covers the CLASSIC generator, where the lift is OPT-IN (``explicit_copy`` defaults off):
-    # the classic path emits implicit copy edges correctly on its own, and keeping its output
-    # byte-identical to upstream is what makes it usable as the A/B reference for the new one.
+    # site covers the CLASSIC generator, where ``explicit_copy`` still governs it -- the knob is on
+    # by default here, and turning it off gives back the byte-identical-to-upstream output that
+    # makes the classic path usable as an A/B reference.
+    copies_lifted = False
     if (config.Config.get_bool('compiler', 'cpu', 'explicit_copy')
             and config.Config.get('compiler', 'cpu', 'implementation') != 'experimental_readable'):
         lower_implicit_copies(sdfg)
+        copies_lifted = True
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
@@ -363,11 +365,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
 
-    elif (not config.Config.get_bool('compiler', 'cpu', 'explicit_copy')
-          and config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and sdfg_uses_gpu(sdfg)):
-        # The experimental CUDA generator requires the lowering the way the readable CPU one does,
-        # whichever CPU generator it is paired with, so it runs even where the knob turned the
-        # classic path's lift off above.
+    elif (config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and not copies_lifted
+          and sdfg_uses_gpu(sdfg)):
+        # The experimental CUDA generator REQUIRES the lowering, the way the readable CPU one does,
+        # whichever CPU generator it is paired with -- so it is unconditional here rather than left
+        # to the knob, and runs only when the site above has not already lifted.
         lower_implicit_copies(sdfg)
 
     # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in

@@ -33,9 +33,14 @@ def test_readable_always_lowers():
         assert 'memcpy' in code, 'the contiguous copy should lower to memcpy'
 
 
-def test_legacy_honours_the_flag_and_defaults_off():
-    """ The knob governs only the classic generator: ``on`` opts into the lowering, ``off`` -- the
-    schema default -- keeps the implicit ``dace::CopyND`` emission byte-identical to upstream. """
+def test_legacy_honours_the_flag_and_defaults_on():
+    """ The knob governs only the classic generator, and it is ON by default.
+
+    Turning it off is what recovers the implicit ``dace::CopyND`` emission, byte-identical to
+    upstream, which is what makes the classic path an A/B reference for the new generators. On is
+    the default because off has no lowering at all for a dtype-converting copy: it reaches the
+    compiler as a CopyND template instantiated on one element type holding a pointer of the other.
+    """
     on = generate('legacy', True)
     assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind on legacy'
     assert 'memcpy' in on, 'the contiguous copy should lower to memcpy on legacy too'
@@ -44,7 +49,7 @@ def test_legacy_honours_the_flag_and_defaults_off():
     with set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
         sdfg = mixed_copies.to_sdfg(simplify=False)
         default = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
-    assert default == off, 'the schema default must be off'
+    assert default == on, 'the schema default must be on'
 
 
 @pytest.mark.parametrize('implementation', ['experimental_readable', 'legacy'])
@@ -111,7 +116,7 @@ def test_self_copy_direction_matches_legacy():
 
 if __name__ == '__main__':
     test_readable_always_lowers()
-    test_legacy_honours_the_flag_and_defaults_off()
+    test_legacy_honours_the_flag_and_defaults_on()
     for implementation in ('experimental_readable', 'legacy'):
         test_both_settings_compile_and_run(implementation, True)
         test_both_settings_compile_and_run(implementation, False)

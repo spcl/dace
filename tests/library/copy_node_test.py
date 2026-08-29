@@ -783,16 +783,28 @@ def test_copy_cross_storage_validation_rejects_without_flag():
         sdfg.expand_library_nodes()
 
 
-def test_copy_dtype_mismatch_rejected():
-    """CopyLibraryNode must reject mismatched dtypes."""
+def test_copy_across_dtypes_casts_rather_than_memcpying():
+    """A copy that changes dtype is carried as a CAST, not refused and not memcpy'd.
+
+    No memcpy variant can convert, so the selector has to route this to a tasklet form and the
+    tasklet has to spell the conversion. Refusing it instead left the classic CPU generator
+    emitting a CopyND template instantiated on one element type and handed a pointer of the other,
+    which does not compile (npbench adi).
+    """
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
         name="dtype_mismatch",
-        libnode_name="cp_bad",
+        libnode_name="cp_cast",
     )
-    with pytest.raises(ValueError, match="data types must match"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    casts = [
+        n.code.as_string for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+        if isinstance(n, dace.sdfg.nodes.Tasklet)
+    ]
+    assert casts, 'the converting copy left no tasklet to carry the cast'
+    assert any('dace.float64(' in c for c in casts), casts
 
 
 def test_cpu_memcpy_rejects_non_contiguous_subset():

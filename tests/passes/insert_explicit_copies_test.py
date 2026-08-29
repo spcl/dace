@@ -951,10 +951,13 @@ def test_polybench_covariance():
     _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
 
 
-def test_iec_skips_dtype_converting_copy():
-    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
-    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
-    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+def test_iec_lifts_a_dtype_converting_copy():
+    """A direct copy between different dtypes is a cast, and it is lifted like any other copy.
+
+    It used to be skipped, on the grounds that a memcpy cannot convert -- but nothing downstream
+    picked it up: the classic generator lowered the surviving edge to a CopyND template
+    instantiated on one element type and handed it a pointer of the other, which does not compile.
+    The copy node carries the cast now, so the pass hands it over instead of leaving it behind."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("iec_dtype_convert")
     sdfg.add_array("A", [64], dace.float32, cpu)
@@ -966,8 +969,8 @@ def test_iec_skips_dtype_converting_copy():
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
-    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
+    assert _count_copy_nodes(sdfg) == 1, "the dtype-converting copy must reach a CopyLibraryNode"
+    assert _count_direct_copy_edges(sdfg) == 0, "the dtype-converting edge must not be left behind"
 
 
 def test_iec_skips_reference_set_edge():

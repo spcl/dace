@@ -462,7 +462,7 @@ required:
 
                     explicit_copy:
                         type: bool
-                        default: false
+                        default: true
                         title: Lower implicit copies to explicit copy nodes
                         description: >
                             If set to true, codegen lifts every implicit copy edge to a
@@ -470,13 +470,15 @@ required:
                             performs, so an empty memlet ordering that write has nothing to point
                             at; giving the copy a node is what makes it orderable.
 
-                            Applies to the CLASSIC CPU generator only, and defaults OFF there: it
-                            emits implicit copy edges correctly without the lift, and holding its
-                            output byte-identical to upstream is what makes it the A/B reference
-                            for the new generators. The experimental readable CPU generator and
-                            the experimental CUDA generator REQUIRE the lowering -- every copy has
-                            to be a node an ordering edge can point at -- and run it regardless of
-                            this key.
+                            Applies to the CLASSIC CPU generator only, and defaults ON there.
+                            Turning it off gives back output byte-identical to upstream, which is
+                            what makes the classic path an A/B reference for the new generators;
+                            the cost of off is that a dtype-converting copy has no lowering at all
+                            on that path and reaches the compiler as a CopyND template call whose
+                            source and destination types disagree. The experimental readable CPU
+                            generator and the experimental CUDA generator REQUIRE the lowering --
+                            every copy has to be a node an ordering edge can point at -- and run
+                            it regardless of this key.
 
                     parallel_min_work_per_region:
                         type: int
