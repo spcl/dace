@@ -38,12 +38,23 @@ DACE_EXPORTED int is_library_loaded(const char *filename) {
   void *hLibrary = nullptr;
 
 #ifdef _WIN32
+  // GetModuleHandleW does not increment the module's reference count, so there is nothing to give
+  // back here.
   hLibrary = (void *)GetModuleHandleW((const wchar_t *)filename);
+  if (hLibrary) return 1;
 #else
   hLibrary = dlopen(filename, RTLD_LOCAL | RTLD_NOW | RTLD_NOLOAD);
+  if (hLibrary) {
+    // RTLD_NOLOAD still takes a reference on a library that IS loaded, and this function only
+    // answers a question. Leaking it here pins the library for the lifetime of the process: a
+    // later dlopen of the same path then hands back the object already mapped instead of the file
+    // just rebuilt, so a program silently runs the code of whichever same-named program was
+    // compiled before it.
+    dlclose(hLibrary);
+    return 1;
+  }
 #endif
 
-  if (hLibrary) return 1;
   return 0;
 }
 

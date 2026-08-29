@@ -36,6 +36,21 @@ def combine_bound(op, lhs, rhs):
     return symbolic.SymExpr(op(lhs_main, rhs_main).simplify(), op(lhs_approx, rhs_approx).simplify())
 
 
+def bounds_outside_launch_scope(hoisted_range, kernel_params):
+    """The symbols in ``hoisted_range`` that the kernel launch cannot see.
+
+    A hoisted bound becomes part of the outer map's range, and that range is evaluated on the HOST
+    to size the grid. A parameter of the kernel itself is bound per block, so naming one here emits
+    a launch expression referencing an identifier that does not exist there -- a C++ error pointing
+    at generated code, several steps from the pass that wrote it.
+    """
+    named = OrderedSet()
+    for bound in hoisted_range[0][:2]:
+        for facet in bound_facets(bound):
+            named |= OrderedSet(str(sym) for sym in symbolic.pystr_to_symbolic(facet).free_symbols)
+    return OrderedSet(sym for sym in named if sym in kernel_params)
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NestedGPUDeviceMapLowering(ppl.Pass):
@@ -270,7 +285,15 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
                 # Append the new dimensions
                 new_range_list = list(gpu_dev_map.map.range)
+                kernel_params = OrderedSet(gpu_dev_map.map.params)
                 for k, v in new_ranges_to_add.items():
+                    unavailable = bounds_outside_launch_scope(v, kernel_params)
+                    if unavailable:
+                        raise NotImplementedError(
+                            f"Cannot flatten the GPU map nesting under '{gpu_dev_map.map.label}': the union of "
+                            f"the inner ranges for '{k}' is {v}, which names {list(unavailable)} -- a parameter "
+                            "of the kernel itself, so the grid cannot be sized from it on the host. The inner "
+                            "map's range has to be expressible in symbols defined outside the kernel.")
                     gpu_dev_map.map.params.append(k)
                     assert len(v) == 1
                     (b, e, s) = v[0]

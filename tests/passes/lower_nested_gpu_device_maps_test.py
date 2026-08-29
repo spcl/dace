@@ -13,7 +13,8 @@ import pytest
 
 import sympy
 
-from dace.transformation.passes.lower_nested_gpu_device_maps import (NestedGPUDeviceMapLowering, combine_bound)
+from dace.transformation.passes.lower_nested_gpu_device_maps import (NestedGPUDeviceMapLowering,
+                                                                     bounds_outside_launch_scope, combine_bound)
 from dace.ordered import OrderedSet
 
 
@@ -197,6 +198,57 @@ def test_a_plain_bound_stays_plain() -> None:
 
     assert not isinstance(combined, dace.symbolic.SymExpr), combined
     assert combined == dace.symbolic.pystr_to_symbolic('n')
+
+
+def _build_inner_range_that_names_the_outer_param() -> dace.SDFG:
+    """An inner ``GPU_Device`` map whose range is written in terms of the OUTER map's parameter --
+    the shape a tiled map has, where the body walks ``tile : tile + tile_size``."""
+    K = dace.symbol('K', dtype=dace.int32)
+
+    sdfg = dace.SDFG('inner_range_names_outer_param')
+    sdfg.add_array('A', [K + 8], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('kernel', dict(__k='0:K'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    inner = dace.SDFG('nested')
+    inner.add_symbol('__k', dace.int32)
+    inner.add_array('a_out', [K + 8], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('nested_root', is_start_block=True)
+    me, mx = inner_state.add_map('tile_body', dict(__j='__k:__k + 4'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tasklet = inner_state.add_tasklet('write', {}, {'_a': dace.float64}, '_a = 1.0')
+    inner_state.add_memlet_path(me, tasklet, memlet=dace.Memlet())
+    inner_state.add_memlet_path(tasklet,
+                                mx,
+                                inner_state.add_write('a_out'),
+                                src_conn='_a',
+                                memlet=dace.Memlet('a_out[__j]'))
+
+    nsdfg = state.add_nested_sdfg(inner, {}, OrderedSet(('a_out', )), symbol_mapping={'__k': '__k'})
+    state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
+    state.add_memlet_path(nsdfg, outer_mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[0:K + 8]'))
+    return sdfg
+
+
+def test_a_hoisted_bound_may_not_name_a_kernel_parameter() -> None:
+    """Flattening moves the inner range into the outer map, and THAT range sizes the grid on the
+    host. A bound naming the kernel's own parameter is bound per block, so the launch would
+    reference an identifier that does not exist there -- a C++ error in generated code, several
+    steps from the pass that wrote it. Refuse where the cause is."""
+    sdfg = _build_inner_range_that_names_the_outer_param()
+
+    with pytest.raises(NotImplementedError, match="__k"):
+        NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+
+def test_the_launch_scope_check_passes_a_bound_it_should() -> None:
+    """Negative control: a bound in symbols defined outside the kernel is not flagged, or the check
+    above would refuse every nesting the pass exists to flatten."""
+    assert not bounds_outside_launch_scope(dace.subsets.Range([(0, dace.symbolic.pystr_to_symbolic('J'), 1)]),
+                                           OrderedSet(['__k']))
+    assert bounds_outside_launch_scope(
+        dace.subsets.Range([(dace.symbolic.pystr_to_symbolic('__k'), dace.symbolic.pystr_to_symbolic('__k + 4'), 1)]),
+        OrderedSet(['__k'])) == OrderedSet(['__k'])
 
 
 if __name__ == '__main__':
