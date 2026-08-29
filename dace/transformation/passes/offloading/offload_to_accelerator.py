@@ -1787,6 +1787,41 @@ class OffloadToAccelerator(ppl.Pass):
 
         return components
 
+    def scope_closed_partition(self, state: SDFGState, region: OrderedSet, boundary: OrderedSet):
+        """``region`` grown until every map scope it touches lies wholly inside it, or None.
+
+        A size-1 map around HALF a scope puts a map entry inside the new map and its own exit
+        outside it, which is not a scope at all: ``entry_node`` then answers for the wrapping map,
+        and validation reports the pair as Map objects that were copied separately. The partition
+        arrives that way because the components are cut by dataflow, which a map scope spans.
+
+        None when closing would have to swallow one of the nodes the partitioning deliberately kept
+        out -- a GPU map or a device-wide library call. Those are the boundaries the partition
+        exists to respect, so the answer there is to leave this group alone rather than to wrap a
+        region that reaches across one.
+        """
+        closed: OrderedSet = OrderedSet(region)
+        scope_children = state.scope_children()
+        queue = list(region)
+        while queue:
+            node = queue.pop()
+            if isinstance(node, nodes.MapEntry):
+                entry = node
+            elif isinstance(node, nodes.MapExit):
+                entry = state.entry_node(node)
+            else:
+                continue
+            if entry is None:
+                continue
+            for extra in [entry, state.exit_node(entry), *scope_children[entry]]:
+                if extra is None or extra in closed:
+                    continue
+                if extra in boundary:
+                    return None
+                closed.add(extra)
+                queue.append(extra)
+        return closed
+
     def _remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: set):
         outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
         nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
@@ -1943,6 +1978,12 @@ class OffloadToAccelerator(ppl.Pass):
             # reduce partition to nodes which need to go into wrap
             self._remove_all_outer_access_nodes_from_group(state, partition)
             ctr += 1
+
+            # A partition is a dataflow component, and a map scope spans one: covariance hands this
+            # a lone MapEntry whose body and exit went to another component.
+            partition = self.scope_closed_partition(state, partition, partition_nodes)
+            if partition is None:
+                continue
 
             # if anything is left, wrap it
             if partition:
