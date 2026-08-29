@@ -588,6 +588,34 @@ def test_apply_gpu_storage_leaves_every_scalar_on_the_host():
     assert sdfg.arrays['A'].storage is dace.StorageType.GPU_Global
 
 
+def test_the_sequential_arm_of_a_guarded_loop_keeps_its_host_copies():
+    """The exception to the rule above: a fallback arm is host code that OWNS its copies.
+
+    Canonicalization emits a loop it can only parallelize under a runtime condition as both arms of
+    one ConditionalBlock. The sequential arm's tasklets are free tasklets over device-resident
+    arrays too, so the lift above would take them -- and delete the copies that are the entire point
+    of the arm. What separates the two is the loop: a fallback is a LoopRegion inside a conditional,
+    while nbody's is an ordinary loop with no conditional above it.
+    """
+    from dace.transformation.passes.offloading.offload_to_accelerator import in_sequential_specialization_arm
+
+    sdfg = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
+    conditionals = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
+    assert conditionals, 'the kernel lost its guard, so this test would pass without checking one'
+
+    arms = {state.label: in_sequential_specialization_arm(state) for state in sdfg.all_states()}
+    sequential = [label for label, inside in arms.items() if inside]
+    assert sequential, 'no state was recognised as the sequential arm'
+    for label in sequential:
+        state = next(s for s in sdfg.all_states() if s.label == label)
+        loops = []
+        current = state.parent_graph
+        while current is not None:
+            loops.append(isinstance(current, LoopRegion))
+            current = getattr(current, 'parent_graph', None)
+        assert any(loops), f'{label} was called a fallback arm without a loop above it'
+
+
 def test_apply_gpu_storage_leaves_an_array_an_interstate_edge_reads_on_the_host():
     """The scalar rule again, for the case the scalar check cannot see.
 

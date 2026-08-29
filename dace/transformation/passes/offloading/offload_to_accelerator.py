@@ -154,6 +154,30 @@ class OffloadingIRNode:
         raise ValueError(f"Invalid IR type to convert to string: {type}")
 
 
+def in_sequential_specialization_arm(block) -> bool:
+    """Whether ``block`` is inside the sequential arm of a guarded specialization.
+
+    Canonicalization emits a loop it can only parallelize under a runtime condition as both arms of
+    one ConditionalBlock -- a Map for the parallel case, the original LoopRegion for the fallback.
+    That fallback IS host code, and it owns the copies that bring its inputs down; lifting its
+    tasklets into size-1 kernels would delete the copies and defeat the arm. The parallel arm has no
+    such loop, so a hybrid there is resolved the usual way.
+
+    A sequential loop that is not a specialization arm (npbench nbody's ``for_48``) is ordinary host
+    code around device work and is NOT this: the LoopRegion has to be reached before a
+    ConditionalBlock for the block to be a fallback.
+    """
+    seen_loop = False
+    current = getattr(block, 'parent_graph', None)
+    while current is not None:
+        if isinstance(current, LoopRegion):
+            seen_loop = True
+        elif isinstance(current, ConditionalBlock):
+            return seen_loop
+        current = getattr(current, 'parent_graph', None)
+    return False
+
+
 @properties.make_properties
 @explicit_cf_compatible
 class OffloadToAccelerator(ppl.Pass):
@@ -937,6 +961,9 @@ class OffloadToAccelerator(ppl.Pass):
 
         # The analysis phase never mutates, so the scope map cached for this round is the current one.
         top_level_nodes = self.cached_scope_children[state][None]
+        #: What a bare host tasklet touches, which is the one host use a size-1 map can lift.
+        free_tasklet_data: OrderedSet[str] = OrderedSet()
+
         for node in top_level_nodes:
 
             g, c = OrderedSet(), OrderedSet()
@@ -968,6 +995,7 @@ class OffloadToAccelerator(ppl.Pass):
             # all else is definitely on CPU
             elif isinstance(node, nodes.Tasklet):  # outside a map scope (else handled by locations_of_map) -> cpu
                 c = self.get_arrays_used_by_node(sdfg, state, node)
+                free_tasklet_data |= c
 
             elif isinstance(node, nodes.AccessNode):
                 pass  # nothing to do; cannot be classified without context
@@ -985,8 +1013,18 @@ class OffloadToAccelerator(ppl.Pass):
             cpu_set |= gpu_set & pinned
             gpu_set -= pinned
 
-        # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU
-        overlap = gpu_set & cpu_set
+        # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU.
+        # A free tasklet over an already device-resident array is the same hybrid wearing a shape
+        # the overlap cannot see: it is host code reading device memory, and nothing else in the
+        # state marks that array as a device use, so the state goes unreconciled and the graph is
+        # invalid (npbench nbody writes PE from one such tasklet and never reads it on the device).
+        # The sequential arm of a guarded specialization is the exception -- see
+        # :func:`in_sequential_specialization_arm`.
+        resident: OrderedSet[str] = OrderedSet()
+        if not in_sequential_specialization_arm(state):
+            resident = OrderedSet(name for name in free_tasklet_data
+                                  if name in sdfg.arrays and sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global)
+        overlap = (gpu_set & cpu_set) | (resident - pinned)
         if overlap:
             self.hybrid_states.add(state)
             self.hybrid_overlap[state] = OrderedSet(overlap)
