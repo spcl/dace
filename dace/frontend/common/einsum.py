@@ -506,7 +506,7 @@ def _create_einsum_internal(sdfg: SDFG,
             for s in symbolic.symlist(coeff).values():
                 if str(s) not in sym_mapping:
                     sym_mapping[str(s)] = s
-        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, sym_mapping)
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X': None, 'Y': None}, {'Z': None}, sym_mapping)
 
         # InlineSDFG composes inner and outer memlets by coordinate-wise offsetting. That is
         # only valid when the nested SDFG's array shape matches the outer array shape. If the
