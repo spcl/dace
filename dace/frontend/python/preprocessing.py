@@ -444,6 +444,17 @@ def own_buffer(value: Any) -> Any:
     return value
 
 
+def aliases_live_object(qualname: str) -> bool:
+    """True if the qualname is a name/attribute/subscript chain, so it names something the caller holds."""
+    try:
+        node = ast.parse(qualname, mode='eval').body
+    except SyntaxError:
+        return False
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
@@ -554,16 +565,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 arrname = self.closure.array_mapping[id(value)]
             else:
                 arrname = self._qualname_to_array_name(qualname)
-                desc = data.create_datadescriptor(value)
-                if keep_object:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
+                if keep_object or aliases_live_object(qualname):
+                    # Names something the caller holds: hand back THAT object. A copy would drop the
+                    # kernel's writes, and a fresh one per call defeats the ``array_mapping`` dedup.
+                    desc = data.create_datadescriptor(value)
+                    evaluator = (lambda: value) if keep_object else (lambda: eval(qualname, self.globals))
                 else:
-                    # A value hoisted out of an EXPRESSION (``np.arange(...)[None, :]``) evaluates to
-                    # a numpy VIEW, which the calling convention refuses. The hoist re-evaluates the
-                    # source text anyway, so nothing observes the copy. ``keep_object`` is left alone
-                    # -- that path exists to hand back the identical object.
-                    self.closure.closure_arrays[arrname] = (qualname, desc,
-                                                            lambda: own_buffer(eval(qualname, self.globals)), False)
+                    # Hoisted out of an EXPRESSION (``np.arange(...)[None, :]``), so it is a temporary
+                    # nobody else holds -- and it can be a numpy VIEW, which the calling convention
+                    # refuses. Materialize it ONCE; re-evaluating would mint a new object per call.
+                    value = own_buffer(value)
+                    desc = data.create_datadescriptor(value)
+                    evaluator = lambda: value
+                self.closure.closure_arrays[arrname] = (qualname, desc, evaluator, False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
