@@ -1,0 +1,2106 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "floor_num",
+    "arg_names": [],
+    "constants_prop": {},
+    "_arrays": {
+      "x": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": null,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": false,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": null,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": false,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z_trunc_int": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": false,
+          "pool": false,
+          "dtype": "int32",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": true,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z_trunc": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": false,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": true,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z_diff": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": false,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": true,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z_sign": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": false,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": true,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      },
+      "z_neg": {
+        "type": "Array",
+        "attributes": {
+          "allow_conflicts": false,
+          "strides": [
+            "256",
+            "1"
+          ],
+          "total_size": "65536",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "may_alias": false,
+          "alignment": 0,
+          "start_offset": 0,
+          "optional": false,
+          "pool": false,
+          "dtype": "float64",
+          "shape": [
+            "256",
+            "256"
+          ],
+          "transient": true,
+          "storage": "CPU_Heap",
+          "lifetime": "Global",
+          "location": {},
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {},
+    "instrument": "No_Instrumentation",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "orig_sdfg": null,
+    "transformation_hist": [],
+    "logical_groups": [],
+    "openmp_sections": false,
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 0,
+      "end_line": 0,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": null
+    },
+    "_pgrids": {},
+    "_subarrays": {},
+    "_rdistrarrays": {},
+    "callback_mapping": {},
+    "is_collapsed": false,
+    "hash": "09d1126a6d65b4730732f0541dcb8a6a87b4774a1612ba776bdfedd6cec10b8a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "state_0",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          6,
+          7
+        ],
+        "7": [
+          8,
+          9
+        ],
+        "9": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "x",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 196,
+              "end_line": 196,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "x",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "z_trunc_int",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 211,
+              "end_line": 211,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z_trunc_int",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 1,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "AccessNode",
+          "label": "z_trunc",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 211,
+              "end_line": 211,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z_trunc",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 2,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "AccessNode",
+          "label": "z_diff",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 211,
+              "end_line": 211,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z_diff",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 3,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "AccessNode",
+          "label": "z_sign",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 211,
+              "end_line": 211,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z_sign",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 4,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "AccessNode",
+          "label": "z_neg",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 211,
+              "end_line": 211,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z_neg",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 5,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "AccessNode",
+          "label": "z",
+          "attributes": {
+            "setzero": false,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 209,
+              "end_line": 209,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "data": "z",
+            "instrument": "No_Instrumentation",
+            "instrument_condition": {
+              "string_data": "1",
+              "language": "CPP"
+            },
+            "in_connectors": {},
+            "out_connectors": {}
+          },
+          "id": 6,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "MapEntry",
+          "label": "map_0_z_trunc_int[i0=0:256]",
+          "attributes": {
+            "label": "map_0_z_trunc_int",
+            "params": [
+              "i0"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "255",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "schedule": "CPU_Multicore",
+            "unroll": false,
+            "collapse": 1,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 169,
+              "end_line": 169,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "is_collapsed": false,
+            "instrument": "No_Instrumentation",
+            "omp_num_threads": 0,
+            "omp_schedule": "Default",
+            "omp_chunk_size": 0,
+            "in_connectors": {
+              "IN_1": {
+                "type": "pointer",
+                "dtype": "float64"
+              },
+              "IN_x": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            },
+            "out_connectors": {
+              "OUT_1": {
+                "type": "pointer",
+                "dtype": "float64"
+              },
+              "OUT_x": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            }
+          },
+          "id": 7,
+          "scope_entry": null,
+          "scope_exit": "8"
+        },
+        {
+          "type": "MapExit",
+          "label": "map_0_z_trunc_int[i0=0:256]",
+          "attributes": {
+            "in_connectors": {
+              "IN_z": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            },
+            "out_connectors": {
+              "OUT_z": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            }
+          },
+          "id": 8,
+          "scope_entry": "7",
+          "scope_exit": "8"
+        },
+        {
+          "type": "MapEntry",
+          "label": "map_1_z_trunc_int[i1=0:256]",
+          "attributes": {
+            "label": "map_1_z_trunc_int",
+            "params": [
+              "i1"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "255",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "schedule": "Sequential",
+            "unroll": false,
+            "collapse": 1,
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 169,
+              "end_line": 169,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "is_collapsed": false,
+            "instrument": "No_Instrumentation",
+            "in_connectors": {
+              "IN_1": {
+                "type": "pointer",
+                "dtype": "float64"
+              },
+              "IN_x": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            },
+            "out_connectors": {
+              "OUT_1": "float64",
+              "OUT_x": "float64"
+            }
+          },
+          "id": 9,
+          "scope_entry": "7",
+          "scope_exit": "10"
+        },
+        {
+          "type": "MapExit",
+          "label": "map_1_z_trunc_int[i1=0:256]",
+          "attributes": {
+            "in_connectors": {
+              "IN_z": "float64"
+            },
+            "out_connectors": {
+              "OUT_z": {
+                "type": "pointer",
+                "dtype": "float64"
+              }
+            }
+          },
+          "id": 10,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "i32_from_f64",
+          "attributes": {
+            "code": {
+              "string_data": "out = int(in_1)",
+              "language": "Python"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "i32_from_f64",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_1": "float64"
+            },
+            "out_connectors": {
+              "out": "int32"
+            }
+          },
+          "id": 11,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "f64_from_i32",
+          "attributes": {
+            "code": {
+              "string_data": "out = double(in_1)",
+              "language": "Python"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "f64_from_i32",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_1": "int32"
+            },
+            "out_connectors": {
+              "out": "float64"
+            }
+          },
+          "id": 12,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "sub",
+          "attributes": {
+            "code": {
+              "string_data": "out = (in_1 - in_2)",
+              "language": "Python"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "sub",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_1": "float64",
+              "in_2": "float64"
+            },
+            "out_connectors": {
+              "out": "float64"
+            }
+          },
+          "id": 13,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "sgnj",
+          "attributes": {
+            "code": {
+              "string_data": "out = (in_2 >= 0 ? fabs(1.0) : -fabs(1.0));",
+              "language": "CPP"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "sgnj",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_2": "float64"
+            },
+            "out_connectors": {
+              "out": "float64"
+            }
+          },
+          "id": 14,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "min",
+          "attributes": {
+            "code": {
+              "string_data": "out = fmin(0.0, in_2);",
+              "language": "CPP"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "min",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_2": "float64"
+            },
+            "out_connectors": {
+              "out": "float64"
+            }
+          },
+          "id": 15,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        },
+        {
+          "type": "Tasklet",
+          "label": "add",
+          "attributes": {
+            "code": {
+              "string_data": "out = (in_1 + in_2)",
+              "language": "Python"
+            },
+            "state_fields": [],
+            "code_global": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_init": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "code_exit": {
+              "string_data": "",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 273,
+              "end_line": 273,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/mnt/c/Users/Severin/zz_BA_Thesis/codegen/microkernels/mk_to_sdfg_opt.py"
+            },
+            "instrument": "No_Instrumentation",
+            "side_effects": null,
+            "ignored_symbols": [],
+            "label": "add",
+            "location": {},
+            "environments": [],
+            "in_connectors": {
+              "in_1": "float64",
+              "in_2": "float64"
+            },
+            "out_connectors": {
+              "out": "float64"
+            }
+          },
+          "id": 16,
+          "scope_entry": "9",
+          "scope_exit": "10"
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "65536",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "65536"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "7",
+          "dst_connector": "IN_1",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "65536",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "65536"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "7",
+          "dst_connector": "IN_x",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_trunc_int",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "12",
+          "dst_connector": "in_1",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_trunc",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "16",
+          "dst_connector": "in_1",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_trunc",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "13",
+          "dst_connector": "in_2",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_diff",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "3",
+          "dst": "14",
+          "dst_connector": "in_2",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_sign",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "4",
+          "dst": "15",
+          "dst_connector": "in_2",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_neg",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "5",
+          "dst": "16",
+          "dst_connector": "in_2",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "256",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "256"
+              }
+            }
+          },
+          "src": "7",
+          "dst": "9",
+          "dst_connector": "IN_1",
+          "src_connector": "OUT_1"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "9",
+          "dst": "13",
+          "dst_connector": "in_1",
+          "src_connector": "OUT_1"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "256",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "256"
+              }
+            }
+          },
+          "src": "7",
+          "dst": "9",
+          "dst_connector": "IN_x",
+          "src_connector": "OUT_x"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "x",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "9",
+          "dst": "11",
+          "dst_connector": "in_1",
+          "src_connector": "OUT_x"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "65536",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "65536"
+              }
+            }
+          },
+          "src": "8",
+          "dst": "6",
+          "dst_connector": null,
+          "src_connector": "OUT_z"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "256",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "255",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "256"
+              }
+            }
+          },
+          "src": "10",
+          "dst": "8",
+          "dst_connector": "IN_z",
+          "src_connector": "OUT_z"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_trunc_int",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "11",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": "out"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_trunc",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "12",
+          "dst": "2",
+          "dst_connector": null,
+          "src_connector": "out"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_diff",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "13",
+          "dst": "3",
+          "dst_connector": null,
+          "src_connector": "out"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_sign",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "14",
+          "dst": "4",
+          "dst_connector": null,
+          "src_connector": "out"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z_neg",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "15",
+          "dst": "5",
+          "dst_connector": null,
+          "src_connector": "out"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "dynamic": false,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": null,
+                "data": "z",
+                "wcr": null,
+                "debuginfo": null,
+                "wcr_nonatomic": false,
+                "allow_oob": false,
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i0",
+                      "end": "i0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "i1",
+                      "end": "i1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "16",
+          "dst": "10",
+          "dst_connector": "IN_z",
+          "src_connector": "out"
+        }
+      ],
+      "attributes": {
+        "nosync": false,
+        "instrument": "No_Instrumentation",
+        "symbol_instrument": "No_Instrumentation",
+        "symbol_instrument_condition": {
+          "string_data": "1",
+          "language": "CPP"
+        },
+        "executions": "0",
+        "dynamic_executions": true,
+        "ranges": {},
+        "location": {},
+        "is_collapsed": false
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "sdfg_list_id": 0,
+  "start_state": null,
+  "dace_version": "0.15.1"
+}
