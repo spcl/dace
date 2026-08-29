@@ -50,7 +50,7 @@ def _accessed_by_unscalarizable_node(sdfg: SDFG, name: str) -> bool:
     * a :class:`~dace.sdfg.nodes.LibraryNode` -- emits its own indexing (e.g. an unexpanded cub
       block ``Reduce``);
     * a non-Python tasklet -- e.g. the expanded cub block reduce whose C++ body is raw text
-      (``buf[0] = cub::BlockReduce...``) the scalar-conversion never sees; since ``ExpandLibraryNodes``
+      (``buf[0] = gpucub::BlockReduce...``) the scalar-conversion never sees; since ``ExpandLibraryNodes``
       runs before this pass, this predicate is what actually fires for the block-reduction case;
     * a GPU-scheduled map / library node -- a thread-block collective, i.e. a multi-thread buffer.
 

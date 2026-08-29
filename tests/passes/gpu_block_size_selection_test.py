@@ -83,7 +83,7 @@ def test_wcr_map_uses_default_block_when_tree_reduction_off():
 
 def test_experimental_codegen_gets_deep_block_with_the_flag_off():
     # ``compiler.emit_tree_reductions`` is legacy-only: the experimental CUDA target always folds
-    # the WCR through cub::BlockReduce, so the map still wants the deep block with the flag off.
+    # the WCR through gpucub::BlockReduce, so the map still wants the deep block with the flag off.
     sdfg, m = make_wcr_reduction_sdfg()
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=False):

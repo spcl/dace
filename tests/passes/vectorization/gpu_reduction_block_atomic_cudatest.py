@@ -2,7 +2,7 @@
 """GPU thread-block reduction for the tile-op vectorizer's map-exit WCR.
 
 Scalar reduction (``acc += A[i]``, ``max``, ``min``) on CUDA: fold half2 partials
-per thread (``TileReduce``), then lift map-exit WCR to one ``cub::BlockReduce`` per
+per thread (``TileReduce``), then lift map-exit WCR to one ``gpucub::BlockReduce`` per
 block + ONE ``reduce_atomic`` from thread 0 (GPU mirror of CPU OpenMP
 ``reduction(op:var)``), not one atomic per thread. Per-thread partial = thread-local
 register: a shared/global partial would have every thread write+read back the SAME
@@ -132,7 +132,7 @@ def test_half2_tile_reduce_fires(kind):
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_emits_block_reduce_and_single_atomic(kind):
-    """The device TU folds the block with ``cub::BlockReduce`` and commits ONE atomic
+    """The device TU folds the block with ``gpucub::BlockReduce`` and commits ONE atomic
     from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
     cu = _device_code(_vectorized(_PROGRAMS[kind][0]))
     suffix = _PROGRAMS[kind][1]
@@ -140,7 +140,7 @@ def test_emits_block_reduce_and_single_atomic(kind):
     # constants chosen by gpu_block_size_selection (not fixed magic numbers). All THREE block
     # dimensions are spelled: the 1-D ``BlockReduce<T, N>`` form assumes threadIdx.y/z == 0 and
     # mis-maps threads whenever the block is 2-D/3-D.
-    assert re.search(r"cub::BlockReduce<dace::float16,\s*\d+,\s*cub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu), \
+    assert re.search(r"gpucub::BlockReduce<dace::float16,\s*\d+,\s*gpucub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu), \
         "block reduce not emitted / not typed to a constant-thread block"
     assert ".Reduce(" in cu, "cub block Reduce call missing"
     assert f"dace::ReductionType::{suffix}" in cu, f"block reduce not using the {suffix} functor"

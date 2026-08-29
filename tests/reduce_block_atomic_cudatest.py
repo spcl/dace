@@ -2,7 +2,7 @@
 """Codegen coverage for ``ExpandReduceCUDABlockAtomic``.
 
 The block-atomic reduce folds each thread's partial across the thread block with
-``cub::BlockReduce`` and commits ONE atomic per block into a length-1 global
+``gpucub::BlockReduce`` and commits ONE atomic per block into a length-1 global
 output. We assert the emitted CUDA (the cub call + the thread-0 ``reduce_atomic``)
 without a GPU; when ``nvcc`` is present we also compile the generated TU.
 """
@@ -59,7 +59,7 @@ def _generated_cuda(sdfg):
 def test_block_atomic_emits_cub_and_atomic():
     sdfg = _build_block_atomic_sum_sdfg()
     code = _generated_cuda(sdfg)
-    assert "cub::BlockReduce<float, 64>" in code, "block reduce not typed to the 64-thread block"
+    assert "gpucub::BlockReduce<float, 64>" in code, "block reduce not typed to the 64-thread block"
     assert ".Reduce(" in code, "cub block Reduce call missing"
     assert "reduce_atomic" in code, "thread-0 atomic to the global output missing"
     assert "threadIdx.x == 0" in code, "atomic not guarded to a single thread per block"

@@ -94,7 +94,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
-        # Reductions folded by thread-block cub::BlockReduce for the current kernel
+        # Reductions folded by thread-block gpucub::BlockReduce for the current kernel
         # (one per map-exit WCR accumulator). Filled at kernel-scope entry, drained at
         # exit. See cpu.collect_gpu_block_reductions / generate_kernel_scope.
         self._gpu_block_reductions: List[dict] = []
@@ -1849,7 +1849,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Add extra kernel arguments for a grid barrier object
         if create_grid_barrier:
-            extra_kernel_args_typed.append('cub::GridBarrier __gbar')
+            extra_kernel_args_typed.append('dace::GridBarrier __gbar')
 
         node = dfg_scope.source_nodes()[0]
 
@@ -1917,12 +1917,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         if create_grid_barrier:
             gbar = '__gbar_' + kernel_name
-            self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar, cfg, state_id, node)
+            self._localcode.write('    dace::GridBarrierLifetime %s;\n' % gbar, cfg, state_id, node)
             self._localcode.write(
                 '{}.Setup({});'.format(gbar,
                                        ' * '.join(_topy(grid_dims)) if not is_persistent else 'dace_number_blocks'),
                 cfg, state_id, node)
-            extra_kernel_args.append('(void *)((cub::GridBarrier *)&%s)' % gbar)
+            extra_kernel_args.append('(void *)((dace::GridBarrier *)&%s)' % gbar)
 
         # Compute dynamic shared memory
         dynsmem_size = 0
@@ -2395,12 +2395,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         scope_entry = dfg_scope.source_nodes()[0]
 
         # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold scalar map-exit
-        # WCR accumulators via cub::BlockReduce + one atomic/block, not one atomic/thread.
+        # WCR accumulators via gpucub::BlockReduce + one atomic/block, not one atomic/thread.
         # Default path only (no explicit tb map). Partial register identity-inited BEFORE the
         # bounds guard (out-of-range threads still join the fold); per-thread atomic suppressed;
         # block fold emitted once the guard closes below.
         # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back to
-        # a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+        # a per-thread atomicAdd (correct but contended) instead of gpucub::BlockReduce.
         self._gpu_block_reductions = []
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
                 and Config.get_bool('compiler', 'emit_tree_reductions')):
@@ -2838,13 +2838,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
             # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold each scalar
-            # device-map-exit WCR accumulator via cub::BlockReduce + one atomic/block. Partial
+            # device-map-exit WCR accumulator via gpucub::BlockReduce + one atomic/block. Partial
             # (allocated just above) identity-inited BEFORE the bounds guard (out-of-range
             # threads still join the fold); per-thread atomic suppressed; fold emitted once the
             # guard closes at the thread-block MapExit. Detected on the enclosing device map,
             # whose exit carries the reduction WCR.
             # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back
-            # to a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+            # to a per-thread atomicAdd (correct but contended) instead of gpucub::BlockReduce.
             self._gpu_block_reductions = []
             if Config.get_bool('compiler', 'emit_tree_reductions'):
                 self._gpu_block_reductions = collect_gpu_block_reductions(sdfg, dfg, scope_entry, self._block_dims,
@@ -2990,7 +2990,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
         if self.create_grid_barrier:
-            result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
+            result.append(('dace::GridBarrier&', '__gbar', '__gbar'))
         if self.dynamic_tbmap_type:
             result.append((f'{self.dynamic_tbmap_type}&', 'dace_dyn_map_shared', 'dace_dyn_map_shared'))
 

@@ -178,7 +178,7 @@ def test_block_reduce_output_not_scalarized_end_to_end():
     ``ExpandLibraryNodes`` runs *before* this pass, turning the cub block ``Reduce`` into a C++
     tasklet that writes ``tB[0]`` as raw text -- so by pass time there is no ``LibraryNode`` to key
     on, only the non-Python tasklet. ``tB`` must still be kept; otherwise codegen emits
-    ``float tB; ... tB[0] = cub::BlockReduce...`` (the CI compile failure). This is the regression a
+    ``float tB; ... tB[0] = gpucub::BlockReduce...`` (the CI compile failure). This is the regression a
     direct (un-expanded) pass invocation does not catch.
     """
     sdfg = _build_block_reduction()
