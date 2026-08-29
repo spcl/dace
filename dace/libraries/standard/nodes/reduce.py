@@ -234,7 +234,11 @@ class ExpandReducePure(pm.ExpandTransformation):
             nstate.add_memlet_path(t, imx, w, src_conn='__out', memlet=outm)
 
         from dace.transformation import dataflow
-        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
+        # ``validate=False``: this SDFG is still DETACHED, so nothing here can see the scope it is
+        # about to be placed in. A device-resident operand read by the Sequential maps above then
+        # reads as a host access of GPU memory -- which it is not, because the node these maps
+        # replace is inside a kernel. The graph is validated in context by the caller.
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse, validate=False)
 
         return nsdfg
 
@@ -371,7 +375,11 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         node.add_out_connector('_out')
 
         from dace.transformation import dataflow
-        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
+        # ``validate=False``: this SDFG is still DETACHED, so nothing here can see the scope it is
+        # about to be placed in. A device-resident operand read by the Sequential maps above then
+        # reads as a host access of GPU memory -- which it is not, because the node these maps
+        # replace is inside a kernel. The graph is validated in context by the caller.
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse, validate=False)
 
         return nsdfg
 
@@ -1813,7 +1821,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         node.add_out_connector('_out')
 
         from dace.transformation import dataflow
-        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
+        # ``validate=False``: this SDFG is still DETACHED, so nothing here can see the scope it is
+        # about to be placed in. A device-resident operand read by the Sequential maps above then
+        # reads as a host access of GPU memory -- which it is not, because the node these maps
+        # replace is inside a kernel. The graph is validated in context by the caller.
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse, validate=False)
 
         return nsdfg
 
