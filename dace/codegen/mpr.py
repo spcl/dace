@@ -314,6 +314,13 @@ def force_pure_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, 
                     break
             if provenance is not None:
                 description = description_of(node)
+                # A library node's specialization hint has to be captured here for the same reason
+                # its description does: the expansion consumes the node, and the loops it leaves
+                # behind carry no memory of what chose their shape. Folded into the description so
+                # the emitter's once-per-origin dedupe covers both -- a Scan expands into several
+                # maps, and the trade is one trade, not one per map.
+                if description is not None and node.specialization_hint:
+                    description = f'{description}\n{node.specialization_hint}'
                 if description is not None:
                     # Recorded BEFORE the expansion: afterwards the node is gone, and with it any
                     # way to ask what it was.

@@ -142,6 +142,21 @@ def describe(guid: str) -> Optional[Tuple[str, str]]:
     return _provenance.get(guid)
 
 
+def hint_comment(hint: Optional[str], indent: str = '') -> str:
+    """Render a ``specialization_hint`` as a comment block, or ``''`` when there is none.
+
+    A no-op outside a standalone rendering: the hint is a note to whoever reads the maximally
+    parallel form -- a specializing pass, or a person -- and the ordinary build has a target
+    already, so emitting it there would be noise in code nobody reads.
+
+    Multi-line hints stay multi-line. The alternatives a hint describes are per-device and do not
+    read as one sentence: ``CPU: ... / GPU: ...`` is the shape, one line each.
+    """
+    if not hint or not standalone():
+        return ''
+    return ''.join(f'{indent}// {line}\n' for line in str(hint).splitlines() if line.strip())
+
+
 @contextlib.contextmanager
 def provenance_scope(provenance: Dict[str, Tuple[str, str]]):
     """Make ``provenance`` the ambient GUID -> description map for the duration of the block."""

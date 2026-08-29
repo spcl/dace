@@ -1252,6 +1252,15 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
+    specialization_hint = Property(dtype=str,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='A device specialization a canonicalizing pass considered and did '
+                                   'not take. Same contract as the node-level property of the same name: '
+                                   'canonicalization picks the most parallel form and records the trade '
+                                   'here, the standalone (MPR) rendering emits it as a comment, and every '
+                                   'other code path ignores it.')
+
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
     invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')

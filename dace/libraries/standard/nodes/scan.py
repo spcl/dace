@@ -1191,6 +1191,17 @@ class Scan(nodes.LibraryNode):
         self.op = op
         self.exclusive = exclusive
         self.identity = identity
+        # Every Scan carries the same device trade, whichever rewrite produced it, so this is set
+        # once here rather than at each of LoopToScan's construction sites. A scan does more work
+        # than the sequential loop it replaces: it wins where there are threads to spare and loses
+        # where the loop was already the cheap way to spend a core. Canonicalization takes the
+        # parallel form and records the reverse for a specializing pass to consider.
+        self.specialization_hint = ('parallel scan; canonicalization takes the parallel form.\n'
+                                    'Alternative: a sequential loop over parallel maps.\n'
+                                    'CPU: the loop is worth trying -- the scan does more work, and the loop '
+                                    'may already saturate the memory system.\n'
+                                    'GPU: the scan is usually the better of the two.\n'
+                                    'Both are correct. Measure before choosing.')
         self.chains = chains
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState):

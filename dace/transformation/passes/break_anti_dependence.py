@@ -1039,6 +1039,19 @@ class BreakAntiDependence(ppl.Pass):
         for arr_name in (array_guards or ()):
             self._emit_array_positive_guard(pre, arr_name, sdfg)
 
+        # The snapshot is the device-neutral resolution: it costs a full copy of the read window
+        # and buys unconditional parallelism. A CPU specialization has a cheaper option -- buffer
+        # only the seam between chunks, where a full copy of the window is bandwidth the loop
+        # itself would not have spent. A GPU has the bandwidth and would pay for the seam in
+        # synchronization instead, so it keeps this form. Recorded, not decided, here.
+        loop.specialization_hint = (f'anti-dependence on {name} broken by snapshotting the read window.\n'
+                                    'Alternative: buffer only the seam between chunks.\n'
+                                    'CPU: the seam buffer is worth trying -- the full copy is the expensive '
+                                    'half here.\n'
+                                    'GPU: the snapshot is usually the cheaper of the two; a seam costs '
+                                    'synchronization.\n'
+                                    'Both are correct. Measure before choosing.')
+
         # Redirect only the read-ahead edges to a fresh `snap` source, keeping any
         # destination subset (copy edges carry an `other_subset`).
         for st, e in to_move:

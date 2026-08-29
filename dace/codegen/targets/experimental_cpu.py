@@ -55,6 +55,13 @@ SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
 # host expansion is inlined at the emission point.
 STANDALONE_INDEX_FUNCTION_QUALIFIER = 'static constexpr inline'
 STANDALONE_SIZE_CONSTEVAL_QUALIFIER = 'static consteval inline'
+# The C answer to both of the above. C has neither ``constexpr`` functions nor ``consteval``, but it
+# does not need them: measured on a 2-D stencil with twelve helpers, gcc and clang emit BYTE-IDENTICAL
+# instructions for the function and for the function-like macro it replaced at -O1, -O2 and -O3. Only
+# -O0 differs, and nothing is scored at -O0. What the function buys is what a macro cannot: it obeys
+# scope instead of staying live to the end of the unit, which is the same class of bug the ``#undef I``
+# in the C preamble exists for.
+STANDALONE_C_INDEX_FUNCTION_QUALIFIER = 'static inline'
 # Identifier tokens of a code string. Used where a name has to be found in code that has no AST here
 # (a C++ tasklet body, a library node's code property): over-matching costs a refusal, missing a
 # token costs a miscompile, so the tokenizer is deliberately the crude one.
@@ -208,38 +215,39 @@ def c_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: Optiona
 
 
 def format_index_helper(qualifier: str, ctype: str, fnname: str, parameters: List[str], body: str) -> str:
-    """The ``<array>_idx`` / ``<array>_size`` helper, as a function or (in C) as a macro.
+    """The ``<array>_idx`` / ``<array>_size`` helper, as a function in every dialect.
 
-    C23 has ``constexpr`` for OBJECTS but not for functions, so the qualifier these helpers carry
-    has no C spelling at all. A function-like macro is what keeps them foldable at compile time --
-    which is the whole point of the qualifier: the index arithmetic collapses into the subscript
-    instead of surviving as a call.
+    C has neither ``constexpr`` functions nor ``consteval``, so the qualifier the C++ form carries
+    has no C spelling; ``static inline`` is the whole of the C one. That costs nothing: measured on
+    a 2-D stencil carrying twelve helpers, gcc and clang emit byte-identical instructions for this
+    form and for the function-like macro it replaced, at -O1, -O2 and -O3 alike. The two diverge
+    only at -O0, where the call survives -- and no build on the scoring path is -O0.
 
-    Every parameter reference is parenthesized AND cast to the helper's own integer type. The
-    parentheses are what makes ``A_idx(i + 1, j)`` mean what it says; the cast is what keeps the
-    C++ helper's int64 return type, so a large extent does not overflow through int32 arithmetic
-    it would never have been evaluated in.
+    A function rather than a macro because a macro is not scoped: it stays live to the end of the
+    translation unit and captures any later identifier of its name, which is the same hazard the
+    ``#undef I`` in the C preamble exists for. Typed parameters also make ``A_idx(i + 1, j)`` mean
+    what it says without the parenthesize-and-cast pass the macro form needed, and a wrong arity is
+    a diagnostic naming the helper instead of an expansion error somewhere below it.
 
-    A comma inside a call argument (``A_idx(ipow(nclv, 2), j)``) is NOT a hazard: C protects commas
-    inside matched parentheses when splitting macro arguments.
+    Nothing places these in a C constant expression, which is the one context a ``static inline``
+    could not serve: an index reaches only a subscript, and a size reaches only the ``malloc``
+    argument in :func:`c_heap_alloc_stmt`. Both are runtime expressions.
 
-    :param qualifier: the C++ qualifier (ignored by the C form, which has no place for one).
+    :param qualifier: the C++ qualifier, ignored by the C form, which has no spelling for one.
     :param ctype: the integer type the helper computes in.
     :param fnname: the helper's name.
     :param parameters: the parameter names, in order.
     :param body: the already-printed expression, naming exactly ``parameters``.
     :returns: the definition to emit once per translation unit.
     """
+    declared = ', '.join('%s %s' % (ctype, name) for name in parameters)
     if not mpr_lowering.standalone_c():
-        declared = ', '.join('%s %s' % (ctype, name) for name in parameters)
         return '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname, declared, body)
-    if parameters:
-        # One pass over an alternation, so a replacement's own text is never rescanned.
-        pattern = re.compile(r'\b(?:%s)\b' % '|'.join(re.escape(name) for name in parameters))
-        body = pattern.sub(lambda match: '((%s)(%s))' % (ctype, match.group(0)), body)
-    else:
-        body = '(%s)(%s)' % (ctype, body)
-    return '#define %s(%s) (%s)' % (fnname, ', '.join(parameters), body)
+    # ``(void)`` rather than ``()``: C23 makes the two equivalent, but the renders are read and
+    # diffed by hand and only one of the two says "takes nothing" in every C anyone might paste it
+    # into.
+    return '%s %s %s(%s) { return %s; }' % (STANDALONE_C_INDEX_FUNCTION_QUALIFIER, ctype, fnname, declared
+                                            or 'void', body)
 
 
 def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
@@ -455,12 +463,19 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if origin in self._emitted_provenance:
             return
         self._emitted_provenance.add(origin)
-        callsite_stream.write('// %s' % description, cfg, state_id, node)
+        # Multi-line when a specialization hint was folded in (``dace.codegen.mpr``): one ``//`` per
+        # line, since the alternatives are per-device and do not read as one sentence.
+        for line in str(description).splitlines():
+            if line.strip():
+                callsite_stream.write('// %s' % line, cfg, state_id, node)
 
     def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         # Compute (and memoize) the walk plan BEFORE the base emitter runs, so ``map_scope_needs_brace``
         # -- which the base calls -- sees it, and push this map so the scope hooks below can find it.
         self.emit_provenance(node, cfg, state_id, callsite_stream)
+        hint = mpr_lowering.hint_comment(node.specialization_hint)
+        if hint:
+            callsite_stream.write(hint.rstrip('\n'), cfg, state_id, node)
         self.walk_plan_for(sdfg, cfg.state(state_id), node)
         self._map_scope_stack.append(node)
         super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
