@@ -11,6 +11,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from ordered_set import OrderedSet
@@ -21,11 +22,10 @@ def _cblas_flags(node):
             'CblasTrans' if node.transA else 'CblasNoTrans', 'CblasUnit' if node.unit_diag else 'CblasNonUnit')
 
 
-def _cublas_flags(node):
-    return ('CUBLAS_SIDE_LEFT' if not node.side else 'CUBLAS_SIDE_RIGHT',
-            'CUBLAS_FILL_MODE_UPPER' if node.uplo else 'CUBLAS_FILL_MODE_LOWER',
-            'CUBLAS_OP_T' if node.transA else 'CUBLAS_OP_N',
-            'CUBLAS_DIAG_UNIT' if node.unit_diag else 'CUBLAS_DIAG_NON_UNIT')
+def _gpu_flags(node, dialect):
+    """(side, uplo, trans, diag) in one vendor's spelling; the node's own booleans decide which."""
+    return (dialect.side(node.side), dialect.fill(node.uplo), dialect.op('T' if node.transA else 'N'),
+            dialect.diag(node.unit_diag))
 
 
 @dace.library.expansion
@@ -63,21 +63,21 @@ class ExpandTrmmMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandTrmmCuBLAS(ExpandTransformation):
+class ExpandTrmmGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_A, lda), (desc_Bin, ldb_in), ldb_out, m, n = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        side, uplo, trans, diag = _cublas_flags(node)
+        side, uplo, trans, diag = _gpu_flags(node, cls.dialect)
         a = node.alpha
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
         {dt.ctype} __alpha = ({dt.ctype})({a});
-        cublas{func}trmm(__dace_cublas_handle, {side}, {uplo}, {trans}, {diag}, {m}, {n}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out});
+        {cls.dialect.func(func, 'trmm')}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {m}, {n}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
@@ -86,11 +86,28 @@ class ExpandTrmmCuBLAS(ExpandTransformation):
                                        language=dace.dtypes.Language.CPP)
 
 
+@dace.library.expansion
+class ExpandTrmmCuBLAS(ExpandTrmmGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandTrmmRocBLAS(ExpandTrmmGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @dace.library.node
 class Trmm(dace.sdfg.nodes.LibraryNode):
     """BLAS ``?TRMM``: triangular matrix-matrix multiply."""
 
-    implementations = {"OpenBLAS": ExpandTrmmOpenBLAS, "MKL": ExpandTrmmMKL, "cuBLAS": ExpandTrmmCuBLAS}
+    implementations = {
+        "OpenBLAS": ExpandTrmmOpenBLAS,
+        "MKL": ExpandTrmmMKL,
+        "cuBLAS": ExpandTrmmCuBLAS,
+        "rocBLAS": ExpandTrmmRocBLAS
+    }
     default_implementation = None
 
     side = dace.properties.Property(dtype=bool,

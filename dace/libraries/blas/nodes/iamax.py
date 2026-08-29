@@ -15,6 +15,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
+from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 
@@ -108,12 +109,12 @@ class ExpandIamaxMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandIamaxCuBLAS(ExpandTransformation):
+class ExpandIamaxGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
 
@@ -124,12 +125,14 @@ class ExpandIamaxCuBLAS(ExpandTransformation):
             return ExpandIamaxPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         # cuBLAS returns 1-indexed; subtract 1 to match the cBLAS convention.
-        cfunc = 'I' + func + 'amax'
+        # `cublasIdamax`, not `cublasIDamax`: the leading I is capital and the type letter is
+        # not. The old spelling named a symbol neither vendor exports.
+        cfunc = 'I' + func.lower() + 'amax'
         n = n or node.n or sz
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         code += f"""
         int __tmp_idx;
-        cublas{cfunc}(__dace_cublas_handle, {n}, _x, {stride_x}, &__tmp_idx);
+        {cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, &__tmp_idx);
         *_result = __tmp_idx - 1;
         """
 
@@ -138,6 +141,18 @@ class ExpandIamaxCuBLAS(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@dace.library.expansion
+class ExpandIamaxCuBLAS(ExpandIamaxGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandIamaxRocBLAS(ExpandIamaxGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @dace.library.node
@@ -152,6 +167,7 @@ class Iamax(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandIamaxOpenBLAS,
         "MKL": ExpandIamaxMKL,
         "cuBLAS": ExpandIamaxCuBLAS,
+        "rocBLAS": ExpandIamaxRocBLAS,
     }
     default_implementation = None
 
