@@ -153,6 +153,38 @@ def test_the_config_knob_selects_the_offloader(use_new_pass):
         assert not staged, 'the old transformation never needs a host copy: it starts on the host'
 
 
+@pytest.mark.parametrize('use_new_pass', [True, False])
+def test_simplify_is_honoured_whichever_offloader_ran(use_new_pass):
+    """``simplify`` is ``apply_gpu_transformations``'s contract, not one offloader's.
+
+    The old arm forwards it into ``GPUTransformSDFG``'s options and the new arm has no options to
+    forward it to, so the knob used to mean "simplify" on one path and nothing on the other. Both
+    offloaders insert copy states, so a caller that asked for a simplified graph and got the new
+    pass was handed the unfused ones -- a difference in graph shape decided by a config knob the
+    caller never set, which is exactly what the argument exists to make explicit.
+    """
+    plain = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
+    simplified = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
+    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=use_new_pass):
+        plain.apply_gpu_transformations(validate=False, simplify=False)
+        simplified.apply_gpu_transformations(validate=False, simplify=True)
+    plain.validate()
+    simplified.validate()
+
+    def size(sdfg):
+        """States, dataflow nodes, dataflow edges. Which one shrinks is not the same on the two
+        arms -- the old one fuses states here and leaves the nodes alone, the new one prunes nodes
+        and leaves the states alone -- so asserting on any single count would pin one arm's
+        incidental shape rather than the contract both share."""
+        return (sum(1 for _ in sdfg.all_states()), sum(len(s.nodes()) for s in sdfg.all_states()),
+                sum(len(s.edges()) for s in sdfg.all_states()))
+
+    before, after = size(plain), size(simplified)
+    assert all(a <= b for a, b in zip(after, before)), (f'simplify=True grew the graph: {before} -> {after}')
+    assert after != before, (f'simplify=True left the graph at {before} (states, nodes, edges), identical to '
+                             'simplify=False, so the argument did nothing')
+
+
 def test_an_offloaded_scan_gets_its_device_lowering():
     """A Scan that ends up on the device must be LOWERED for the device.
 

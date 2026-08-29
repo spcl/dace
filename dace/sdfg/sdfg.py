@@ -3279,6 +3279,11 @@ class SDFG(ControlFlowRegion):
             # Avoiding import loops
             from dace.transformation.passes.offloading import OffloadToAccelerator
             OffloadToAccelerator().apply_pass(self, {})
+            # ``simplify`` is this method's contract, not ``GPUTransformSDFG``'s: the offloading
+            # leaves the copy states it inserted unfused, so a caller that asked for a simplified
+            # graph would silently get one shaped by which pass ran.
+            if simplify:
+                self.simplify()
             if validate or validate_all:
                 self.validate()
             return
