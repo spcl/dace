@@ -4,7 +4,7 @@
 // ``dace::tileops::tile_<op>`` signatures as the scalar / avx512 / ... sibling
 // headers, but every function is ``__device__`` (the tile ops run inside a GPU
 // kernel) and the fp16 elementwise ops use the native ``half2`` (FP16x2) SIMD
-// intrinsics from <cuda_fp16.h> -- ``__hadd2`` / ``__hsub2`` / ``__hmul2`` /
+// intrinsics from <cuda_fp16.h> / <hip/hip_fp16.h> -- ``__hadd2`` / ``__hsub2`` / ``__hmul2`` /
 // ``__h2div`` / ``__hmin2`` / ``__hmax2`` / ``__hneg2``. The GPU vectorizer only
 // targets fp16 (and fp8) -- see the design note in vectorize_cpu_multi_dim.
 //
@@ -17,14 +17,17 @@
 // Op-code legend and masked semantics are identical to scalar.h (the reference).
 #pragma once
 
-// The device paths below are guarded on the DEVICE COMPILER, not on the vendor: this header names
-// no NVIDIA-only intrinsic, so hipcc compiles it verbatim. Guarding on __CUDACC__ alone made every
-// tile op vanish under HIP and fall back to the scalar path, which is a silent performance loss
-// rather than an error.
+// The device paths below are guarded on the DEVICE COMPILER, not on the vendor: guarding on
+// __CUDACC__ alone made every tile op vanish under HIP and fall back to the scalar path, which is
+// a silent performance loss rather than an error. The two spots where the vendors genuinely differ
+// -- the fp16/fp8 header names and the missing FP16x2 min/max -- are handled where they occur.
 
 #include <cstdint>
 
-#if defined(__CUDACC__) || defined(__HIPCC__)
+#if defined(__HIPCC__)
+#include <hip/hip_fp16.h>
+#include <hip/hip_fp8.h>
+#elif defined(__CUDACC__)
 #include <cuda_fp16.h>
 #if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 890) || !defined(__CUDA_ARCH__)
 #include <cuda_fp8.h>
@@ -135,6 +138,24 @@ DACE_DFI constexpr bool _is_half2_binop() {
          Op == '>' || Op == 'g' || Op == '=' || Op == '!';
 }
 
+// ROCm 7.2.3 ships the scalar ``__hmin`` / ``__hmax`` but no FP16x2 pair, so the two lanes fold
+// through the scalar ones there; CUDA keeps its single native instruction.
+DACE_DFI __half2 _half2_min(__half2 a, __half2 b) {
+#if defined(__HIPCC__)
+  return __halves2half2(__hmin(__low2half(a), __low2half(b)), __hmin(__high2half(a), __high2half(b)));
+#else
+  return __hmin2(a, b);
+#endif
+}
+
+DACE_DFI __half2 _half2_max(__half2 a, __half2 b) {
+#if defined(__HIPCC__)
+  return __halves2half2(__hmax(__low2half(a), __low2half(b)), __hmax(__high2half(a), __high2half(b)));
+#else
+  return __hmax2(a, b);
+#endif
+}
+
 template <char Op>
 DACE_DFI __half2 _half2_apply(__half2 a, __half2 b) {
   if constexpr (Op == '+')
@@ -146,9 +167,9 @@ DACE_DFI __half2 _half2_apply(__half2 a, __half2 b) {
   else if constexpr (Op == '/')
     return __h2div(a, b);
   else if constexpr (Op == 'm')
-    return __hmin2(a, b);
+    return _half2_min(a, b);
   else if constexpr (Op == 'M')
-    return __hmax2(a, b);
+    return _half2_max(a, b);
   else if constexpr (Op == '<')
     return __hlt2(a, b);
   else if constexpr (Op == 'l')
@@ -594,7 +615,7 @@ DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_binop(Out&& out, A&
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked, typename Out,
           typename A, typename B, typename C>
 DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_fma(Out&& out, A&& a, B&& b, C&& c,
-                                                                const bool* __restrict__ mask) {
+                                                                 const bool* __restrict__ mask) {
   const float af = _cuda_to_compute<T>(tile_load_value<T>(a));
   const float bf = _cuda_to_compute<T>(tile_load_value<T>(b));
   const float cf = _cuda_to_compute<T>(tile_load_value<T>(c));
