@@ -90,7 +90,11 @@ def _vectorized(prog):
 
 
 def _device_code(sdfg):
-    return "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    # By TITLE, not by language: the experimental CUDA codegen emits the device TU as a ``.cpp``, so
+    # a ``language == "cu"`` filter selects nothing and every assertion below runs against "".
+    codes = [c for c in sdfg.generate_code() if c.title == "CUDA"]
+    assert codes, "no device translation unit was generated"
+    return "\n".join(c.clean_code for c in codes)
 
 
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
