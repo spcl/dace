@@ -11,7 +11,7 @@ from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties
@@ -250,7 +250,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         subset: Optional[subsets.Range] = None
         volume = 0
         for edge in producer_edges:
-            if edge.data.dst_subset is None:
+            # The box is sized with `size()` further down, which only a `Range` offers, so a
+            #  producer writing a `SubsetUnion` has no box to tile and is refused here rather
+            #  than raising deeper in.
+            if not isinstance(edge.data.dst_subset, subsets.Range):
                 return None
             subset = (edge.data.dst_subset if subset is None else subsets.bounding_box_union(
                 subset, edge.data.dst_subset))
