@@ -565,6 +565,139 @@ def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0)
     return out
 
 
+@oprepo.replaces('numpy.pad')
+def pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, pad_width, mode='constant', **kwargs) -> str:
+    """``np.pad`` in constant mode: fill the padded shape, then copy the original into the interior.
+
+    Only ``mode='constant'`` lowers. The edge modes read a mirrored or clamped index, which is a
+    different kernel and not what any of the padding call sites here ask for.
+    """
+    from dace.frontend.python.replacements.array_creation import _numpy_full  # Avoid import loop
+
+    if str(mode) != 'constant':
+        raise NotImplementedError(f'numpy.pad supports mode="constant", not mode="{mode}"')
+    fill = kwargs.get('constant_values', 0)
+    if isinstance(fill, (list, tuple)):
+        raise NotImplementedError('numpy.pad with per-axis constant_values is not supported')
+    desc = sdfg.arrays[arr]
+    ndim = len(desc.shape)
+
+    widths = pad_width
+    if isinstance(widths, Integral):
+        widths = [(int(widths), int(widths))] * ndim
+    elif isinstance(widths, (list, tuple)) and widths and isinstance(widths[0], Integral):
+        widths = [(int(widths[0]), int(widths[-1]))] * ndim
+    else:
+        widths = [(int(lo), int(hi)) for lo, hi in widths]
+    if len(widths) != ndim:
+        raise ValueError(f'numpy.pad: {len(widths)} pad widths for a rank-{ndim} array')
+
+    out_shape = [extent + lo + hi for extent, (lo, hi) in zip(desc.shape, widths)]
+    out = _numpy_full(pv, sdfg, state, out_shape, fill, desc.dtype)
+    # The fill and the interior copy are two writes to one array; the state boundary the fill
+    # opened is what orders them.
+    state = pv.last_block
+    interior = ', '.join(f'{lo}:{lo} + {extent}' for extent, (lo, _) in zip(desc.shape, widths))
+    state.add_edge(
+        state.add_read(arr), None, state.add_write(out), None,
+        Memlet(data=arr, subset=subsets.Range.from_array(desc), other_subset=subsets.Range.from_string(interior)))
+    return out
+
+
+@oprepo.replaces('numpy.fill_diagonal')
+def fill_diagonal(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, val) -> str:
+    """``np.fill_diagonal`` writes IN PLACE, so the caller's array is the one returned."""
+    desc = sdfg.arrays[arr]
+    if len(desc.shape) != 2:
+        raise ValueError('numpy.fill_diagonal is supported for rank-2 arrays')
+    n = f'min({desc.shape[0]}, {desc.shape[1]})'
+    if isinstance(val, str) and val in sdfg.arrays:
+        state.add_mapped_tasklet('fill_diagonal', {'__d': f'0:{n}'}, {'__inp': Memlet(f'{val}[0]')},
+                                 '__out = __inp', {'__out': Memlet(f'{arr}[__d, __d]')},
+                                 external_edges=True)
+    else:
+        state.add_mapped_tasklet('fill_diagonal', {'__d': f'0:{n}'}, {},
+                                 f'__out = {val}', {'__out': Memlet(f'{arr}[__d, __d]')},
+                                 external_edges=True)
+    return arr
+
+
+@oprepo.replaces('numpy.diagflat')
+def diagflat(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0) -> str:
+    """``np.diagflat`` is :func:`diag` of the flattened input."""
+    return diag(pv, sdfg, state, flat(pv, sdfg, state, arr), k)
+
+
+@oprepo.replaces('numpy.diff')
+def diff(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, n: int = 1, axis: int = -1) -> str:
+    """``np.diff``: the adjacent difference along ``axis``, applied ``n`` times."""
+    if not isinstance(n, Integral) or int(n) < 0:
+        raise ValueError('numpy.diff needs a compile-time non-negative n')
+    if int(n) == 0:
+        return arr
+    desc = sdfg.arrays[arr]
+    ndim = len(desc.shape)
+    ax = normalize_axes(axis, ndim, 'axis')[0]
+
+    out_shape = list(desc.shape)
+    out_shape[ax] = desc.shape[ax] - 1
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), out_shape, desc.dtype, desc.storage, find_new_name=True)
+    rng = {f'__i{d}': f'0:{out_shape[d]}' for d in range(ndim)}
+    hi = ', '.join(f'__i{d} + 1' if d == ax else f'__i{d}' for d in range(ndim))
+    lo = ', '.join(f'__i{d}' for d in range(ndim))
+    state.add_mapped_tasklet('diff',
+                             rng, {
+                                 '__hi': Memlet(f'{arr}[{hi}]'),
+                                 '__lo': Memlet(f'{arr}[{lo}]')
+                             },
+                             '__out = __hi - __lo', {'__out': Memlet(f'{out}[{lo}]')},
+                             external_edges=True)
+    return diff(pv, pv.sdfg, pv.last_block, out, int(n) - 1, ax) if int(n) > 1 else out
+
+
+@oprepo.replaces('numpy.ediff1d')
+def ediff1d(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    """``np.ediff1d`` is :func:`diff` of the flattened input."""
+    return diff(pv, sdfg, state, flat(pv, sdfg, state, arr))
+
+
+@oprepo.replaces('numpy.meshgrid')
+def meshgrid(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *arrays, indexing='xy') -> list:
+    """``np.meshgrid`` for 1-D inputs: one ``Broadcast`` per output axis.
+
+    ``indexing='xy'`` transposes the first two axes against ``'ij'``, which is the whole difference
+    between the two spellings and the one a stencil gets wrong silently.
+    """
+
+    if str(indexing) not in ('xy', 'ij'):
+        raise ValueError(f"numpy.meshgrid: indexing must be 'xy' or 'ij', got {indexing!r}")
+    names = [a for a in arrays]
+    for name in names:
+        if name not in sdfg.arrays or len(sdfg.arrays[name].shape) != 1:
+            raise NotImplementedError('numpy.meshgrid is supported for rank-1 inputs')
+    lengths = [sdfg.arrays[n].shape[0] for n in names]
+    grid = list(lengths)
+    if str(indexing) == 'xy' and len(names) >= 2:
+        grid[0], grid[1] = grid[1], grid[0]
+
+    out_names = []
+    for k, name in enumerate(names):
+        desc = sdfg.arrays[name]
+        # Which grid axis this operand varies along -- 'xy' swaps the first two.
+        axis = k
+        if str(indexing) == 'xy' and k < 2:
+            axis = 1 - k
+        out, out_desc = sdfg.add_transient(pv.get_target_name(), grid, desc.dtype, desc.storage, find_new_name=True)
+        rng = {f'__o{d}': f'0:{grid[d]}' for d in range(len(grid))}
+        state.add_mapped_tasklet(
+            f'meshgrid_{k}',
+            rng, {'__inp': Memlet(f'{name}[__o{axis}]')},
+            '__out = __inp', {'__out': Memlet('{}[{}]'.format(out, ', '.join(f'__o{d}' for d in range(len(grid)))))},
+            external_edges=True)
+        out_names.append(out)
+    return out_names
+
+
 @oprepo.replaces('numpy.trace')
 def trace(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, offset: int = 0) -> str:
     """``np.trace`` is the sum of :func:`diagonal`."""

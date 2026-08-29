@@ -342,3 +342,114 @@ def test_trace_matches_numpy():
 
     a = np.random.rand(4, 4)
     check(prog, np.trace(a), a=a, out=np.zeros(1))
+
+
+def test_pad_constant_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[4], out: dace.float64[8]):
+        out[:] = np.pad(a, 2)
+
+    a = np.random.rand(4)
+    check(prog, np.pad(a, 2), a=a, out=np.zeros(8))
+
+
+def test_pad_two_dimensional_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[3, 4], out: dace.float64[5, 6]):
+        out[:] = np.pad(a, 1)
+
+    a = np.random.rand(3, 4)
+    check(prog, np.pad(a, 1), a=a, out=np.zeros((5, 6)))
+
+
+def test_pad_refuses_an_edge_mode():
+
+    @dace.program
+    def prog(a: dace.float64[4], out: dace.float64[8]):
+        out[:] = np.pad(a, 2, mode='edge')
+
+    with pytest.raises(Exception, match='pad'):
+        prog.to_sdfg(simplify=False)
+
+
+def test_diff_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[6], out: dace.float64[5]):
+        out[:] = np.diff(a)
+
+    a = np.random.rand(6)
+    check(prog, np.diff(a), a=a, out=np.zeros(5))
+
+
+def test_diff_on_an_axis_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[4, 5], out: dace.float64[3, 5]):
+        out[:] = np.diff(a, 1, 0)
+
+    a = np.random.rand(4, 5)
+    check(prog, np.diff(a, 1, 0), a=a, out=np.zeros((3, 5)))
+
+
+def test_ediff1d_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[2, 3], out: dace.float64[5]):
+        out[:] = np.ediff1d(a)
+
+    a = np.random.rand(2, 3)
+    check(prog, np.ediff1d(a), a=a, out=np.zeros(5))
+
+
+def test_fill_diagonal_writes_in_place():
+
+    @dace.program
+    def prog(out: dace.float64[4, 4]):
+        np.fill_diagonal(out, 7.0)
+
+    want = np.ones((4, 4))
+    np.fill_diagonal(want, 7.0)
+    out = np.ones((4, 4))
+    prog(out=out)
+    assert np.allclose(out, want)
+
+
+def test_diagflat_matches_numpy():
+
+    @dace.program
+    def prog(a: dace.float64[2, 2], out: dace.float64[4, 4]):
+        out[:] = np.diagflat(a)
+
+    a = np.random.rand(2, 2)
+    check(prog, np.diagflat(a), a=a, out=np.zeros((4, 4)))
+
+
+def test_meshgrid_xy_and_ij_differ():
+
+    @dace.program
+    def prog_xy(x: dace.float64[3], y: dace.float64[4], ox: dace.float64[4, 3], oy: dace.float64[4, 3]):
+        gx, gy = np.meshgrid(x, y)
+        ox[:] = gx
+        oy[:] = gy
+
+    @dace.program
+    def prog_ij(x: dace.float64[3], y: dace.float64[4], ox: dace.float64[3, 4], oy: dace.float64[3, 4]):
+        gx, gy = np.meshgrid(x, y, indexing='ij')
+        ox[:] = gx
+        oy[:] = gy
+
+    x, y = np.arange(3.0), np.arange(4.0)
+    wx, wy = np.meshgrid(x, y)
+    ox, oy = np.zeros((4, 3)), np.zeros((4, 3))
+    sdfg = prog_xy.to_sdfg(simplify=False)
+    assert callback_free(sdfg)
+    prog_xy(x=x, y=y, ox=ox, oy=oy)
+    assert np.allclose(ox, wx) and np.allclose(oy, wy)
+
+    wx, wy = np.meshgrid(x, y, indexing='ij')
+    ox, oy = np.zeros((3, 4)), np.zeros((3, 4))
+    prog_ij(x=x, y=y, ox=ox, oy=oy)
+    assert np.allclose(ox, wx) and np.allclose(oy, wy)
