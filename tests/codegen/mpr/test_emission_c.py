@@ -126,7 +126,8 @@ def test_entry_point_has_no_language_linkage():
     assert 'extern "C"' not in code, 'extern "C" does not exist in C'
     assert re.search(r'^void mprc_axpy\(', code, re.M), 'MPR must export the SDFG under its own name'
     assert '#pragma omp parallel for' in code, 'a data-parallel map must render as an OpenMP loop'
-    assert '#define x_idx(' in code, 'C has no constexpr function, so the index helper must be a macro'
+    assert re.search(r'^static inline int64_t x_idx\(', code, re.M), \
+        'C has no constexpr function, so the index helper is a plain static inline one'
 
     n = 128
     x = np.random.rand(n)
@@ -136,13 +137,20 @@ def test_entry_point_has_no_language_linkage():
     assert_matches({'y': expected}, {'y': y}, 'mprc_axpy')
 
 
-def test_two_dimensional_index_macro_carries_the_stride():
-    """A 2-D index helper is a macro whose parameters are each parenthesized and cast."""
+def test_two_dimensional_index_helper_carries_the_stride():
+    """A 2-D index helper is a function taking each index in the helper's own integer type.
+
+    Typed parameters are what the macro form bought with a parenthesize-and-cast pass over the
+    body: an argument cannot re-associate into the stride expression, and an index wide enough to
+    overflow int32 is widened at the call rather than inside arithmetic it was never evaluated in.
+    """
     sdfg, code = render_c(c_transpose_add, 'mprc_transpose')
     assert '#pragma omp parallel for' in code
-    macro = re.search(r'^#define a_idx\(__d0, __d1[^)]*\) (.*)$', code, re.M)
-    assert macro is not None, f'expected a 2-index a_idx macro in:\n{code}'
-    assert '((int64_t)(__d0))' in macro.group(1) and '((int64_t)(__d1))' in macro.group(1), macro.group(1)
+    helper = re.search(r'^static inline int64_t a_idx\((int64_t __d0, int64_t __d1[^)]*)\) '
+                       r'\{ return (.*); \}$', code, re.M)
+    assert helper is not None, f'expected a 2-index a_idx function in:\n{code}'
+    assert '__d0' in helper.group(2) and '__d1' in helper.group(2), helper.group(2)
+    assert '#define a_idx' not in code, 'the index helper must not also be a macro'
 
     m, n = 12, 20
     a = np.random.rand(m, n)
@@ -388,12 +396,13 @@ def test_an_unknown_language_is_refused():
         mpr(sdfg, language='fortran')
 
 
-# -- the index macro, probed directly ------------------------------------------------------------
+# -- the index helper, probed directly -----------------------------------------------------------
 #
-# A macro that mis-parses its argument is a WRONG ANSWER, not a compile error, so the two hazards
-# are probed by building and RUNNING the generated macro rather than by matching its text.
+# A helper that mis-parses its argument or narrows it is a WRONG ANSWER, not a compile error, so
+# both are probed by building and RUNNING the generated helper rather than by matching its text.
+# These outlived the macro they were written for: the spelling changed, the arithmetic did not.
 
-_MACRO_PROBE = """
+_HELPER_PROBE = """
 #include <stdint.h>
 static inline int64_t mpr_probe_max_l(int64_t a, int64_t b) {{ return (a > b) ? a : b; }}
 #define probe_max(a, b) _Generic((a) + (b), long: mpr_probe_max_l)(a, b)
@@ -407,13 +416,19 @@ void probe(int64_t * out) {{ out[0] = {call}; }}
     ('probe_idx(probe_max(3L, 7L), 5)', 7 * 10 + 5),
 ],
                          ids=['compound-argument', 'call-argument-with-a-comma'])
-def test_index_macro_parses_its_arguments(call, expected):
-    """``A_idx(i + 1, j)`` must mean what it says, and a comma inside a call is not a hazard."""
+def test_index_helper_parses_its_arguments(call, expected):
+    """``A_idx(i + 1, j)`` must mean what it says, and a comma inside a call is not a hazard.
+
+    Both were macro hazards that a function cannot have -- which is the point of the change, and
+    the reason the two cases are still RUN rather than deleted: they are the arithmetic the render
+    depends on, and they have to keep giving the same answers whatever the helper is spelled as.
+    """
     with mpr_lowering.dialect_scope(mpr_lowering.Dialect.STANDALONE_C):
         helper = format_index_helper('unused', 'int64_t', 'probe_idx', ['__d0', '__d1'], '((10 * __d0) + __d1)')
-    assert helper.startswith('#define probe_idx('), f'the C dialect must emit a macro, not a function: {helper}'
+    assert helper.startswith('static inline int64_t probe_idx('), \
+        f'the C dialect must emit a function, not a macro: {helper}'
 
-    code = _MACRO_PROBE.format(helper=helper, call=call)
+    code = _HELPER_PROBE.format(helper=helper, call=call)
     library = ctypes.CDLL(compile_standalone(code, 'mpr_idx_probe', language='c'))
     out = np.zeros(1, dtype=np.int64)
     library.probe.argtypes = [ctypes.c_void_p]
@@ -422,11 +437,11 @@ def test_index_macro_parses_its_arguments(call, expected):
     assert out[0] == expected, f'{call} expanded to a different expression than it reads as'
 
 
-def test_index_macro_computes_in_int64():
-    """The C++ helper returned ``int64_t``; the macro must keep that, or a large extent overflows."""
+def test_index_helper_computes_in_int64():
+    """The C++ helper returns ``int64_t``; the C one must too, or a large extent overflows."""
     with mpr_lowering.dialect_scope(mpr_lowering.Dialect.STANDALONE_C):
         helper = format_index_helper('unused', 'int64_t', 'probe_idx', ['__d0', '__d1'], '((10 * __d0) + __d1)')
-    code = _MACRO_PROBE.format(helper=helper, call='probe_idx(300000000, 7)')
+    code = _HELPER_PROBE.format(helper=helper, call='probe_idx(300000000, 7)')
     library = ctypes.CDLL(compile_standalone(code, 'mpr_idx_width', language='c'))
     out = np.zeros(1, dtype=np.int64)
     library.probe.argtypes = [ctypes.c_void_p]
