@@ -36,11 +36,35 @@ from typing import Dict, List, Optional, Tuple
 
 from dace.sdfg import nodes
 from dace import SDFG
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks, _is_per_iter_subset
 from dace.sdfg.utils import set_nested_sdfg_parent_references
+
+
+def _interstate_reads(block) -> List[str]:
+    """Containers ``block`` reads through an interstate edge or a branch condition.
+
+    Such a read never becomes an AccessNode: ``if mask[i]:`` lowers to an assignment
+    ``mask_index = mask[i]`` on the edge into a ConditionalBlock, plus the branch condition on the
+    symbol. A walk over AccessNodes therefore reports the container as UNREAD by this block, and a
+    pass deciding a split on that answer separates the mask from the statements that read it.
+    """
+    if isinstance(block, SDFGState):
+        return []
+    arrays = block.sdfg.arrays
+    found: Dict[str, None] = {}
+    for edge in block.all_interstate_edges(recursive=True):
+        found.update(dict.fromkeys(name for name in edge.data.free_symbols if name in arrays))
+    for region in block.all_control_flow_regions(recursive=True):
+        if not isinstance(region, ConditionalBlock):
+            continue
+        for condition, _ in region.branches:
+            if condition is None:
+                continue
+            found.update(dict.fromkeys(name for name in condition.get_free_symbols() if name in arrays))
+    return list(found)
 
 
 def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[str, bool]]:
@@ -72,6 +96,11 @@ def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[s
                     reads[n.data] = reads.get(n.data, True) and _is_per_iter_subset(sub, loop_var)
                 if st.out_degree(n) == 0 and st.in_degree(n) == 0:
                     reads.setdefault(n.data, False)
+    # False, not True: the subset an interstate read uses is not analyzable here, and the forward
+    # producer->consumer split is only legal when BOTH sides are provably per-iteration. Recording
+    # it as unanalyzable keeps such a pair fused.
+    for name in _interstate_reads(block):
+        reads[name] = False
     return writes, reads
 
 

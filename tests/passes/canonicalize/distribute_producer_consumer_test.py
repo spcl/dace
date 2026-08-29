@@ -192,9 +192,67 @@ def test_backward_dependence_refuses():
     assert np.allclose(ga, ref_a) and np.allclose(gb, ref_b), 'WAR case must stay value-preserving'
 
 
+def test_mask_read_through_an_interstate_edge_refuses():
+    """A container read only via an interstate edge still blocks the split.
+
+    ``if mask[i]:`` lowers to an assignment ``mask_index = mask[i]`` on the edge into a
+    ConditionalBlock plus a condition on the resulting symbol -- never an AccessNode. A
+    read/write analysis that walks AccessNodes alone therefore called the second reader group
+    independent of the group producing the mask, and split them. The consumer loop then ran
+    against the mask left by the producer loop's LAST iteration instead of its own, which is a
+    silent wrong answer: npbench mandelbrot1 reported an integer mismatch and nothing else.
+    """
+    M = dace.symbol('M', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64)
+
+    @dace.program
+    def mask_loop(Z: dace.float64[M], C: dace.float64[M], NN: dace.int64[M]):
+        for n in range(K):
+            mask = Z < 4.0
+            for i in range(M):
+                if mask[i]:
+                    Z[i] = Z[i] * Z[i] + C[i]
+            for i in range(M):
+                if mask[i]:
+                    NN[i] = n
+
+    sdfg = mask_loop.to_sdfg(simplify=True)
+    before = len([
+        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    ])
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) is None, 'the mask must keep its readers'
+    after = len([
+        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    ])
+    assert after == before
+
+    # Values, on inputs whose mask CHANGES per iteration -- with a constant mask both orders agree
+    # and the bug is invisible.
+    seed_z = np.array([0.1, 0.5, 1.5, 1.9, 2.5, 3.5])
+    seed_c = np.full(6, 0.05)
+    z, c = seed_z.copy(), seed_c.copy()
+    nn = np.zeros(6, dtype=np.int64)
+    sdfg(Z=z, C=c, NN=nn, M=6, K=4)
+
+    ref_z, ref_nn = seed_z.copy(), np.zeros(6, dtype=np.int64)
+    for n in range(4):
+        m = ref_z < 4.0
+        for i in range(6):
+            if m[i]:
+                ref_z[i] = ref_z[i] * ref_z[i] + seed_c[i]
+        for i in range(6):
+            if m[i]:
+                ref_nn[i] = n
+    assert np.array_equal(nn, ref_nn), f'{nn} != {ref_nn}'
+    assert np.allclose(z, ref_z)
+
+
 if __name__ == '__main__':
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
     test_scalar_carried_recurrence_refuses()
     test_backward_dependence_refuses()
+    test_mask_read_through_an_interstate_edge_refuses()
     print("OK")
