@@ -6,13 +6,34 @@ import copy
 import sympy
 
 import dace
-from dace import SDFG, properties
+from dace import SDFG, properties, symbolic
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
 from dace.ordered import OrderedSet
+
+
+def bound_facets(bound):
+    """A range bound's ``(main, overapproximation)`` pair; a plain expression is its own."""
+    if isinstance(bound, symbolic.SymExpr):
+        return bound.expr, bound.approx
+    return bound, bound
+
+
+def combine_bound(op, lhs, rhs):
+    """``op`` over two range bounds, applied to each facet separately.
+
+    ``sympy.Min`` / ``sympy.Max`` cannot sympify a :class:`~dace.symbolic.SymExpr` -- a bound
+    carrying a separate overapproximation, which any non-trivial subset produces -- and reducing one
+    to its main expression to get past that would silently drop the very bound the pair exists to
+    carry. Combining facet by facet keeps both; ``SymExpr`` collapses back to a plain expression
+    when the two agree.
+    """
+    lhs_main, lhs_approx = bound_facets(lhs)
+    rhs_main, rhs_approx = bound_facets(rhs)
+    return symbolic.SymExpr(op(lhs_main, rhs_main).simplify(), op(lhs_approx, rhs_approx).simplify())
 
 
 @properties.make_properties
@@ -244,7 +265,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                         assert len(new_ranges_to_add[p]) == 1
                         cur_b, cur_e, cur_s = new_ranges_to_add[p][0]
                         new_ranges_to_add[p] = dace.subsets.Range([
-                            (sympy.Min(old_b, cur_b).simplify(), sympy.Max(old_e, cur_e).simplify(), 1),
+                            (combine_bound(sympy.Min, old_b, cur_b), combine_bound(sympy.Max, old_e, cur_e), 1),
                         ])
 
                 # Append the new dimensions
