@@ -43,6 +43,15 @@ class Node(object):
                              allow_none=True,
                              desc="GPU stream assignment from the experimental-codegen stream "
                              "scheduler. None when unassigned. Persisted across save/load.")
+    specialization_hint = Property(dtype=str,
+                                   default=None,
+                                   allow_none=True,
+                                   desc="A device specialization a canonicalizing pass considered "
+                                   "and did not take, recorded where it applies. Canonicalization "
+                                   "picks the most parallel form; this says what a target-specific "
+                                   "pass could trade it for and on which device the trade pays. "
+                                   "Rendered as a comment by the standalone (MPR) rendering and "
+                                   "ignored everywhere else. None when there is no alternative.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -322,6 +331,17 @@ class AccessNode(Node):
         node._gpu_stream_id = self._gpu_stream_id
 
         node._guid = graph.generate_element_id(node)
+
+        # The assignments above are a hot-path shortcut over the base class's copy of __dict__, and
+        # a shortcut that lists fields by hand goes stale: a Property added to Node later is not
+        # copied, and reading it on the copy raises AttributeError instead of returning its default
+        # -- which is how ``specialization_hint`` disappeared from every deepcopied AccessNode.
+        # Backfill whatever the enumeration missed so the next Property cannot repeat it.
+        copied = vars(node)
+        for name in type(self).__properties__:
+            field = f'_{name}'
+            if field not in copied:
+                copied[field] = dcpy(vars(self).get(field), memo=memo)
 
         return node
 
