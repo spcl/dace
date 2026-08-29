@@ -1707,7 +1707,9 @@ class ProgramVisitor(ExtNodeVisitor):
                          update_expr: Optional[str] = None,
                          inverted: bool = False) -> LoopRegion:
         loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted)
-        self.cfg_target.add_node(loop_region)
+        # A compile-time-unrolled Python loop replays its body, so the same source line mints the
+        # same ``for_<lineno>`` once per unrolled copy and validation rejects the duplicates.
+        self.cfg_target.add_node(loop_region, ensure_unique_name=True)
         self._on_block_added(loop_region)
         return loop_region
 
@@ -2687,7 +2689,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
             _, first_subblock, _, _ = self._recursive_visit(node.body,
-                                                            f'for_{node.lineno}',
+                                                            loop_region.label,
                                                             node.lineno,
                                                             extra_symbols=extra_syms,
                                                             parent=loop_region,
@@ -2777,7 +2779,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Parse body
         self._recursive_visit(node.body,
-                              f'while_{node.lineno}',
+                              loop_region.label,
                               node.lineno,
                               parent=loop_region,
                               unconnected_last_block=False)

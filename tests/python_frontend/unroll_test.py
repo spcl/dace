@@ -413,6 +413,32 @@ def test_nounroll():
         assert np.allclose(A, ref)
 
 
+def test_unrolled_body_loops_get_unique_labels():
+    """An unrolled body replays its inner loops, so their LoopRegions must not share one label.
+
+    Every copy came out as ``for_<lineno>``, and validation rejects duplicate block names in a
+    region -- the whole graph, not just the loops, became unbuildable.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+
+    @dace.program
+    def unrolled_bodies(a: dace.float64[N], out: dace.float64[N]):
+        for w in (1.0, 2.0, 3.0):
+            for i in range(N):
+                out[i] = out[i] + a[i] * w
+
+    sdfg = unrolled_bodies.to_sdfg(simplify=False)
+    labels = [b.label for b in sdfg.nodes()]
+    assert len(labels) == len(set(labels)), f'duplicate block labels: {sorted(labels)}'
+    assert sum(1 for b in sdfg.nodes() if isinstance(b, dace.sdfg.state.LoopRegion)) == 3
+    sdfg.validate()
+
+    a = np.arange(1.0, 5.0, dtype=np.float64)
+    out = np.zeros(4, dtype=np.float64)
+    sdfg(a=a, out=out, N=4)
+    assert np.allclose(out, a * 6.0)
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -434,3 +460,4 @@ if __name__ == '__main__':
     test_arrays_values()
     test_objects()
     test_nounroll()
+    test_unrolled_body_loops_get_unique_labels()
