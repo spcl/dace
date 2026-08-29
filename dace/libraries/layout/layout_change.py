@@ -76,6 +76,27 @@ class ExpandCuTensor(ExpandTransformation):
 
 
 @library.expansion
+class ExpandHipTensor(ExpandTransformation):
+    """Pure permutation -> ``hiptensorPermute`` (AMD GPU); anything else -> ``pure``.
+
+    Delegates to :class:`~dace.libraries.linalg.nodes.ttranspose.TensorTranspose` exactly as the
+    cuTENSOR expansion does, so the vendor choice is a name passed down and not a second body.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        in_desc, out_desc = node.validate(parent_sdfg, parent_state)
+        ops = node.op_sequence()
+        _, out_map, _ = relayout_map(list(in_desc.shape), ops)
+        axes = _as_permutation(out_map, list(in_desc.shape))
+        if axes is None:
+            return ExpandPure.expansion(node, parent_state, parent_sdfg)
+        return _build_transpose_sdfg(node.label, in_desc, out_desc, axes, "hipTENSOR")
+
+
+@library.expansion
 class ExpandHPTT(ExpandTransformation):
     """Pure permutation -> HPTT tensor transpose (CPU); anything else -> ``pure``."""
 
@@ -99,6 +120,7 @@ class LayoutChange(nodes.LibraryNode):
     implementations = {
         "pure": ExpandPure,
         "cuTENSOR": ExpandCuTensor,
+        "hipTENSOR": ExpandHipTensor,
         "HPTT": ExpandHPTT,
     }
     default_implementation = "pure"

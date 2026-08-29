@@ -33,6 +33,10 @@ class GpuBlasDialect(NamedTuple):
     pointer_device: str
     #: ``('D', 'gemv') -> 'cublasDgemv'`` / ``'rocblas_dgemv'``.
     func: Callable[[str, str], str]
+    #: Strided-batched GEMM. Not derivable from :attr:`routine`: cuBLAS suffixes the camel-case
+    #: name (``cublasDgemmStridedBatched``) while rocBLAS extends the snake_case one
+    #: (``rocblas_dgemm_strided_batched``), so the two are different SHAPES, not different cases.
+    strided_batched: Callable[[str], str]
     #: For a node that already holds the COMPLETE routine name including its type letter, because
     #: the letter is not a plain prefix there -- ``Idamax``, ``Scnrm2``, ``Dzasum``. Passing such a
     #: name to :attr:`func` would prepend the letter a second time (``cublasDDnrm2``, measured).
@@ -54,6 +58,7 @@ CUBLAS = GpuBlasDialect(
     pointer_device="CUBLAS_POINTER_MODE_DEVICE",
     func=lambda letter, routine: f"cublas{letter}{routine}",
     routine=lambda name: f"cublas{name}",
+    strided_batched=lambda name: f"cublas{name}StridedBatched",
     op=lambda mode: f"CUBLAS_OP_{mode}",
     fill=lambda upper: "CUBLAS_FILL_MODE_UPPER" if upper else "CUBLAS_FILL_MODE_LOWER",
     side=lambda right: "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT",
@@ -70,6 +75,7 @@ ROCBLAS = GpuBlasDialect(
     pointer_device="rocblas_pointer_mode_device",
     func=lambda letter, routine: f"rocblas_{letter.lower()}{routine.lower()}",
     routine=lambda name: f"rocblas_{name.lower()}",
+    strided_batched=lambda name: f"rocblas_{name.lower()}_strided_batched",
     op=lambda mode: "rocblas_operation_transpose" if mode == "T" else "rocblas_operation_none",
     fill=lambda upper: "rocblas_fill_upper" if upper else "rocblas_fill_lower",
     side=lambda right: "rocblas_side_right" if right else "rocblas_side_left",
