@@ -109,3 +109,43 @@ if __name__ == "__main__":
     test_add_aug_assignment_matching_slice_is_value_exact()
     test_add_indirection_subgraph_with_slice_is_value_exact()
     print("OK")
+
+# _add_aug_assignment, the other direction: a size-1 dim the OPERAND DECLARES is not an index
+# artifact. Squeezing it turned the channel-bias broadcast every convolution writes into
+# "could not broadcast input array from shape [C] into shape [N, C, H, W]".
+C_CH = 3
+
+
+@dace.program
+def aug_assign_declared_singleton(y: dace.float64[2, C_CH, 4, 5], bias: dace.float64[C_CH]):
+    y += np.reshape(bias, (1, C_CH, 1, 1))
+
+
+def test_add_aug_assignment_broadcasts_declared_length1_axes():
+    rng = np.random.default_rng(2)
+    y0 = rng.random((2, C_CH, 4, 5))
+    bias = rng.random(C_CH)
+    oracle = y0 + np.reshape(bias, (1, C_CH, 1, 1))
+
+    got = y0.copy()
+    aug_assign_declared_singleton(y=got, bias=bias.copy())
+    assert got.shape == oracle.shape
+    assert np.allclose(got, oracle), f"max|diff| = {np.abs(got - oracle).max()}"
+
+
+@dace.program
+def aug_assign_newaxis_singleton(y: dace.float64[2, C_CH, 4, 5], bias: dace.float64[C_CH]):
+    y += bias[np.newaxis, :, np.newaxis, np.newaxis]
+
+
+def test_add_aug_assignment_broadcasts_newaxis_singletons():
+    """The same broadcast spelled with newaxis rather than reshape -- a different route to the
+    same rank-4 operand, so a fix that only taught ``reshape`` about it would miss this one."""
+    rng = np.random.default_rng(3)
+    y0 = rng.random((2, C_CH, 4, 5))
+    bias = rng.random(C_CH)
+    oracle = y0 + bias[np.newaxis, :, np.newaxis, np.newaxis]
+
+    got = y0.copy()
+    aug_assign_newaxis_singleton(y=got, bias=bias.copy())
+    assert np.allclose(got, oracle), f"max|diff| = {np.abs(got - oracle).max()}"
