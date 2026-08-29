@@ -789,15 +789,34 @@ def make_transients_persistent(sdfg: SDFG,
     return result
 
 
+def interstate_read_names(sdfg: SDFG) -> OrderedSet:
+    """The containers this SDFG's interstate edges read, which is host code reading them.
+
+    An interstate edge's reads live in its condition and its assignments rather than on any
+    AccessNode, so no dataflow analysis of the states reports them and a pass that walks nodes
+    alone concludes the container is only ever touched by the maps it can see.
+    """
+    names: OrderedSet = OrderedSet()
+    for edge in sdfg.all_interstate_edges():
+        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True):
+            names.add(memlet.data)
+    return names
+
+
 def apply_gpu_storage(sdfg: SDFG) -> None:
     """ Changes the storage of the SDFG's input and output arrays to GPU global memory.
 
     Scalars stay on the host: host code reads them (loop bounds, branch conditions, a tasklet
     outside any map), and a device-resident scalar makes every such read invalid. A device map
     that writes one gets a GPU transient and a copy back from the offload pass.
+
+    An array an interstate edge indexes stays for the same reason, and it is the same host read --
+    ``A[0] < N`` on a loop condition is not a scalar, so the check above does not cover it, and the
+    graph it produces is refused only later, by validation, as a host read of device memory.
     """
-    for desc in sdfg.arrays.values():
-        if isinstance(desc, dt.Scalar):
+    host_read = interstate_read_names(sdfg)
+    for name, desc in sdfg.arrays.items():
+        if isinstance(desc, dt.Scalar) or name in host_read:
             continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
             desc.storage = dtypes.StorageType.GPU_Global

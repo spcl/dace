@@ -586,3 +586,34 @@ def test_apply_gpu_storage_leaves_every_scalar_on_the_host():
     assert sdfg.arrays['written'].storage is not dace.StorageType.GPU_Global
     assert sdfg.arrays['read_only'].storage is not dace.StorageType.GPU_Global
     assert sdfg.arrays['A'].storage is dace.StorageType.GPU_Global
+
+
+def test_apply_gpu_storage_leaves_an_array_an_interstate_edge_reads_on_the_host():
+    """The scalar rule again, for the case the scalar check cannot see.
+
+    An interstate edge's reads live in its condition and assignments, not on any AccessNode, so a
+    pass that walks nodes concludes the array is only ever touched by the maps it can see. Indexing
+    one element does not make the container a Scalar, so ``A[0] < N`` on a loop condition took the
+    array to the device and left the host reading device memory -- a graph validation refuses, well
+    after the pass that shaped it. npbench azimint_hist reaches this through the bin edges
+    ``np.histogram`` derives from its ``radius`` argument.
+    """
+    from dace.transformation.auto import auto_optimize
+
+    sdfg = dace.SDFG('interstate_read_stays_on_host')
+    sdfg.add_array('bounds', [2], dace.float64, transient=False)
+    sdfg.add_array('data', [8], dace.float64, transient=False)
+    body = sdfg.add_state('body')
+    entry, exit_ = body.add_map('k', {'i': '0:8'}, schedule=dace.ScheduleType.GPU_Device)
+    tasklet = body.add_tasklet('scale', {'d': None}, {'o': None}, 'o = d * 2.0')
+    body.add_memlet_path(body.add_read('data'), entry, tasklet, dst_conn='d', memlet=dace.Memlet('data[i]'))
+    body.add_memlet_path(tasklet, exit_, body.add_write('data'), src_conn='o', memlet=dace.Memlet('data[i]'))
+    after = sdfg.add_state('after')
+    # The read that no AccessNode carries.
+    sdfg.add_edge(body, after, dace.InterstateEdge(condition='bounds[0] < bounds[1]'))
+
+    auto_optimize.apply_gpu_storage(sdfg)
+
+    assert sdfg.arrays['bounds'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['data'].storage is dace.StorageType.GPU_Global
+    sdfg.validate()
