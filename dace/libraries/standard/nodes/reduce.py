@@ -1496,26 +1496,27 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 acc_vec_2 = nstate.add_access('acc_vec')
 
                 if schedule.vec_len == 2:
-                    init_vec = nstate.add_tasklet('init_vec', {}, {'o'},
-                                                  f'o.x = {node.identity}\no.y = {node.identity}')
+                    init_vec = nstate.add_tasklet('init_vec', {}, {'__o_out'},
+                                                  f'__o_out.x = {node.identity}\n__o_out.y = {node.identity}')
                 elif schedule.vec_len == 4:
                     init_vec = nstate.add_tasklet(
-                        'init_vec', {}, {'o'},
-                        f'o.x = {node.identity}\no.y = {node.identity}\no.z = {node.identity}\no.w = {node.identity}')
+                        'init_vec', {}, {'__o_out'},
+                        f'__o_out.x = {node.identity}\n__o_out.y = {node.identity}\n__o_out.z = {node.identity}\n__o_out.w = {node.identity}'
+                    )
                 else:
                     raise ValueError(f'Vector length of {schedule.vec_len} not supported')
 
                 nstate.add_edge(bme, None, init_vec, None, dace.Memlet())
-                nstate.add_edge(init_vec, 'o', acc_vec_1, None, dace.Memlet('acc_vec'))
+                nstate.add_edge(init_vec, '__o_out', acc_vec_1, None, dace.Memlet('acc_vec'))
 
             nsdfg.add_scalar('acc', nsdfg.arrays['_in'].dtype, dtypes.StorageType.Register, True)
             acc_1 = nstate.add_access('acc')
             acc_2 = nstate.add_access('acc')
             acc_3 = nstate.add_access('acc')
 
-            init_scalar = nstate.add_tasklet('init_scalar', {}, {'o'}, f'o = {node.identity}')
+            init_scalar = nstate.add_tasklet('init_scalar', {}, {'__o_out'}, f'__o_out = {node.identity}')
             nstate.add_edge(bme, None, init_scalar, None, dace.Memlet())
-            nstate.add_edge(init_scalar, 'o', acc_1, None, dace.Memlet('acc[0]'))
+            nstate.add_edge(init_scalar, '__o_out', acc_1, None, dace.Memlet('acc[0]'))
 
             # Add inner map, which corresponds to the range to reduce, containing an identity tasklet
             # with vectorization we simply have different start and stride
@@ -1539,18 +1540,18 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             # Add identity tasklet for reduction
             if vectorize:
                 id = nstate.add_tasklet('identity', {
-                    'a': dace.vector(in_type, schedule.vec_len),
-                    'b': dace.vector(in_type, schedule.vec_len)
-                }, {'o'}, 'o = b')
+                    '__a_in': dace.vector(in_type, schedule.vec_len),
+                    '__b_in': dace.vector(in_type, schedule.vec_len)
+                }, {'__o_out'}, '__o_out = __b_in')
             else:
-                id = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = b')
+                id = nstate.add_tasklet('identity', {'__a_in', '__b_in'}, {'__o_out'}, '__o_out = __b_in')
 
             if vectorize:
                 # add a vec_reduce tasklet
                 vr = nstate.add_tasklet('vec_reduce', {
-                    'a': in_type,
-                    'b': dace.vector(in_type, schedule.vec_len)
-                }, {'o': dace.vector(in_type, schedule.vec_len)}, 'o = b')
+                    '__a_in': in_type,
+                    '__b_in': dace.vector(in_type, schedule.vec_len)
+                }, {'__o_out': dace.vector(in_type, schedule.vec_len)}, '__o_out = __b_in')
 
             # add warpReduce tasklet
             ctype = output_data.dtype
@@ -1572,19 +1573,23 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             w = nstate.add_write('_out')
 
             if schedule.multi_axes:
-                nstate.add_memlet_path(r, add_me, ome, bme, ime, id, dst_conn='b', memlet=inmm)
+                nstate.add_memlet_path(r, add_me, ome, bme, ime, id, dst_conn='__b_in', memlet=inmm)
             else:
-                nstate.add_memlet_path(r, ome, bme, ime, id, dst_conn='b', memlet=inmm)
+                nstate.add_memlet_path(r, ome, bme, ime, id, dst_conn='__b_in', memlet=inmm)
 
             if vectorize:
-                nstate.add_memlet_path(acc_vec_1, ime, id, dst_conn='a', memlet=dace.Memlet('acc_vec[0]'))
-                nstate.add_memlet_path(id, imx, acc_vec_2, src_conn='o', memlet=dace.Memlet('acc_vec[0]', wcr=node.wcr))
-                nstate.add_memlet_path(acc_vec_2, vr, dst_conn='b', memlet=dace.Memlet('acc_vec[0]'))
-                nstate.add_memlet_path(acc_1, vr, dst_conn='a', memlet=dace.Memlet('acc[0]'))
-                nstate.add_memlet_path(vr, acc_2, src_conn='o', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
+                nstate.add_memlet_path(acc_vec_1, ime, id, dst_conn='__a_in', memlet=dace.Memlet('acc_vec[0]'))
+                nstate.add_memlet_path(id,
+                                       imx,
+                                       acc_vec_2,
+                                       src_conn='__o_out',
+                                       memlet=dace.Memlet('acc_vec[0]', wcr=node.wcr))
+                nstate.add_memlet_path(acc_vec_2, vr, dst_conn='__b_in', memlet=dace.Memlet('acc_vec[0]'))
+                nstate.add_memlet_path(acc_1, vr, dst_conn='__a_in', memlet=dace.Memlet('acc[0]'))
+                nstate.add_memlet_path(vr, acc_2, src_conn='__o_out', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
             else:
-                nstate.add_memlet_path(acc_1, ime, id, dst_conn='a', memlet=dace.Memlet('acc[0]'))
-                nstate.add_memlet_path(id, imx, acc_2, src_conn='o', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
+                nstate.add_memlet_path(acc_1, ime, id, dst_conn='__a_in', memlet=dace.Memlet('acc[0]'))
+                nstate.add_memlet_path(id, imx, acc_2, src_conn='__o_out', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
 
             nstate.add_memlet_path(acc_2, wr, dst_conn='__a', memlet=dace.Memlet('acc[0]'))
             nstate.add_memlet_path(wr, bmx, acc_3, src_conn='__out', memlet=dace.Memlet('acc[0]'))
@@ -1698,14 +1703,14 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             accwrite = real_state.add_access('acc')
             final_inner_smem = real_state.add_access('s_mem')
 
-            init_scalar = real_state.add_tasklet('reset_acc', {}, {'o'}, f'o = {node.identity}')
-            real_state.add_edge(init_scalar, 'o', accread, None, dace.Memlet('acc'))
+            init_scalar = real_state.add_tasklet('reset_acc', {}, {'__o_out'}, f'__o_out = {node.identity}')
+            real_state.add_edge(init_scalar, '__o_out', accread, None, dace.Memlet('acc'))
 
-            init_smem = nstate.add_tasklet('reset_smem', {'a'}, {'o'}, f'o = {node.identity}')
+            init_smem = nstate.add_tasklet('reset_smem', {'__a_in'}, {'__o_out'}, f'__o_out = {node.identity}')
             s_mem2 = nstate.add_access('s_mem')
 
-            nstate.add_memlet_path(s_mem1, bme1, init_smem, dst_conn='a', memlet=dace.Memlet('s_mem[_b]'))
-            nstate.add_memlet_path(init_smem, bmx1, s_mem2, src_conn='o', memlet=dace.Memlet('s_mem[_b]'))
+            nstate.add_memlet_path(s_mem1, bme1, init_smem, dst_conn='__a_in', memlet=dace.Memlet('s_mem[_b]'))
+            nstate.add_memlet_path(init_smem, bmx1, s_mem2, src_conn='__o_out', memlet=dace.Memlet('s_mem[_b]'))
 
             s_mem3 = nstate.add_access('s_mem')
 
@@ -1720,9 +1725,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 ime, imx = real_state.add_map('reduce_values', {'_i': f'_b0:{schedule.sequential[0]}:16'},
                                               schedule=dtypes.ScheduleType.Sequential)
 
-            id = real_state.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = b')
+            id = real_state.add_tasklet('identity', {'__a_in', '__b_in'}, {'__o_out'}, '__o_out = __b_in')
             # tasklet for reducing partial results to shared memory
-            id_smem = real_state.add_tasklet('identity_smem', {'a', 'b'}, {'o'}, 'o = b')
+            id_smem = real_state.add_tasklet('identity_smem', {'__a_in', '__b_in'}, {'__o_out'}, '__o_out = __b_in')
 
             # Connect everything
             r = nstate.add_read('_in')
@@ -1742,7 +1747,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
             nstate.add_memlet_path(actual_nested_sdfg, bmx2, s_mem3, src_conn='s_mem', memlet=dace.Memlet('s_mem[_b1]'))
 
-            real_state.add_memlet_path(inner_in, ime, id, dst_conn='b', memlet=dace.Memlet('_in[_i]'))
+            real_state.add_memlet_path(inner_in, ime, id, dst_conn='__b_in', memlet=dace.Memlet('_in[_i]'))
 
             if mini_warps:
                 cond_tasklet = nstate.add_tasklet(
@@ -1755,16 +1760,20 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     f'if _b + {warp_size} * _g < {schedule.out_shape[-1]} and _bb == 0: _output = _input')
 
             # connect accumulator to identity tasklet
-            real_state.add_memlet_path(accread, ime, id, dst_conn='a', memlet=dace.Memlet('acc[0]'))
+            real_state.add_memlet_path(accread, ime, id, dst_conn='__a_in', memlet=dace.Memlet('acc[0]'))
             # connect output of id tasklet
-            real_state.add_memlet_path(id, imx, accwrite, src_conn='o', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
+            real_state.add_memlet_path(id,
+                                       imx,
+                                       accwrite,
+                                       src_conn='__o_out',
+                                       memlet=dace.Memlet('acc[0]', wcr=node.wcr))
 
             # connect to and from smem reduction tasklet
-            real_state.add_memlet_path(inner_smem, id_smem, dst_conn='a', memlet=dace.Memlet('s_mem[0]'))
-            real_state.add_memlet_path(accwrite, id_smem, dst_conn='b', memlet=dace.Memlet('acc[0]'))
+            real_state.add_memlet_path(inner_smem, id_smem, dst_conn='__a_in', memlet=dace.Memlet('s_mem[0]'))
+            real_state.add_memlet_path(accwrite, id_smem, dst_conn='__b_in', memlet=dace.Memlet('acc[0]'))
             real_state.add_memlet_path(id_smem,
                                        final_inner_smem,
-                                       src_conn='o',
+                                       src_conn='__o_out',
                                        memlet=dace.Memlet('s_mem[0]', wcr=node.wcr))
 
             if mini_warps:
