@@ -4,6 +4,7 @@ from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
 from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
+from dace.ordered import OrderedSet
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
@@ -226,13 +227,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
         all_write_indices = list()
 
         # Empty memlets are ordering edges: they access no element, so they carry no indices.
-        read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an) if not e.data.is_empty())
-        uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
-                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an)
-                                 if not e.data.is_empty())
-        all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                              for e in st.in_edges(an) if not e.data.is_empty())
+        read_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
+                                for e in st.out_edges(an) if not e.data.is_empty())
+        uncond_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes()
+                                        if an.data == array_name and an not in self.cond_unique
+                                        for e in st.in_edges(an) if not e.data.is_empty())
+        all_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
+                                     for e in st.in_edges(an) if not e.data.is_empty())
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)

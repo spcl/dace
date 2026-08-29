@@ -1016,7 +1016,7 @@ def isolate_nested_sdfg(
     # ``B = f(A); A = f(B)`` pair) is sequenced AFTER the NSDFG by the real
     # output-edge chain, even though it shares the input's data name. The
     # edge-implied ordering is authoritative and wins over the name-based guess.
-    forward_from_nsdfg: Set[nodes.Node] = set()
+    forward_from_nsdfg: OrderedSet[nodes.Node] = OrderedSet()
     fwd_stack: List[nodes.Node] = [oedge.dst for oedge in state.out_edges(nsdfg_node)]
     while fwd_stack:
         fnode = fwd_stack.pop()
@@ -1035,7 +1035,7 @@ def isolate_nested_sdfg(
         for other_writer in data_writers.get(input_node.data, ()):
             if other_writer is not input_node and other_writer not in forward_from_nsdfg:
                 to_visit.append(other_writer)
-    visited: Set[nodes.Node] = set()
+    visited: OrderedSet[nodes.Node] = OrderedSet()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
         if node_to_process in visited:
