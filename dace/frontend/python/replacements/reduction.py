@@ -101,14 +101,31 @@ def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     return reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
+def as_bool(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    """The operand's truth values. ``any``/``all`` reduce over these, not over the operand itself."""
+    from dace.frontend.python.replacements.array_manipulation import _ndarray_astype  # Avoid import loop
+
+    if sdfg.arrays[arr].dtype == dtypes.bool_:
+        return arr
+    return _ndarray_astype(pv, sdfg, state, arr, dtypes.bool_)
+
+
 @oprepo.replaces('numpy.any')
 def _any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return reduce(pv, sdfg, state, "lambda x, y: x or y", a, axis=axis, identity=0)
+    return reduce(pv, sdfg, state, "lambda x, y: x or y", as_bool(pv, sdfg, state, a), axis=axis, identity=0)
 
 
 @oprepo.replaces('numpy.all')
 def _all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return reduce(pv, sdfg, state, "lambda x, y: x and y", a, axis=axis, identity=0)
+    """``np.all``: AND over the operand's truth values.
+
+    The identity of AND is TRUE, and it has to be true in the dtype the accumulator carries.
+    Reducing the operand directly made that dtype-dependent -- and with an identity of 0 the very
+    first ``x and y`` was false, which pinned every result to False for every input. Reducing the
+    BOOL cast instead makes the accumulator bool, so the identity is unambiguous and the answer
+    comes back in bool, the way NumPy reports it.
+    """
+    return reduce(pv, sdfg, state, "lambda x, y: x and y", as_bool(pv, sdfg, state, a), axis=axis, identity=1)
 
 
 @oprepo.replaces('numpy.mean')
