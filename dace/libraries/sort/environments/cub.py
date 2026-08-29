@@ -111,9 +111,11 @@ class ScanScratch:
     cmake_link_flags = []
     cmake_files = []
 
-    #: CUDA unit only: the affine expansion's kernels and its map monoid. The host translation
-    #: unit never sees it -- it includes ``cub/cub.cuh``, which the host compiler cannot parse.
-    headers = {'frame': [], 'cuda': ['dace/cuda/scan_affine.cuh']}
+    #: CUDA unit only: the affine expansion's kernels and its map monoid, and the residue-class
+    #: kernels the strided path launches. The host translation unit never sees either -- both
+    #: carry ``__global__`` symbols, and the affine header includes ``cub/cub.cuh``, which the
+    #: host compiler cannot parse.
+    headers = {'frame': [], 'cuda': ['dace/cuda/scan_affine.cuh', 'dace/cuda/scan.cuh']}
     state_fields = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::ScanTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ScanTag>();"

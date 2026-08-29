@@ -149,17 +149,14 @@ def _to_gpu_sdfg(sdfg: dace.SDFG, suffix: str, device_resident_data=()) -> dace.
     for arr in device_resident_data:
         if arr in gpu.arrays:
             gpu.arrays[arr].storage = dace.dtypes.StorageType.GPU_Global
-    # Library-node implementations default to CPU; on a GPU SDFG we want the
-    # device-side expansion. Pick by stride: cub::DeviceScan for unit-stride,
-    # the custom block-per-residue-class kernel (``CUDA_strided``) for stride
-    # > 1 -- the latter avoids cub.cuh's CCCL 3 g++-incompatible templates.
-    # ``apply_gpu_transformations`` does not touch library-node
-    # implementation strings, so set them explicitly here.
-    from dace import symbolic as _symbolic
+    # Library-node implementations default to CPU; on a GPU SDFG we want the device-side
+    # expansion. ``ExpandCUDA`` picks cub::DeviceScan or the residue-class kernel from the node's
+    # own stride, so the stride is not this caller's business.
+    # ``apply_gpu_transformations`` does not touch library-node implementation strings, so set
+    # them explicitly here.
     for n, _ in gpu.all_nodes_recursive():
         if isinstance(n, _nodes.LibraryNode) and type(n).__name__ == 'Scan':
-            is_unit_stride = (_symbolic.pystr_to_symbolic(str(n.stride)) == 1)
-            n.implementation = 'CUDA' if is_unit_stride else 'CUDA_strided'
+            n.implementation = 'CUDA'
     gpu.validate()
     return gpu
 

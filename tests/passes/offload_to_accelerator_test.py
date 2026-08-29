@@ -177,7 +177,7 @@ def test_an_offloaded_scan_gets_its_device_lowering():
     ]
     assert offloaded, 'the Scan was not offloaded, so its lowering says nothing'
     for node in offloaded:
-        assert node.implementation in ('CUDA', 'CUDA_strided', 'GPUAuto'), (
+        assert node.implementation in ('CUDA', 'GPUAuto'), (
             f'the Scan runs on the device with implementation {node.implementation!r}; that is a '
             'host lowering, so the kernel would carry a serial sweep')
 

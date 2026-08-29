@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Standalone tests for the :class:`~dace.libraries.standard.nodes.ArgReduce`
 libnode (argmax / argmin -> value + index, two scalar outputs)."""
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -112,16 +114,27 @@ def gpu_argreduce(op: str) -> dace.SDFG:
 
 
 @pytest.mark.parametrize('op', ['max', 'min'])
-def test_the_cuda_expansion_calls_cub_and_brings_the_pair_back(op):
-    """CUB answers in DEVICE memory; both outputs are host scalars, so the pair has to be copied."""
+def test_the_cuda_expansion_calls_cub_and_brings_the_answer_back(op):
+    """CUB answers in DEVICE memory; both outputs are host scalars, so the answer has to be copied.
+
+    The CUB call, the scratch block and the copy back live in ``dace::cub::arg_reduce`` rather than
+    in the emitted string -- that is where the toolkit picks between CUB's deprecated
+    ``KeyValuePair`` output and the two-iterator one that replaced it. So the emitted code is
+    checked for the right op tag, and the header is checked for the three things it now owns.
+    """
     sdfg = gpu_argreduce(op)
     sdfg.expand_library_nodes()
     code = '\n'.join(c.clean_code for c in sdfg.generate_code())
 
+    tag = 'ArgMaxOp' if op == 'max' else 'ArgMinOp'
+    assert f'::dace::cub::arg_reduce<::dace::cub::{tag}>' in code, (
+        f'the CUDA expansion did not dispatch the {op} arg-reduction to ::dace::cub::{tag}')
+
+    compat = (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'cub_compat.cuh').read_text()
     kind = 'ArgMax' if op == 'max' else 'ArgMin'
-    assert f'cub::DeviceReduce::{kind}' in code, f'the CUDA expansion did not call cub::DeviceReduce::{kind}'
-    assert 'get_scratch<::dace::cub::ReduceTag>' in code, 'the workspace does not come from the scratch pool'
-    assert 'cudaMemcpyDeviceToHost' in code, 'the KeyValuePair is never copied back, so the outputs read device memory'
+    assert f'DeviceReduce::{kind}' in compat, f'::dace::cub::{tag} does not reach gpucub::DeviceReduce::{kind}'
+    assert 'get_scratch<ReduceTag>' in compat, 'the workspace does not come from the scratch pool'
+    assert 'gpuMemcpyDeviceToHost' in compat, 'the answer is never copied back, so the outputs read device memory'
     assert ArgReduce.host_connectors == frozenset(
         {'_out_val',
          '_out_idx'}), ('both answers are written by host code, so an offloader must be told to leave them there')

@@ -21,7 +21,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 """
 import os
 
-from dace import SDFG, dtypes, symbolic
+from dace import SDFG, dtypes
 from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import SDFGState
@@ -170,12 +170,8 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # affine scan under the outer loop). Decide by SCOPE, as the generic rule below does; the
         # schedule says ``Sequential`` for a host loop and a kernel alike.
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
-            # ``cub::DeviceScan`` is one contiguous scan, so a strided scan has its own expansion and
-            # ``ExpandCUDA`` refuses the case outright rather than walk past a residue boundary
-            # (tsvc_2_5 ext_floordiv_offset_m). Pick by stride instead of handing it the refusal.
-            device_impl = 'CUDA' if symbolic.equal(node.stride, 1) else 'CUDA_strided'
             node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
-                                   (device_impl if device_impl in impls else node.implementation))
+                                   ('CUDA' if 'CUDA' in impls else node.implementation))
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
