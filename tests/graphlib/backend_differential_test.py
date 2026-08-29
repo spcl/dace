@@ -45,6 +45,26 @@ def test_immediate_dominators(backend):
 
 
 @pytest.mark.parametrize('backend', _BACKENDS)
+def test_the_start_block_dominates_itself(backend):
+    """networkx 3.6 builds ``idom = {start: None}``, computes, then ``del idom[start]`` before
+    returning, so the root stopped being a key. Every caller in dace indexes the map directly, so
+    the first lookup of an entry block raised ``KeyError: SDFGState (...)`` and canonicalize died on
+    graphs it handled one networkx release earlier. The backend layer restores the entry; this
+    pins it for both backends, on the two shapes where the root has no predecessor at all."""
+    with gl.set_default_backend(backend):
+        single = gl.DiGraph()
+        single.add_node('only')
+        assert gl.immediate_dominators(single, 'only') == {'only': 'only'}
+
+        chain = gl.DiGraph()
+        chain.add_edge('entry', 'mid')
+        chain.add_edge('mid', 'exit')
+        idom = gl.immediate_dominators(chain, 'entry')
+        assert idom['entry'] == 'entry', 'the entry block must dominate itself'
+        assert idom == {'entry': 'entry', 'mid': 'entry', 'exit': 'mid'}
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
 def test_weakly_connected_components(backend):
     with gl.set_default_backend(backend):
         G = _diamond()

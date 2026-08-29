@@ -24,6 +24,11 @@ class GraphBackend(Protocol):
         ...
 
     def immediate_dominators(self, G: Any, start: Any) -> Dict[Any, Any]:
+        """``{node: immediate dominator}`` over what ``start`` reaches, ``start`` mapped to itself.
+
+        The self-entry is part of the contract, not an artefact of one backend: networkx dropped it
+        in 3.6 and its adapter puts it back.
+        """
         ...
 
     def weakly_connected_components(self, G: Any) -> Iterable[Set[Any]]:
