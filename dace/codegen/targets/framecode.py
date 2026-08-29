@@ -1032,6 +1032,41 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
 
+    def order_views_after_their_sources(self, entries: list[tuple[Any, ...]]) -> list[int]:
+        """Order allocations so a view is bound only once the container it points into exists.
+
+        ``to_allocate`` is filled in descriptor order, which says nothing about who views whom. A
+        view emitted first takes the address of a pointer that is still null, or still holds the
+        previous iteration's freed buffer -- the read through it is then wild.
+        """
+        allocated_at: dict[str, int] = {}
+        for index, (_, _, node, _, allocate, _) in enumerate(entries):
+            if allocate and node.data not in allocated_at:
+                allocated_at[node.data] = index
+
+        def source_of(index: int) -> int | None:
+            tsdfg, state, node, _, allocate, _ = entries[index]
+            if not allocate or state is None or not isinstance(node.desc(tsdfg), data.View):
+                return None
+            viewed = utils.get_view_node(state, node)
+            if viewed is None or viewed.data == node.data:
+                return None
+            source = allocated_at.get(viewed.data)
+            return None if source == index else source
+
+        # Depth in the view chain, so a stable sort leaves every unrelated allocation where it was.
+        depth: dict[int, int] = {}
+        for start in range(len(entries)):
+            chain: list[int] = []
+            index: int | None = start
+            while index is not None and index not in depth and index not in chain:
+                chain.append(index)
+                index = source_of(index)
+            base = 0 if index is None or index in chain else depth[index]
+            for offset, member in enumerate(reversed(chain)):
+                depth[member] = base + offset + 1
+        return sorted(range(len(entries)), key=lambda index: depth[index])
+
     def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -1041,7 +1076,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
-        for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
+        entries = self.to_allocate[scope]
+        for index in self.order_views_after_their_sources(entries):
+            tsdfg, state, node, declare, allocate, _ = entries[index]
             if state is not None:
                 state_id = state.block_id
             else:
