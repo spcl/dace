@@ -8,6 +8,8 @@ from dace.libraries.blas import blas_helpers
 from dace import symbolic
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg import scope
 from dace.transformation.transformation import ExpandTransformation
 import warnings
 
@@ -72,6 +74,24 @@ class ExpandTransposePure(ExpandTransformation):
     environments = []
 
     @staticmethod
+    def map_schedule(node, parent_state, parent_sdfg):
+        """Schedule for the element-wise map this expansion builds.
+
+        Schedule inference has already run by the time a library node expands, so a map left at the
+        default schedule is whatever surrounds it -- and on device-resident data at host level that
+        is a host loop over ``GPU_Global`` memory. npbench nbody lands here exactly: ``pos[:, 0:1]``
+        is a strided view, so every packed-layout expansion declines it and this one takes over.
+        Inside a kernel the opposite holds: everything below is device code already, and a nested
+        device map is not allowed.
+        """
+        if scope.is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            return dace.dtypes.ScheduleType.Sequential
+        operands = [parent_state.in_edges(node)[0].data.data, parent_state.out_edges(node)[0].data.data]
+        if any(parent_sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES for name in operands):
+            return dace.dtypes.ScheduleType.GPU_Device
+        return dace.dtypes.ScheduleType.Default
+
+    @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
 
         in_edge, in_outer_array, in_shape, in_strides = _get_transpose_input(node, parent_state, parent_sdfg)
@@ -94,6 +114,7 @@ class ExpandTransposePure(ExpandTransformation):
         else:
             state.add_mapped_tasklet(
                 name="transpose",
+                schedule=ExpandTransposePure.map_schedule(node, parent_state, parent_sdfg),
                 map_ranges={
                     "__i%d" % i: "0:%s" % n
                     for i, n in enumerate(in_array.shape)

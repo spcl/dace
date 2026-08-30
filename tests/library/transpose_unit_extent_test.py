@@ -128,6 +128,37 @@ def test_a_strided_operand_transposes_correctly(implementation):
     assert np.array_equal(out, a[:, 0:1].T), f"{implementation}: {out} != {a[:, 0:1].T}"
 
 
+def expansion_maps(sdfg):
+    """Every map the expansion built, including the ones inside the nested SDFG it returns."""
+    return [
+        node.map for nested in sdfg.all_sdfgs_recursive() for state in nested.all_states() for node in state.nodes()
+        if isinstance(node, dace.nodes.MapEntry)
+    ]
+
+
+def test_a_device_resident_operand_expands_to_a_device_map():
+    """The element-wise expansion is where a strided device operand LANDS -- every packed-layout
+    expansion declines it -- so the map it builds has to carry a device schedule. Left at the
+    default it is a host loop over ``GPU_Global`` memory, which validation rejects at codegen
+    (npbench nbody, whose ``pos[:, 0:1]`` reaches this expansion three times per step)."""
+    sdfg = build((4, 3), "pure")
+    for desc in sdfg.arrays.values():
+        desc.storage = dace.StorageType.GPU_Global
+    sdfg.expand_library_nodes()
+
+    maps = expansion_maps(sdfg)
+    assert maps, "the element-wise expansion should have built a map"
+    assert all(m.schedule == dace.ScheduleType.GPU_Device for m in maps), \
+        f"device-resident operands need a device schedule, got {[m.schedule for m in maps]}"
+
+    # Non-vacuity: the same expansion on host data must NOT be forced onto the device.
+    host = build((4, 3), "pure")
+    host.expand_library_nodes()
+    host_maps = expansion_maps(host)
+    assert all(m.schedule == dace.ScheduleType.Default for m in host_maps), \
+        f"host operands must keep the default schedule, got {[m.schedule for m in host_maps]}"
+
+
 if __name__ == '__main__':
     for s in SHAPES:
         test_transpose_pure_handles_a_unit_extent(s)
@@ -137,3 +168,4 @@ if __name__ == '__main__':
         test_a_strided_operand_never_reaches_a_blas_call(impl)
     for impl in ("pure", "OpenBLAS"):
         test_a_strided_operand_transposes_correctly(impl)
+    test_a_device_resident_operand_expands_to_a_device_map()
