@@ -388,6 +388,10 @@ class OffloadToAccelerator(ppl.Pass):
             # inside itself. Counting them here would answer a rarely-taken read with a copy every
             # execution pays for -- the exact cost the arm-local copies exist to avoid.
             fallback = in_sequential_specialization_arm(state)
+            # Host means "touched by code that STAYS on the host". A free tasklet sharing its state
+            # with device code does not: the hybrid resolution wraps it in a len-1 map, and a
+            # container staged on the strength of that use is then written from inside a kernel.
+            hybrid = any(self.touches_device_code(scopes, node) for node in state.nodes())
             for node in state.data_nodes():
                 if node.data not in sdfg.arrays:
                     continue
@@ -397,7 +401,7 @@ class OffloadToAccelerator(ppl.Pass):
                     other = edge.dst if edge.src is node else edge.src
                     if self.touches_device_code(scopes, other):
                         device.add(node.data)
-                    elif not fallback:
+                    elif not fallback and not hybrid:
                         host.add(node.data)
         return host, device, written
 
