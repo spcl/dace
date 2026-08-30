@@ -2,13 +2,20 @@
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 import dace
 import multiprocessing
-from dace import dtypes, library, nodes, properties
+from dace import dtypes, library, nodes, properties, symbolic
+from dace.data import core as datacore
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from numbers import Number
 from dace.libraries.linalg import environments
 import warnings
+from typing import Any, Sequence
+
+
+def moves_whole_container(desc: dace.data.Data, shape: Sequence[Any]) -> bool:
+    """True iff a memlet carrying ``shape`` spans all of ``desc``."""
+    return symbolic.shapes_equal(shape, desc.shape)
 
 
 @library.expansion
@@ -19,16 +26,18 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
+        # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
+        # carries, laid out the way the array it is cut from is laid out.
         _, inp_arr = sdfg.add_array("_inp_tensor",
-                                    inp_tensor.shape,
+                                    inp_shape,
                                     inp_tensor.dtype,
                                     inp_tensor.storage,
                                     strides=inp_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
+                                    out_shape,
                                     out_tensor.dtype,
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
@@ -65,18 +74,24 @@ class ExpandHPTT(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
-        inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
+        # HPTT expresses a non-packed operand only as an "outer size" per mode -- it cannot take a
+        # stride array -- so a memlet moving a slice of a larger container has no faithful call here.
+        if not (moves_whole_container(inp_tensor, inp_shape) and moves_whole_container(out_tensor, out_shape)):
+            warnings.warn("HPTT takes no stride array, so it cannot transpose a subset of a larger "
+                          "container, falling back to the pure implementation")
+            return ExpandPure.expansion(node, parent_state, parent_sdfg)
         axes = ','.join([sym2cpp(a) for a in node.axes])
-        shape = ','.join([sym2cpp(s) for s in inp_tensor.shape])
+        shape = ','.join([sym2cpp(s) for s in inp_shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
         code = f"""
-            int perm[{len(inp_tensor.shape)}] = {{{axes}}};
-            int size[{len(inp_tensor.shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
+            int perm[{len(inp_shape)}] = {{{axes}}};
+            int size[{len(inp_shape)}] = {{{shape}}};
+            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
         tasklet = nodes.Tasklet(node.name,
@@ -121,14 +136,14 @@ class ExpandGPUTensor(ExpandTransformation):
     def expansion(cls, node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
-        inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
             raise NotImplementedError(f"{cls.vendor} permute does not support beta != 0. Its signature is "
                                       "(handle, plan, alpha, A, B, stream) -- out-of-place B = alpha*op(A), no "
                                       "beta term. Use the 'pure' expansion for C = alpha*perm(A) + beta*C.")
 
-        ndim = len(inp_tensor.shape)
+        ndim = len(inp_shape)
         dtype = inp_tensor.dtype.base_type
 
         if dtype not in cls.environments[0].TYPE_MAP:
@@ -147,13 +162,17 @@ class ExpandGPUTensor(ExpandTransformation):
         # Output modes: the permutation   [axes[0], axes[1], ...]
         modes_c = list(node.axes)
 
-        extent_a = [sym2cpp(s) for s in inp_tensor.shape]
-        extent_c = [sym2cpp(s) for s in out_tensor.shape]
+        # Extents from the memlets, strides from the containers: the v2 descriptor takes both, so a
+        # subset is expressed exactly -- the pointer already arrives at the subset origin.
+        extent_a = [sym2cpp(s) for s in inp_shape]
+        extent_c = [sym2cpp(s) for s in out_shape]
         stride_a = [sym2cpp(s) for s in inp_tensor.strides]
         stride_c = [sym2cpp(s) for s in out_tensor.strides]
 
         if cls.fastest_mode_first:
-            if not out_tensor.is_packed_c_strides():
+            # Packedness is a property of the moved REGION: a slice of a packed container is not
+            # itself packed, and this vendor writes the output densely whatever its strides say.
+            if not datacore.strides_equal(datacore.packed_c_strides(out_shape), out_tensor.strides):
                 warnings.warn(f"{cls.vendor} permute ignores the output tensor's strides and would pack a "
                               "non-packed output, falling back to the pure implementation (still a GPU map "
                               "on GPU-resident data)")
@@ -292,8 +311,8 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg, **kwargs):
         from dace.codegen.targets.cpp import sym2cpp
-        inp_tensor, out_tensor = node.validate(sdfg, state)
-        plain_swap = (list(node.axes) == [1, 0] and len(inp_tensor.shape) == 2 and node.alpha == 1 and node.beta == 0)
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(sdfg, state)
+        plain_swap = (list(node.axes) == [1, 0] and len(inp_shape) == 2 and node.alpha == 1 and node.beta == 0)
         if not plain_swap:
             # ``ExpandTransformation.apply`` attaches THIS class's ``environments`` to whatever is
             # returned, so a delegation has to carry the delegate's -- otherwise cuTENSOR's expansion
@@ -303,7 +322,9 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
             return delegate.expansion(node, state, sdfg, **kwargs)
         ExpandTensorTransposeCUDA.environments = [TiledTranspose]
 
-        rows, cols = inp_tensor.shape
+        # The kernel takes leading dimensions separately, so the extents are the region's and the
+        # strides stay the containers' -- that pair is what makes a subset transpose correct here.
+        rows, cols = inp_shape
         state_id = state.parent_graph.node_id(state)
         idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
         ctype = inp_tensor.dtype.base_type.ctype
@@ -352,16 +373,25 @@ class TensorTranspose(nodes.LibraryNode):
     def validate(self, sdfg, state):
         """
         Validates the tensor transposition operation.
-        :return: A tuple (inp_tensor, out_tensor) for the data descriptors in the parent SDFG.
+
+        :return: A tuple (inp_tensor, out_tensor, inp_shape, out_shape) -- the data descriptors in
+                 the parent SDFG, and the extents the memlets actually move.
         """
 
         inp_tensor, out_tensor = None, None
+        inp_shape, out_shape = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
                 out_tensor = sdfg.arrays[e.data.data]
+                # The extents come from the SUBSET, not the descriptor: a transpose may write into a
+                # slice of a larger container -- densenet appends 32 channels into channels 64:96 of
+                # a 256-channel concatenation buffer -- and comparing the permuted input against the
+                # container rejects a write that is correct.
+                out_shape = e.data.subset.size()
         for e in state.in_edges(self):
             if e.dst_conn == "_inp_tensor":
                 inp_tensor = sdfg.arrays[e.data.data]
+                inp_shape = e.data.subset.size()
 
         if not inp_tensor:
             raise ValueError("Missing the input tensor.")
@@ -374,15 +404,17 @@ class TensorTranspose(nodes.LibraryNode):
         if inp_tensor.storage != out_tensor.storage:
             raise ValueError("The storage of the input and output tensors must match.")
 
-        if len(inp_tensor.shape) != len(out_tensor.shape):
+        if len(inp_shape) != len(out_shape):
             raise ValueError("The input and output tensors must have the same number of modes.")
-        if len(inp_tensor.shape) != len(self.axes):
+        if len(inp_shape) != len(self.axes):
             raise ValueError("The axes list property must have as many elements as the number of tensor modes.")
-        if sorted(self.axes) != list(range(len(inp_tensor.shape))):
+        if sorted(self.axes) != list(range(len(inp_shape))):
             raise ValueError("The axes list property is not a perimutation of the input tensor's modes.")
 
-        transposed_shape = [inp_tensor.shape[t] for t in self.axes]
-        if transposed_shape != list(out_tensor.shape):
+        transposed_shape = [inp_shape[t] for t in self.axes]
+        # Compared by NAME: one extent reaches the two sides through different rewrites and arrives
+        # as two spellings that raw ``!=`` calls unequal, rejecting shapes that match.
+        if not symbolic.shapes_equal(transposed_shape, out_shape):
             raise ValueError("The permutation of the input shape does not match the output shape.")
 
-        return inp_tensor, out_tensor
+        return inp_tensor, out_tensor, inp_shape, out_shape

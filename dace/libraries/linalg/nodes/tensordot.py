@@ -4,7 +4,7 @@ import collections
 import dace
 
 from dace.libraries.linalg import environments
-from dace import library, nodes, properties
+from dace import library, nodes, properties, symbolic
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -19,21 +19,24 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
+        # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
+        # carries, laid out the way the array it is cut from is laid out. Everything below reads
+        # these connector descriptors, so the whole expansion follows the subset from here.
         _, left_arr = sdfg.add_array("_left_tensor",
-                                     left_tensor.shape,
+                                     left_ext,
                                      left_tensor.dtype,
                                      left_tensor.storage,
                                      strides=left_tensor.strides)
         _, right_arr = sdfg.add_array("_right_tensor",
-                                      right_tensor.shape,
+                                      right_ext,
                                       right_tensor.dtype,
                                       right_tensor.storage,
                                       strides=right_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
+                                    out_ext,
                                     out_tensor.dtype,
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
@@ -42,31 +45,29 @@ class ExpandPure(ExpandTransformation):
         init_state.add_mapped_tasklet(
             f"{node.label}_init_tasklet", {
                 f"__i{i}": f"0:{symstr(s)}"
-                for i, s in enumerate(out_tensor.shape)
+                for i, s in enumerate(out_arr.shape)
             }, {},
-            '__out = 0', {
-                '__out':
-                dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_tensor.shape))])}]")
-            },
+            '__out = 0',
+            {'__out': dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_arr.shape))])}]")},
             external_edges=True)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
 
-        outer_map_shape = list([s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes])
-        outer_map_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+        outer_map_shape = list([s for i, s in enumerate(left_arr.shape) if i not in node.left_axes])
+        outer_map_shape.extend([s for i, s in enumerate(right_arr.shape) if i not in node.right_axes])
         outer_map_params = [f"__oi{i}" for i in range(len(outer_map_shape))]
         outer_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(outer_map_params, outer_map_shape)}
-        inner_map_shape = list([left_tensor.shape[i] for i in node.left_axes])
+        inner_map_shape = list([left_arr.shape[i] for i in node.left_axes])
         inner_map_params = [f"__ii{i}" for i in range(len(inner_map_shape))]
         inner_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(inner_map_params, inner_map_shape)}
 
-        left_idx = outer_map_params[:len(left_tensor.shape) - len(node.left_axes)]
+        left_idx = outer_map_params[:len(left_arr.shape) - len(node.left_axes)]
         left_dict = {j: inner_map_params[i] for i, j in enumerate(node.left_axes)}
         left_sorted_dict = collections.OrderedDict(sorted(left_dict.items()))
         for k, v in left_sorted_dict.items():
             left_idx.insert(k, v)
-        right_idx = outer_map_params[len(left_tensor.shape) - len(node.left_axes):]
+        right_idx = outer_map_params[len(left_arr.shape) - len(node.left_axes):]
         right_dict = {j: inner_map_params[i] for i, j in enumerate(node.right_axes)}
         right_sorted_dict = collections.OrderedDict(sorted(right_dict.items()))
         for k, v in right_sorted_dict.items():
@@ -104,21 +105,24 @@ class ExpandTTGT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
+        # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
+        # carries, laid out the way the array it is cut from is laid out. Everything below reads
+        # these connector descriptors, so the whole expansion follows the subset from here.
         _, left_arr = sdfg.add_array("_left_tensor",
-                                     left_tensor.shape,
+                                     left_ext,
                                      left_tensor.dtype,
                                      left_tensor.storage,
                                      strides=left_tensor.strides)
         _, right_arr = sdfg.add_array("_right_tensor",
-                                      right_tensor.shape,
+                                      right_ext,
                                       right_tensor.dtype,
                                       right_tensor.storage,
                                       strides=right_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
+                                    out_ext,
                                     out_tensor.dtype,
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
@@ -220,8 +224,8 @@ class ExpandTTGT(ExpandTransformation):
         else:
             out_shape.append(right_shape[1])
         if node.permutation and node.permutation != list(range(len(node.permutation))):
-            dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes]
-            dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+            dot_shape = [s for i, s in enumerate(left_arr.shape) if i not in node.left_axes]
+            dot_shape.extend([s for i, s in enumerate(right_arr.shape) if i not in node.right_axes])
             dot_name, dot_arr = sdfg.add_temp_transient(dot_shape, out_arr.dtype, out_arr.storage)
             out_strides = [dot_arr.strides[len(left_tt_arr.shape) - len(node.left_axes) - 1], dot_arr.strides[-1]]
             dot_vname, dot_view = sdfg.add_view('__gemm_out',
@@ -272,7 +276,7 @@ class ExpandGPUTensorDot(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
         if dtype not in cls.environments[0].TYPE_MAP:
@@ -287,10 +291,10 @@ class ExpandGPUTensorDot(ExpandTransformation):
             {scalar_type} beta = {beta};
         """
 
-        left_modes = list(range(len(left_tensor.shape)))
+        left_modes = list(range(len(left_ext)))
         right_modes = [
-            node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_tensor.shape) + i
-            for i in range(len(right_tensor.shape))
+            node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_ext) + i
+            for i in range(len(right_ext))
         ]
         out_modes = [i for i in left_modes if i not in node.left_axes]
         out_modes.extend([i for i in right_modes if i not in node.left_axes])
@@ -304,10 +308,10 @@ class ExpandGPUTensorDot(ExpandTransformation):
         """
 
         # Modes are dense indices into the concatenated shapes, so a vector indexes them directly.
-        extents = f"std::vector<int64_t> extent({len(left_tensor.shape) + len(right_tensor.shape)});\n"
-        for i, s in zip(left_modes, left_tensor.shape):
+        extents = f"std::vector<int64_t> extent({len(left_ext) + len(right_ext)});\n"
+        for i, s in zip(left_modes, left_ext):
             extents += f"extent[{i}] = {s};\n"
-        for i, s in zip(right_modes, right_tensor.shape):
+        for i, s in zip(right_modes, right_ext):
             if i in node.right_axes:
                 continue
             extents += f"extent[{i}] = {s};\n"
@@ -437,7 +441,7 @@ class ExpandTBLIS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
         if dtype not in ExpandTBLIS.TYPE_MAP:
@@ -445,8 +449,8 @@ class ExpandTBLIS(ExpandTransformation):
                                       f"{sorted(str(t) for t in ExpandTBLIS.TYPE_MAP)}")
         suffix, ctype = ExpandTBLIS.TYPE_MAP[dtype]
 
-        idx_a, idx_b, idx_c = ExpandTBLIS.contraction_labels(len(left_tensor.shape), len(right_tensor.shape),
-                                                             node.left_axes, node.right_axes, node.permutation)
+        idx_a, idx_b, idx_c = ExpandTBLIS.contraction_labels(len(left_ext), len(right_ext), node.left_axes,
+                                                             node.right_axes, node.permutation)
 
         def carr(name, vals):
             if len(vals) == 0:
@@ -454,17 +458,17 @@ class ExpandTBLIS(ExpandTransformation):
             return f"ptrdiff_t {name}[] = {{{', '.join(symstr(v) for v in vals)}}};"
 
         code = f"""
-            {carr('lenA', list(left_tensor.shape))}
+            {carr('lenA', list(left_ext))}
             {carr('strideA', list(left_tensor.strides))}
-            {carr('lenB', list(right_tensor.shape))}
+            {carr('lenB', list(right_ext))}
             {carr('strideB', list(right_tensor.strides))}
-            {carr('lenC', list(out_tensor.shape))}
+            {carr('lenC', list(out_ext))}
             {carr('strideC', list(out_tensor.strides))}
             using namespace tblis;
             tblis_tensor A, B, C;
-            tblis_init_tensor_{suffix}(&A, {len(left_tensor.shape)}, lenA, ({ctype}*)_left_tensor, strideA);
-            tblis_init_tensor_{suffix}(&B, {len(right_tensor.shape)}, lenB, ({ctype}*)_right_tensor, strideB);
-            tblis_init_tensor_scaled_{suffix}(&C, ({ctype})0, {len(out_tensor.shape)}, lenC, ({ctype}*)_out_tensor, strideC);
+            tblis_init_tensor_{suffix}(&A, {len(left_ext)}, lenA, ({ctype}*)_left_tensor, strideA);
+            tblis_init_tensor_{suffix}(&B, {len(right_ext)}, lenB, ({ctype}*)_right_tensor, strideB);
+            tblis_init_tensor_scaled_{suffix}(&C, ({ctype})0, {len(out_ext)}, lenC, ({ctype}*)_out_tensor, strideC);
             tblis_tensor_mult(NULL, NULL, &A, "{idx_a}", &B, "{idx_b}", &C, "{idx_c}");
         """
 
@@ -547,18 +551,26 @@ class TensorDot(nodes.LibraryNode):
     def validate(self, sdfg, state):
         """
         Validates the tensor dot-product operation.
-        :return: A triple (left_tensor, right_tensor, out_tensor) for the data descriptors in the parent SDFG.
+        :return: A tuple (left_tensor, right_tensor, out_tensor, left_shape, right_shape, out_shape) -- the
+                 data descriptors in the parent SDFG, and the extents the memlets actually move.
         """
 
         left_tensor, right_tensor, out_tensor = None, None, None
+        left_shape, right_shape, out_shape = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
                 out_tensor = sdfg.arrays[e.data.data]
+                # The extents come from the SUBSET, not the descriptor: a contraction may write into
+                # a slice of a larger container, and comparing the dot-product shape against the
+                # container rejects a write that is correct.
+                out_shape = e.data.subset.size()
         for e in state.in_edges(self):
             if e.dst_conn == "_left_tensor":
                 left_tensor = sdfg.arrays[e.data.data]
+                left_shape = e.data.subset.size()
             elif e.dst_conn == "_right_tensor":
                 right_tensor = sdfg.arrays[e.data.data]
+                right_shape = e.data.subset.size()
 
         if not left_tensor or not right_tensor:
             raise ValueError("Missing the input tensors.")
@@ -571,18 +583,22 @@ class TensorDot(nodes.LibraryNode):
         # if left_tensor.storage != right_tensor.storage or left_tensor.storage != out_tensor.storage:
         #     raise ValueError("The storage of the input and output tensors must match.")
 
-        if any(a >= len(left_tensor.shape) or a < 0 for a in self.left_axes):
+        if any(a >= len(left_shape) or a < 0 for a in self.left_axes):
             raise ValueError("Axes for left tensor are out-of-bounds.")
-        if any(a >= len(right_tensor.shape) or a < 0 for a in self.right_axes):
+        if any(a >= len(right_shape) or a < 0 for a in self.right_axes):
             raise ValueError("Axes for right tensor are out-of-bounds.")
         if len(self.left_axes) != len(self.right_axes):
             raise ValueError("The input tensors must have the same number of contracting modes.")
-        if any(left_tensor.shape[l] != right_tensor.shape[r] for l, r in zip(self.left_axes, self.right_axes)):
+        # Compared by NAME: one extent reaches the two sides through different rewrites and arrives
+        # as two spellings that raw ``!=`` calls unequal, rejecting shapes that match.
+        if any(
+                symbolic.inequal_symbols(left_shape[l], right_shape[r])
+                for l, r in zip(self.left_axes, self.right_axes)):
             raise ValueError("The input tensors' contracting modes must have the same length.")
 
-        dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in self.left_axes]
-        dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in self.right_axes])
-        out_shape = list(out_tensor.shape)
+        dot_shape = [s for i, s in enumerate(left_shape) if i not in self.left_axes]
+        dot_shape.extend([s for i, s in enumerate(right_shape) if i not in self.right_axes])
+        out_shape = list(out_shape)
         if len(dot_shape) != len(out_shape):
             raise ValueError("The intermediate (dot-product) and output tensors must have the same number of modes..")
 
@@ -599,19 +615,19 @@ class TensorDot(nodes.LibraryNode):
         #     raise ValueError("The output tensor shape is not a permutation of the dot-product shape.")
 
         if not self.permutation:
-            if dot_shape != out_shape:
+            if not symbolic.shapes_equal(dot_shape, out_shape):
                 raise ValueError("The shapes of the intermediate (dot-product) and output tensors must match.")
         else:
             # NOTE: If the output tensor is transposed, then the permutation must be given explicitely. The permutation
             # can only be inferred if each tensor mode has different length, which should never be assumed.
-            if len(out_tensor.shape) != len(self.permutation):
+            if len(out_shape) != len(self.permutation):
                 raise ValueError(
                     "The permutation list property must have as many elements as the number of output tensor modes.")
-            if sorted(self.permutation) != list(range(len(out_tensor.shape))):
+            if sorted(self.permutation) != list(range(len(out_shape))):
                 raise ValueError("The permutation list property is not a perimutation of the output tensor's modes.")
             transposed_shape = [dot_shape[p] for p in self.permutation]
-            if transposed_shape != list(out_tensor.shape):
+            if not symbolic.shapes_equal(transposed_shape, out_shape):
                 raise ValueError(
                     "The permutation of the intermediate (dot-product) shape does not match the output shape.")
 
-        return left_tensor, right_tensor, out_tensor
+        return left_tensor, right_tensor, out_tensor, left_shape, right_shape, out_shape

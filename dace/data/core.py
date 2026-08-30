@@ -12,7 +12,7 @@ import dataclasses
 
 from collections import OrderedDict
 from numbers import Integral
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Sequence, Set, Tuple, Union
 
 import numpy as np
 import sympy as sp
@@ -385,6 +385,21 @@ class Scalar(Data):
             #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
+
+
+def packed_c_strides(shape: Sequence[Any]) -> Tuple[Any, ...]:
+    """Row-major strides for ``shape``, with the trailing dimension contiguous.
+
+    Free-standing because packedness is a property of a REGION, not only of a container: a library
+    node moving a subset has to ask about the extents its memlet carries, which no descriptor holds.
+    """
+    strides = [1]
+    accum = 1
+    # Iterate in reversed order except the first dimension
+    for s in reversed(shape[1:]):
+        accum *= s
+        strides.insert(0, accum)
+    return tuple(strides)
 
 
 def strides_equal(packed, actual) -> bool:
@@ -786,16 +801,9 @@ class Array(Data):
 
     def _get_packed_c_strides(self) -> Tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
-        # Strides increase along the trailing dimensions
         self.refresh_packed_strides_cache()
         if self._packed_c_strides is None:
-            strides = [1]
-            accum = 1
-            # Iterate in reversed order except the first dimension
-            for s in reversed(self.shape[1:]):
-                accum *= s
-                strides.insert(0, accum)
-            self._packed_c_strides = tuple(strides)
+            self._packed_c_strides = packed_c_strides(self.shape)
         return self._packed_c_strides
 
     def is_packed_fortran_strides(self) -> bool:
