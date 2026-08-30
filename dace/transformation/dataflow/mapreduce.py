@@ -63,7 +63,14 @@ class MapReduceFusion(pm.SingleStateTransformation):
         if any([dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)]):
             return False
 
-        tmem = next(e for e in graph.edges_between(tasklet, tmap_exit) if e.data.data == in_array.data).data
+        # ``apply`` rewrites whichever in-edge of the exit carries the intermediate, and does not care
+        # which node produced it -- so this check has to look at the same edge set. Reading only the
+        # matched tasklet's edges instead raises a bare StopIteration whenever the map body holds a
+        # second tasklet that writes somewhere else and the matcher binds THAT one, which npbench
+        # nbody does six times per build.
+        tmem = next((e.data for e in graph.in_edges(tmap_exit) if e.data.data == in_array.data), None)
+        if tmem is None:
+            return False
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states

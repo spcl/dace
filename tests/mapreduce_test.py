@@ -1,4 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
+import io
+
 import dace
 import numpy as np
 import dace.libraries.standard as stdlib
@@ -337,6 +340,52 @@ def test_full_map_fusion_removes_the_reduced_intermediate():
     assert np.allclose(out[0], np.sum(a * b))
 
 
+def test_a_second_body_tasklet_does_not_break_the_match():
+    """``apply`` finds the reduced intermediate among ALL the exit's in-edges, so ``can_be_applied``
+    must too. Reading only the matched tasklet's own edges raised a bare StopIteration as soon as a
+    map body held a second tasklet writing elsewhere and the matcher bound that one -- swallowed by
+    the matcher into a printed warning, six per npbench nbody build."""
+    n = 8
+    sdfg = dace.SDFG('two_body_writers')
+    sdfg.add_array('a', (N, ), dace.float64)
+    sdfg.add_array('other', (N, ), dace.float64)
+    sdfg.add_array('out', (1, ), dace.float64)
+    sdfg.add_transient('tmp', (N, ), dace.float64)
+
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    read = state.add_read('a')
+    # Insertion order is load-bearing: the matcher reaches the non-producing tasklet first, which is
+    # exactly the binding that used to raise.
+    copy = state.add_tasklet('copy', {'inp'}, {'o'}, 'o = inp + 1.0')
+    scale = state.add_tasklet('scale', {'inp'}, {'o'}, 'o = inp * 2.0')
+    tmp = state.add_access('tmp')
+    state.add_memlet_path(read, me, copy, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(read, me, scale, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(copy, mx, state.add_write('other'), src_conn='o', memlet=dace.Memlet('other[i]'))
+    state.add_memlet_path(scale, mx, tmp, src_conn='o', memlet=dace.Memlet('tmp[i]'))
+
+    red = state.add_reduce('lambda a, b: a + b', None, identity=0)
+    state.add_edge(tmp, None, red, None, dace.Memlet('tmp[0:N]'))
+    state.add_edge(red, None, state.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.validate()
+
+    with contextlib.redirect_stdout(io.StringIO()) as captured:
+        applied = sdfg.apply_transformations_repeated(MapReduceFusion)
+    # The matcher prints and swallows every exception a `can_be_applied` raises, so the warning it
+    # prints is the only place the failure is observable.
+    assert 'exception' not in captured.getvalue(), captured.getvalue()
+    assert applied == 1, 'the reduction should still fuse into the map'
+    assert not [node for node in state.nodes() if isinstance(node, stdlib.Reduce)]
+
+    rng = np.random.default_rng(20260830)
+    a = rng.random(n)
+    other, out = np.zeros(n), np.zeros(1)
+    sdfg(a=a.copy(), other=other, out=out, N=n)
+    assert np.allclose(out[0], (a * 2.0).sum()), f'reduction wrong: {out[0]}'
+    assert np.allclose(other, a + 1.0), 'the second body tasklet lost its output'
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -346,3 +395,4 @@ if __name__ == "__main__":
     test_mapreduce_onemap()
     test_mapreduce_twomaps()
     test_full_map_fusion_removes_the_reduced_intermediate()
+    test_a_second_body_tasklet_does_not_break_the_match()
