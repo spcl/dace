@@ -1532,6 +1532,37 @@ class DaceFunction(sympy.Function, metaclass=_HEAD_META):
     """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
 
 
+def split_exact_multiple(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
+    """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder`` and
+    ``quotient`` a provable integer, or ``None`` when no term divides.
+
+    ``floor((q*y + r)/y)`` is ``q + floor(r/y)`` exactly -- for any remainder and either sign of the
+    divisor -- as long as ``q`` is an integer, because ``q*y/y`` is ``q`` with nothing to round and
+    ``floor(t + q) == floor(t) + q``. The identity is the same for ``ceil``. So the rounding only
+    ever applies to what is left once the exactly-divisible terms come out.
+
+    The rule the existing exact-division check cannot reach is a SYMBOLIC divisor. A strided slice
+    ``a[0:(k - 1)*s + 1:s]`` gets its extent as ``int_ceil(s*(k - 1) + 1, s)``, which is ``k``, but
+    no amount of sympy simplification finds that: it is an identity about floor division, not about
+    the ring. Splitting turns it into ``(k - 1) + int_ceil(1, s)``, and the surviving node is over a
+    numerator small enough that the numeric rules finish it. Without this, one quantity has two
+    spellings that never compare equal, and a reshape of that slice is refused as unprovable.
+
+    ``quotient == 0`` returns ``None`` rather than a zero quotient, which would rebuild the very node
+    being evaluated and recurse forever.
+    """
+    if x.is_Number or y.is_zero:
+        return None
+    quotient, remainder = sympy.S.Zero, sympy.S.Zero
+    for term in sympy.Add.make_args(x):
+        candidate = term / y
+        if candidate.is_integer:
+            quotient += candidate
+        else:
+            remainder += term
+    return None if quotient.is_zero else (quotient, remainder)
+
+
 class int_floor(DaceFunction):
 
     @classmethod
@@ -1555,6 +1586,10 @@ class int_floor(DaceFunction):
             quotient = x / y
             if quotient.is_integer:
                 return quotient
+        split = split_exact_multiple(x, y)
+        if split is not None:
+            quotient, remainder = split
+            return quotient if remainder.is_zero else quotient + cls(remainder, y)
 
     def _eval_is_integer(self):
         return True
@@ -1589,6 +1624,10 @@ class int_ceil(DaceFunction):
             quotient = x / y
             if quotient.is_integer:
                 return quotient
+        split = split_exact_multiple(x, y)
+        if split is not None:
+            quotient, remainder = split
+            return quotient if remainder.is_zero else quotient + cls(remainder, y)
 
     def _eval_is_integer(self):
         return True
