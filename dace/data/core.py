@@ -402,6 +402,137 @@ def packed_c_strides(shape: Sequence[Any]) -> Tuple[Any, ...]:
     return tuple(strides)
 
 
+def packed_fortran_strides(shape: Sequence[Any]) -> Tuple[Any, ...]:
+    """Column-major strides for ``shape``, with the leading dimension contiguous."""
+    strides = [1]
+    accum = 1
+    for s in shape[:-1]:
+        accum *= s
+        strides.append(accum)
+    return tuple(strides)
+
+
+def extent_cmp(a: Any, b: Any) -> Union[int, None]:
+    """``-1`` / ``0`` / ``1`` for ``a`` less than / equal to / greater than ``b``, or None if undecidable.
+
+    The reshape factoring below has to know which side of a running product to grow. Concrete extents
+    compare directly; symbolic ones fall back to a RATIO, which needs no ordering assumption on the
+    symbols and refuses anything that is not a whole multiple.
+    """
+    if symbolic.equal(a, b) is True:
+        return 0
+    sa, sb = sp.sympify(a), sp.sympify(b)
+    if sa.is_Number and sb.is_Number:
+        return -1 if sa < sb else 1
+    if extent_multiple(a, b):
+        return -1
+    if extent_multiple(b, a):
+        return 1
+    return None
+
+
+def extent_multiple(small: Any, large: Any) -> bool:
+    """True when ``large`` is provably ``small`` times an integer factor of at least two.
+
+    The reshape factoring below has to know which side of a product to grow, and extents are
+    symbolic often enough that a subtraction's sign is undecidable. A RATIO needs no ordering
+    assumption: ``B*OH*OW`` over ``B`` is ``OH*OW``, and a concrete pair like 6 and 4 is rejected by
+    the denominator test rather than mistaken for a multiple.
+    """
+    if symbolic.equal(small, large) is True:
+        return False
+    ratio = symbolic.simplify(sp.sympify(large) / sp.sympify(small))
+    if sp.denom(ratio) != 1:
+        return False
+    if ratio.is_Integer:
+        return ratio >= 2
+    return bool(ratio.free_symbols)  # a symbolic factor: provably a whole multiple, size unknown
+
+
+def nocopy_reshape_strides(old_shape: Sequence[Any],
+                           old_strides: Sequence[Any],
+                           new_shape: Sequence[Any],
+                           fortran_order: bool = False) -> Tuple[Union[List[Any], None], bool]:
+    """Strides viewing ``old_shape``/``old_strides`` as ``new_shape``, as ``(strides, decided)``.
+
+    numpy's own rule (``_attempt_nocopy_reshape``), not the far stricter "the source is packed": the
+    source axes collapse into maximal stride-contiguous groups, and the reshape is a view exactly when
+    the new shape factors into those groups. Splitting the contiguous trailing axis of a strided slice
+    stays a view, and answering "copy" there is not merely slower -- a write through the result has to
+    reach the source, and a copy silently drops it.
+
+    Three outcomes, and the third exists only because extents here are SYMBOLIC:
+
+    * ``([...], True)``  -- a view, with these strides;
+    * ``(None, True)``   -- provably a copy, exactly as numpy would copy;
+    * ``(None, False)``  -- undecidable. A read may copy, since the values are the same either way,
+      but a WRITE through the result is a coin flip between two different programs and is refused.
+    """
+    # A contiguous source in the REQUESTED order reshapes to anything of the same size, whatever the
+    # extents are -- numpy takes this path before it ever tries to factor. Without it every symbolic
+    # pair the factoring cannot order, ``(N, M) -> (M, N)`` among them, comes back "undecidable" for
+    # a source that is not ambiguous at all.
+    if fortran_order:
+        if strides_equal(packed_fortran_strides(old_shape), old_strides):
+            return [prod(new_shape[:i]) for i in range(len(new_shape))], True
+    elif strides_equal(packed_c_strides(old_shape), old_strides):
+        return [prod(new_shape[i + 1:]) for i in range(len(new_shape))], True
+
+    # A length-1 axis has an arbitrary stride and constrains nothing, so numpy drops it first.
+    kept = [(e, st) for e, st in zip(old_shape, old_strides) if symbolic.equal(e, 1) is not True]
+    olddims = [e for e, _ in kept]
+    oldstrides = [st for _, st in kept]
+    newstrides: List[Any] = [1] * len(new_shape)
+
+    oi, oj, ni, nj = 0, 1, 0, 1
+    while ni < len(new_shape) and oi < len(olddims):
+        np_, op = new_shape[ni], olddims[oi]
+        order = extent_cmp(np_, op)
+        while order != 0:
+            if order is None:
+                return None, False  # cannot tell which side of the product to grow
+            if order < 0:
+                if nj >= len(new_shape):
+                    return None, True  # the new shape ran out: it does not factor into the source
+                np_ *= new_shape[nj]
+                nj += 1
+            else:
+                if oj >= len(olddims):
+                    return None, True
+                op *= olddims[oj]
+                oj += 1
+            order = extent_cmp(np_, op)
+
+        # The source axes this group spans must be contiguous AMONG THEMSELVES, or no stride walks it.
+        for ok in range(oi, oj - 1):
+            if fortran_order:
+                contiguous = symbolic.equal(oldstrides[ok + 1], olddims[ok] * oldstrides[ok])
+            else:
+                contiguous = symbolic.equal(oldstrides[ok], olddims[ok + 1] * oldstrides[ok + 1])
+            if contiguous is not True:
+                # False is numpy's own "these axes cannot be combined"; None is ours alone.
+                return None, contiguous is False
+
+        if fortran_order:
+            newstrides[ni] = oldstrides[oi]
+            for nk in range(ni + 1, nj):
+                newstrides[nk] = newstrides[nk - 1] * new_shape[nk - 1]
+        else:
+            newstrides[nj - 1] = oldstrides[oj - 1]
+            for nk in range(nj - 1, ni, -1):
+                newstrides[nk - 1] = newstrides[nk] * new_shape[nk]
+        ni, nj = nj, nj + 1
+        oi, oj = oj, oj + 1
+
+    # Trailing length-1 axes of the new shape: any stride walks them, so reuse the last one.
+    last = newstrides[ni - 1] if ni >= 1 else 1
+    if fortran_order and ni >= 1:
+        last = last * new_shape[ni - 1]
+    for nk in range(ni, len(new_shape)):
+        newstrides[nk] = last
+    return newstrides, True
+
+
 def strides_equal(packed, actual) -> bool:
     """Stride-tuple equality that survives canonicalization.
 

@@ -795,20 +795,35 @@ def reshape(pv: ProgramVisitor,
         arr = arr[0]
     desc = sdfg.arrays[arr]
 
-    # "order" determines stride orders
+    # "order" determines stride orders. ``'A'`` asks whether the source is FORTRAN-contiguous, which
+    # a unit first stride does not answer -- every array whose leading axis walks by one has it.
     order = str(order)
-    fortran_strides = False
-    if order == 'F' or (order == 'A' and desc.strides[0] == 1):
-        # FORTRAN strides
-        fortran_strides = True
+    fortran_strides = order == 'F' or (order == 'A' and desc.is_packed_fortran_strides())
 
     # New shape and strides as symbolic expressions
     newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    undecided = False
     if strides is None:
-        if fortran_strides:
-            strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
-        else:
-            strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
+        # numpy's own rule: a view exactly when the new shape factors into the source's
+        # stride-contiguous groups. Reinterpreting a source as packed reads the elements a slice
+        # skips -- densenet's im2col reshapes a strided window, so every tap came out of the zero
+        # padding -- and copying where numpy aliases drops a write through the result instead.
+        strides, decided = data.core.nocopy_reshape_strides(desc.shape, desc.strides, newshape, fortran_strides)
+        if strides is None:
+            from dace.frontend.python.replacements.array_creation import _numpy_copy  # Avoid import loop
+            source = arr  # the name a write through the result would have had to reach
+            arr = _numpy_copy(pv, sdfg, state, arr)
+            desc = sdfg.arrays[arr]
+            # A PROVABLE copy is what numpy itself does, writes to the result included -- they land in
+            # the copy there too. Only an UNDECIDED one has to refuse a write, because view and copy
+            # are then two different programs and nothing here can pick between them.
+            undecided = not decided
+            # The copy is packed, so the view over it is the packed formula. Re-running the factoring
+            # would answer "undecided" all over again whenever the extents are what made it undecided.
+            if fortran_strides:
+                strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
+            else:
+                strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
 
     newarr, newdesc = sdfg.add_view(arr,
                                     newshape,
@@ -825,6 +840,8 @@ def reshape(pv: ProgramVisitor,
     aset = subsets.Range.from_array(desc)
     vset = subsets.Range.from_array(newdesc)
     pv.views[newarr] = (arr, Memlet(data=arr, subset=aset, other_subset=vset))
+    if undecided:
+        pv.detached_reshapes[newarr] = source
 
     return newarr
 

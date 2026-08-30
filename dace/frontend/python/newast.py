@@ -1340,6 +1340,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # separate branch CFRs and only one of them actually runs).
         self._w_keys_to_hide_from_reads: Set[Tuple[str, "dace.subsets.Subset", str]] = set()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        #: ``{copy name: source name}`` for a reshape whose layout was not PROVABLY viewable
+        #: and so had to materialize. A read of one is fine; a write through it cannot reach
+        #: the source, and dropping that write silently is the quieter of the two miscompiles.
+        self.detached_reshapes: Dict[str, str] = {}
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -3724,6 +3728,22 @@ class ProgramVisitor(ExtNodeVisitor):
             name = self.views[name][0]
         return name
 
+    def detached_reshape_source(self, name: str) -> Optional[str]:
+        """The array a materialized reshape along ``name``'s view chain was taken from, or None.
+
+        The mark never sits on the name an assignment resolves to: binding the reshape's result to a
+        caller local adds one more view on top of it, so the chain has to be walked.
+        """
+        seen = OrderedSet()
+        while name not in seen:
+            if name in self.detached_reshapes:
+                return self.detached_reshapes[name]
+            if name not in self.views:
+                return None
+            seen.add(name)
+            name = self.views[name][0]
+        return None
+
     def promote_read_connector_to_output(self, name: str) -> None:
         """Makes a read-only nested SDFG connector in/out, because NumPy writes through the view."""
         root = self.view_root(name)
@@ -3881,6 +3901,15 @@ class ProgramVisitor(ExtNodeVisitor):
                             self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
 
                 true_array = defined_arrays[true_name]
+
+            if op is not None or isinstance(target, ast.Subscript):
+                reshaped_from = self.detached_reshape_source(true_name)
+                if reshaped_from is not None:
+                    raise DaceSyntaxError(
+                        self, target, f'Cannot write through "{name}": its reshape of "{reshaped_from}" is not '
+                        'provably expressible as a view of that array\'s layout, so it was materialized and '
+                        'the write would not reach the source. Reshape a contiguous copy explicitly, or write '
+                        'to the source directly.')
 
             # If type was already annotated
             if dtype is None and name in self.annotated_types:
