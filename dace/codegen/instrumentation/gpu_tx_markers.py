@@ -22,15 +22,18 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
-        # Check if ROCm TX libraries and headers are available
+        # Check if ROCm TX libraries and headers are available. Only meaningful
+        # when the backend is HIP -- on a CUDA host that happens to also have
+        # ROCm installed we must not flip into rocTX mode (would suppress
+        # NVTX init markers via the ``enable_rocTX`` short-circuits below).
         rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
         roctx_header_paths = [
             os.path.join(rocm_path, 'roctracer/include/roctx.h'),
             os.path.join(rocm_path, 'include/roctracer/roctx.h')
         ]
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
-        self.enable_rocTX = any(os.path.isfile(path)
-                                for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
+        self.enable_rocTX = (self.backend == 'hip' and any(os.path.isfile(path) for path in roctx_header_paths)
+                             and os.path.isfile(roctx_library_path))
         self.include_generated = False
         super().__init__()
 
@@ -152,23 +155,28 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(local_stream)
 
+    def _is_marked(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
+        """Node-level marker, or a host-side ``copy_*`` tasklet of an instrumented state.
+
+        A CopyLibraryNode expansion emits its ``cudaMemcpyAsync`` as a plain Tasklet that carries no
+        ``instrument`` of its own and never reaches ``on_copy_begin``.
+        """
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            return False  # Don't instrument device code
+        if isinstance(node, nodes.CodeNode) and node.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return True
+        return (state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS and isinstance(node, nodes.Tasklet)
+                and node.label.startswith('copy_'))
+
     def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            # Don't instrument device code
-            return
-        self.print_range_push(node.label, sdfg, outer_stream)
+        if self._is_marked(sdfg, state, node):
+            self.print_range_push(node.label, sdfg, outer_stream)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
                     outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
-            return
-        if is_devicelevel_gpu_kernel(sdfg, state, node):
-            # Don't instrument device code
-            return
-        self.print_range_pop(outer_stream)
+        if self._is_marked(sdfg, state, node):
+            self.print_range_pop(outer_stream)
 
     def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
                        outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:

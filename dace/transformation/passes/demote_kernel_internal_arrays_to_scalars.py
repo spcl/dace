@@ -1,0 +1,143 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""``DemoteKernelInternalArraysToScalars``, the inverse of ``PromoteGPUScalarsToArrays``.
+
+That pass widens a scalar crossing a kernel's output boundary into a length-1 ``Array``; this one
+keeps a value living entirely inside the kernel a ``Scalar``, so codegen emits ``double`` rather
+than a needless ``double*``. Scalarization is delegated to ``ConvertLengthOneArraysToScalars``,
+after which the stale pointer-typed ``NestedSDFG`` connectors are reset and re-inferred.
+"""
+from typing import Any, Dict, Optional, Set
+
+from dace import data, dtypes, properties
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg import SDFG, infer_types, nodes
+from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (innermost_enclosing_map,
+                                                                               is_inside_gpu_device_kernel,
+                                                                               written_by_gpu_map_exit)
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+
+
+def _node_schedule(node: nodes.Node) -> Optional[dtypes.ScheduleType]:
+    """The schedule of ``node``, or ``None``: only maps and library nodes carry one."""
+    if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+        return node.map.schedule
+    if isinstance(node, nodes.LibraryNode):
+        return node.schedule
+    return None
+
+
+def _accessed_by_unscalarizable_node(sdfg: SDFG, name: str) -> bool:
+    """Whether an access node for ``name`` neighbours a node whose emitted code cannot be rewritten
+    to scalar access, so demoting the length-1 buffer would produce ``float buf; buf[0]``.
+
+    Blocking: a LibraryNode (emits its own indexing), a non-Python tasklet (raw C++ body the
+    conversion never sees -- the case that actually fires for the expanded cub block reduce), and a
+    GPU-scheduled map or library node (a thread-block collective, i.e. a multi-thread buffer).
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                continue
+            neighbors = [e.src for e in state.in_edges(node)] + [e.dst for e in state.out_edges(node)]
+            for nb in neighbors:
+                if isinstance(nb, nodes.LibraryNode):
+                    return True
+                if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
+                    return True
+                if _node_schedule(nb) in dtypes.GPU_SCHEDULES:
+                    return True
+    return False
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class DemoteKernelInternalArraysToScalars(ppl.Pass):
+    """Scalarize kernel-internal length-1 ``Array``s (inverse of ``PromoteGPUScalarsToArrays``)."""
+
+    def modifies(self) -> ppl.Modifies:
+        # Array->Scalar (Descriptors), subset collapse (Memlets), NestedSDFG connector reset (Nodes).
+        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        """Demote every kernel-internal length-1 array across the SDFG hierarchy.
+
+        :param sdfg: Root SDFG (modified in place).
+        :returns: Number of descriptors demoted, or ``None`` if nothing changed.
+        """
+        demoted = 0
+        for sub in list(sdfg.all_sdfgs_recursive()):
+            device_function = is_inside_gpu_device_kernel(sub)
+            names = {
+                name
+                for name, desc in sub.arrays.items()
+                if self._is_kernel_internal_len1_array(sub, name, desc, device_function)
+            }
+            if not names:
+                continue
+            # ``filter`` scalarizes the named descriptors regardless of their ``transient``
+            # flag (device-function connectors are non-transient). ``recursive=False`` -- we
+            # visit the hierarchy ourselves so each level's set is computed independently.
+            ConvertLengthOneArraysToScalars(recursive=False, filter=names).apply_pass(sub, {})
+            self._reset_parent_connectors(sub, names)
+            demoted += len(names)
+
+        if demoted == 0:
+            return None
+
+        # Connectors of demoted device-function descriptors were reset to an
+        # uninferred typeclass; re-derive them (now scalar references).
+        for sub in sdfg.all_sdfgs_recursive():
+            infer_types.infer_connector_types(sub)
+        return demoted
+
+    def _is_kernel_internal_len1_array(self, sdfg: SDFG, name: str, desc: data.Data, device_function: bool) -> bool:
+        """Whether ``name`` is a kernel-internal single value masquerading as a length-1 array."""
+        if not (isinstance(desc, data.Array) and tuple(desc.shape) == (1, )):
+            return False
+        # A GPU-resident length-1 array is addressable memory; a register scalar would be wrong.
+        if desc.storage in GPU_RESIDENT_STORAGES:
+            return False
+        # Kernel outputs must stay arrays -- they cross the GPU_Device boundary.
+        if written_by_gpu_map_exit(sdfg, name):
+            return False
+        # A buffer touched by a node whose code we cannot rewrite to scalar access
+        # (see ``_accessed_by_unscalarizable_node``) must stay an array.
+        if _accessed_by_unscalarizable_node(sdfg, name):
+            return False
+        # A descriptor inside a device-function sub-SDFG is kernel-internal by
+        # construction; otherwise every access must sit within a GPU_Device map scope.
+        if device_function:
+            return True
+        return self._all_accesses_within_gpu_device(sdfg, name)
+
+    @staticmethod
+    def _all_accesses_within_gpu_device(sdfg: SDFG, name: str) -> bool:
+        """``True`` iff every access node for ``name`` lies inside a ``GPU_Device`` map
+        scope (and at least one access exists)."""
+        seen = False
+        for state in sdfg.states():
+            for node in state.nodes():
+                if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                    continue
+                seen = True
+                if innermost_enclosing_map(state, node, dtypes.ScheduleType.GPU_Device) is None:
+                    return False
+        return seen
+
+    @staticmethod
+    def _reset_parent_connectors(sub: SDFG, names: Set[str]) -> None:
+        """Reset the parent ``NestedSDFG`` connectors that carried the now-scalarized
+        descriptors so :func:`infer_connector_types` re-derives them as scalar references."""
+        node = sub.parent_nsdfg_node
+        if node is None:
+            return
+        uninferred = dtypes.typeclass(None)
+        for nm in names:
+            if nm in node.in_connectors:
+                node.in_connectors[nm] = uninferred
+            if nm in node.out_connectors:
+                node.out_connectors[nm] = uninferred

@@ -1556,6 +1556,31 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
     return None
 
 
+def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
+    """
+    Checks if the given node is enclosed within a Map whose schedule type
+    matches any in the ``schedules`` set.
+
+    :param state: The state where the node resides.
+    :param node: The node to check.
+    :param schedules: Schedule types to match, e.g. ``{dtypes.ScheduleType.GPU_Device}``.
+    :return: True if the node is enclosed by a Map with a schedule type in ``schedules``.
+    """
+    current = node
+
+    while current is not None:
+        if isinstance(current, nodes.MapEntry):
+            if current.map.schedule in schedules:
+                return True
+
+        parent = get_parent_map(state, current)
+        if parent is None:
+            return False
+        current, state = parent
+
+    return False
+
+
 def redirect_edge(state: SDFGState,
                   edge: graph.MultiConnectorEdge[Memlet],
                   new_src: Optional[nodes.Node] = None,
