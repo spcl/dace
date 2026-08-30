@@ -10,6 +10,7 @@ import ctypes
 import os
 import pathlib
 import subprocess
+import tempfile
 
 import numpy
 import pytest
@@ -91,30 +92,59 @@ def test_chase_body_is_a_bare_dependent_load(lib):
     assert "mov    (%rax),%rax" in _disassemble("chase_run_timed")
 
 
-def widest_vector_register() -> str:
-    """The register class ``-march=native`` is expected to reach on THIS host.
+#: Vector register classes, widest first, as they appear in objdump's AT&T output.
+VECTOR_REGISTERS = ("%zmm", "%ymm", "%xmm")
 
-    The assertion below is about the flag doing its job, not about the box being a particular
-    Xeon: a runner without AVX-512 still has to vectorize, just into ``%ymm``. Pinning ``%zmm``
-    unconditionally tests the hardware instead of the build, and fails on every AVX2-only machine.
+
+def widest_vector_register() -> str:
+    """The register class this COMPILER reaches for a triad at ``membench``'s own flags.
+
+    Asking ``/proc/cpuinfo`` asks the wrong oracle. The assertion below is about ``-march=native``
+    doing its job, and the compiler does not simply take the widest register the CPU has: GCC
+    defaults to ``-mprefer-vector-width=256`` on most Intel AVX-512 parts, because 512-bit code
+    downclocks. A runner whose flags advertise ``avx512f`` therefore vectorizes into ``%ymm``, and
+    demanding ``%zmm`` there fails a build that did exactly what it was asked to.
+
+    So compile the same loop with the same flags and read back what came out. This answers only
+    "did the library reach what these flags can reach"; it cannot answer "are the flags right",
+    since a build that lost ``-march=native`` degrades this probe too. Its caller carries the
+    second assertion that covers exactly that.
     """
-    flags = pathlib.Path("/proc/cpuinfo").read_text()
-    if "avx512f" in flags:
-        return "%zmm"
-    if "avx2" in flags or " avx " in flags:
-        return "%ymm"
-    return "%xmm"
+    probe = pathlib.Path(tempfile.mkdtemp()) / "probe.c"
+    probe.write_text("void triad(double *a, const double *b, const double *c, double q, long n) {\n"
+                     "    for (long i = 0; i < n; ++i) a[i] = b[i] + q * c[i];\n"
+                     "}\n")
+    obj = probe.with_suffix(".o")
+    flags = [f for f in membench.CFLAGS if f not in ("-shared", "-fPIC")]
+    subprocess.run([os.environ.get("CC", "cc"), *flags, "-c",
+                    str(probe), "-o", str(obj)],
+                   check=True,
+                   capture_output=True,
+                   text=True)
+    text = subprocess.run(["objdump", "-d", str(obj)], capture_output=True, text=True, check=True).stdout
+    return next((reg for reg in VECTOR_REGISTERS if reg in text), "%xmm")
 
 
 def test_triad_vectorizes_and_is_not_rewritten_to_memcpy(lib):
     """-march=native must actually engage the host's widest vectors (plain -O3 gives SSE2), and -O3
     must not turn the loop into a memcpy call -- glibc's memcpy switches to non-temporal stores past
     a size threshold, which would make the benchmark measure glibc's strategy rather than the memory
-    system."""
+    system.
+
+    TWO assertions, because the probe alone cannot carry this. It is built at ``membench``'s own
+    flags, so a build that lost ``-march=native`` degrades the probe and the library together and
+    the comparison passes on two equally broken objects. The second assertion is the floor: a host
+    whose flags advertise AVX must reach SOMETHING wider than SSE2, and that is the regression the
+    first one cannot see.
+    """
     text = _disassemble()
     register = widest_vector_register()
     assert register in text, f"triad did not vectorize to {register}"
     assert "call" not in text or "memcpy" not in text, "loop was rewritten into memcpy"
+    host = pathlib.Path("/proc/cpuinfo").read_text()
+    if "avx512f" in host or "avx2" in host or " avx " in host:
+        assert register != "%xmm", ("the host advertises AVX but the triad compiled to SSE2 -- "
+                                    f"-march=native is not reaching it (CFLAGS={membench.CFLAGS})")
 
 
 def test_triad_computes_the_right_answer(lib):
