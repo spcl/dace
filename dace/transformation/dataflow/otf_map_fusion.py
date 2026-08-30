@@ -77,6 +77,18 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         first_writes.pop(self.array.data, None)
         second_reads = touched(graph.in_edges(self.second_map_entry))
         second_writes = touched(graph.out_edges(graph.exit_node(self.second_map_entry)))
+        # Condition: the producer is the intermediate's ONLY writer in the state. Fusion deletes that
+        # producer once the consumer stops reading it, which is sound only if the write it removes was
+        # the array's whole definition. polybench correlation is the counterexample: ``stddev =
+        # sqrt(...)`` followed by ``stddev[stddev <= eps] = replacement``, whose masked write reaches
+        # some elements and leaves the rest holding what the producer wrote. Deleting the producer
+        # leaves those elements uninitialized -- wrong numbers, and a graph that still validates.
+        written = 0
+        for dnode in graph.data_nodes():
+            if dnode.data == self.array.data and graph.in_degree(dnode) > 0:
+                written += 1
+                if written > 1:
+                    return False
         if (not first_reads.keys().isdisjoint(second_writes) or not first_writes.keys().isdisjoint(second_reads)
                 or not first_writes.keys().isdisjoint(second_writes)):
             return False

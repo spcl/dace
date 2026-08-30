@@ -830,6 +830,61 @@ def test_seidel_2d_like_war_refuses_fusion():
     assert np.allclose(got, ref)
 
 
+@dace.program
+def masked_inplace_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """polybench correlation's stddev step: a producer defines every element of ``s``, and a later
+    map overwrites only the elements the mask selects, so the rest keep the producer's values."""
+    s = np.sqrt(rdo / N)
+    s[s <= eps] = repl
+    out[:] = s
+
+
+@dace.program
+def masked_other_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """The conflict-free twin: same producer, same mask, but the masked write lands in another array,
+    so the producer really is ``s``'s only definition."""
+    s = np.sqrt(rdo / N)
+    out[:] = np.where(s <= eps, repl, s)
+
+
+def test_second_writer_of_the_intermediate_is_not_fused():
+    """Fusion deletes the producer once the consumer stops reading it, which is sound only while
+    that producer is the intermediate's whole definition. Here a masked write reaches some elements
+    of ``s`` and leaves the rest holding what the producer wrote, so deleting it reads those
+    uninitialized -- wrong numbers on a graph that still validates."""
+    rng = np.random.default_rng(20260830)
+    n = 8
+    rdo = rng.random(n)
+    # Chosen so the mask is PARTIAL: an eps above every element writes the whole array and the bug
+    # cannot show, which is what makes the numeric half of this test load-bearing.
+    eps, repl = 0.15, 9.0
+    ref = np.sqrt(rdo / n)
+    assert 0 < np.count_nonzero(ref <= eps) < n, 'the mask must be partial for this to test anything'
+    ref = np.where(ref <= eps, repl, ref)
+
+    sdfg = masked_inplace_intermediate.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 4
+    # The producer of ``rdo / N`` still fuses -- only the one that would delete ``s``'s definition
+    # is refused, so a blanket refusal would pass the numbers below and still be a regression.
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) == 1
+    assert count_maps(sdfg) == 3
+
+    got = np.zeros(n)
+    sdfg(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+
+    free = masked_other_intermediate.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 3
+    assert free.apply_transformations_repeated(OTFMapFusion) == 2, 'non-vacuity: one writer still fuses through'
+    assert count_maps(free) == 2
+
+    got = np.zeros(n)
+    free(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
@@ -866,3 +921,4 @@ if __name__ == '__main__':
 
     # Data hazards
     test_read_ahead_write_is_not_fused()
+    test_second_writer_of_the_intermediate_is_not_fused()
