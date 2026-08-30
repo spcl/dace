@@ -95,16 +95,19 @@ def test_nesting():
 
 
 def test_nesting_view():
-
+    # a[i] is contiguous, so reshaping it is a view numpy can take too and the increment below is
+    # written through to the caller's array. Reshaping a strided slice such as a[:, i, :] is NOT --
+    # numpy copies there, and so does DaCe, which is why the shape read has to stay contiguous for
+    # a ViewNode to be the right answer.
     @dace.program
-    def nest2(a: dace.float64[40]):
+    def nest2(a: dace.float64[50]):
         a += 1
 
     @dace.program
     def nest1(a):
-        for i in range(5):
-            subset = a[:, i, :]
-            nest2(subset.reshape((40, )))
+        for i in range(4):
+            subset = a[i]
+            nest2(subset.reshape((50, )))
 
     @dace.program
     def main(a: dace.float64[20, 10]):
@@ -113,6 +116,15 @@ def test_nesting_view():
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
     assert any(isinstance(node, tn.ViewNode) for node in stree.children)
+
+    reference = np.zeros((20, 10))
+    reshaped = reference.reshape((4, 5, 10))
+    for i in range(4):
+        reshaped[i].reshape((50, ))[:] += 1
+
+    result = np.zeros((20, 10))
+    main(a=result)
+    assert np.allclose(result, reference), 'the view must be written through, as it is in numpy'
 
 
 def test_nesting_nview():
