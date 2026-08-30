@@ -1532,27 +1532,18 @@ class DaceFunction(sympy.Function, metaclass=_HEAD_META):
     """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
 
 
-def split_exact_multiple(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
-    """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder`` and
-    ``quotient`` a provable integer, or ``None`` when no term divides.
+def split_divisible_terms(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
+    """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder``, ``quotient``
+    a provable integer and ``remainder`` everything that did not divide, or None if no term divides.
 
-    ``floor((q*y + r)/y)`` is ``q + floor(r/y)`` exactly -- for any remainder and either sign of the
-    divisor -- as long as ``q`` is an integer, because ``q*y/y`` is ``q`` with nothing to round and
-    ``floor(t + q) == floor(t) + q``. The identity is the same for ``ceil``. So the rounding only
-    ever applies to what is left once the exactly-divisible terms come out.
+    Splitting per TERM is what reaches a symbolic divisor at all: sympy cancels a monomial against a
+    monomial but never a sum, so ``(S*(K - 1) + S) / S`` does not report itself as an integer while
+    each of its terms does.
 
-    The rule the existing exact-division check cannot reach is a SYMBOLIC divisor. A strided slice
-    ``a[0:(k - 1)*s + 1:s]`` gets its extent as ``int_ceil(s*(k - 1) + 1, s)``, which is ``k``, but
-    no amount of sympy simplification finds that: it is an identity about floor division, not about
-    the ring. Splitting turns it into ``(k - 1) + int_ceil(1, s)``, and the surviving node is over a
-    numerator small enough that the numeric rules finish it. Without this, one quantity has two
-    spellings that never compare equal, and a reshape of that slice is refused as unprovable.
-
-    ``quotient == 0`` returns ``None`` rather than a zero quotient, which would rebuild the very node
-    being evaluated and recurse forever.
+    The caller decides what the split is worth. A zero remainder is exact and needs no assumption
+    about either operand -- nothing is rounded, so truncation, floor and ceiling all agree. A
+    remainder is only safe to leave behind where truncation IS flooring; see the callers.
     """
-    if x.is_Number or y.is_zero:
-        return None
     quotient, remainder = sympy.S.Zero, sympy.S.Zero
     for term in sympy.Add.make_args(x):
         candidate = term / y
@@ -1561,6 +1552,19 @@ def split_exact_multiple(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
         else:
             remainder += term
     return None if quotient.is_zero else (quotient, remainder)
+
+
+def rounds_like_flooring(x, y, remainder) -> bool:
+    """True where C's truncating ``/`` computes the floor for both divisions the split produces.
+
+    ``int_floor`` emits C ``/``, which truncates toward zero, so ``floor((q*y + r)/y) == q +
+    floor(r/y)`` is an identity about a function DaCe does not generate: pulling ``-2*S`` out of
+    ``int_floor(-2*S + 3, S)`` answers -2 where the program, at ``S = 5``, computes ``-7/5 == -1``.
+    A nonnegative numerator over a positive divisor is where the two agree, and it is common --
+    extents, shapes and strides are declared ``positive`` or ``nonnegative`` -- so the split is worth
+    having as long as the assumptions are actually there to prove it, and refused when they are not.
+    """
+    return bool(y.is_positive and x.is_nonnegative and remainder.is_nonnegative)
 
 
 class int_floor(DaceFunction):
@@ -1586,10 +1590,17 @@ class int_floor(DaceFunction):
             quotient = x / y
             if quotient.is_integer:
                 return quotient
-        split = split_exact_multiple(x, y)
-        if split is not None:
-            quotient, remainder = split
-            return quotient if remainder.is_zero else quotient + cls(remainder, y)
+        # A divisor that may be zero divides nothing: folding ``int_floor(i, i)`` to 1 asserts
+        # ``i != 0``, which no assumption established, and it costs the expression its only symbol.
+        if y.is_nonzero is not True:
+            return None
+        split = split_divisible_terms(x, y)
+        if split is None:
+            return None
+        quotient, remainder = split
+        if remainder.is_zero:
+            return quotient
+        return quotient + cls(remainder, y) if rounds_like_flooring(x, y, remainder) else None
 
     def _eval_is_integer(self):
         return True
@@ -1624,10 +1635,23 @@ class int_ceil(DaceFunction):
             quotient = x / y
             if quotient.is_integer:
                 return quotient
-        split = split_exact_multiple(x, y)
+        if y.is_nonzero is not True:
+            return None
+        split = split_divisible_terms(x, y)
         if split is not None:
             quotient, remainder = split
-            return quotient if remainder.is_zero else quotient + cls(remainder, y)
+            if remainder.is_zero:
+                return quotient
+            if rounds_like_flooring(x, y, remainder):
+                return quotient + cls(remainder, y)
+        # ``dace::math::int_ceil`` IS ``(x + y - 1) / y`` (runtime/include/dace/math.h), so a
+        # numerator that divides exactly once biased is already the value the program computes and
+        # the rounding this node exists for never happens. Folds a strided slice's extent
+        # ``int_ceil(s*(k - 1) + 1, s)``, whose biased numerator is ``s*k``, to the trip count ``k``.
+        if y.is_positive:
+            biased = split_divisible_terms(x + y - 1, y)
+            if biased is not None and biased[1].is_zero:
+                return biased[0]
 
     def _eval_is_integer(self):
         return True
