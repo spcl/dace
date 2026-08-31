@@ -30,7 +30,6 @@ def _substitute_map_range(subset: subsets.Range, params: List[str], rng: subsets
     :return: The substituted subset, or ``None`` if it cannot be derived exactly.
     """
     symbolic_params = [pystr_to_symbolic(p) for p in params]
-    sizes = rng.size()
     result = []
     for rb, re, rs in subset.ndrange():
         rb, re, rs = (pystr_to_symbolic(v) for v in (rb, re, rs))
@@ -49,10 +48,12 @@ def _substitute_map_range(subset: subsets.Range, params: List[str], rng: subsets
         addition = poly.coeff_monomial(1)
         if not mult.is_Integer or mult <= 0:
             return None
-        map_rb, _map_re, map_rs = rng[pind]
-        # The last value the parameter actually takes, which is not necessarily the range's end
-        last = map_rb + (sizes[pind] - 1) * map_rs
-        result.append((mult * map_rb + addition, mult * last + addition, mult * map_rs))
+        map_rb, map_re, map_rs = rng[pind]
+        # The range's own end is kept rather than the last value the parameter actually takes. Both
+        # describe the same set of elements, but this form makes the element count come out as the
+        # map's own size expression, which symbolic comparisons against the augmented transient can
+        # then match without having to reason about the ceiling division.
+        result.append((mult * map_rb + addition, mult * map_re + addition, mult * map_rs))
     return subsets.Range(result)
 
 
@@ -591,7 +592,12 @@ class MapFission(transformation.SingleStateTransformation):
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    outside_border_edges.add(e)
+                                    new_subset = _substitute_map_range(e.data.subset, outer_map.params, outer_map.range)
+                                    if new_subset is None:
+                                        e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    else:
+                                        e.data.subset = new_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
