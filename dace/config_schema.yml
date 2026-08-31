@@ -435,7 +435,8 @@ required:
                         type: int
                         title: Number of chiplets of the target GPU
                         description: >
-                            Number of chiplets (XCDs) of the GPU the code is generated for. Set to 6 on MI300A.
+                            Number of chiplets (XCDs) of the GPU the code is generated for. Set to 6 on MI300A,
+                            or 8 on MI300X.
                             The thread-blocks of every kernel are then distributed over that many chiplets: the
                             first dimension of the grid is split into as many contiguous chunks as there are
                             chiplets, relying on the round-robin thread-block scheduling of multi-chiplet AMD

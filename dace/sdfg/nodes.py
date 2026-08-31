@@ -1073,7 +1073,7 @@ class Map(object):
         default=True,
         desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
         "(see the `compiler.cuda.chiplet_number` configuration entry)",
-        serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
 
     def __init__(self,
                  label,
