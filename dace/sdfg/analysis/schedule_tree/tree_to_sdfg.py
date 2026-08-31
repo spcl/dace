@@ -550,9 +550,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                             if parent_sdfg.arrays[memlet_data].transient:
                                 sdfg.arrays[memlet_data].transient = False
 
-                        # Dev note: nview.target and memlet_data are identical
-                        assert memlet_data not in outer_to_connect["inputs"]
-                        outer_to_connect["inputs"].add(memlet_data)
+                    # Dev note: nview.target and memlet_data are identical
+                    outer_to_connect["inputs"].add(memlet_data)
                 else:
                     assert outer_map_entry is None
 
