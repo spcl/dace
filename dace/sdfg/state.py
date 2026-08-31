@@ -1795,17 +1795,28 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_sdfg = self.sdfg
 
             sdfg.update_cfg_list([])
+            # Entries of the mapping whose symbol the nested SDFG does not (yet) use cannot be
+            # applied by replacement. They are kept verbatim instead of being dropped, because a
+            # nested SDFG is commonly added empty and populated afterwards -- see
+            # ``tests/codegen/symbol_arguments_test.py::test_nested_sdfg_redefinition`` -- and
+            # discarding the mapping here would lose those symbols entirely.
+            retained_mapping: Dict[str, Any] = {}
             if symbol_mapping:
                 from dace.sdfg import dealias  # Avoid circular import
-                dealias.remove_symbol_aliases(sdfg, symbol_mapping)
+                used = sdfg.free_symbols
+                applied_mapping = {k: v for k, v in symbol_mapping.items() if k in used}
+                retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in used}
 
-                symbolic.safe_replace(symbol_mapping, lambda m: sdfg.replace_dict(m))
+                if applied_mapping:
+                    dealias.remove_symbol_aliases(sdfg, applied_mapping)
 
-                # Integrate any internal SDFGs after performing replacements
-                for state in sdfg.states():
-                    for node in state.nodes():
-                        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
-                            dealias.integrate_nested_sdfg(node.sdfg)
+                    symbolic.safe_replace(applied_mapping, lambda m: sdfg.replace_dict(m))
+
+                    # Integrate any internal SDFGs after performing replacements
+                    for state in sdfg.states():
+                        for node in state.nodes():
+                            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                                dealias.integrate_nested_sdfg(node.sdfg)
 
         # Make dictionary of autodetect connector types from set
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
@@ -1831,8 +1842,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_nsdfg_node = s
 
             # After the replacements above, all remaining free symbols refer to parent-scope
-            # names directly, so the effective symbol mapping is the identity.
+            # names directly, so the effective symbol mapping is the identity, plus whatever the
+            # caller asked for that could not be applied yet.
             symbol_mapping = {fs: fs for fs in sdfg.free_symbols}
+            symbol_mapping.update(retained_mapping)
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
