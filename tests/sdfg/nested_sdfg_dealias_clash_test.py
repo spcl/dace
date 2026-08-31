@@ -358,6 +358,40 @@ def test_symbol_rename_target_clash_with_grandchild():
     sdfg.validate()
 
 
+def test_free_symbol_shared_with_mapping_value_is_not_renamed():
+    """An inner free symbol that also appears in a mapping value is the parent's symbol, not a clash.
+
+    Mirrors the shape produced by the Python frontend when a callee's argument descriptor is
+    specialized with the caller's symbols: the callee ends up using ``H`` directly while its own
+    symbol ``N`` is mapped to an expression over the same ``H``.
+    """
+    sdfg = dace.SDFG('parent')
+    sdfg.add_symbol('H', dace.int32)
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+
+    inner = _inner_with_map(range_end='N', param='i')
+    inner.add_symbol('N', dace.int32)
+    # A second map uses the parent's 'H' directly; it is free inside and therefore identity-mapped
+    st2 = inner.add_state()
+    inner.add_edge(inner.start_block, st2, dace.InterstateEdge())
+    me2, mx2 = st2.add_map('m2', {'j': '0:H'})
+    t2 = st2.add_tasklet('t2', {}, {}, '')
+    st2.add_edge(me2, None, t2, None, dace.Memlet())
+    st2.add_edge(t2, None, mx2, None, dace.Memlet())
+
+    node = state.add_nested_sdfg(inner, {'inA'}, {'outB'}, {'N': 'H + 2'})
+    _connect(state, node)
+
+    maps = {n.map.params[0]: n.map for n, _ in inner.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
+    assert str(maps['j'].range[0][1] + 1) == 'H'
+    assert str(maps['i'].range[0][1] + 1) == 'H + 2'
+    # No new symbol may have leaked into the parent
+    assert sdfg.free_symbols == {'H'}
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     import traceback
     for name, fn in list(globals().items()):

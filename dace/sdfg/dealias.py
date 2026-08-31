@@ -469,12 +469,16 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
         defined_symbols.update(map(str, region.new_symbols({}).keys()))
 
     used_symbols = set(map(str, sdfg.used_symbols(all_symbols=True)))
+    # Free symbols of this SDFG are resolved through the parent node's symbol mapping, and any of them
+    # that the mapping does not list is implicitly identity-mapped (see ``SDFGState.add_nested_sdfg``).
+    # Such a symbol therefore *is* the parent's symbol of the same name and must never be renamed away.
+    free_symbols = set(map(str, sdfg.free_symbols))
 
     clashing: Set[str] = set()
     for sym in target_symbols:
         if sym in defined_symbols or sym in sdfg.arrays or sym in sdfg.constants_prop:
             clashing.add(sym)
-        elif sym in used_symbols and sym not in symbol_mapping:
+        elif sym in used_symbols and sym not in symbol_mapping and sym not in free_symbols:
             clashing.add(sym)
 
     if not clashing:

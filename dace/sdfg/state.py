@@ -1648,6 +1648,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
 
+        # Add symbols defined by the enclosing control flow regions (e.g., loop variables). Those are not
+        # part of ``sdfg.symbols`` and are not carried by top-level interstate edges, so they would
+        # otherwise be invisible to every consumer of this method.
+        enclosing = []
+        cfg = self.parent_graph
+        while cfg is not None and cfg is not sdfg:
+            enclosing.append(cfg)
+            cfg = cfg.parent_graph
+        for region in reversed(enclosing):
+            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
+
         # Find scopes this node is situated in
         sdict = self.scope_dict()
         scope_list = []
