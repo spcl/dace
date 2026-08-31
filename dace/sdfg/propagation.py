@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Set
+from typing import Any, Dict, TYPE_CHECKING, List, Set
 
 import sympy
 from sympy import Symbol, ceiling
@@ -1298,6 +1298,57 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
                                                                         propagated, arrays[array_name])
 
 
+def _propagate_nsdfg_border_edge(edge: gr.MultiConnectorEdge[Memlet], internal_memlet: Memlet, parent_sdfg: 'SDFG',
+                                 sdfg: 'SDFG', connector: str, outer_symbols: Dict[str, Any]) -> Memlet:
+    """
+    Converts a propagated 'border' memlet of a nested SDFG into a memlet on the outer edge.
+
+    :param edge: The outer edge of the nested SDFG node to propagate onto.
+    :param internal_memlet: The propagated border memlet, expressed in the inner descriptor.
+    :param parent_sdfg: The SDFG containing the nested SDFG node.
+    :param sdfg: The nested SDFG.
+    :param connector: The connector of the nested SDFG node that ``edge`` is attached to.
+    :param outer_symbols: The symbols defined at the nested SDFG node in the parent.
+    :return: The memlet to place on ``edge``.
+    """
+    # We import late to avoid cyclic imports here.
+    from dace.transformation.helpers import unsqueeze_memlet
+
+    extname = edge.data.data
+    outer_desc = parent_sdfg.arrays.get(extname, None)
+    inner_desc = sdfg.arrays.get(connector, None)
+    if outer_desc is not None and inner_desc is not None and outer_desc.is_equivalent(inner_desc):
+        # The nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) makes the inner
+        # descriptor identical to the outer one, so the border memlet is already expressed in the
+        # outer coordinate system and only has to be renamed.
+        result = copy.deepcopy(internal_memlet)
+        result.data = extname
+        return result
+
+    # Otherwise the border memlet is expressed in a narrower descriptor and has to be unsqueezed
+    # back into the outer one. Producers that have not been migrated to the contract above still
+    # build such connectors, and merely renaming their memlets would under-approximate the access
+    # set instead of just annotating it differently.
+    try:
+        result = unsqueeze_memlet(internal_memlet, edge.data, True)
+        # If no appropriate memlet found, use array dimension
+        for i, (rng, s) in enumerate(zip(internal_memlet.subset, outer_desc.shape)):
+            if rng[1] + 1 == s:
+                result.subset[i] = (result.subset[i][0], s - 1, 1)
+            if symbolic.issymbolic(result.volume):
+                if any(str(s) not in outer_symbols for s in result.volume.free_symbols):
+                    result.volume = 0
+                    result.dynamic = True
+        return result
+    except (ValueError, NotImplementedError):
+        # In any case of memlets that cannot be unsqueezed (i.e., reshapes), use dynamic unbounded
+        # memlets.
+        result = copy.deepcopy(edge.data)
+        result.volume = 0
+        result.dynamic = True
+        return result
+
+
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
     """
     Propagate memlets out of a nested sdfg.
@@ -1376,17 +1427,15 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            extname = iedge.data.data
-            iedge.data = copy.deepcopy(internal_memlet)
-            iedge.data.data = extname
+            iedge.data = _propagate_nsdfg_border_edge(iedge, internal_memlet, parent_sdfg, sdfg, iedge.dst_conn,
+                                                      outer_symbols)
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            extname = oedge.data.data
-            oedge.data = copy.deepcopy(internal_memlet)
-            oedge.data.data = extname
+            oedge.data = _propagate_nsdfg_border_edge(oedge, internal_memlet, parent_sdfg, sdfg, oedge.src_conn,
+                                                      outer_symbols)
 
 
 def reset_state_annotations(sdfg: 'SDFG'):
