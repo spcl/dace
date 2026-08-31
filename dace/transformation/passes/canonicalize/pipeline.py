@@ -97,6 +97,7 @@ from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScat
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.buffer_expansion import BufferExpansion
+from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
 from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
@@ -1019,8 +1020,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('loop_to_x', LoopToTranspose())]
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
           ('loop_to_x', LoopToReduce()), ('loop_to_x', LiftPreprocess()),
-          ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
-          ('loop_to_x', LoopToConditionalReduce()), ('loop_to_x', LoopToStreamCompaction())]
+          ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target)),
+          ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce()),
+          ('loop_to_x', LoopToStreamCompaction())]
 
     # cascade_iedges_up (pre-parallelize): re-run after fission / normalize rewrite
     # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the
@@ -1046,13 +1048,17 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (``s242``, ``s1221``); running it again here also lifts the post-fission
     # ones without harming the already-lifted shapes.
     s += [('loop_to_scan', LiftPreprocess()),
-          ('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map))]
+          ('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target))]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     # ``LoopToMap`` reads the scope-summary memlets as its write set, so rebuild them from the
     # bodies first: the inline stages above expose exact body subsets without re-propagating the
     # enclosing map, which leaves polybench ``covariance``'s map exit claiming ``cov[0:M, 0:M]``
     # while the body writes ``cov[i, i:M]``. See :class:`PropagateMemlets`.
+    # A store a LATER iteration overwrites unread is the only carrier some loops have (TSVC
+    # ``s244``); dropping it, and peeling the tail iterations whose store does survive, hands
+    # LoopToMap a DOALL loop. Must precede it -- afterwards there is no LoopRegion to peel.
+    s += [('parallelize', DeadCarriedStoreElimination())]
     s += [('parallelize', PropagateMemlets())]
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
