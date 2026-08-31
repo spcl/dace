@@ -391,6 +391,41 @@ class GuardReadWiring(ast.NodeTransformer):
         return ast.copy_location(self.connector(node.id, node.id, subsets.Range([(0, 0, 1)])), node)
 
 
+#: Right-hand operand values that make a binary op the identity on its left operand.
+_IDENTITY_RHS = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
+#: ... and the mirrored form, for the commutative ops only.
+_IDENTITY_LHS = ((ast.Add, 0), (ast.Mult, 1))
+
+
+def strip_identity(expr: ast.AST) -> ast.AST:
+    """``expr`` with outer identity arithmetic (``+ 0``, ``- 0``, ``* 1``, ``/ 1``) peeled off.
+
+    A scalar assignment does not always reach us spelled as one. ``x = y`` on a rank-0 value makes
+    ``x`` a second NAME for ``y``'s container rather than a copy, so a producer that needs a copy
+    writes ``x = y + 0`` on purpose -- which is what the numpy-to-DaCe emitter does for every
+    scalar alias it lowers. Matching the surface syntax then refuses the very write the identity
+    was added to express: TSVC ``s318`` binds ``maxv := abs(a[k]) + 0.0``, the arg-reduce match
+    asks for a bare ``abs(...)`` call, and a textbook argmax stays a sequential loop.
+
+    Peeled, not evaluated: only an operand that is literally the neutral constant is removed, so
+    nothing here changes a value or depends on floating-point reasoning.
+    """
+    while isinstance(expr, ast.BinOp):
+        right, left = expr.right, expr.left
+        if (isinstance(right, ast.Constant) and isinstance(right.value,
+                                                           (int, float)) and not isinstance(right.value, bool)
+                and any(isinstance(expr.op, op) and right.value == v for op, v in _IDENTITY_RHS)):
+            expr = left
+            continue
+        if (isinstance(left, ast.Constant) and isinstance(left.value,
+                                                          (int, float)) and not isinstance(left.value, bool)
+                and any(isinstance(expr.op, op) and left.value == v for op, v in _IDENTITY_LHS)):
+            expr = right
+            continue
+        return expr
+    return expr
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class ArgMaxLift(ppl.Pass):
@@ -1326,6 +1361,7 @@ class ArgMaxLift(ppl.Pass):
             tree = ast.parse(rhs_str, mode='eval').body
         except SyntaxError:
             return False
+        tree = strip_identity(tree)
         if transform is not None:
             if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id == transform
                     and len(tree.args) == 1 and not tree.keywords):

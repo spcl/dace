@@ -19,7 +19,14 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "networkx>=2.5,<=3.5",
+    # Cap is <3.7, not <=3.5. networkx 3.6 dropped the root from ``immediate_dominators``
+    # (it computes with ``{start: None}``, then ``del idom[start]`` before returning), and
+    # every caller here reads that map as total over the reachable blocks, so an entry block
+    # raised ``KeyError`` and the whole canonicalize pipeline died. The backend layer
+    # (``dace/graphlib/networkx_backend.py``) restores the entry, which is what a backend
+    # layer is for, so 3.6 is supported. The cap stays so the NEXT contract change surfaces
+    # as a pip resolution error rather than as a KeyError mid-pipeline.
+    "networkx>=2.5,<3.7",
     "astunparse",
     "sympy>=1.9",
     "pyyaml",

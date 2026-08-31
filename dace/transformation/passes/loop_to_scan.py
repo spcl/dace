@@ -2472,6 +2472,30 @@ def _iter_write_edges(state: SDFGState, name: str) -> List[Any]:
     return edges
 
 
+def _divisor_symbols(expr) -> set:
+    """Free symbols that appear as a DIVISOR in ``expr`` -- and are therefore ``>= 1``, not merely
+    ``>= 0``.
+
+    The canonicalize contract builds every free symbol ``nonnegative`` (see
+    :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`), and for a divisor
+    that is one bound too weak: ``nonnegative`` admits ``0``, so SymPy cannot decide the sign of
+    ``-floor(LEN_1D/M)`` and answers UNKNOWN, which :func:`_admissible_scan_stride` reads as an
+    admissible symbolic stride. That is how ``a[i] = a[i + LEN_1D//M] + b[i]`` -- a read-ahead over
+    a disjoint region, the same shape as the constant-divisor ``s1421`` this function already
+    handles -- gets lifted to a scan and loses its Map.
+
+    Nothing is assumed here that was not already required: a zero divisor is undefined behaviour in
+    the emitted code either way, so a symbol used as one is ``>= 1`` wherever the kernel runs at
+    all. Only DaCe's own ``int_floor``/``int_ceil`` are inspected; a plain SymPy quotient already
+    carries its own sign rules.
+    """
+    out: set = set()
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, (symbolic.int_floor, symbolic.int_ceil)) and len(node.args) > 1:
+            out |= node.args[1].free_symbols
+    return out
+
+
 def _provably_nonpositive(expr) -> bool:
     """``True`` iff ``expr`` is provably ``<= 0`` under the canonicalize nonnegative-symbol
     contract (see :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`).
@@ -2489,7 +2513,13 @@ def _provably_nonpositive(expr) -> bool:
         return False
     if expr.is_nonpositive is True:
         return True
-    rebuilt = expr.subs({s: sympy.Symbol(s.name, nonnegative=True, integer=True) for s in expr.free_symbols})
+    divisors = _divisor_symbols(expr)
+    rebuilt = expr.subs({
+        s:
+        sympy.Symbol(s.name, positive=True, integer=True)
+        if s in divisors else sympy.Symbol(s.name, nonnegative=True, integer=True)
+        for s in expr.free_symbols
+    })
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_floor), lambda n: sympy.floor(n.args[0] / n.args[1]))
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_ceil),
                               lambda n: sympy.ceiling(n.args[0] / n.args[1]))

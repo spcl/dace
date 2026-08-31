@@ -8,7 +8,7 @@ computation. See ``DESIGN.md`` for the rationale and ordering constraints.
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from dace import SDFG, properties
+from dace import SDFG, symbolic, properties
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
@@ -51,6 +51,7 @@ from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
+from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
@@ -202,7 +203,8 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
        merges guards that are already adjacent -- it cannot push one inward.)
     6. structural cleanup -- fuse the states the steps above just freed and
        inline the nestings, so the maps genuinely share a state.
-    7. ``MinimizeStridePermutation`` then ``MapCollapse`` -- BEFORE fusing, in
+    7. ``ReverseMapTraversal`` then ``MinimizeStridePermutation`` then ``MapCollapse``
+       -- BEFORE fusing, in
        that order, for two separate reasons. The permuter only walks chains of
        single-parameter maps (``_collect_perfect_nest`` breaks on a multi-param
        map and ``_reorder_nest`` needs two levels), so collapsing first would
@@ -225,6 +227,10 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
                                      ('coalesce', PatternMatchAndApplyRepeated([MoveIfIntoMap()]))]
     s += _inline_single_state('coalesce')
     s += _structural_cleanup('coalesce')
+    # Direction before order: a reversed source loop reaches here as an ascending parameter over
+    # DESCENDING addresses, and the permuter scores unit coefficients -- so orient first and it
+    # scores the accesses the emitted code will actually make.
+    s += [('coalesce', ReverseMapTraversal())]
     s += [('coalesce', MinimizeStridePermutation())]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     s += [('coalesce',
@@ -2025,6 +2031,28 @@ def canonicalize(sdfg: SDFG,
                              maps (a library node is not vectorizable).
     :returns: The same ``sdfg`` instance, canonicalized.
     """
+    # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
+    # them -- and an unscoped parse mints ``DEFAULT_SYMBOL_TYPE``. Declaring the SDFG's own symbol
+    # table as the authority for the whole run is what keeps one name spelled as ONE symbol, so a
+    # bound and a descriptor shape still cancel (see ``sympy_to_dace``). Nested SDFGs are covered
+    # by name: a nested scope re-declares the same names, and only names this table does not carry
+    # keep the default.
+    authority = {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
+    with symbolic.serialization_symbol_dtypes(authority):
+        return canonicalize_under_authority(sdfg, validate, validate_all, unroll_limit, peel_limit,
+                                            break_anti_dependence, target, interchange_carry_with_map,
+                                            scatter_to_guarded_maps, privatize_scatter_reductions,
+                                            reconstruct_wavefront_nest, normalize_loop_and_map_origin,
+                                            assume_parallel_guards, perfect_loop_nesting, specialize_constants, lift,
+                                            lift_copy, semantic_lifting, dump_dir)
+
+
+def canonicalize_under_authority(sdfg: SDFG, validate, validate_all, unroll_limit, peel_limit, break_anti_dependence,
+                                 target, interchange_carry_with_map, scatter_to_guarded_maps,
+                                 privatize_scatter_reductions, reconstruct_wavefront_nest,
+                                 normalize_loop_and_map_origin, assume_parallel_guards, perfect_loop_nesting,
+                                 specialize_constants, lift, lift_copy, semantic_lifting, dump_dir) -> SDFG:
+    """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(validate=validate,
                              validate_all=validate_all,
                              unroll_limit=unroll_limit,
