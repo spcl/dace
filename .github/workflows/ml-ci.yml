@@ -12,6 +12,11 @@ concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  UV_NO_EDITABLE: 1 # don't install dace in editable mode
+
 jobs:
   test:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
@@ -37,12 +42,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake
         sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
-        uv sync --extra ml-testing,ml
+        uv sync --group ml-testing --extra ml
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
     - name: Test with pytest
       run: |
+        source .venv/bin/activate
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -54,7 +60,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=600 -v -m "(torch or onnx or autodiff) and not gpu"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=600 -v -m "(torch or onnx or autodiff) and not gpu"
         ./codecov
 
     - uses: codecov/codecov-action@v6

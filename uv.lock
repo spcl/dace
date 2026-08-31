@@ -646,20 +646,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-docs = [
-    { name = "jinja2" },
-    { name = "sphinx-autodoc-typehints", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "sphinx-autodoc-typehints", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "sphinx-autodoc-typehints", version = "3.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "sphinx-rtd-theme" },
-]
 gpu = [
     { name = "cupy-cuda13x" },
     { name = "cutensor-cu13" },
-]
-linting = [
-    { name = "pre-commit" },
-    { name = "yapf" },
 ]
 ml = [
     { name = "ninja" },
@@ -670,6 +659,45 @@ ml = [
     { name = "onnxsim" },
     { name = "protobuf" },
     { name = "torch" },
+]
+mpi = [
+    { name = "mpi4py" },
+    { name = "pytest-mpi" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "absl-py" },
+    { name = "coverage" },
+    { name = "ipykernel" },
+    { name = "jinja2" },
+    { name = "nbconvert" },
+    { name = "opt-einsum" },
+    { name = "pre-commit" },
+    { name = "pymlir" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-autodoc-typehints", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sphinx-autodoc-typehints", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "sphinx-autodoc-typehints", version = "3.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-rtd-theme" },
+    { name = "yapf" },
+]
+docs = [
+    { name = "jinja2" },
+    { name = "sphinx-autodoc-typehints", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sphinx-autodoc-typehints", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "sphinx-autodoc-typehints", version = "3.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-rtd-theme" },
+]
+linting = [
+    { name = "pre-commit" },
+    { name = "yapf" },
 ]
 ml-testing = [
     { name = "absl-py" },
@@ -688,15 +716,9 @@ ml-testing = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "transformers" },
 ]
-mpi = [
-    { name = "mpi4py" },
-    { name = "pytest-mpi" },
-]
 testing = [
     { name = "absl-py" },
-    { name = "click" },
     { name = "coverage" },
-    { name = "flake8" },
     { name = "ipykernel" },
     { name = "nbconvert" },
     { name = "opt-einsum" },
@@ -712,28 +734,14 @@ testing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "absl-py", marker = "extra == 'ml-testing'" },
-    { name = "absl-py", marker = "extra == 'testing'" },
     { name = "astunparse" },
-    { name = "click", marker = "extra == 'ml-testing'" },
-    { name = "click", marker = "extra == 'testing'" },
     { name = "cmake" },
-    { name = "coverage", marker = "extra == 'ml-testing'" },
-    { name = "coverage", marker = "extra == 'testing'" },
     { name = "cupy-cuda13x", marker = "extra == 'gpu'" },
     { name = "cutensor-cu13", marker = "extra == 'gpu'" },
     { name = "dill" },
-    { name = "efficientnet-pytorch", marker = "extra == 'ml-testing'" },
-    { name = "flake8", marker = "extra == 'testing'" },
     { name = "fparser", specifier = ">=0.1.3,!=0.2.3" },
-    { name = "ipykernel", marker = "extra == 'ml-testing'" },
-    { name = "ipykernel", marker = "extra == 'testing'" },
-    { name = "jax", marker = "extra == 'ml-testing'", specifier = "<=0.6.2" },
-    { name = "jinja2", marker = "extra == 'docs'", specifier = "<3.2.0" },
     { name = "ml-dtypes" },
     { name = "mpi4py", marker = "extra == 'mpi'" },
-    { name = "nbconvert", marker = "extra == 'ml-testing'" },
-    { name = "nbconvert", marker = "extra == 'testing'" },
     { name = "networkx", specifier = ">=2.5,<=3.5" },
     { name = "ninja" },
     { name = "ninja", marker = "extra == 'ml'" },
@@ -742,36 +750,76 @@ requires-dist = [
     { name = "onnxruntime", marker = "extra == 'ml'" },
     { name = "onnxscript", marker = "extra == 'ml'" },
     { name = "onnxsim", marker = "extra == 'ml'" },
-    { name = "opt-einsum", marker = "extra == 'ml-testing'" },
-    { name = "opt-einsum", marker = "extra == 'testing'" },
     { name = "ordered-set", specifier = ">=4.0.0" },
     { name = "packaging" },
     { name = "ply" },
-    { name = "pre-commit", marker = "extra == 'linting'", specifier = "==4.1.0" },
     { name = "protobuf", marker = "extra == 'ml'" },
-    { name = "pymlir", marker = "extra == 'ml-testing'" },
-    { name = "pymlir", marker = "extra == 'testing'" },
     { name = "pyreadline", marker = "sys_platform == 'win32'" },
-    { name = "pytest", marker = "extra == 'testing'" },
-    { name = "pytest-cov", marker = "extra == 'ml-testing'" },
-    { name = "pytest-cov", marker = "extra == 'testing'" },
     { name = "pytest-mpi", marker = "extra == 'mpi'" },
-    { name = "pytest-timeout", marker = "extra == 'ml-testing'" },
-    { name = "pytest-timeout", marker = "extra == 'testing'" },
-    { name = "pytest-xdist", marker = "extra == 'testing'" },
     { name = "pyyaml" },
     { name = "scikit-build" },
-    { name = "scipy", marker = "extra == 'ml-testing'" },
-    { name = "scipy", marker = "extra == 'testing'" },
-    { name = "sphinx-autodoc-typehints", marker = "extra == 'docs'" },
-    { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=0.5.1" },
     { name = "sympy", specifier = ">=1.9" },
     { name = "torch", marker = "extra == 'ml'" },
-    { name = "transformers", marker = "extra == 'ml-testing'", specifier = "==4.50" },
     { name = "typing-extensions" },
-    { name = "yapf", marker = "extra == 'linting'", specifier = "==0.43.0" },
 ]
-provides-extras = ["ml", "testing", "mpi", "gpu", "ml-testing", "docs", "linting"]
+provides-extras = ["ml", "mpi", "gpu"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "absl-py" },
+    { name = "coverage" },
+    { name = "ipykernel" },
+    { name = "jinja2", specifier = "<3.2.0" },
+    { name = "nbconvert" },
+    { name = "opt-einsum" },
+    { name = "pre-commit", specifier = "==4.1.0" },
+    { name = "pymlir" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "scipy" },
+    { name = "sphinx-autodoc-typehints" },
+    { name = "sphinx-rtd-theme", specifier = ">=0.5.1" },
+    { name = "yapf", specifier = "==0.43.0" },
+]
+docs = [
+    { name = "jinja2", specifier = "<3.2.0" },
+    { name = "sphinx-autodoc-typehints" },
+    { name = "sphinx-rtd-theme", specifier = ">=0.5.1" },
+]
+linting = [
+    { name = "pre-commit", specifier = "==4.1.0" },
+    { name = "yapf", specifier = "==0.43.0" },
+]
+ml-testing = [
+    { name = "absl-py" },
+    { name = "click" },
+    { name = "coverage" },
+    { name = "efficientnet-pytorch" },
+    { name = "ipykernel" },
+    { name = "jax", specifier = "<=0.6.2" },
+    { name = "nbconvert" },
+    { name = "opt-einsum" },
+    { name = "pymlir" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "scipy" },
+    { name = "transformers", specifier = "==4.50" },
+]
+testing = [
+    { name = "absl-py" },
+    { name = "coverage" },
+    { name = "ipykernel" },
+    { name = "nbconvert" },
+    { name = "opt-einsum" },
+    { name = "pymlir" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "scipy" },
+]
 
 [[package]]
 name = "debugpy"
@@ -929,20 +977,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7d/64/a02e6765de08964ed371eca577870593245afc9dfac16d037de7c10d18e6/filelock-3.32.3.tar.gz", hash = "sha256:0ffa185a3540854c95caa7fa76b76cb219d907415e2c5dc9af25fd970563487f", size = 218135, upload-time = "2026-08-13T16:00:05.577Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/8e/50f46a9c0ce8d2861a394c1347caae037ea0431d2f67d7feb151cbc4649a/filelock-3.32.3-py3-none-any.whl", hash = "sha256:7f0ca4bcc0e181c60dbbd8aa9ab5b120ebb99e4e064e83636340056f833a1f09", size = 98901, upload-time = "2026-08-13T16:00:03.974Z" },
-]
-
-[[package]]
-name = "flake8"
-version = "7.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mccabe" },
-    { name = "pycodestyle" },
-    { name = "pyflakes" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/af/fbfe3c4b5a657d79e5c47a2827a362f9e1b763336a52f926126aa6dc7123/flake8-7.3.0.tar.gz", hash = "sha256:fe044858146b9fc69b551a4b490d69cf960fcb78ad1edcb84e7fbb1b4a8e3872", size = 48326, upload-time = "2025-06-20T19:31:35.838Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/56/13ab06b4f93ca7cac71078fbe37fcea175d3216f31f85c3168a6bbd0bb9a/flake8-7.3.0-py2.py3-none-any.whl", hash = "sha256:b9696257b9ce8beb888cdbe31cf885c90d31928fe202be0889a7cdafad32f01e", size = 57922, upload-time = "2025-06-20T19:31:34.425Z" },
 ]
 
 [[package]]
@@ -1401,15 +1435,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bd/c0/9f7c9a46090390368a4d7bcb76bb87a4a36c421e4c0792cdb53486ffac7a/matplotlib_inline-0.2.2.tar.gz", hash = "sha256:72f3fe8fce36b70d4a5b612f899090cd0401deddc4ea90e1572b9f4bfb058c79", size = 8150, upload-time = "2026-05-08T17:33:33.49Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/09/5b161152e2d90f7b87f781c2e1267494aef9c32498df793f73ad0a0a494a/matplotlib_inline-0.2.2-py3-none-any.whl", hash = "sha256:3c821cf1c209f59fb2d2d64abbf5b23b67bcb2210d663f9918dd851c6da1fcf6", size = 9534, upload-time = "2026-05-08T17:33:32.055Z" },
-]
-
-[[package]]
-name = "mccabe"
-version = "0.7.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e7/ff/0ffefdcac38932a54d2b5eed4e0ba8a408f215002cd178ad1df0f2806ff8/mccabe-0.7.0.tar.gz", hash = "sha256:348e0240c33b60bbdf4e523192ef919f28cb2c3d7d5c7794f74009290f236325", size = 9658, upload-time = "2022-01-24T01:14:51.113Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/1a/1f68f9ba0c207934b35b86a8ca3aad8395a3d6dd7921c0686e23853ff5a9/mccabe-0.7.0-py2.py3-none-any.whl", hash = "sha256:6c2d30ab6be0e4a46919781807b4f0d834ebdd6c6e3dca0bda5a15f863427b6e", size = 7350, upload-time = "2022-01-24T01:14:49.62Z" },
 ]
 
 [[package]]
@@ -2382,30 +2407,12 @@ wheels = [
 ]
 
 [[package]]
-name = "pycodestyle"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/11/e0/abfd2a0d2efe47670df87f3e3a0e2edda42f055053c85361f19c0e2c1ca8/pycodestyle-2.14.0.tar.gz", hash = "sha256:c4b5b517d278089ff9d0abdec919cd97262a3367449ea1c8b49b91529167b783", size = 39472, upload-time = "2025-06-20T18:49:48.75Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/27/a58ddaf8c588a3ef080db9d0b7e0b97215cee3a45df74f3a94dbbf5c893a/pycodestyle-2.14.0-py2.py3-none-any.whl", hash = "sha256:dd6bf7cb4ee77f8e016f9c8e74a35ddd9f67e1d5fd4184d86c3b98e07099f42d", size = 31594, upload-time = "2025-06-20T18:49:47.491Z" },
-]
-
-[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz", hash = "sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29", size = 103492, upload-time = "2026-01-21T14:26:51.89Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992", size = 48172, upload-time = "2026-01-21T14:26:50.693Z" },
-]
-
-[[package]]
-name = "pyflakes"
-version = "3.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/45/dc/fd034dc20b4b264b3d015808458391acbf9df40b1e54750ef175d39180b1/pyflakes-3.4.0.tar.gz", hash = "sha256:b24f96fafb7d2ab0ec5075b7350b3d2d2218eab42003821c06344973d3ea2f58", size = 64669, upload-time = "2025-06-20T18:45:27.834Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/2f/81d580a0fb83baeb066698975cb14a618bdbed7720678566f1b046a95fe8/pyflakes-3.4.0-py2.py3-none-any.whl", hash = "sha256:f742a7dbd0d9cb9ea41e9a24a918996e8170c799fa528688d40dd582c8265f4f", size = 63551, upload-time = "2025-06-20T18:45:26.937Z" },
 ]
 
 [[package]]
