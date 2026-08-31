@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import dace
 import importlib
+import sys
 import matplotlib.pyplot as plt
 from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
@@ -15,6 +16,30 @@ warnings.filterwarnings(
     category=UserWarning,
     module=r"dace\.transformation\.dataflow\.add_threadblock_map",
 )
+
+
+def _ensure_npbench_on_syspath() -> None:
+    """Ensure that `npbench.benchmarks` is importable from this test location."""
+    try:
+        importlib.import_module("npbench.benchmarks")
+        return
+    except ModuleNotFoundError:
+        pass
+
+    this_file = Path(__file__).resolve()
+    for parent in this_file.parents:
+        npbench_repo_root = parent / "npbench"
+        if (npbench_repo_root / "npbench" / "benchmarks").is_dir():
+            sys.path.insert(0, str(npbench_repo_root))
+            return
+
+    raise ModuleNotFoundError(
+        "Could not locate NPBench package root. Expected a parent directory containing "
+        "'npbench/npbench/benchmarks'."
+    )
+
+
+_ensure_npbench_on_syspath()
 
 #########################################################
 ###                      Globals                      ###
@@ -172,6 +197,29 @@ def _run_generic_offloading_test(sdfg: dace.SDFG):
     return seq_time, offl_time
 
 
+def _run_idempotency_offloading_test(sdfg: dace.SDFG):
+    sdfg.validate()
+
+    baseline_inputs = _generate_inputs_for_sdfg(sdfg)
+    fixed_inputs = deepcopy(baseline_inputs)
+    sdfg(**baseline_inputs)
+
+    for i in range(2):
+        OtA().apply_pass(sdfg, {})
+        sdfg.view()
+        sdfg.validate()
+        
+        sdfg._recompile = True
+        offload_inputs = deepcopy(fixed_inputs)
+        sdfg(**offload_inputs)
+
+        for name, baseline_value in baseline_inputs.items():
+            if isinstance(baseline_value, np.ndarray):
+                assert np.allclose(baseline_value, offload_inputs[name], equal_nan=True), f"Mismatch in '{name}'"
+
+    return 
+
+
 ########################################################
 ##                  Polybench Tests                  ###
 ########################################################
@@ -196,7 +244,8 @@ def get_sdfg(short_name, submodule="", test_name="", program_name=""):
     return sdfg
 
 def test_offload(short_name, submodule="", test_name="", program_name=""):
-    _run_generic_offloading_test(get_sdfg(short_name, submodule, test_name, program_name))
+    #_run_generic_offloading_test(get_sdfg(short_name, submodule, test_name, program_name))
+    _run_idempotency_offloading_test(get_sdfg(short_name, submodule, test_name, program_name))
 
 def test_polybench_offload(short_name): test_offload(short_name, "polybench")
 
@@ -345,7 +394,6 @@ PYTRAN_BENCHMARKS = [
 # Small SDFGs
 @pytest.mark.polybench
 @pytest.mark.polybench_small
-@pytest.mark.current
 def test_polybench_atax(): test_polybench_offload("atax") # fine
 
 @pytest.mark.polybench
@@ -579,26 +627,30 @@ def test_scattering_self_energies(): test_offload("scattering_self_energies")  #
 # HANGS in run(orig) for 8+ minutes -> just needs to run longer, its 10 or so nested loops; offload looks correct
 # FAILS in run(offl) with wcr-related compiler failure
 
+
 @pytest.mark.non_polybench
+@pytest.mark.current
 def test_arc_distance(): test_offload("arc_distance", "pythran") # fine
 
 @pytest.mark.no_offload
 @pytest.mark.non_polybench
+@pytest.mark.current
 def test_spmv(): test_offload("spmv") # fine
 
 @pytest.mark.non_polybench
+@pytest.mark.current
 def test_stockham_fft(): test_offload("stockham_fft") # FAILS huuge compiler error in orig and this error in offl:
 """
 E   dace.sdfg.validation.InvalidSDFGEdgeError: Dimensionality mismatch between src/dst subsets 
 (at state BinOp_39_0, edge expr_3_141592653589793_times_i_coord_gpu[0:R, 0:R] (_Mult__map[__i0=0:R, __i1=0:R]:OUT_expr_3_141592653589793_times_i_coord -> expr_3_141592653589793_times_i_coord_gpu:None))
 """
 @pytest.mark.non_polybench
+@pytest.mark.current
 def test_hdiff(): test_offload("hdiff", "weather_stencils") # fine
 
 @pytest.mark.non_polybench
-def test_vadv(): test_offload("vadv", "weather_stencils") # FAILS with data mismatch!
-
-# 17 of 25 run out of the box!
+@pytest.mark.current
+def test_vadv(): test_offload("vadv", "weather_stencils")
 
 #######################################################
 ##                       Main                       ###
@@ -609,7 +661,7 @@ VIEW_MOD = False
 
 if __name__ == "__main__":
     # Run with: python npbench_testsuite.py
-    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "polybench"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "non_polybench"])
 

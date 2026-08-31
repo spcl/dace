@@ -16,14 +16,9 @@ from warnings import warn
 from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
 VERBOSE = False
-PRINT_NAMES = 500
 SHOW_SDFGS = False
 DEBUG_SIZE1_MAPS = False
 DEBUG_FPI = False
-
-# scope dictionary: cache it
-# replace_dict: always bacth as much as possible
-# no has_attr, get_attr
 
 class OffloadingIRNode:
     # INVARIANT: IR-trees are always DAGs
@@ -41,10 +36,11 @@ class OffloadingIRNode:
         self.cpu_set : set[str] = cpu_set
         self.gpu_set : set[str] = gpu_set
         self.next : list[OffloadingIRNode] = next
-        self.close = close
-        
+
+        self.close = close # corresponding open and close nodes refer to each other
         self.open = None
-        self.debug_name = "Cpt. Nemo"
+
+        self.debug_name = "debug"
         self.copy_successor = False
         
         # there should be a reference to the corresponding close node IFF the current node is an open node
@@ -58,7 +54,7 @@ class OffloadingIRNode:
     def _get_str(self, visited_set, len_before):
         s = f"{self.debug_name}:"
         spaces = 40 - (len_before + len(s))
-        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= PRINT_NAMES])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= PRINT_NAMES])}\n"
+        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set])}, gpu = {sorted([name for name in self.gpu_set])}\n"
 
         if self in visited_set:
             return s
@@ -142,6 +138,7 @@ class OffloadToAccelerator(ppl.Pass):
     """
     
     CATEGORY: str = 'Offload To Accelerator'
+    MAX_ITERATIONS : int = 10
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -179,7 +176,6 @@ class OffloadToAccelerator(ppl.Pass):
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
         self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
-
         """
         library node -> GPU
         map cpu
@@ -188,37 +184,20 @@ class OffloadToAccelerator(ppl.Pass):
                 library node -> Seq
                 map gpu
                     library node -> Seq
-
-        TODO: let user set the schedule to anything else than Device -> stays that way
-        if user set to GPU device, then map cannot be offloaded (known limitation)
         """
-        # step 2:
-        # make as many scalars as possible, as few len1-arrays as heuristically necessary
-        #self.decide_length1_array_or_scalar_FPI(sdfg)
 
-        for _ in range(3):
+        transformed = set()
+        new_maps = set()
+
+        for i in range(OffloadToAccelerator.MAX_ITERATIONS):
+           
             # step 2: copy analysis -> IR stores analysis results
             if VERBOSE: print("--- Analysis---")
             self.hybrid_states = set()
             sdfgIR = self.sdfg_to_IR(sdfg)
-
-            # step 3: resolve hybrid states 
-            if self.hybrid_states:
-                new_maps = set()
-                for state in self.hybrid_states:
-                    new_maps |= self.make_size1_map_wrappers(sdfg, state)
-
-                # run mapfusion
-                # TODO ask Yakup how to use this properly -> new_maps
-                mapfusion_pass = FullMapFusion(
-                    strict_dataflow=True,
-                    perform_vertical_map_fusion=True,
-                    perform_horizontal_map_fusion=True,
-                )
-                mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
-                mapfusion_pipeline.apply_pass(sdfg, {})
-
-            # step 4: assign scalars / len1-arrays correctly
+            if VERBOSE: print(sdfgIR)
+            
+            # step 3: assign scalars / len1-arrays correctly
             all_scalars : set[str]= {data_name for data_name in sdfg.arrays if self._is_scalar(data_name, sdfg)}
             all_len1arrays : set[str]= {data_name for data_name in sdfg.arrays if self._is_length1_array(data_name, sdfg)}        
             gpu_written = set()
@@ -228,24 +207,40 @@ class OffloadToAccelerator(ppl.Pass):
                         gpu_written |= self.get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
 
             #print("gpu_written:", gpu_written)
-            to_len1_arrays = all_scalars & gpu_written
-            to_scalars = all_len1arrays - gpu_written
+            to_len1_arrays = all_scalars & gpu_written - transformed # don't apply double - shouldn't be an issue for arrays
+            transformed |= to_len1_arrays
+
+            to_scalars = all_len1arrays - gpu_written - transformed # but is an issue for non-transient scalars, because they add a copy state that still has the original
             to_scalars = {name for name in to_scalars if not name.startswith("__return")} # __return must always be by reference in case CPU/GPU reads results back
+            transformed |= to_scalars
+
             if to_len1_arrays:
-                print("to_len1_arrays", to_len1_arrays)
+                if VERBOSE: print("to_len1_arrays", to_len1_arrays)
                 ConvertScalarsToLengthOneArrays(
                     recursive=True,
                     preserve_abi=True,
                     filter=to_len1_arrays,
                 ).apply_pass(sdfg, {})
+
+                for data_name in to_len1_arrays: # prevents frequent copies within busy loops
+                    sdfg.arrays[data_name].lifetime = dtypes.AllocationLifetime.SDFG
             
             if to_scalars:
-                print("to_scalars", to_scalars)
+                if VERBOSE: print("to_scalars", to_scalars)
                 ConvertLengthOneArraysToScalars(
                     recursive=True,
                     preserve_abi=True,
                     filter=to_scalars,
                 ).apply_pass(sdfg, {})
+
+
+            # step 4: resolve hybrid states 
+            if self.hybrid_states:
+                if VERBOSE: print("hybrid:", self.hybrid_states)
+                new_maps = set()
+                for state in self.hybrid_states:
+                    new_maps |= self.make_size1_map_wrappers(sdfg, state)
+            
 
             # rerun IR if anything has changed
             if to_len1_arrays or to_scalars or self.hybrid_states: # sdfg has been changed
@@ -255,7 +250,7 @@ class OffloadToAccelerator(ppl.Pass):
             break # else IR is correct for current sdfg, go on to next step
 
         else:
-            raise RuntimeError("Passes 2-4 were repeated 3 times without conclusive result.")
+            raise RuntimeError(f"OffloadToAccelerator pass has reached max. iterations (OffloadToAccelerator.MAX_ITERATIONS = {OffloadToAccelerator.MAX_ITERATIONS}) without conclusive result. Increase limit if this is not a mistake.")
 
         
         # TODO: remove eventually
@@ -264,16 +259,25 @@ class OffloadToAccelerator(ppl.Pass):
             assert not scalars, f"scalars {scalars} found in {node.debug_name}\n\tgpu: {node.gpu_set}\n\tcpu: {node.cpu_set}"
         self.__traverse_IR(sdfgIR, assert_no_scalars)
         
-        # step 4: insert copies based on IR
+        # step 5: insert copies based on IR
         if VERBOSE: print("--- Copies ---")
         self.eval_IR(sdfg, sdfgIR)
         
         if SHOW_SDFGS: sdfg.view(filename=f"output_sdfg")
         if VERBOSE: print()
 
-        #except Exception as e:
-        #    print(e)
-        #    sdfg.view(filename=f"output_sdfg")
+        # step 6: post-optimize
+        if new_maps:
+            mapfusion_pass = FullMapFusion(
+                strict_dataflow=True,
+                perform_vertical_map_fusion=True,
+                perform_horizontal_map_fusion=True,
+            )
+            mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
+            mapfusion_pipeline.apply_pass(sdfg, {})
+
+        #self.single_element_copies_into_map(sdfg)
+        sdfg.view()
 
     def cache_scopes(self, sdfg):
         self.cached_scopes = {}
@@ -305,10 +309,6 @@ class OffloadToAccelerator(ppl.Pass):
                         assert False
 
                 else: # within nested scope -> must not have GPU schedule (defensive check)
-                    if self.has_GPU_schedule(node):
-                        raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass." \
-                        "All maps must have default or CPU schedule before pass." \
-                        f"Node {node} has schedule type {self.get_schedule(node)}" )
                     node.schedule = dtypes.ScheduleType.Sequential # set specifically as Default can be lowered to Cuda in the wrong places
     
     ### generic HELPERS ###
@@ -471,7 +471,6 @@ class OffloadToAccelerator(ppl.Pass):
             elif data_name in cpu_set: # has already been accessed on CPU
                 if is_gpu: # is now accessed on GPU
                     gpu_set.add(data_name)
-                    #raise RuntimeError("CPU->GPU copy needed within map for " + data_name)
 
             else:
                 assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
@@ -565,68 +564,18 @@ class OffloadToAccelerator(ppl.Pass):
                 pass # nothing to do; cannot be classified without context
 
             else:
-                raise RuntimeError(f"unhandled node {node} of type {node.__class__.__name__} in state {state}")
+                raise RuntimeError(f"Unknown node {node} of type {node.__class__.__name__} in state {state}.")
 
             gpu_set |= g
             cpu_set |= c
 
-        # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU
+        # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU -> mark for future resolution
         overlap = gpu_set & cpu_set
         if overlap:
             self.hybrid_states.add(state)
             gpu_set |= cpu_set
             cpu_set = set()
  
-        """if overlap and not recursive_call:
-            self.make_size1_map_wrappers(sdfg, state)
-
-            resolved = False
-            gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state, True)
-            if not (gpu_set & cpu_set):
-                resolved = True
-            
-            if not resolved:
-                sdfg.view()
-                raise NotImplementedError(f"Unable to resolve with size1 wrappers: This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
-                """
-
-        """#OLD BEHAVIOUR
-            def set_to_gpu(type, nodes):
-                has_gpu_node = False
-                for node in nodes:
-                    if isinstance(node, type) and self.has_GPU_schedule(node): #second conditions prevents infinite recursion on unfixable cases
-                        node.schedule = dtypes.ScheduleType.Default
-                        has_gpu_node = True
-                return has_gpu_node
-                
-            # This is most often caused by lib nodes which were offloaded but weren't supposed to (initial heuristic failed).
-            # Try to keep lib nodes on CPU & analyse state again.
-            resolved = False
-            change_made = set_to_gpu(nodes.LibraryNode, top_level_nodes)
-            
-            if change_made:
-                gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state)
-                if not (gpu_set & cpu_set):
-                    resolved = True
-
-            # If that didn't work, set all maps to CPU (Sequential).
-            # This should remove all sources of conflict by completely running the state on CPU
-            # In case the conflict still isn't resolved (shouldn't happen), raise an error.
-            # Else, raise a Warning to the user that this state couldn't be offloaded properly and continue.
-            if not resolved:
-                change_made = set_to_gpu(nodes.MapEntry, top_level_nodes)
-                
-                if change_made:
-                    gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state)
-                    if not (gpu_set & cpu_set):
-                        resolved = True
-                        
-            if not resolved:
-                raise NotImplementedError(f"(This should never happen.) This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
-            
-            warn(f"{sdfg.label} has state {state} which accesses the arrays {overlap} on both GPU and CPU.\n", UserWarning)
-            """
-
         return gpu_set, cpu_set
     
 
@@ -1049,24 +998,36 @@ class OffloadToAccelerator(ppl.Pass):
 
 
     def _correct_transient_storage_locations(self, sdfg:SDFG, IR:OffloadingIRNode):
-        seen_transients = set()
+        seen = set()
 
         def _correct_transients(node:OffloadingIRNode):
             for name in node.gpu_set:
                 assert name in sdfg.arrays
                 desc = sdfg.arrays[name]
-                if desc.transient and not name in seen_transients:
+                if desc.transient and not name in seen:
                     desc.storage = dtypes.StorageType.GPU_Global
-                    seen_transients.add(name)
+                    seen.add(name)
 
             for name in node.cpu_set:
                 assert name in sdfg.arrays
                 desc = sdfg.arrays[name]
-                if desc.transient and not name in seen_transients:
+                if desc.transient and not name in seen:
                     desc.storage = dtypes.StorageType.Default
-                    seen_transients.add(name)
+                    seen.add(name)
 
         self.__traverse_IR(IR, _correct_transients)
+
+    def _correct_view_storage_locations(self, sdfg:SDFG):
+        state : SDFGState
+        for state in sdfg.states():
+            scope = self.cached_scopes[state]
+            for node in state.data_nodes():
+                data_name = node.data
+                parent = scope.get(node)
+                if self._is_view(data_name, sdfg) and isinstance(parent, nodes.MapEntry) and self.has_GPU_schedule(parent):
+                    # if its within a GPU map, set it to register because GPU_Global isn't handled correctly by code gen
+                    sdfg.arrays[data_name].storage = dtypes.StorageType.Register
+                    
 
     def eval_IR(self, sdfg, IR:OffloadingIRNode):   
         # modifies SDFG in place & inserts all necessary copies
@@ -1082,7 +1043,35 @@ class OffloadToAccelerator(ppl.Pass):
                 self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
 
 
-        def eval(node:OffloadingIRNode):          
+        def eval(node:OffloadingIRNode):     
+            # loop copies if applicable
+            if node.type == OffloadingIRNode.CLOSE and node.open and node.open.type == OffloadingIRNode.OPEN_LOOP: # CLOSE LOOP
+                top : OffloadingIRNode = node.open
+                bottom : OffloadingIRNode = node
+                tails = OffloadingIRNode.get_all_tails(top) # INV: all are STATE or CLOSE if there's a nested loop
+
+                gpu_copies = bottom.cpu_set & top.gpu_set
+                if VERBOSE: print(f"LOOP COPIES for {node.debug_name}: {gpu_copies}")
+
+                if gpu_copies:
+                    for tail in tails:
+                        if tail.type == OffloadingIRNode.CLOSE:
+                            self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
+                        else:
+                            self.create_interstate_copy(sdfg, tail.block, None, gpu_copies, to_gpu=True)
+
+                cpu_copies = bottom.gpu_set & top.cpu_set
+                if cpu_copies:
+                    for tail in tails:
+                        if tail.type == OffloadingIRNode.CLOSE:
+                            self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
+                        else:
+                            self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
+
+                # copies added at end of loop state, within loop -> modify IR of LOOP_CLOSE to represent that
+                node.gpu_set = (node.gpu_set | gpu_copies) - cpu_copies
+                node.cpu_set = (node.cpu_set | cpu_copies) - gpu_copies
+            
             for next in node.next:
 
                 if node.cpu_set & node.gpu_set:
@@ -1099,32 +1088,9 @@ class OffloadToAccelerator(ppl.Pass):
                     insert_copies(node, next, node.block, next.block)
                     
 
-            # loop copies if applicable
-            if node.type == OffloadingIRNode.OPEN_LOOP:
-                top = node # INV: top.type == OffloadingIRNode.OPEN_LOOP
-                bottom = node.close # INV: bottom.type == OffloadingIRNode.CLOSE
-                tails = OffloadingIRNode.get_all_tails(top) # INV: all are STATE or CLOSE if there's a nested loop
-
-                gpu_copies = bottom.cpu_set & top.gpu_set
-                if VERBOSE: print(f"LOOP COPIES for {node.debug_name}: {gpu_copies}")
-
-                if gpu_copies:
-                    for tail in tails:
-                        if tail.type == OffloadingIRNode.CLOSE: # and bottom.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
-                        else:
-                            self.create_interstate_copy(sdfg, tail.block, None, gpu_copies, to_gpu=True)
-
-                cpu_copies = bottom.gpu_set & top.cpu_set
-                if cpu_copies:
-                    for tail in tails:
-                        if tail.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
-                        else:
-                            self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
-
-
+           
         self._correct_transient_storage_locations(sdfg, IR)
+        self._correct_view_storage_locations(sdfg)
         self._insert_copy_names(sdfg, IR)
         self.__traverse_IR(IR, eval)
 
@@ -1542,33 +1508,11 @@ class OffloadToAccelerator(ppl.Pass):
                 self._forward_input_only_map_data(state, map_entry, map_exit)
 
                 # Avoid illegal copy from gpu_device scheduled map to (by default) cpu_heap stored scalar: make all write scalars gpu_global
-                self._store_output_scalars_on_GPU(sdfg, state, map_exit)
+                #self._store_output_scalars_on_GPU(sdfg, state, map_exit)
 
         return new_maps
-        
 
-   
-################################################################
-## Fix Point Iteration Over Lattice                           ##
-    """
-    TODO rewrite
-    Decide whether variables need to be len1-arrays or scalars.
-    If a GPU-scheduled map writtes to a variable, it needs to be an array
-    (if not, due to copy-by-value semantics, the written value will be lost).
-    Heuristic: Assume a tasklet has N input and M output variables. If even one of 
-    the input or one of the output variables are written to by GPU (are len1-arrays),
-    then all N output variables can potentially be written to by GPU and must become
-    len1-arrays. Using this rule, a fix point analysis determines the final set of
-    len1-arrays. This is compared against the current set of scalars and len1-arrays.
-    If there are mismatches, the data containers will be converted into the other, correct type.
-
-    Steps:
-    1) find the set of all len1arrays and all scalars; vars = len1arrays u scalars
-    2) find the set of all outputs of GPU maps; gpu_vars = vars n map_outputs
-    3) make a dictionary d[tasklet] = tuple(set(tasklet_inputs n vars), set(tasklet_outputs n vars)) for all tasklets
-    4) fix point iteration over the dictionary using the rule above -> result
-    5) run scalar_to_len1array(scalars n result) and run len1array_to_scalar(len1array - result)
-    """
+# post optimization & helpers
 
     def _is_scalar(self, data_name:str, sdfg:SDFG):
         assert data_name in sdfg.arrays
@@ -1590,64 +1534,96 @@ class OffloadToAccelerator(ppl.Pass):
         desc = sdfg.arrays[data_name]
         return isinstance(desc, data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
 
-    def decide_length1_array_or_scalar_FPI(self, sdfg:SDFG):
-        # 1)
-        all_scalars : set[str]= {data_name for data_name in sdfg.arrays if self._is_scalar(data_name, sdfg)}
-        all_len1arrays : set[str]= {data_name for data_name in sdfg.arrays if self._is_length1_array(data_name, sdfg)}
-        vars : set[str]= all_scalars | all_len1arrays
+    def _get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> list[str]:
+            if not in_connector:
+                return []
+            suffix = in_connector[3:] # connectors starts with "IN_"
+            return [out_conn  for out_conn in map_entry.out_connectors if out_conn.startswith("OUT_") and out_conn[4:] == suffix]
+    
+    def _rewire_access_into_map(self, state:SDFGState, access: nodes.AccessNode, map: nodes.MapEntry) -> None:
+        """
+        Move an access node from outside a map to inside the map entry boundary.
+        Rewires
+            B -> access -> map -> C
+        into
+            B -> map -> access -> C
+        for the connector path(s) that currently route through ``access`` into ``map``.
+        """
+        # 0) get all edges B -> access
+        incoming_to_access = list(state.in_edges(access))
+        access_to_map_edges = [edge for edge in state.out_edges(access) if edge.dst is map]
+        if not access_to_map_edges:
+            raise ValueError(f"Access node '{access.label}' does not feed map '{map.label}'.")
 
-        # 2) with current scheduling heuristic, only toplevel can be GPU
-        # 3) tasklets within nested sdfgs are not relevant
-        gpu_written : set[str]= set()
-        tasklet_dict : Dict = {} # maps tasklet to (inputs, outputs) where both are sets of data names (array & scalar) accessed as input/output
+        # 1) connect all inputs of access  to map:      B -> map;           access -> map -> C
+        # 2) then connect the new out connectors to access:  B -> map -> access; access -> map -> C
+        for idx, edge in enumerate(incoming_to_access):
+            src, src_conn = edge.src, edge.src_conn
+            ext_memlet = deepcopy(edge.data)
+            int_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
+
+            conn_idx = 0
+            in_conn = f"IN_REWIRE_ACCESS_{idx}_{conn_idx}"
+            out_conn = f"OUT_REWIRE_ACCESS_{idx}_{conn_idx}"
+            while in_conn in map.in_connectors or out_conn in map.out_connectors:
+                conn_idx += 1
+                in_conn = f"IN_REWIRE_ACCESS_{idx}_{conn_idx}"
+                out_conn = f"OUT_REWIRE_ACCESS_{idx}_{conn_idx}"
+
+            map.add_in_connector(in_conn)
+            map.add_out_connector(out_conn)
+
+            state.add_edge(src, src_conn, map, in_conn, ext_memlet) # B -> map
+            state.add_edge(map, out_conn, access, None, int_memlet) # B -> map -> access
+
+        # 3) delete the edge and the in_connector of access: B -> map -> access; map -> C
+        accesses_to_map = [e for e in state.in_edges(map) if e.src is access]
+        assert len(accesses_to_map) == 1, "multiple edges between same two nodes"
+        access_to_map = accesses_to_map[0]
+
+        access_out_conns = self._get_corresponding_out_connectors(map, access_to_map.dst_conn)
+        map.remove_in_connector(access_to_map.dst_conn)
+        state.remove_edge(access_to_map)
+
+        # 4) delete the out_connectors of access and the edges to the output nodes: B -> map -> access; C
+        map_out_edges = [e for e in state.out_edges(map) if e.src_conn in access_out_conns]
+        for out_conn in access_out_conns:
+            map.remove_out_connector(out_conn)
+
+        # 5) connect the output nodes directly to acces: B -> map -> access -> C
+        for e in map_out_edges:
+            state.add_edge(access, None, e.dst, e.dst_conn, deepcopy(e.data))
+            state.remove_edge(e)
+
+
+    def single_element_copies_into_map(self, sdfg):
+        # pattern A -> single access -> Map becomes A -> Map -> single access
+        changes = set()
         for state in sdfg.states():
             for node in state.nodes():
-                
-                if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and self.has_GPU_schedule(node):
-                    outputs = self.get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
-                    gpu_written |= outputs & vars
-                
-                elif isinstance(node, nodes.Tasklet):
-                    inputs = self.get_data_used_by_incoming_access_nodes(sdfg, state, node, include_scalars=True)
-                    outputs = self.get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
-                    tasklet_dict[node] = (inputs, outputs)
+                if not isinstance(node, nodes.MapEntry):
+                    continue
+                map_entry : nodes.MapEntry = node
 
-        # 4)
-        if DEBUG_FPI: print(f"FPI:\n\tscalars: {all_scalars}\n\tlen1_arrays: {all_len1arrays}\n\tgpu_written: {gpu_written}\n\ttasklet_dict: {tasklet_dict}")
-            
-        if gpu_written:
-            new_gpu_written = gpu_written.copy()
+                for input in self.get_predecessors(state, map_entry):
+                    if not isinstance(input, nodes.AccessNode):
+                        continue
+                    data_name = input.data
+                    if not self._is_scalar(data_name, sdfg) and not self._is_length1_array(data_name, sdfg):
+                        continue
+                    single_access = input
 
-            while True:
-                for inputs, outputs in tasklet_dict.values():
+                    preds = list(self.get_predecessors(state, single_access))
+                    if len(preds) != 1 or not isinstance(preds[0], nodes.AccessNode):
+                        continue
 
-                    if inputs & gpu_written or outputs & gpu_written: # at least one in- or output var is written to by gpu
-                        new_gpu_written |= outputs # add all outputs as being potentially written to by gpu
-                    
-                if DEBUG_FPI: print(f"new: {new_gpu_written}")
-                if new_gpu_written == gpu_written: # fixpoint reached
-                    break
-                gpu_written = new_gpu_written.copy()
-            
-            if DEBUG_FPI: print("fixpoint!")
+                    # pattern A -> single access -> Map becomes A -> Map -> single access
+                    changes.add((state, input, map_entry))
 
-        # 5)
-        to_len1_arrays = all_scalars & gpu_written
-        to_scalars = all_len1arrays - gpu_written
-        to_scalars = {name for name in to_scalars if not name.startswith("__return")} # is usually very inefficient because __return if mostly used at the end of the graph
+        for state, access, map_entry in changes:
+            if VERBOSE: print(f"SINGLE ELEMENT: {state}, {access}, {map_entry}")
+            self._rewire_access_into_map(state, access, map_entry)
 
-        if DEBUG_FPI: print(f"to_len1_arrays: {to_len1_arrays}\nto_scalars: {to_scalars}")
-       
-        if to_len1_arrays:
-            ConvertScalarsToLengthOneArrays(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_len1_arrays,
-            ).apply_pass(sdfg, {})
-        
-        if to_scalars:
-            ConvertLengthOneArraysToScalars(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_scalars,
-            ).apply_pass(sdfg, {})
+        return True if changes else False
+

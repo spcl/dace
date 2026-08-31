@@ -534,6 +534,7 @@ def test_cpu_scalars_no_copies():
         return sdfg
     
     sdfg = create_sdfg()
+    sdfg.view()
     input = 3490.2378
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
@@ -818,7 +819,6 @@ def test_reduce_to_array():
         new_out,
     )
 
-@pytest.mark.current
 @pytest.mark.gpu_offload
 def test_reduce_to_scalar():
     sdfg = reduce_to_scalar_sdfg()
@@ -834,48 +834,34 @@ def test_reduce_to_scalar():
         new_out,
     )
 
+
+def single_element_copy_sdfg():
+    @dace.program
+    def single_elements_map(A: dace.float64[16], B: dace.float64[16]):
+        b = B[0]
+        for i in dace.map[0:16]:
+            A[i] = b * A[i]
+
+    sdfg = single_elements_map.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+@pytest.mark.current
 @pytest.mark.gpu_offload
-def test_nbody():
-    workspace_root = Path(__file__).resolve().parents[6]
-    dace_repo_root = workspace_root / "dace"
-    npbench_repo_root = workspace_root / "npbench"
-    for repo_path in (dace_repo_root, npbench_repo_root):
-        repo_path_str = str(repo_path)
-        if repo_path_str not in sys.path:
-            sys.path.insert(0, repo_path_str)
-
-    nbody_module = importlib.import_module("npbench.benchmarks.nbody.nbody_dace")
-    init_module = importlib.import_module("npbench.benchmarks.nbody.nbody")
-
-    N, t_end, dt, softening, G = 25, 2.0, 0.05, 0.1, 1.0
-    mass, pos, vel, Nt = init_module.initialize(N, t_end, dt)
-
-    sdfg = nbody_module.nbody.to_sdfg()
-    orig_KE = np.zeros(Nt + 1, dtype=np.float64)
-    new_KE = np.zeros(Nt + 1, dtype=np.float64)
-
+def test_single_element_copy():
+    sdfg = single_element_copy_sdfg()
     sdfg.view()
+    A = np.arange(16, dtype=np.float64)
+    B = np.arange(16, dtype=np.float64) + 5.0
+    orig_out = np.zeros(1, dtype=np.float64)
+    new_out = np.zeros(1, dtype=np.float64)
 
     run_numerical_offloading_test(
         sdfg,
-        {
-            "mass": mass.copy(),
-            "pos": pos.copy(),
-            "vel": vel.copy(),
-            "dt": np.float64(dt),
-            "G": np.float64(G),
-            "softening": np.float64(softening),
-            "N": np.int64(N),
-            "Nt": np.int64(Nt),
-            "__return_1": np.zeros(Nt + 1, dtype=np.float64),
-        },
-        orig_KE,
-        new_KE,
-        result_name="__return_0",
+        {"A": A, "B":B},
+        orig_out,
+        new_out,
     )
-
-    
-    
 # ============================================================================
 # Thesis Picture Graphs
 # ============================================================================
@@ -934,6 +920,20 @@ def nodes_image():
     sdfg.validate()
     return sdfg
 
+
+def copy_image():
+    TS = dace.symbol("TS")
+    @dace.program
+    def example(A: dace.float64[100, 100], B: dace.float64[100]) -> dace.float64[100, 100]:
+        for t2 in range(2):
+            for j in range(100):
+                for i in dace.map[0:100]:
+                    B[i] = B[i] + A[i, j]
+            for i in range(1, 100):
+                B[i] = (B[i-1] + B[i]) / 100.0
+
+    return example.to_sdfg()
+
 # ============================================================================
 # Conftest-style marker registration (if running standalone)
 # ============================================================================
@@ -953,6 +953,8 @@ if __name__ == "__main__":
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
 
+    nodes_image().view()
+    """
     import importlib
     import sys
     from pathlib import Path
@@ -962,8 +964,17 @@ if __name__ == "__main__":
     if str(npbench_repo_root) not in sys.path:
         sys.path.insert(0, str(npbench_repo_root))
 
-    module = importlib.import_module("npbench.benchmarks.azimint_naive.azimint_naive_dace")#"npbench.benchmarks.polybench.symm.symm_dace")
-    sdfg = module.azimint_naive.to_sdfg()
+    module = importlib.import_module("npbench.benchmarks.scattering_self_energies.scattering_self_energies_dace")#"npbench.benchmarks.polybench.symm.symm_dace")
+    sdfg = module.scattering_self_energies.to_sdfg()
+    
+    sdfg = copy_image()
+    OtA().apply_pass(sdfg, {})
+    sdfg.view()
+
+    OtA().apply_pass(sdfg, {})
+    sdfg.view()
+    
+    
     sdfg.view()
     sdfg.validate()
     print("is valid")
@@ -972,3 +983,4 @@ if __name__ == "__main__":
     sdfg.validate()
     print("offl is valid")
     sdfg.view()
+    """

@@ -448,7 +448,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
 
     scope = state.scope_dict()
-
+    
     for nid, node in enumerate(state.nodes()):
         # Reference check
         if id(node) in references:
