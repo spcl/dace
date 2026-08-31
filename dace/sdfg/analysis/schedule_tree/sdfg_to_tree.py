@@ -3,12 +3,11 @@ from collections import defaultdict
 import copy
 from typing import Dict, List, Set
 import dace
-from dace import data, subsets, symbolic
+from dace import data, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
                              UnstructuredControlFlow)
-from dace.sdfg import utils as sdutil, graph as gr, nodes as nd, dealias
-from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.transformation.passes.analysis import StateReachability

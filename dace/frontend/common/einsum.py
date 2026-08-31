@@ -10,7 +10,7 @@ import dace
 from dace import dtypes, subsets, symbolic
 from dace.utils import prod
 from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState, InterstateEdge, dealias
+from dace.sdfg import SDFG, SDFGState, dealias
 from dace.memlet import Memlet
 
 

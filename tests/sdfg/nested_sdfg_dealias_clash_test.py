@@ -3,7 +3,6 @@
 Red-green tests for name clashes between symbols and data containers when nesting SDFGs
 (``add_nested_sdfg`` / ``dace.sdfg.dealias``), including deeply nested SDFGs.
 """
-import pytest
 
 import dace
 from dace.sdfg import SDFG, nodes
@@ -360,7 +359,6 @@ def test_symbol_rename_target_clash_with_grandchild():
 
 
 if __name__ == '__main__':
-    import sys
     import traceback
     for name, fn in list(globals().items()):
         if name.startswith('test_') and callable(fn):

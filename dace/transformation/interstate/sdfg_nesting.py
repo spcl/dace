@@ -1,17 +1,15 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
-import ast
 from copy import deepcopy as dc
 import itertools
 import networkx as nx
-from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 from functools import reduce
 import operator
 import copy
 
-from dace import memlet, Memlet, symbolic, dtypes, subsets
-from dace.frontend.python import astutils
+from dace import memlet, Memlet, symbolic, dtypes
 from dace.sdfg import dealias, nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState

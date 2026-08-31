@@ -14,7 +14,7 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
-from dace.sdfg.replace import replace_in_codeblock, replace
+from dace.sdfg.replace import replace_in_codeblock
 import dace.serialize
 from dace import data as dt
 from dace import dtypes

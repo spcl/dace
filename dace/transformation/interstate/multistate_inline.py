@@ -5,7 +5,7 @@ from copy import deepcopy as dc
 import itertools
 from typing import Dict, List
 
-from dace import Memlet, symbolic, subsets
+from dace import Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState

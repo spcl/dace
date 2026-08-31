@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, List, Set
 
 import sympy
 from sympy import Symbol, ceiling
@@ -1294,7 +1294,6 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     :note: This operates in-place on the parent SDFG.
     """
     # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
     from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
