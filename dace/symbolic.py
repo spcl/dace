@@ -34,6 +34,11 @@ class _SymbolDTypeContext(threading.local):
 
         # The lowest level in the stack is reserved for "no stack active".
         self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
+        # Parallel stack of hashable fingerprints. ``pystr_to_symbolic`` is cached on the text
+        # alone, but the same text names a different symbol under a different authority, so the
+        # fingerprint goes in the key. Maintained on push/pop -- computing it per parse would put
+        # a sort on one of the hottest paths in the compiler.
+        self.key_stack: List[Tuple] = [()]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
@@ -46,6 +51,7 @@ class _SymbolDTypeContext(threading.local):
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
         })
         self.ctx_stack.append(new_stack_level)
+        self.key_stack.append(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items())))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -53,6 +59,7 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
+        self.key_stack.pop()
         return self
 
     def get(self) -> types.MappingProxyType:
@@ -60,6 +67,10 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 0:
             raise IndexError("Symbol type stack is empty.")
         return self.ctx_stack[-1]
+
+    def cache_key(self) -> Tuple:
+        """Hashable stand-in for the active authority, for use in a parse cache key."""
+        return self.key_stack[-1]
 
     @staticmethod
     def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
@@ -1127,7 +1138,20 @@ def sympy_to_dace(exprs, symbol_map=None):
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
                         # Substituted back into a sympy tree: a foreign leaf converts straight back.
-                        repl[atom] = sympy_symbol(atom.name, **atom.assumptions0)
+                        # DTYPE FROM THE ENCLOSING SCOPE, not the default. A symbol's dtype is part
+                        # of its identity (``symbol._hashable_content``), and a bound recovered from
+                        # a STRING-backed property (a loop's init / condition / update) is re-parsed
+                        # here, so minting it at ``DEFAULT_SYMBOL_TYPE`` puts a second ``N`` in a
+                        # graph whose descriptors carry the declared one. ``N - N`` then never
+                        # cancels -- not even under ``simplify`` -- and every proof that compares a
+                        # bound against a subset fails on a well-formed program: the modular-wrap
+                        # split rejects its own split point (ext_modular_wrap, 250x slower) and the
+                        # 2-D arg-reduce match rejects a nest that does cover the whole array
+                        # (TSVC s3110 / s13110). The authority only ever OVERRIDES: a name no
+                        # enclosing scope declares keeps the default, so an unscoped parse is
+                        # unchanged.
+                        declared = _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name)
+                        repl[atom] = sympy_symbol(atom.name, declared, **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]
@@ -3344,12 +3368,14 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy.simplify(expr) if isinstance(expr, sympy.Basic) else expr.simplify()
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
-        return _pystr_to_symbolic_cached(expr, simplify)
+        # The authority is part of the key: the same text names a symbol of a different dtype under
+        # a different scope, and a cache keyed on the text alone would hand back the other scope's.
+        return _pystr_to_symbolic_cached(expr, simplify, _SERIALIZATION_SYMBOL_DTYPES.cache_key())
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
+def _pystr_to_symbolic_cached(expr, simplify=None, authority_key: Tuple = ()) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
 
@@ -3370,7 +3396,10 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
         if dtypes.validate_name(expr):
-            return symbol(expr)
+            # A bare name short-circuits the whole parse, so it needs the scope authority here too
+            # -- otherwise the commonest spelling of all (a loop bound that IS just ``N``) is the
+            # one place the stamping does not reach. See ``sympy_to_dace``.
+            return symbol(expr, _SERIALIZATION_SYMBOL_DTYPES.get().get(expr))
 
     symbol_map = symbol_map or {}
 
