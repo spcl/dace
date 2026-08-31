@@ -2,7 +2,7 @@
 """
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
-from dace import data, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import SDFG
@@ -101,6 +101,11 @@ def dealias_sdfg(sdfg: SDFG):
                 break
 
     if to_unsqueeze:
+        # Symbols used by the parent's data descriptors may be defined by an enclosing scope (e.g., map
+        # parameters or dynamic map inputs) rather than by the parent SDFG's symbol repository, so the
+        # scope-aware set of defined symbols is the correct source of truth here.
+        defined_symbols = parent_state.symbols_defined_at(parent_node)
+
         for parent_name in to_unsqueeze:
             parent_arr = parent_sdfg.arrays[parent_name]
 
@@ -112,7 +117,8 @@ def dealias_sdfg(sdfg: SDFG):
             new_syms = parent_arr.used_symbols(all_symbols=True) - previous_syms
             for sym in new_syms:
                 if str(sym) not in sdfg.symbols:
-                    sdfg.add_symbol(str(sym), parent_sdfg.symbols[str(sym)])
+                    symtype = defined_symbols.get(str(sym), parent_sdfg.symbols.get(str(sym), None))
+                    sdfg.add_symbol(str(sym), symtype or dtypes.typeclass(int))
                     parent_node.symbol_mapping[str(sym)] = str(sym)
 
             if isinstance(parent_arr, data.ArrayView):

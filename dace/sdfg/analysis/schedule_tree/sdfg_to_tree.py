@@ -77,14 +77,14 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
             if isinstance(src, dace.nodes.AccessNode) and src.data in input_mapping:
                 src_data = src.data
                 src_memlet = align_memlet(state, e, False)
-                src_memlet.data = input_mapping[src.data].data.data
+                src_memlet.data = input_mapping[src.data].data
             else:
                 src_data = None
                 src_memlet = None
             if isinstance(dst, dace.nodes.AccessNode) and dst.data in output_mapping:
                 dst_data = dst.data
                 dst_memlet = align_memlet(state, e, True)
-                dst_memlet.data = output_mapping[dst.data].data.data
+                dst_memlet.data = output_mapping[dst.data].data
             else:
                 dst_data = None
                 dst_memlet = None
@@ -93,10 +93,10 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
             if src_data is None and dst_data is None:
                 if e.data.data in input_mapping:
                     memlet = align_memlet(state, e, False)
-                    memlet.data = input_mapping[e.data.data].data.data
+                    memlet.data = input_mapping[e.data.data].data
                 elif e.data.data in output_mapping:
                     memlet = align_memlet(state, e, True)
-                    memlet.data = output_mapping[e.data.data].data.data
+                    memlet.data = output_mapping[e.data.data].data
                 e.data = memlet
             else:
                 if src_memlet is not None:
@@ -121,7 +121,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
                     mapping = output_mapping
 
                 repl_memlet = copy.deepcopy(memlet)
-                repl_memlet.data = mapping[memlet.data].data.data
+                repl_memlet.data = mapping[memlet.data].data
                 repl_dict[str(memlet)] = str(repl_memlet)
                 if memlet.data in syms:
                     syms.remove(memlet.data)
@@ -211,7 +211,7 @@ def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_
     Helper function to create a view schedule tree node from a memlet edge.
     """
     sdfg = state.parent
-    normalized = _normalize_memlet(sdfg, state, edge, viewed_name)
+    normalized = normalize_memlet(sdfg, state, edge, viewed_name)
     view_node = tn.ViewNode(target=view_name,
                             source=viewed_name,
                             memlet=normalized,
@@ -343,7 +343,7 @@ def _prepare_schedule_tree_edges(
                 result[e] = tn.DynScopeCopyNode(target=e.dst_conn, memlet=e.data)
             else:
                 target_name = innermost_node.data
-                new_memlet = _normalize_memlet(sdfg, state, e, outermost_node.data)
+                new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
@@ -621,6 +621,7 @@ def _generate_views_in_scope(
 
 def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
     from dace.transformation import helpers as xfh  # Avoid import loop
+    from dace.sdfg import dealias  # Avoid import loop
 
     # Split edges with assignments and conditions
     xfh.split_interstate_edges(sdfg)
@@ -633,7 +634,7 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
         _remove_name_collisions(sdfg)
 
         # Ensure no arrays alias in SDFG tree
-        _dealias_sdfg(sdfg)
+        dealias.dealias_sdfg_recursive(sdfg)
 
 
 def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot) -> None:
