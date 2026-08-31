@@ -133,6 +133,12 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    # The dictionaries this helper serves (interstate-edge assignments, arrays, symbols, constants,
+    # callback mappings) are keyed by name. A replacement may arrive as a symbolic expression, so
+    # render both sides back to their string form: a sympy object used as a key neither matches the
+    # existing string keys nor survives serialization.
+    old = str(old)
+    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return

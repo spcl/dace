@@ -3635,7 +3635,8 @@ class LoopRegion(ControlFlowRegion):
 
     def replace_meta_accesses(self, replacements):
         if self.loop_variable in replacements:
-            self.loop_variable = replacements[self.loop_variable]
+            # ``loop_variable`` is typed ``str``, but a replacement may arrive as a symbol.
+            self.loop_variable = str(replacements[self.loop_variable])
         replace_in_codeblock(self.loop_condition, replacements)
         if self.init_statement:
             replace_in_codeblock(self.init_statement, replacements)
@@ -3802,7 +3803,8 @@ class LoopRegion(ControlFlowRegion):
                      replace_keys: bool = True):
         if replace_keys:
             if self.loop_variable and self.loop_variable in repl:
-                self.loop_variable = repl[self.loop_variable]
+                # ``loop_variable`` is typed ``str``, but a replacement may arrive as a symbol.
+                self.loop_variable = str(repl[self.loop_variable])
 
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
