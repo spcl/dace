@@ -625,6 +625,7 @@ name = "dace"
 source = { editable = "." }
 dependencies = [
     { name = "astunparse" },
+    { name = "click" },
     { name = "cmake" },
     { name = "dill" },
     { name = "fparser" },
@@ -663,6 +664,13 @@ ml = [
 mpi = [
     { name = "mpi4py" },
     { name = "pytest-mpi" },
+]
+testing = [
+    { name = "opt-einsum" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
 ]
 
 [package.dev-dependencies]
@@ -735,6 +743,7 @@ testing = [
 [package.metadata]
 requires-dist = [
     { name = "astunparse" },
+    { name = "click", specifier = ">=8.0" },
     { name = "cmake" },
     { name = "cupy-cuda13x", marker = "extra == 'gpu'" },
     { name = "cutensor-cu13", marker = "extra == 'gpu'" },
@@ -750,19 +759,24 @@ requires-dist = [
     { name = "onnxruntime", marker = "extra == 'ml'" },
     { name = "onnxscript", marker = "extra == 'ml'" },
     { name = "onnxsim", marker = "extra == 'ml'" },
+    { name = "opt-einsum", marker = "extra == 'testing'", specifier = ">=3.0" },
     { name = "ordered-set", specifier = ">=4.0.0" },
     { name = "packaging" },
     { name = "ply" },
     { name = "protobuf", marker = "extra == 'ml'" },
     { name = "pyreadline", marker = "sys_platform == 'win32'" },
+    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.0" },
+    { name = "pytest-cov", marker = "extra == 'testing'", specifier = ">=4.0" },
     { name = "pytest-mpi", marker = "extra == 'mpi'" },
+    { name = "pytest-timeout", marker = "extra == 'testing'", specifier = ">=2.0" },
+    { name = "pytest-xdist", marker = "extra == 'testing'", specifier = ">=3.0" },
     { name = "pyyaml" },
     { name = "scikit-build" },
     { name = "sympy", specifier = ">=1.9" },
     { name = "torch", marker = "extra == 'ml'" },
     { name = "typing-extensions" },
 ]
-provides-extras = ["ml", "mpi", "gpu"]
+provides-extras = ["ml", "mpi", "gpu", "testing"]
 
 [package.metadata.requires-dev]
 dev = [

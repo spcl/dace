@@ -71,12 +71,20 @@ dependencies = [
     "scikit-build",
     "cmake",
     "ninja",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
+testing = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-timeout>=2.0",
+    "pytest-xdist>=3.0",
+    "opt-einsum>=3.0",
+]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"
