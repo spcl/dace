@@ -27,15 +27,16 @@ ml-testing = [
 ]
 testing = [
     "coverage",
-    "pytest",
-    "pytest-cov",
-    "pytest-timeout",
-    "pytest-xdist",
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-timeout>=2.0",
+    "pytest-xdist>=3.0",
     "scipy",
     "absl-py",
-    "opt_einsum",
+    "opt-einsum>=3.0",
     "pymlir",
     "ipykernel",
+    "nbformat",
     "nbconvert",
 ]
 
@@ -78,16 +79,6 @@ dependencies = [
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
-testing = [
-    "pytest>=8.0",
-    "pytest-cov>=4.0",
-    "pytest-timeout>=2.0",
-    "pytest-xdist>=3.0",
-    "opt-einsum>=3.0",
-    "scipy",
-    "nbformat",
-    "nbconvert",
-]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"
