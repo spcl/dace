@@ -98,6 +98,11 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         self.uses_gpu = False
         self.framecode: 'DaCeCodeGenerator' = None
 
+    def writes_to_report(self) -> bool:
+        # Data instrumentation dumps arrays to a separate directory and never touches
+        # __state->report.
+        return False
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
                       codegen: 'DaCeCodeGenerator'):
         # Initialize serializer versioning object
@@ -201,6 +206,11 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         self.gpu_runtime_init = False
         self.uses_gpu = False
         self.framecode: 'DaCeCodeGenerator' = None
+
+    def writes_to_report(self) -> bool:
+        # Data instrumentation dumps arrays to a separate directory and never touches
+        # __state->report.
+        return False
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
         return f'''

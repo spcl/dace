@@ -34,6 +34,9 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         self.include_generated = False
         super().__init__()
 
+    def writes_to_report(self) -> bool:
+        return False
+
     def _print_include(self, sdfg: SDFG) -> None:
         """ Prints the include statement for the NVTX/rocTX library for a given SDFG. """
         if self.include_generated:
