@@ -2488,6 +2488,11 @@ def _make_map_fusion_nested_sdfg_slicing(
     mx2.add_scope_connectors("result")
     state.add_edge(mx2, "OUT_result", result_data, None, dace.Memlet(f"result_data[0:{nb_cells}, 0:{nb_levels}]"))
 
+    # The nested SDFGs' connectors are slices of the outer arrays. Integration can only run once
+    # the nodes are wired up, so it has to be requested explicitly here.
+    hood_nsdfg.integrate_into_parent()
+    reduction_nsdfg.integrate_into_parent()
+
     sdfg.validate()
 
     return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, hood_nsdfg

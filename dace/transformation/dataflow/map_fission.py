@@ -115,8 +115,12 @@ class MapFission(transformation.SingleStateTransformation):
         schildren = subgraph.scope_children()
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
-            return set(node.data for node in subset.nodes()
-                       if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].transient)
+            # Views are marked transient but do not own their storage: they alias a container that
+            # already spans every iteration of the map. Giving them the per-iteration extent that
+            # border transients get would grow the descriptor past the window its ``views`` edge
+            # binds, so they are not border arrays.
+            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode)
+                       and sdfg.arrays[node.data].transient and not isinstance(sdfg.arrays[node.data], dt.View))
         else:
             return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
 
@@ -571,6 +575,11 @@ class MapFission(transformation.SingleStateTransformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
+                        # If the two descriptors are already identical, the nested SDFG has been
+                        # integrated into its parent (see ``dace.sdfg.dealias``) and its memlets are
+                        # expressed in the outer coordinate system already. Widening them against the
+                        # outer edge would then apply the outer edge's offset a second time.
+                        already_integrated = desc.is_equivalent(outer_desc)
                         if isinstance(desc, dt.Scalar):
                             parent.arrays[node.data] = dcpy(outer_desc)
                             desc = parent.arrays[node.data]
@@ -585,8 +594,9 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
-                                e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                if not already_integrated:
+                                    e.data.subset.offset(desc.offset, False)
+                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
