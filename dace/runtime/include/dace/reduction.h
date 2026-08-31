@@ -13,6 +13,9 @@
     #include <cub/cub.cuh>
     #include <thrust/iterator/counting_iterator.h>
     #include <thrust/iterator/transform_iterator.h>
+    // The cub iterators are deprecated in favour of these, and warn from CCCL 2.8 on (CUDA 12.8).
+    // Only the bundled cub predates thrust here, so that fallback keeps the cub spelling.
+    #define DACE_THRUST_ITERATORS
 #else
     #include "../../../external/cub/cub/device/device_segmented_reduce.cuh"
     #include "../../../external/cub/cub/device/device_reduce.cuh"
@@ -601,14 +604,14 @@ namespace dace {
     };
 
     inline auto stridedIterator(size_t stride) {
-        #if __CUDACC_VER_MAJOR__ >= 13
+        #ifdef DACE_THRUST_ITERATORS
         thrust::counting_iterator
         #else
         cub::CountingInputIterator
         #endif
         <int> counting_iterator(0);
         StridedIteratorHelper conversion_op(stride);
-        #if __CUDACC_VER_MAJOR__ >= 13
+        #ifdef DACE_THRUST_ITERATORS
         thrust::transform_iterator<decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
         #else
         cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
