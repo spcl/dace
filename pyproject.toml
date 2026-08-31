@@ -86,6 +86,7 @@ testing = [
     "opt-einsum>=3.0",
     "scipy",
     "nbformat",
+    "nbconvert",
 ]
 
 [project.scripts]
