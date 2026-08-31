@@ -84,6 +84,8 @@ testing = [
     "pytest-timeout>=2.0",
     "pytest-xdist>=3.0",
     "opt-einsum>=3.0",
+    "scipy",
+    "nbformat",
 ]
 
 [project.scripts]

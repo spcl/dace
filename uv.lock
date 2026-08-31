@@ -666,11 +666,15 @@ mpi = [
     { name = "pytest-mpi" },
 ]
 testing = [
+    { name = "nbformat" },
     { name = "opt-einsum" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
 [package.dev-dependencies]
@@ -751,6 +755,7 @@ requires-dist = [
     { name = "fparser", specifier = ">=0.1.3,!=0.2.3" },
     { name = "ml-dtypes" },
     { name = "mpi4py", marker = "extra == 'mpi'" },
+    { name = "nbformat", marker = "extra == 'testing'" },
     { name = "networkx", specifier = ">=2.5,<=3.5" },
     { name = "ninja" },
     { name = "ninja", marker = "extra == 'ml'" },
@@ -772,6 +777,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'testing'", specifier = ">=3.0" },
     { name = "pyyaml" },
     { name = "scikit-build" },
+    { name = "scipy", marker = "extra == 'testing'" },
     { name = "sympy", specifier = ">=1.9" },
     { name = "torch", marker = "extra == 'ml'" },
     { name = "typing-extensions" },
