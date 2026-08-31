@@ -471,6 +471,10 @@ def test_prune_connectors_with_conditional_block():
     state.add_memlet_path(state.add_access(COND), me, nsdfg_node, dst_conn=cond, memlet=dace.Memlet(f"{COND}[i]"))
     state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
 
+    # The connectors are single elements of the outer arrays, so they have to be integrated into
+    # the parent once the node is wired up.
+    nsdfg_node.integrate_into_parent()
+
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
 
 

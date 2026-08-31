@@ -215,6 +215,10 @@ def test_dealias_interstate_edge():
     state.add_edge(ra, None, nsdfg_node, 'B', dace.Memlet('A[1:20]'))
     state.add_edge(rb, None, nsdfg_node, 'A', dace.Memlet('B[2:17]'))
 
+    # The connectors are offset slices of the outer arrays. Integration can only run once the node
+    # is wired up, so it has to be requested explicitly here.
+    nsdfg_node.integrate_into_parent()
+
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]

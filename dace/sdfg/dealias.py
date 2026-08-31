@@ -8,7 +8,8 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+import ast
 import copy
 
 
@@ -430,6 +431,80 @@ def integrate_nested_sdfg(sdfg: SDFG):
             # Add the symbol to the SDFG and the parent node's symbol mapping
             sdfg.add_symbol(sym_name, sym_type)
         parent_node.symbol_mapping[sym_name] = sym_name
+
+    # Containers read only by meta code never receive a ``views`` edge above, so redirect those
+    # accesses to the parent container they alias.
+    redirect_meta_accesses(sdfg, to_add_and_view)
+
+
+def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Data, Memlet]]) -> Set[str]:
+    """
+    Rewrites meta accesses of freshly integrated containers so that they address the parent container.
+
+    Integration expresses the narrowing of a connector as a ``View``, and a view only takes effect
+    through the ``views`` edge of an access node. A container that is read solely by meta code -- a
+    branch condition, a loop condition, an interstate-edge condition or assignment -- never gets such
+    an edge, so code generation has no pointer to emit for it and the generated program does not even
+    compile. Those accesses are therefore rewritten to address the parent container directly, with
+    the accessed subset composed into the parent's.
+
+    :param sdfg: The nested SDFG being integrated.
+    :param integrated: The containers that were integrated, mapping the inner name to the parent
+                       name, the parent descriptor and the memlet connecting the two.
+    :return: The names of the inner containers whose meta accesses were rewritten.
+    :note: This function operates in-place.
+    """
+    # Avoid import loops
+    from dace.frontend.python import astutils
+    from dace.sdfg.memlet_utils import MemletReplacer
+
+    if not integrated:
+        return set()
+
+    rewritten: Set[str] = set()
+
+    def process(memlet: Memlet) -> Optional[Memlet]:
+        entry = integrated.get(memlet.data)
+        if entry is None:
+            return None
+        parent_name, _, parent_memlet = entry
+        try:
+            new_memlet = unsqueeze_memlet(memlet, parent_memlet)
+        except (ValueError, NotImplementedError):
+            # The access cannot be expressed in the parent's coordinate system; leave it alone so
+            # that the resulting SDFG fails loudly rather than silently addressing the wrong data.
+            return None
+        new_memlet.data = parent_name
+        rewritten.add(memlet.data)
+        return new_memlet
+
+    replacer = MemletReplacer(sdfg.arrays, process, set(integrated.keys()))
+
+    for edge in sdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            for stmt in edge.data.condition.code:
+                replacer.visit(stmt)
+        for name, assignment in list(edge.data.assignments.items()):
+            edge.data.assignments[name] = astutils.unparse(replacer.visit(ast.parse(assignment)))
+
+    for region in sdfg.all_control_flow_regions():
+        for code in region.get_meta_codeblocks():
+            if code.code is None or isinstance(code.code, str):
+                continue
+            for stmt in code.code:
+                replacer.visit(stmt)
+
+    # Views that only existed for the sake of a meta access are now unused
+    for name in rewritten:
+        if any(node.data == name for state in sdfg.all_states() for node in state.data_nodes()):
+            continue
+        try:
+            sdfg.remove_data(name, validate=True)
+        except ValueError:
+            # Still referenced somewhere; keeping it is harmless
+            pass
+
+    return rewritten
 
 
 def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[str, str]:
