@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
+from ordered_set import OrderedSet
+
 from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
@@ -245,7 +247,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         data_already_on_gpu = {}
 
         cloned_arrays = {}
-        for inodename, inode in set(input_nodes):
+        for inodename, inode in OrderedSet(input_nodes):
             if inode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[inodename] = None
                 continue
@@ -257,7 +259,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             name = sdfg.add_datadesc('gpu_' + inodename, newdesc, find_new_name=True)
             cloned_arrays[inodename] = name
 
-        for onodename, onode in set(output_nodes):
+        for onodename, onode in OrderedSet(output_nodes):
             if onode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[onodename] = None
                 continue
