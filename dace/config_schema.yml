@@ -438,11 +438,12 @@ required:
                             Number of chiplets (XCDs) of the GPU the code is generated for. Set to 6 on MI300A,
                             or 8 on MI300X.
                             The thread-blocks of every kernel are then distributed over that many chiplets: the
-                            first dimension of the grid is split into as many contiguous chunks as there are
-                            chiplets, relying on the round-robin thread-block scheduling of multi-chiplet AMD
-                            GPUs. A value of 1 disables the distribution. Individual kernels can be excluded
-                            from it by setting the `allow_chiplet_threadblock_distribution` property of their
-                            map to False.
+                            first dimension of the grid is padded to a multiple of that number and split into
+                            as many contiguous chunks as there are chiplets, relying on the round-robin
+                            thread-block scheduling of multi-chiplet AMD GPUs. The other two grid dimensions
+                            are left untouched. A value of 1 disables the distribution. Individual kernels can
+                            be excluded from it by setting the `allow_chiplet_threadblock_distribution`
+                            property of their map to False.
                         default: 1
 
                     dynamic_map_block_size:

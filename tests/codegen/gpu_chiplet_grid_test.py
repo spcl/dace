@@ -19,7 +19,8 @@ TBX, TBY = 64, 4
 
 # The first grid dimension corresponds to the last map parameter and is divided by the default block
 # size of 32, so the grid of ``two_dimensional`` is [M / 32, N, 1] = [32, 512, 1] thread-blocks. Over
-# 6 chiplets it becomes [6, ceil(32 / 6), 512] = [6, 6, 512].
+# 6 chiplets its first dimension is padded to ceil(32 / 6) * 6 = 36, so the grid becomes [36, 512, 1]
+# and every chiplet owns 6 thread-blocks of it.
 CHIPLETS = 6
 
 
@@ -37,8 +38,9 @@ def three_dimensional(a: dace.float64[K, N, M] @ dace.StorageType.GPU_Global):
 
 # A kernel with an explicit thread-block map takes its block size from that map, and its device map
 # is already expressed in thread-blocks, so the grid of ``explicit_threadblock`` is
-# [M / TBX, N / TBY, 1] = [16, 128, 1]. Over 6 chiplets it becomes [6, ceil(16 / 6), 128] = [6, 3,
-# 128], whose 18 thread-blocks cover the 16 of the first dimension, leaving 2 to be masked out.
+# [M / TBX, N / TBY, 1] = [16, 128, 1]. Over 6 chiplets its first dimension is padded to
+# ceil(16 / 6) * 6 = 18, so the grid becomes [18, 128, 1], whose 18 thread-blocks cover the 16 of the
+# first dimension, leaving 2 to be masked out.
 @dace.program
 def explicit_threadblock(a: dace.float64[N, M] @ dace.StorageType.GPU_Global):
     for i, j in dace.map[0:N:TBY, 0:M:TBX] @ dace.ScheduleType.GPU_Device:
@@ -77,16 +79,16 @@ def _generate(program, chiplets=None, allow_distribution=None):
 def test_chiplet_distribution():
     code = _generate(two_dimensional, CHIPLETS)
 
-    # The chiplet ID is the first grid dimension, which the hardware round-robin scheduling maps to
-    # the chiplets, and the first dimension of the map is spread over the two first grid dimensions
-    assert 'dim3(6, 6, 512)' in code
-    assert '(blockIdx.x * gridDim.y + blockIdx.y)' in code
+    # The first grid dimension is padded to a multiple of the number of chiplets, which makes the
+    # chiplet a block runs on `blockIdx.x % chiplets` under the hardware round-robin scheduling, and
+    # the blocks of the first dimension are permuted so that every chiplet owns a contiguous chunk
+    assert 'dim3(36, 512, 1)' in code
+    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
 
-    # The second dimension of the map moves to the third grid dimension
-    assert re.search(r'\w+ = blockIdx\.z;', code)
+    # The second dimension of the map keeps the second grid dimension
+    assert re.search(r'\w+ = blockIdx\.y;', code)
 
-    # The first grid dimension is padded to a multiple of the number of chiplets, so the blocks
-    # beyond the range of the map have to be masked out
+    # The blocks that the padding adds beyond the range of the map have to be masked out
     assert re.search(r'if \(\w+ < %d\)' % M, code)
 
 
@@ -97,19 +99,21 @@ def test_chiplet_distribution_without_threadblock_map(monkeypatch):
     monkeypatch.setattr(AddThreadBlockMap, 'can_be_applied', lambda *args, **kwargs: False)
     code = _generate(two_dimensional, CHIPLETS)
 
-    assert 'dim3(6, 6, 512)' in code
-    assert '(blockIdx.x * gridDim.y + blockIdx.y) * 32 + threadIdx.x' in code
+    assert 'dim3(36, 512, 1)' in code
+    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6) * 32 + threadIdx.x' in code
     assert re.search(r'if \(\w+ < %d\)' % M, code)
 
 
-def test_chiplet_distribution_skipped_for_three_dimensional_grid():
-    # The distribution moves the second grid dimension to the third one, so it cannot be applied to
-    # a kernel that uses all three of them
-    with pytest.warns(UserWarning, match='third grid dimension'):
-        code = _generate(three_dimensional, CHIPLETS)
+def test_chiplet_distribution_for_three_dimensional_grid():
+    # The distribution only reshapes the first grid dimension, so it applies to a kernel that uses
+    # all three of them, and leaves the other two dimensions of the map on their own grid dimension
+    code = _generate(three_dimensional, CHIPLETS)
 
-    assert 'dim3(32, 512, 8)' in code
-    assert 'gridDim.y' not in code
+    assert 'dim3(36, 512, 8)' in code
+    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
+    assert re.search(r'\w+ = blockIdx\.y;', code)
+    assert re.search(r'\w+ = blockIdx\.z;', code)
+    assert re.search(r'if \(\w+ < %d\)' % M, code)
 
 
 def test_chiplet_distribution_disabled_by_default():
@@ -118,7 +122,7 @@ def test_chiplet_distribution_disabled_by_default():
 
     assert default == disabled
     assert 'dim3(32, 512, 1)' in default
-    assert 'gridDim.y' not in default
+    assert 'blockIdx.x % ' not in default
 
 
 def test_chiplet_distribution_disabled_per_map():
@@ -128,7 +132,7 @@ def test_chiplet_distribution_disabled_per_map():
     code = _generate(two_dimensional, CHIPLETS, allow_distribution=False)
 
     assert 'dim3(32, 512, 1)' in code
-    assert 'gridDim.y' not in code
+    assert 'blockIdx.x % ' not in code
 
     # Opting out is not a misconfiguration, so it is not reported. Note that the label of the kernel
     # contains the name of this file, so the messages themselves have to be matched.
@@ -144,7 +148,7 @@ def test_chiplet_distribution_disabled_per_map_without_threadblock_map(monkeypat
     code = _generate(two_dimensional, CHIPLETS, allow_distribution=False)
 
     assert 'dim3(32, 512, 1)' in code
-    assert 'gridDim.y' not in code
+    assert 'blockIdx.x % ' not in code
 
 
 def test_chiplet_distribution_with_threadblock_map():
@@ -153,12 +157,12 @@ def test_chiplet_distribution_with_threadblock_map():
     # The block size comes from the thread-block map, not from `compiler.cuda.default_block_size`,
     # while the grid is distributed over the chiplets
     assert 'dim3(%d, %d, 1)' % (TBX, TBY) in code
-    assert 'dim3(6, 3, 128)' in code
+    assert 'dim3(18, 128, 1)' in code
 
     # The thread-block map maps work to the threads of the block, so the index of the distributed
     # dimension is not offset by the thread index, unlike in a kernel without such a map
-    assert '(%d * (blockIdx.x * gridDim.y + blockIdx.y))' % TBX in code
-    assert '(%d * blockIdx.z)' % TBY in code
+    assert '(%d * ((blockIdx.x %% 6) * 3 + blockIdx.x / 6))' % TBX in code
+    assert '(%d * blockIdx.y)' % TBY in code
     assert re.search(r'if \(\w+ < %d\)' % M, code)
 
     assert re.search(r'\w+ = threadIdx\.x;', code)
@@ -171,7 +175,7 @@ def test_chiplet_distribution_disabled_per_map_with_threadblock_map():
     # The grid is left alone, and the block size is unaffected either way
     assert 'dim3(16, 128, 1)' in code
     assert 'dim3(%d, %d, 1)' % (TBX, TBY) in code
-    assert 'gridDim.y' not in code
+    assert 'blockIdx.x % ' not in code
 
 
 def test_chiplet_number_not_configured_warns():
@@ -204,7 +208,7 @@ def test_invalid_chiplet_number():
 
 if __name__ == '__main__':
     test_chiplet_distribution()
-    test_chiplet_distribution_skipped_for_three_dimensional_grid()
+    test_chiplet_distribution_for_three_dimensional_grid()
     test_chiplet_distribution_disabled_by_default()
     test_chiplet_distribution_disabled_per_map()
     test_chiplet_distribution_with_threadblock_map()
