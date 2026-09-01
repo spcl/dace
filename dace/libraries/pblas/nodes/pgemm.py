@@ -145,24 +145,7 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                         std::fprintf(stderr, "[PGEMM-DBG] rank=%d sym %s -> %s\\n",
                                      __state->__scalapack_rank, dbg_syms[dbg_j], dbg_from);
                     }}
-                    if (__state->__scalapack_rank == 0) {{
-                        std::FILE *dbg_maps = std::fopen("/proc/self/maps", "r");
-                        if (dbg_maps) {{
-                            char dbg_line[512], dbg_prev[512];
-                            dbg_prev[0] = 0;
-                            while (std::fgets(dbg_line, sizeof(dbg_line), dbg_maps)) {{
-                                char *dbg_path = std::strrchr(dbg_line, ' ');
-                                if (!dbg_path) continue;
-                                ++dbg_path;
-                                char *dbg_nl = std::strchr(dbg_path, '\\n');
-                                if (dbg_nl) *dbg_nl = 0;
-                                if (dbg_path[0] != '/' || !std::strstr(dbg_path, ".so")) continue;
-                                if (std::strcmp(dbg_path, dbg_prev) == 0) continue;
-                                std::snprintf(dbg_prev, sizeof(dbg_prev), "%s", dbg_path);
-                                std::fprintf(stderr, "[PGEMM-DBG] lib %s\\n", dbg_path);
-                            }}
-                            std::fclose(dbg_maps);
-                        }}
+                }}
                     }}
                 }}
                 std::fprintf(stderr,
