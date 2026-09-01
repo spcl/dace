@@ -131,7 +131,12 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(v, tn.NView) for v in stree.children)
+
+    # Reshaping (20, 10) into (4, 5, 10) is not a slice of a, so it cannot be composed away and
+    # survives as a view. Under the nested SDFG contract it sits inside the nesting rather than
+    # at its boundary, which makes it an ordinary view of the container rather than an NView.
+    views = [n for n in stree.preorder_traversal() if isinstance(n, tn.ViewNode)]
+    assert any(v.source == 'a' and tuple(v.view_desc.shape) == (4, 5, 10) for v in views)
 
 
 def test_irreducible_sub_sdfg():
@@ -254,9 +259,13 @@ def test_dyn_map_range():
     assert all(isinstance(c, tn.MapScope) for c in stree.children)
     mapscope = stree.children[1]
     start, end, dynrangemap = mapscope.children
-    assert isinstance(start, tn.DynScopeCopyNode)
-    assert isinstance(end, tn.DynScopeCopyNode)
+    # The two bounds are read from A_row ahead of the inner map, which then ranges between them.
+    # Simplification promotes those reads to symbols, so they arrive as assignments rather than
+    # as copies into the map's dynamic-range connectors.
+    assert isinstance(start, tn.AssignNode)
+    assert isinstance(end, tn.AssignNode)
     assert isinstance(dynrangemap, tn.MapScope)
+    assert str(dynrangemap.node.map.range) == f'{start.name}:{end.name}'
 
 
 def test_multiview():
