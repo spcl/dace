@@ -102,15 +102,55 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
             int n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
             // int n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
             int b_lld = max(n_lb_rows, 1);
-            int info;
+            int info_c, info_a, info_b;
             int _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
-            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
-            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info);
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info_c);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info_a);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info_b);
             int _m = gc_rows, _n = gc_cols, _k = ga_rows;
+            {{
+                double dbg_sa = 0.0, dbg_sb = 0.0;
+                for (int dbg_i = 0; dbg_i < la_rows * la_cols; ++dbg_i) dbg_sa += _a[dbg_i];
+                for (int dbg_i = 0; dbg_i < lb_rows * lb_cols; ++dbg_i) dbg_sb += _b[dbg_i];
+                std::fprintf(stderr,
+                    "[PGEMM-DBG] rank=%d size=%d ctx=%d prows=%d pcols=%d myprow=%d mypcol=%d "
+                    "g(c=%dx%d a=%dx%d b=%dx%d) blk(c=%dx%d a=%dx%d b=%dx%d) "
+                    "numroc(c=%d a=%d b=%d) lld(c=%d a=%d b=%d) info(c=%d a=%d b=%d) "
+                    "mnk=(%d,%d,%d) bs_a=(%d,%d) bs_b=(%d,%d) sum_a=%.17g sum_b=%.17g\\n",
+                    __state->__scalapack_rank, __state->__scalapack_size, __state->__scalapack_context,
+                    __state->__scalapack_prows, __state->__scalapack_pcols,
+                    __state->__scalapack_myprow, __state->__scalapack_mypcol,
+                    (int)gc_rows, (int)gc_cols, (int)ga_rows, (int)ga_cols, (int)gb_rows, (int)gb_cols,
+                    (int)lc_rows, (int)lc_cols, (int)la_rows, (int)la_cols, (int)lb_rows, (int)lb_cols,
+                    (int)n_lc_rows, (int)n_la_rows, (int)n_lb_rows, (int)c_lld, (int)a_lld, (int)b_lld,
+                    (int)info_c, (int)info_a, (int)info_b, (int)_m, (int)_n, (int)_k,
+                    (int)_a_block_sizes[0], (int)_a_block_sizes[1],
+                    (int)_b_block_sizes[0], (int)_b_block_sizes[1], dbg_sa, dbg_sb);
+                std::fprintf(stderr,
+                    "[PGEMM-DBG] rank=%d desc_c=[%d %d %d %d %d %d %d %d %d] "
+                    "desc_a=[%d %d %d %d %d %d %d %d %d] desc_b=[%d %d %d %d %d %d %d %d %d]\\n",
+                    __state->__scalapack_rank,
+                    _c_ldesc[0], _c_ldesc[1], _c_ldesc[2], _c_ldesc[3], _c_ldesc[4], _c_ldesc[5], _c_ldesc[6], _c_ldesc[7], _c_ldesc[8],
+                    _a_ldesc[0], _a_ldesc[1], _a_ldesc[2], _a_ldesc[3], _a_ldesc[4], _a_ldesc[5], _a_ldesc[6], _a_ldesc[7], _a_ldesc[8],
+                    _b_ldesc[0], _b_ldesc[1], _b_ldesc[2], _b_ldesc[3], _b_ldesc[4], _b_ldesc[5], _b_ldesc[6], _b_ldesc[7], _b_ldesc[8]);
+                {{
+                    Dl_info dbg_dl;
+                    if (dladdr((void *)p{lapack_dtype_str}gemm_, &dbg_dl) && dbg_dl.dli_fname)
+                        std::fprintf(stderr, "[PGEMM-DBG] rank=%d p{lapack_dtype_str}gemm_ from %s\\n",
+                                     __state->__scalapack_rank, dbg_dl.dli_fname);
+                }}
+                std::fflush(stderr);
+            }}
             p{lapack_dtype_str}gemm_(
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
                 _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
+            {{
+                double dbg_sc = 0.0;
+                for (int dbg_i = 0; dbg_i < lc_rows * lc_cols; ++dbg_i) dbg_sc += _c[dbg_i];
+                std::fprintf(stderr, "[PGEMM-DBG] rank=%d sum_c=%.17g first_c=%.17g\\n",
+                             __state->__scalapack_rank, dbg_sc, _c[0]);
+                std::fflush(stderr);
+            }}
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
