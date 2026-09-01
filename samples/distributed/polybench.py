@@ -281,27 +281,13 @@ def doitgen(A: dace.float64[LKx, GM, GN], C4: dace.float64[GN, GN]):
 
 def doitgen_shmem_init(NR, NQ, NP, datatype):
     A = np.fromfunction(lambda i, j, k: ((i * j + k) % NP) / NP, shape=(NR, NQ, NP), dtype=datatype)
-    C4 = np.fromfunction(
-        lambda i, j: (i * j % NP) / NP,
-        shape=(
-            NP,
-            NP,
-        ),
-        dtype=datatype,
-    )
+    C4 = np.fromfunction(lambda i, j: (i * j % NP) / NP, shape=(NP, NP), dtype=datatype)
     return A, C4
 
 
 def doitgen_distr_init(NR, NQ, NP, lR, datatype, p):
     A = np.fromfunction(lambda i, j, k: ((l2g(i, p, lR) * j + k) % NP) / NP, shape=(lR, NQ, NP), dtype=datatype)
-    C4 = np.fromfunction(
-        lambda i, j: (i * j % NP) / NP,
-        shape=(
-            NP,
-            NP,
-        ),
-        dtype=datatype,
-    )
+    C4 = np.fromfunction(lambda i, j: (i * j % NP) / NP, shape=(NP, NP), dtype=datatype)
     return A, C4
 
 
