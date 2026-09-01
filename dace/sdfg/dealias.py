@@ -299,7 +299,17 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 if not sdfg.arrays[connector].transient:
                     # If the parent data descriptor is equivalent to the inner data descriptor, simply copy it
                     if parent_sdfg.arrays[edge.data.data].is_equivalent(sdfg.arrays[connector]):
+                        # ``offset`` names the origin of the index space the memlets inside are
+                        # written in -- the Fortran frontend uses it to keep one-based indices --
+                        # and equivalence deliberately does not compare it. Adopting the parent's
+                        # would silently move every one of those memlets by the difference.
+                        # Only arrays carry a settable one; a scalar or a structure has no index
+                        # space of its own to preserve.
+                        old_desc = sdfg.arrays[connector]
+                        inner_offset = (copy.deepcopy(old_desc.offset) if isinstance(old_desc, data.Array) else None)
                         sdfg.arrays[connector] = copy.deepcopy(parent_sdfg.arrays[edge.data.data])
+                        if inner_offset is not None and isinstance(sdfg.arrays[connector], data.Array):
+                            sdfg.arrays[connector].offset = inner_offset
 
                         # Make non-reference descriptor
                         if isinstance(
