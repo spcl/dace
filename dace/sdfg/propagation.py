@@ -1355,6 +1355,34 @@ def _propagate_nsdfg_border_edge(edge: gr.MultiConnectorEdge[Memlet], internal_m
     """
     Converts a propagated 'border' memlet of a nested SDFG into a memlet on the outer edge.
 
+    A result that does not fit the container it names is never an improvement on what the edge
+    already says: it can only come from an inner descriptor that disagrees with the subset the
+    caller passes, and reporting it would replace a sound annotation with an out-of-bounds one.
+
+    :param edge: The outer edge of the nested SDFG node to propagate onto.
+    :param internal_memlet: The propagated border memlet, expressed in the inner descriptor.
+    :param parent_sdfg: The SDFG containing the nested SDFG node.
+    :param sdfg: The nested SDFG.
+    :param connector: The connector of the nested SDFG node that ``edge`` is attached to.
+    :param outer_symbols: The symbols defined at the nested SDFG node in the parent.
+    :return: The memlet to place on ``edge``.
+    """
+    result = _propagated_nsdfg_border_memlet(edge, internal_memlet, parent_sdfg, sdfg, connector, outer_symbols)
+    outer_desc = parent_sdfg.arrays.get(edge.data.data, None)
+    if outer_desc is not None and result.subset is not None:
+        if len(result.subset) != len(outer_desc.shape):
+            return copy.deepcopy(edge.data)
+        for maxel, size in zip(result.subset.max_element(), outer_desc.shape):
+            if (maxel >= size) == True:
+                return copy.deepcopy(edge.data)
+    return result
+
+
+def _propagated_nsdfg_border_memlet(edge: gr.MultiConnectorEdge[Memlet], internal_memlet: Memlet, parent_sdfg: 'SDFG',
+                                    sdfg: 'SDFG', connector: str, outer_symbols: Dict[str, Any]) -> Memlet:
+    """
+    Converts a propagated 'border' memlet of a nested SDFG into a memlet on the outer edge.
+
     :param edge: The outer edge of the nested SDFG node to propagate onto.
     :param internal_memlet: The propagated border memlet, expressed in the inner descriptor.
     :param parent_sdfg: The SDFG containing the nested SDFG node.
