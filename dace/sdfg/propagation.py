@@ -1023,7 +1023,49 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
                 continue
 
             edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
-            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+            for edge in edges:
+                border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
+
+
+def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[Memlet]:
+    """
+    Resolves a border candidate that reaches its container through a view.
+
+    Integration expresses a narrowed connector as a ``View`` bound to the container by a ``views``
+    edge (see ``dace.sdfg.dealias.integrate_nested_sdfg``). That binding memlet spans the whole
+    window the view covers, so taking it as the border candidate reports the window rather than the
+    part of it the nested SDFG actually touches. Look through the view instead and express each of
+    its own accesses in the container's coordinate system.
+
+    :param state: The state the edge belongs to.
+    :param edge: The edge adjacent to the container's access node.
+    :param direction: ``'in'`` for a border input, ``'out'`` for a border output.
+    :return: The memlets to use as border candidates for this edge.
+    """
+    # We import late to avoid cyclic imports here.
+    from dace.transformation.helpers import unsqueeze_memlet
+
+    if direction == 'in':
+        view_node, is_binding = edge.dst, edge.dst_conn == 'views'
+    else:
+        view_node, is_binding = edge.src, edge.src_conn == 'views'
+    if not is_binding or not isinstance(view_node, nodes.AccessNode):
+        return [edge.data]
+    if not isinstance(view_node.desc(state.sdfg), data.View):
+        return [edge.data]
+
+    inner_edges = state.out_edges(view_node) if direction == 'in' else state.in_edges(view_node)
+    result: List[Memlet] = []
+    for inner in inner_edges:
+        if inner.data.is_empty() or inner.data.data != view_node.data:
+            return [edge.data]
+        try:
+            result.append(unsqueeze_memlet(inner.data, edge.data))
+        except (ValueError, NotImplementedError):
+            # The access cannot be expressed in the container's coordinates; the binding memlet is
+            # still a correct, if coarser, answer.
+            return [edge.data]
+    return result or [edge.data]
 
 
 def _collect_region_meta_read_candidates(region, candidates) -> None:

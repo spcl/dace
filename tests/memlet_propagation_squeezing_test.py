@@ -70,7 +70,9 @@ def make_conditional_sdfg():
     nsdfg = dace.SDFG('nested_conditional')
     nsdfg.add_symbol('M', dace.int64)
     nsdfg.add_symbol('cond', dace.bool_)
-    nsdfg.add_array('a', [4, M], dace.int64)
+    # The connector is the window the outer memlet selects, which is what the writes below address;
+    # integration turns it into a view of A bound by that memlet.
+    nsdfg.add_array('a', [4, 2], dace.int64, strides=(M, 1))
 
     cond_region = dace.sdfg.state.ConditionalBlock('if_region', sdfg=nsdfg)
 
@@ -95,6 +97,7 @@ def make_conditional_sdfg():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(j='j', M='M', cond='cond'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
     state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:4, j-1:j+1]'))
+    nsdfg_node.integrate_into_parent()
 
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -114,7 +117,8 @@ def make_inverted_loop_sdfg():
     nsdfg.using_explicit_control_flow = True
     nsdfg.add_symbol('M', dace.int64)
     nsdfg.add_symbol('i', dace.int64)
-    nsdfg.add_array('a', [5, M], dace.int64)
+    # The connector is the window the outer memlet selects, which is what the write below addresses.
+    nsdfg.add_array('a', [5, 2], dace.int64, strides=(M, 1))
 
     loop_region = dace.sdfg.state.LoopRegion('loop_region',
                                              condition_expr='i < 3',
@@ -134,7 +138,8 @@ def make_inverted_loop_sdfg():
 
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(j='j', M='M'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
-    state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:5, j-1]'))
+    state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:5, j-1:j+1]'))
+    nsdfg_node.integrate_into_parent()
 
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -239,7 +244,9 @@ def test_memlets_inverted_loop():
     assert out_memlet.volume == 4
     assert out_memlet.dynamic == False
     assert out_memlet.subset[0] == (0, 3, 1)
-    assert out_memlet.subset[1] == (j - 1, j, 1)
+    # The loop only ever writes column 1 of the window, which is column j of A. Column j - 1 is the
+    # window's origin but is never written, so it is no longer part of the propagated write set.
+    assert out_memlet.subset[1] == (j, j, 1)
 
 
 if __name__ == '__main__':
