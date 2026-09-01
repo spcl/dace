@@ -37,21 +37,12 @@ def _make_sdfg(language: str, with_data: bool = False):
     B = state.add_read('B')
     C = state.add_write('C')
     me, mx = state.add_map('Map', {'i': '0:' + str(M)})
-    inputs = {
-        '__inp1': datatype,
-        '__inp2': datatype,
-    }
-    outputs = {
-        '__out': datatype,
-    }
+    inputs = {'__inp1': datatype, '__inp2': datatype}
+    outputs = {'__out': datatype}
     ta = state.add_tasklet(
         'a',
         inputs,
-        {
-            '__out1': datatype,
-            '__out2': datatype,
-            '__out3': datatype,
-        },
+        {'__out1': datatype, '__out2': datatype, '__out3': datatype},
         f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}',
         lang,
     )

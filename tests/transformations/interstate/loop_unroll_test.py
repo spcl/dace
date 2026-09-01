@@ -126,11 +126,7 @@ def melt_kernel(
 
 
 @dace.program
-def triang_elim_kernel(
-    zqlhs: dace.float64[nclv, nclv, klon],
-    kidia: dace.int32,
-    kfdia: dace.int32,
-):
+def triang_elim_kernel(zqlhs: dace.float64[nclv, nclv, klon], kidia: dace.int32, kfdia: dace.int32):
     for jn in range(1, nclv - 1 + 1):
         for jm in range(jn + 1, nclv + 1):
             for ik in range(jn + 1, nclv + 1):

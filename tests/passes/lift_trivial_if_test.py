@@ -9,27 +9,10 @@ from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 
 # Conditions the pass must recognize as constant ``True``.
-_ALWAYS_TRUE = [
-    "True",
-    "1 == 1",
-    "2 > 1",
-    "5 >= 5",
-    "not False",
-    "2 + 2 == 4",
-    "abs(-5) == 5",
-    "max(1, 2, 3) == 3",
-]
+_ALWAYS_TRUE = ["True", "1 == 1", "2 > 1", "5 >= 5", "not False", "2 + 2 == 4", "abs(-5) == 5", "max(1, 2, 3) == 3"]
 
 # Conditions the pass must recognize as constant ``False``.
-_ALWAYS_FALSE = [
-    "False",
-    "1 == 2",
-    "5 < 3",
-    "10 <= 9",
-    "not True",
-    "2 + 2 == 5",
-    "abs(-5) == -5",
-]
+_ALWAYS_FALSE = ["False", "1 == 2", "5 < 3", "10 <= 9", "not True", "2 + 2 == 5", "abs(-5) == -5"]
 
 # Conditions that reference unbound symbols -- the pass must leave these alone.
 _CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
@@ -47,22 +30,8 @@ def _get_sdfg(condition: str):
     :returns: The SDFG with the conditional as its start block.
     """
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(
-        name="A",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
-    _, B = sdfg.add_array(
-        name="B",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
+    _, A = sdfg.add_array(name="A", shape=[5], dtype=dace.float64, transient=False)
+    _, B = sdfg.add_array(name="B", shape=[5], dtype=dace.float64, transient=False)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -84,22 +53,8 @@ def _get_if_else_sdfg(condition: str, body_in_else_branch: bool):
     :returns: The SDFG with the conditional as its start block.
     """
     sdfg = dace.SDFG("if_else_1")
-    _, A = sdfg.add_array(
-        name="A",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
-    _, B = sdfg.add_array(
-        name="B",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
+    _, A = sdfg.add_array(name="A", shape=[5], dtype=dace.float64, transient=False)
+    _, B = sdfg.add_array(name="B", shape=[5], dtype=dace.float64, transient=False)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg_if_true = ControlFlowRegion(label="cfg_if_true", sdfg=cb.sdfg, parent=cb)
@@ -128,22 +83,8 @@ def _get_nested_sdfg(condition1: str, condition2: str):
     """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(
-        name="A",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
-    _, B = sdfg.add_array(
-        name="B",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
+    _, A = sdfg.add_array(name="A", shape=[5], dtype=dace.float64, transient=False)
+    _, B = sdfg.add_array(name="B", shape=[5], dtype=dace.float64, transient=False)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg1 = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -167,22 +108,8 @@ def _get_sdfg_with_many_states():
     """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(
-        name="A",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
-    _, B = sdfg.add_array(
-        name="B",
-        shape=[
-            5,
-        ],
-        dtype=dace.float64,
-        transient=False,
-    )
+    _, A = sdfg.add_array(name="A", shape=[5], dtype=dace.float64, transient=False)
+    _, B = sdfg.add_array(name="B", shape=[5], dtype=dace.float64, transient=False)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     so1 = sdfg.add_state("so1", is_start_block=True)
     so2 = sdfg.add_state("so2")

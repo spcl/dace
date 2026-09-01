@@ -141,8 +141,7 @@ def test_dse_malformed_conditional_block():
     sdfg.add_edge(condition, merge_state, dace.InterstateEdge())
 
     with pytest.raises(
-        InvalidSDFGNodeError,
-        match="Conditional block detected, where else branch is not the last branch.",
+        InvalidSDFGNodeError, match="Conditional block detected, where else branch is not the last branch."
     ):
         DeadStateElimination().apply_pass(sdfg, {})
 
@@ -437,10 +436,7 @@ else:
 _out = _tmp
         """,
         inputs={"_cond": dace.Memlet(subset="k", data="cond")},
-        outputs={
-            "_out": dace.Memlet(subset="k", data="out"),
-            "_tmp": dace.Memlet(subset="k", data="tmp"),
-        },
+        outputs={"_out": dace.Memlet(subset="k", data="out"), "_tmp": dace.Memlet(subset="k", data="tmp")},
         map_ranges={"k": "0:10"},
         name="test_tasklet",
         external_edges=True,
@@ -463,12 +459,7 @@ def test_prune_single_branch_conditional_block():
     sdfg = dace.SDFG("conditional_sdfg")
 
     for name in "abc":
-        sdfg.add_array(
-            name,
-            shape=(10,),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
     sdfg.arrays["b"].transient = True
 
     first_state = sdfg.add_state("first_state")

@@ -19,12 +19,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
 
     names = ["A", "B", "C", "D", "out"]
     for name in names:
-        sdfg.add_array(
-            name,
-            shape=((10, 4) if name == "out" else (10,)),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=((10, 4) if name == "out" else (10,)), dtype=dace.float64, transient=False)
 
     out = state.add_access("out")
 
@@ -67,12 +62,7 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
 
     names = ["a", "t", "b"]
     for name in names:
-        sdfg.add_array(
-            name,
-            shape=(10,),
-            dtype=dace.float64,
-            transient=(name == "t"),
-        )
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=(name == "t"))
 
     t = state.add_access("t")
     state.add_mapped_tasklet(
@@ -102,20 +92,12 @@ def _make_simple_horizontal_map_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapEntry, 
     state = sdfg.add_state(is_start_block=True)
 
     for aname in "abc":
-        sdfg.add_array(
-            aname,
-            shape=(10, 20),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(aname, shape=(10, 20), dtype=dace.float64, transient=False)
     a = state.add_access("a")
 
     _, me_a, _ = state.add_mapped_tasklet(
         "comp_a",
-        map_ranges={
-            "__i": "0:10",
-            "__j": "0:20",
-        },
+        map_ranges={"__i": "0:10", "__j": "0:20"},
         inputs={"__in": dace.Memlet("a[__i, __j]")},
         code="__out = __in + 1.2",
         outputs={"__out": dace.Memlet("b[__i, __j]")},
@@ -124,10 +106,7 @@ def _make_simple_horizontal_map_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapEntry, 
     )
     _, me_b, _ = state.add_mapped_tasklet(
         "comp_b",
-        map_ranges={
-            "__i": "0:10",
-            "__j": "0:20",
-        },
+        map_ranges={"__i": "0:10", "__j": "0:20"},
         inputs={"__in": dace.Memlet("a[__i, __j]")},
         code="__out = __in + 1.3",
         outputs={"__out": dace.Memlet("c[__i, __j]")},
@@ -145,9 +124,7 @@ def test_vertical_map_fusion_common_ancestor_is_required():
     assert count_nodes(sdfg, nodes.MapExit) == 4
 
     count = sdfg.apply_transformations_repeated(
-        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)],
-        validate=True,
-        validate_all=True,
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)], validate=True, validate_all=True
     )
     assert count == 0
 
@@ -162,9 +139,7 @@ def test_vertical_map_fusion_no_common_ancestor_not_required():
     assert len([ac for ac in ac_nodes_before if ac.data == "A"]) == 2
 
     count = sdfg.apply_transformations_repeated(
-        [dftrans.MapFusionHorizontal(only_if_common_ancestor=False)],
-        validate=True,
-        validate_all=True,
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=False)], validate=True, validate_all=True
     )
     assert count == 3
     assert count_nodes(sdfg, nodes.AccessNode) == 5
@@ -182,9 +157,7 @@ def test_vertical_map_fusion_with_common_ancestor_is_required():
     assert state.out_degree(ac_A_node) == 2
 
     count = sdfg.apply_transformations_repeated(
-        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)],
-        validate=True,
-        validate_all=True,
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)], validate=True, validate_all=True
     )
     assert count == 1
     assert count_nodes(sdfg, nodes.AccessNode) == 5
@@ -249,21 +222,13 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
     assert expected_final_label < me_b.map.label
 
     if first_order:
-        dftrans.MapFusionHorizontal.apply_to(
-            sdfg=sdfg,
-            first_parallel_map_entry=me_a,
-            second_parallel_map_entry=me_b,
-        )
+        dftrans.MapFusionHorizontal.apply_to(sdfg=sdfg, first_parallel_map_entry=me_a, second_parallel_map_entry=me_b)
         # Always preserve the scope nodes of the first Map,
         assert {me_a} == set(count_nodes(sdfg, dace.nodes.MapEntry, True))
         final_me = me_a
 
     else:
-        dftrans.MapFusionHorizontal.apply_to(
-            sdfg=sdfg,
-            first_parallel_map_entry=me_b,
-            second_parallel_map_entry=me_a,
-        )
+        dftrans.MapFusionHorizontal.apply_to(sdfg=sdfg, first_parallel_map_entry=me_b, second_parallel_map_entry=me_a)
         # Always preserve the scope nodes of the first Map,
         assert {me_b} == set(count_nodes(sdfg, dace.nodes.MapEntry, True))
         final_me = me_b

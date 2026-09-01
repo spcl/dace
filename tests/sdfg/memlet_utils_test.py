@@ -120,12 +120,7 @@ def _make_non_lin_delin_sdfg(
 
     ac = []
     for name, shape in [('a', shape_a), ('b', shape_b)]:
-        sdfg.add_array(
-            name=name,
-            shape=shape,
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name=name, shape=shape, dtype=dace.float64, transient=False)
         ac.append(state.add_access(name))
 
     return sdfg, state, ac[0], ac[1]
@@ -133,81 +128,49 @@ def _make_non_lin_delin_sdfg(
 
 def test_non_lin_delin_1():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[0:10, 0:10] -> [0:10, 0:10]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[0:10, 0:10] -> [0:10, 0:10]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_2():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10), (100, 100))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[0:10, 0:10] -> [50:60, 40:50]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[0:10, 0:10] -> [50:60, 40:50]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_3():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 100), (100, 100))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[1:11, 20:30] -> [50:60, 40:50]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[1:11, 20:30] -> [50:60, 40:50]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_4():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 4, 100), (100, 100))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 40:50]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 40:50]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_5():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 4, 100), (100, 10, 100))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 4, 40:50]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 4, 40:50]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_6():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 100), (100, 10, 100))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[1:11, 20:30] -> [50:60, 4, 40:50]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[1:11, 20:30] -> [50:60, 4, 40:50]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_7():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10), (20, 20))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("b[5:15, 6:16]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("b[5:15, 6:16]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 
 def test_non_lin_delin_8():
     sdfg, state, a, b = _make_non_lin_delin_sdfg((20, 20), (10, 10))
-    e = state.add_nedge(
-        a,
-        b,
-        dace.Memlet("a[5:15, 6:16]"),
-    )
+    e = state.add_nedge(a, b, dace.Memlet("a[5:15, 6:16]"))
     _perform_non_lin_delin_test(sdfg, e)
 
 

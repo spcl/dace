@@ -21,65 +21,21 @@ def test_reshaping_with_redundant_arrays():
 
     def make_sdfg() -> Tuple[dace.SDFG, dace.nodes.AccessNode, dace.nodes.AccessNode, dace.nodes.AccessNode]:
         sdfg = dace.SDFG("slicing_sdfg")
-        _, input_desc = sdfg.add_array(
-            "input",
-            shape=(6, 6, 6),
-            transient=False,
-            strides=None,
-            dtype=dace.float64,
-        )
-        _, a_desc = sdfg.add_array(
-            "a",
-            shape=(6, 6, 6),
-            transient=True,
-            strides=None,
-            dtype=dace.float64,
-        )
-        _, b_desc = sdfg.add_array(
-            "b",
-            shape=(36, 1, 6),
-            transient=True,
-            strides=None,
-            dtype=dace.float64,
-        )
-        _, output_desc = sdfg.add_array(
-            "output",
-            shape=(36, 1, 6),
-            transient=False,
-            strides=None,
-            dtype=dace.float64,
-        )
+        _, input_desc = sdfg.add_array("input", shape=(6, 6, 6), transient=False, strides=None, dtype=dace.float64)
+        _, a_desc = sdfg.add_array("a", shape=(6, 6, 6), transient=True, strides=None, dtype=dace.float64)
+        _, b_desc = sdfg.add_array("b", shape=(36, 1, 6), transient=True, strides=None, dtype=dace.float64)
+        _, output_desc = sdfg.add_array("output", shape=(36, 1, 6), transient=False, strides=None, dtype=dace.float64)
         state = sdfg.add_state("state", is_start_block=True)
         input_an = state.add_access("input")
         a_an = state.add_access("a")
         b_an = state.add_access("b")
         output_an = state.add_access("output")
 
+        state.add_edge(input_an, None, a_an, None, dace.Memlet.from_array("input", input_desc))
         state.add_edge(
-            input_an,
-            None,
-            a_an,
-            None,
-            dace.Memlet.from_array("input", input_desc),
+            a_an, None, b_an, None, dace.Memlet.simple("a", subset_str="0:6, 0:6, 0:6", other_subset_str="0:36, 0, 0:6")
         )
-        state.add_edge(
-            a_an,
-            None,
-            b_an,
-            None,
-            dace.Memlet.simple(
-                "a",
-                subset_str="0:6, 0:6, 0:6",
-                other_subset_str="0:36, 0, 0:6",
-            ),
-        )
-        state.add_edge(
-            b_an,
-            None,
-            output_an,
-            None,
-            dace.Memlet.from_array("b", b_desc),
-        )
+        state.add_edge(b_an, None, output_an, None, dace.Memlet.from_array("b", b_desc))
         sdfg.validate()
         assert state.number_of_nodes() == 4
         assert len(sdfg.arrays) == 4
@@ -380,8 +336,7 @@ def conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[K, K, C_in,
     for i in range(H - K + 1):
         for j in range(W - K + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
-                axis=(1, 2, 3),
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3)
             )
 
     return output
@@ -402,8 +357,7 @@ def conv2d_py(input, weights):
     for i in range(output.shape[1]):
         for j in range(output.shape[2]):
             output[:, i, j, :] = np.sum(
-                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
-                axis=(1, 2, 3),
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3)
             )
 
     return output
@@ -471,27 +425,9 @@ def _make_reshaping_not_zero_started_input_sdfg(
     state = sdfg.add_state(is_start_block=True)
 
     a_shape = (10, 1, 2, 20) if a_has_larger_rank_than_b else (10, 20)
-    sdfg.add_array(
-        "a",
-        shape=a_shape,
-        dtype=dace.float64,
-        transient=False,
-    )
-    sdfg.add_array(
-        "b",
-        shape=(5, 1, 10),
-        dtype=dace.float64,
-        transient=True,
-    )
-    sdfg.add_array(
-        "c",
-        shape=(
-            10,
-            20,
-        ),
-        dtype=dace.float64,
-        transient=False,
-    )
+    sdfg.add_array("a", shape=a_shape, dtype=dace.float64, transient=False)
+    sdfg.add_array("b", shape=(5, 1, 10), dtype=dace.float64, transient=True)
+    sdfg.add_array("c", shape=(10, 20), dtype=dace.float64, transient=False)
     a, b, c = (state.add_access(name) for name in "abc")
 
     state.add_edge(

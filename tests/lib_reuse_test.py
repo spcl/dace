@@ -59,10 +59,7 @@ def test_load_precompiled():
     for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:
             conf.set('compiler', 'build_folder_mode', value=folder_mode)
-            _load_precompiled_impl(
-                test_name="test_load_precompiled",
-                folder_mode=folder_mode,
-            )
+            _load_precompiled_impl(test_name="test_load_precompiled", folder_mode=folder_mode)
 
 
 def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:

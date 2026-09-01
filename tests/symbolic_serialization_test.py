@@ -255,14 +255,7 @@ def test_pystr_to_symbolic_simplifies_basic_when_requested():
 def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     json_range = {
         'type': 'Range',
-        'ranges': [
-            {
-                'start': '0',
-                'end': '-1 + symbol($N, dtype=dace.int16)',
-                'step': '1',
-                'tile': '1',
-            }
-        ],
+        'ranges': [{'start': '0', 'end': '-1 + symbol($N, dtype=dace.int16)', 'step': '1', 'tile': '1'}],
     }
 
     rng = subsets.Range.from_json(json_range, {"version": dace.__version__})
@@ -390,15 +383,7 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
 
 
 @pytest.mark.parametrize('op', ['Min', 'Max'])
-@pytest.mark.parametrize(
-    'literal',
-    [
-        '5.0',
-        '5.0f64',
-        '5f32',
-        '7f64',
-    ],
-)
+@pytest.mark.parametrize('literal', ['5.0', '5.0f64', '5f32', '7f64'])
 def test_minmax_with_float_literal_roundtrip(op, literal):
     serialized = f'{op}({literal}, $N)'
     restored = symbolic.deserialize_symbolic(serialized)

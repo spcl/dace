@@ -105,10 +105,7 @@ def _generate_double_tasklet_sdfg(
 
     if not direct_connection_between_tasklets:
         tmp_access = state.add_access("tmp_Scalar")
-    map_entry, map_exit = state.add_map(
-        name="double_taskelt_map",
-        ndrange={"i": dace.subsets.Range([(0, 0, 1)])},
-    )
+    map_entry, map_exit = state.add_map(name="double_taskelt_map", ndrange={"i": dace.subsets.Range([(0, 0, 1)])})
 
     for in_access in in_accesses:
         state.add_edge(
@@ -269,20 +266,13 @@ S = dace.symbol("S")
 
 
 @dace.program
-def tasklet_in_nested_sdfg(
-    a: dace.float64[S, S],
-    b: dace.float64[S, S],
-    offset1: dace.int64,
-    offset2: dace.int64,
-):
+def tasklet_in_nested_sdfg(a: dace.float64[S, S], b: dace.float64[S, S], offset1: dace.int64, offset2: dace.int64):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
         a[i + offset1, j + offset1] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
 
 
 @dace.program
-def cast_tasklet_first_in_a_map(
-    a: dace.float64[S, S],
-):
+def cast_tasklet_first_in_a_map(a: dace.float64[S, S]):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
         a[i, j] = dace.float64(i) + ((dace.float64(j) + 5.2) * 2.7)
 

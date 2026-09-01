@@ -195,11 +195,7 @@ def test_list_global_enumerate():
             tracers[q][:] = A  # type:ignore
 
     a = np.ones([3])
-    q = {
-        "vapor": np.zeros([3]),
-        "rain": np.zeros([3]),
-        "nope": np.zeros([3]),
-    }
+    q = {"vapor": np.zeros([3]), "rain": np.zeros([3]), "nope": np.zeros([3])}
     with pytest.warns(match='implicitly unrolled'):
         enumerate_parsing(a, q)
     assert np.allclose(q["vapor"], np.array([1, 1, 1]))
@@ -219,11 +215,7 @@ def test_tuple_global_enumerate():
             tracers[q][:] = A  # type:ignore
 
     a = np.ones([3])
-    q = {
-        "vapor": np.zeros([3]),
-        "rain": np.zeros([3]),
-        "nope": np.zeros([3]),
-    }
+    q = {"vapor": np.zeros([3]), "rain": np.zeros([3]), "nope": np.zeros([3])}
     with pytest.warns(match='implicitly unrolled'):
         enumerate_parsing(a, q)
     assert np.allclose(q["vapor"], np.array([1, 1, 1]))

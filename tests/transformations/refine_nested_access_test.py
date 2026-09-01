@@ -177,10 +177,7 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
             T1_input = state.add_access("T1")
 
         tsklt = state.add_tasklet(
-            "comp",
-            inputs={"__in1": None, "__in2": None},
-            outputs={"__out": None},
-            code="__out = __in1 + __in2",
+            "comp", inputs={"__in1": None, "__in2": None}, outputs={"__out": None}, code="__out = __in1 + __in2"
         )
 
         state.add_edge(A, None, tsklt, "__in1", dace.Memlet("A[1]"))
@@ -203,10 +200,7 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
     nested_sdfg = _make_nested_sdfg(diff_in_out)
 
     nsdfg = state.add_nested_sdfg(
-        nested_sdfg,
-        inputs={"A"},
-        outputs={"T2", "T1"} if diff_in_out else {"T1"},
-        symbol_mapping={},
+        nested_sdfg, inputs={"A"}, outputs={"T2", "T1"} if diff_in_out else {"T1"}, symbol_mapping={}
     )
 
     state.add_edge(A, None, nsdfg, "A", dace.Memlet("A[0:2]"))
@@ -222,11 +216,7 @@ def test_rna_read_and_write_sets_doule_use():
     # The transformation does not apply because we access element `0` of both arrays that we
     #  pass inside the nested SDFG.
     sdfg = _make_rna_read_and_write_set_sdfg(False)
-    nb_applied = sdfg.apply_transformations_repeated(
-        [RefineNestedAccess],
-        validate=True,
-        validate_all=True,
-    )
+    nb_applied = sdfg.apply_transformations_repeated([RefineNestedAccess], validate=True, validate_all=True)
     assert nb_applied == 0
 
 
@@ -235,11 +225,7 @@ def test_rna_read_and_write_sets_different_storage():
     # There is a dedicated temporary storage used.
     sdfg = _make_rna_read_and_write_set_sdfg(True)
 
-    nb_applied = sdfg.apply_transformations_repeated(
-        [RefineNestedAccess],
-        validate=True,
-        validate_all=True,
-    )
+    nb_applied = sdfg.apply_transformations_repeated([RefineNestedAccess], validate=True, validate_all=True)
     assert nb_applied > 0
 
     args = {

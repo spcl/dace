@@ -293,10 +293,7 @@ def test_write_structure_in_map():
 
     data = np.zeros((10, 5), dtype=np.float32)
     fill_value = 42
-    inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        size=9,
-    )
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(data=data.__array_interface__['data'][0], size=9)
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:9, :] = fill_value
 
@@ -325,9 +322,7 @@ def test_readwrite_structure_in_map():
     data = np.zeros((10, 5), dtype=np.float32)
     data2 = np.ones((10, 5), dtype=np.float32)
     inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        data2=data2.__array_interface__['data'][0],
-        size=6,
+        data=data.__array_interface__['data'][0], data2=data2.__array_interface__['data'][0], size=6
     )
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = 6.0
@@ -351,10 +346,7 @@ def test_write_structure_in_loop():
 
     data = np.zeros((10, 5), dtype=np.float32)
     fill_value = 42
-    inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        size=6,
-    )
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(data=data.__array_interface__['data'][0], size=6)
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = fill_value
 

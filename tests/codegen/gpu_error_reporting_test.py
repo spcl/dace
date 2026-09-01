@@ -36,12 +36,7 @@ def build_doubler():
 
 
 def arguments(m):
-    return {
-        'A': np.ones((m, 2), dtype=np.float64),
-        'B': np.zeros((m, 2), dtype=np.float64),
-        'N': 2,
-        'M': m,
-    }
+    return {'A': np.ones((m, 2), dtype=np.float64), 'B': np.zeros((m, 2), dtype=np.float64), 'N': 2, 'M': m}
 
 
 @pytest.mark.gpu

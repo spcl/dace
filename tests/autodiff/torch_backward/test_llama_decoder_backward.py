@@ -76,12 +76,7 @@ def test_llama_decoder_backward():
     wrapped_model = LlamaDecoderLayerWrapper(decoder_layer, config)
 
     # Avoid the simplify pass since it takes too long for this model
-    dace_model = DaceModule(
-        wrapped_model,
-        sdfg_name="test_llama_decoder_backward",
-        onnx_simplify=True,
-        backward=True,
-    )
+    dace_model = DaceModule(wrapped_model, sdfg_name="test_llama_decoder_backward", onnx_simplify=True, backward=True)
 
     hidden_states_pt, attention_mask_pt, position_ids_pt = (
         torch.clone(hidden_states),

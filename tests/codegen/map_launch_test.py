@@ -11,23 +11,14 @@ except ImportError:
     cp = None
 
 
-def _make_sdfg(
-    lb: Union[str, int],
-    ub: Union[str, int],
-    on_gpu: bool,
-) -> tuple[dace.SDFG, dace.nodes.MapEntry]:
+def _make_sdfg(lb: Union[str, int], ub: Union[str, int], on_gpu: bool) -> tuple[dace.SDFG, dace.nodes.MapEntry]:
     # The four CPU tests here share this name, and at second resolution two
     # of them land in the same build folder and clobber each other's build when run in parallel.
     sdfg = dace.SDFG("map_test_" + ("gpu" if on_gpu else "cpu") + f"_{time.time_ns()}")
     state = sdfg.add_state(is_start_block=True)
 
     for name in ["i0", "o0"]:
-        sdfg.add_array(
-            name,
-            shape=(10,),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
         if on_gpu:
             sdfg.arrays[name].storage = dace.dtypes.StorageType.GPU_Global
 
@@ -56,12 +47,7 @@ def _make_sdfg(
     return sdfg, me
 
 
-def _run_test(
-    lb: Union[str, int],
-    ub: Union[str, int],
-    on_gpu: bool,
-    **kwargs,
-):
+def _run_test(lb: Union[str, int], ub: Union[str, int], on_gpu: bool, **kwargs):
     xp = cp if on_gpu else np
 
     if xp is None:

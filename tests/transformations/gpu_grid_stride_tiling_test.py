@@ -11,9 +11,7 @@ import scipy.sparse as sparse
 
 def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:
     if isinstance(map_name_list, str):
-        map_name_list = [
-            map_name_list,
-        ]
+        map_name_list = [map_name_list]
     ret_list = [None] * len(map_name_list)
     for state in sdfg.states():
         for node in state.nodes():

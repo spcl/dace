@@ -8,23 +8,7 @@ N = dace.symbol('N')
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [
-    {
-        N: 40,
-    },
-    {
-        N: 120,
-    },
-    {
-        N: 400,
-    },
-    {
-        N: 2000,
-    },
-    {
-        N: 4000,
-    },
-]
+sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
 args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N, N], datatype)]
 

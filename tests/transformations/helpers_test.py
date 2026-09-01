@@ -66,7 +66,7 @@ def test_all_isedges_between_consecutive_loops():
         _edge_signature(edge) for edge in all_isedges_between(blocks['first_body'], blocks['between_loops'])
     }
     assert edges_to_after_first == {
-        ('first_loop', 'LoopRegion', 'consecutive_loops', 'between_loops', 'SDFGState', 'consecutive_loops', '1', ()),
+        ('first_loop', 'LoopRegion', 'consecutive_loops', 'between_loops', 'SDFGState', 'consecutive_loops', '1', ())
     }
 
     edges_to_second_body = {
@@ -86,7 +86,7 @@ def test_all_isedges_between_nested_loops():
         _edge_signature(edge) for edge in all_isedges_between(blocks['inner_body'], blocks['after_inner'])
     }
     assert edges_to_after_inner == {
-        ('inner_loop', 'LoopRegion', 'outer_loop', 'after_inner', 'SDFGState', 'outer_loop', '1', ()),
+        ('inner_loop', 'LoopRegion', 'outer_loop', 'after_inner', 'SDFGState', 'outer_loop', '1', ())
     }
 
     edges_to_after_outer = {

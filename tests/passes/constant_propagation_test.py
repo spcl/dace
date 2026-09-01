@@ -338,13 +338,7 @@ def test_for_with_external_init():
 
     sdfg = dace.SDFG('for_with_external_init')
     sdfg.add_symbol('i', dace.int64)
-    sdfg.add_array(
-        'A',
-        {
-            N,
-        },
-        dace.int32,
-    )
+    sdfg.add_array('A', {N}, dace.int32)
     init = sdfg.add_state('init')
     body = sdfg.add_state('body')
     sdfg.add_loop(init, body, None, 'i', None, 'i < N', 'i + 1')
@@ -540,29 +534,11 @@ def test_dependency_change():
     sdfg.add_edge(
         body,
         body2,
-        dace.InterstateEdge(
-            assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'),
-        ),
+        dace.InterstateEdge(assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1')),
     )
-    sdfg.add_edge(
-        body2,
-        exiting,
-        dace.InterstateEdge(
-            assignments=dict(cont='i_next == 2500'),
-        ),
-    )
+    sdfg.add_edge(body2, exiting, dace.InterstateEdge(assignments=dict(cont='i_next == 2500')))
     sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
-    sdfg.add_edge(
-        exiting,
-        latch,
-        dace.InterstateEdge(
-            'not cont',
-            dict(
-                irev='irev_next',
-                i='i_next',
-            ),
-        ),
-    )
+    sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(irev='irev_next', i='i_next')))
     sdfg.add_edge(latch, body, dace.InterstateEdge(assignments=dict(t='t_next')))
 
     t = body.add_tasklet('add', {'inp'}, {'out'}, 'out = inp + t')

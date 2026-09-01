@@ -102,19 +102,8 @@ def test_nested_symbol_in_args():
         rdt = 1.0 / dt
         inner(field, rdt)
 
-    sdfg = funct.to_sdfg(
-        np.random.randn(
-            10,
-        ),
-        1.0,
-        simplify=False,
-    )
-    sdfg(
-        np.random.randn(
-            10,
-        ),
-        1.0,
-    )
+    sdfg = funct.to_sdfg(np.random.randn(10), 1.0, simplify=False)
+    sdfg(np.random.randn(10), 1.0)
 
 
 def test_nested_symbol_as_constant():
@@ -137,11 +126,7 @@ def test_nested_symbol_as_constant():
     def funct(field):
         inner(field, rdt)
 
-    funct(
-        np.random.randn(
-            10,
-        )
-    )
+    funct(np.random.randn(10))
 
 
 if __name__ == '__main__':

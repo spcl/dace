@@ -70,13 +70,7 @@ def trivial_map_with_dynamic_map_range_sdfg():
         output_nodes={"B": B},
         external_edges=True,
     )
-    state.add_edge(
-        C,
-        None,
-        me,
-        "dynamic_variable",
-        dace.Memlet("C[0]"),
-    )
+    state.add_edge(C, None, me, "dynamic_variable", dace.Memlet("C[0]"))
     me.add_in_connector("dynamic_variable")
     sdfg.validate()
 

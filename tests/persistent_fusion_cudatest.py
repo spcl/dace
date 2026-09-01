@@ -77,19 +77,11 @@ def _make_sdfg():
 
     s_init.add_memlet_path(root_in, frontier_out, memlet=dace.Memlet.simple(root_in.data, '0', other_subset_str='0'))
 
-    tasklet = s_init.add_tasklet(
-        'set_count1',
-        {},
-        {'out'},
-        'out = 1',
-    )
+    tasklet = s_init.add_tasklet('set_count1', {}, {'out'}, 'out = 1')
 
     s_init.add_memlet_path(tasklet, count1_out, src_conn='out', memlet=dace.Memlet.simple(count1_out.data, '0'))
 
-    map_entry, map_exit = s_init.add_map(
-        'set_result_map',
-        dict(i='0:N'),
-    )
+    map_entry, map_exit = s_init.add_map('set_result_map', dict(i='0:N'))
 
     tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
 

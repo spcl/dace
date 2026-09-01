@@ -66,10 +66,7 @@ def test_two_state_add_mul():
     return (
         SDFGBackwardRunner(sdfg, "S"),
         torch_func,
-        dict(
-            X=np.random.rand(3, 3).astype(np.float32),
-            Y=np.random.rand(3, 3).astype(np.float32),
-        ),
+        dict(X=np.random.rand(3, 3).astype(np.float32), Y=np.random.rand(3, 3).astype(np.float32)),
     )
 
 
@@ -102,11 +99,7 @@ def test_conditional_simple():
         S.backward()
         return dict(gradient_X=X.grad)
 
-    return (
-        SDFGBackwardRunner(sdfg, "S", simplify=False),
-        torch_func,
-        dict(X=np.random.rand(3, 3).astype(np.float32)),
-    )
+    return (SDFGBackwardRunner(sdfg, "S", simplify=False), torch_func, dict(X=np.random.rand(3, 3).astype(np.float32)))
 
 
 @pytest.mark.autodiff
@@ -139,10 +132,7 @@ def test_for_loop():
     return (
         SDFGBackwardRunner(sdfg, "__return"),
         torch_func,
-        dict(
-            A=np.random.rand(10).astype(np.float32),
-            B=np.random.rand(10).astype(np.float32),
-        ),
+        dict(A=np.random.rand(10).astype(np.float32), B=np.random.rand(10).astype(np.float32)),
     )
 
 
@@ -218,11 +208,7 @@ def test_diamond_pattern_conditional():
         S.backward()
         return dict(gradient_X=X.grad)
 
-    return (
-        SDFGBackwardRunner(sdfg, "S", simplify=False),
-        torch_func,
-        dict(X=np.random.rand(5).astype(np.float32)),
-    )
+    return (SDFGBackwardRunner(sdfg, "S", simplify=False), torch_func, dict(X=np.random.rand(5).astype(np.float32)))
 
 
 @pytest.mark.autodiff
@@ -286,11 +272,7 @@ def test_multi_output_state():
         S.backward()
         return dict(gradient_X=X.grad)
 
-    return (
-        SDFGBackwardRunner(sdfg, "S"),
-        torch_func,
-        dict(X=np.random.rand(5).astype(np.float32)),
-    )
+    return (SDFGBackwardRunner(sdfg, "S"), torch_func, dict(X=np.random.rand(5).astype(np.float32)))
 
 
 @pytest.mark.autodiff

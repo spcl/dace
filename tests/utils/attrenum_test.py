@@ -185,12 +185,7 @@ def test_serialization_nestedclass():
         'type': 'Vehicle.PLANE',
         'model': 'MODEL_ONE',
         'is_plane': 'TRUE',
-        'details': {
-            'type': 'PlaneDetails',
-            'range_km': 5000,
-            'capacity': 180,
-            'is_plane': 'FALSE',
-        },
+        'details': {'type': 'PlaneDetails', 'range_km': 5000, 'capacity': 180, 'is_plane': 'FALSE'},
     }
     plane_restored = serialize.from_json(plane_json)
     assert plane_restored == plane

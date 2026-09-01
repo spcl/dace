@@ -62,14 +62,8 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, 
 
 
 _impls = ['pure', pytest.param('MKL', marks=pytest.mark.mkl), pytest.param('cuBLAS', marks=pytest.mark.gpu)]
-_param_grid_trans = dict(
-    transA=[True, False],
-    transB=[True, False],
-)
-_param_grid_scalars = dict(
-    alpha=[1.0, 0.0, random.random()],
-    beta=[1.0, 0.0, random.random()],
-)
+_param_grid_trans = dict(transA=[True, False], transB=[True, False])
+_param_grid_scalars = dict(alpha=[1.0, 0.0, random.random()], beta=[1.0, 0.0, random.random()])
 _param_grid_complex = dict(
     complex=[True],
     alpha=[random.random(), complex(random.random(), random.random())],
@@ -77,9 +71,7 @@ _param_grid_complex = dict(
 )
 
 _param_grid_broadcast_C = dict(
-    alpha=[random.random()],
-    beta=[random.random()],
-    C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
+    alpha=[random.random()], beta=[random.random()], C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]]
 )
 
 

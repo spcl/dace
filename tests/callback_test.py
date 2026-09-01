@@ -68,12 +68,7 @@ def test_callback():
     B[:] = 0
 
     callback_test(
-        A,
-        B,
-        giveandtake=mysquarer,
-        take=consumer,
-        give=answertolifeuniverseandeverything,
-        donothing=failed_test,
+        A, B, giveandtake=mysquarer, take=consumer, give=answertolifeuniverseandeverything, donothing=failed_test
     )
     for b in B:
         assert b == 25

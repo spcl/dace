@@ -499,13 +499,7 @@ def test_gather_onnx_2():
     sdfg.expand_library_nodes()
     sdfg.simplify()
 
-    data = np.array(
-        [
-            [1.0, 1.2, 1.9],
-            [2.3, 3.4, 3.9],
-            [4.5, 5.7, 5.9],
-        ]
-    )
+    data = np.array([[1.0, 1.2, 1.9], [2.3, 3.4, 3.9], [4.5, 5.7, 5.9]])
     indices = np.array([[0, 2]])
     result = sdfg(inp=data.copy(), indices=indices.copy())
     np_result = np.take(data, indices, axis=1)
@@ -527,13 +521,7 @@ def test_unsqueeze():
 
     sdfg: dace.SDFG = unsqueeze.to_sdfg()
 
-    data = np.array(
-        [
-            [1.0, 1.2, 1.9],
-            [2.3, 3.4, 3.9],
-            [4.5, 5.7, 5.9],
-        ]
-    )
+    data = np.array([[1.0, 1.2, 1.9], [2.3, 3.4, 3.9], [4.5, 5.7, 5.9]])
 
     np_result = np.reshape(data, [3, 1, 3, 1])
 

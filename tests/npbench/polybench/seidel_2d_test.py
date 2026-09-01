@@ -88,11 +88,7 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
         # sdfg = auto_optimize(sdfg, device_type) # TBD
         sdfg(TSTEPS, A, N=N)
     # Compute ground truth and validate
-    ground_truth(
-        TSTEPS,
-        N,
-        A_ref,
-    )
+    ground_truth(TSTEPS, N, A_ref)
     print(np.linalg.norm(A - A_ref) / np.linalg.norm(A_ref))
     assert np.allclose(A, A_ref)
     return sdfg

@@ -37,12 +37,8 @@ def test_stree_propagation_symassign():
     N = dace.symbol('N')
     stree = tn.ScheduleTreeRoot(
         name='tester',
-        containers={
-            'A': dace.data.Array(dace.float64, [20]),
-        },
-        symbols={
-            'N': N,
-        },
+        containers={'A': dace.data.Array(dace.float64, [20])},
+        symbols={'N': N},
         children=[
             tn.MapScope(
                 node=dace.nodes.MapEntry(dace.nodes.Map('map', ['i'], dace.subsets.Range([(1, N - 1, 1)]))),
@@ -54,7 +50,7 @@ def test_stree_propagation_symassign():
                         {'out': dace.Memlet('A[j]')},
                     ),
                 ],
-            ),
+            )
         ],
     )
     stree.children[0].parent = stree

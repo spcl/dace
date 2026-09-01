@@ -151,9 +151,7 @@ of << i << "\\n";""",
     return sdfg_outer
 
 
-def _make_read_write_sdfg(
-    conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+def _make_read_write_sdfg(conforming_memlet: bool) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -215,27 +213,15 @@ def _make_read_write_sdfg(
         # Because the `data` field of the inncoming and outgoing memlet are both
         #  set to `inner_A` the read to `inner_A` will be removed and the
         #  transformation can apply.
-        istate.add_nedge(
-            inner_A,
-            inner_B,
-            dace.Memlet("inner_A[0:4, 0:4] -> [0:4, 0:4]"),
-        )
+        istate.add_nedge(inner_A, inner_B, dace.Memlet("inner_A[0:4, 0:4] -> [0:4, 0:4]"))
     else:
         # Because the `data` filed of the involved memlets differs the read to
         #  `inner_A` will not be removed thus the transformation can not remove
         #  the incoming `inner_A`.
-        istate.add_nedge(
-            inner_A,
-            inner_B,
-            dace.Memlet("inner_B[0:4, 0:4] -> [0:4, 0:4]"),
-        )
+        istate.add_nedge(inner_A, inner_B, dace.Memlet("inner_B[0:4, 0:4] -> [0:4, 0:4]"))
 
     # Add the nested SDFG
-    nsdfg = ostate.add_nested_sdfg(
-        sdfg=isdfg,
-        inputs={"inner_A"},
-        outputs={"inner_A", "inner_B"},
-    )
+    nsdfg = ostate.add_nested_sdfg(sdfg=isdfg, inputs={"inner_A"}, outputs={"inner_A", "inner_B"})
 
     # Connecting the nested SDFG
     ostate.add_edge(A1, None, nsdfg, "inner_A", dace.Memlet("A[0:4, 0:4]"))

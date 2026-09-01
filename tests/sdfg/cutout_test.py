@@ -96,12 +96,7 @@ def test_cutout_implicit_array():
     nnz = dace.symbol("nnz")
 
     @dace.program
-    def spmm(
-        A_row: dace.int32[C + 1],
-        A_col: dace.int32[nnz],
-        A_val: dace.float32[nnz],
-        B: dace.float32[C, N],
-    ):
+    def spmm(A_row: dace.int32[C + 1], A_col: dace.int32[nnz], A_val: dace.float32[nnz], B: dace.float32[C, N]):
         out = dace.define_local((C, N), dtype=B.dtype)
 
         for i in dace.map[0:C]:

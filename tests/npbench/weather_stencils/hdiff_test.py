@@ -23,18 +23,10 @@ def hdiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I,
 
     # res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
     res1 = lap_field[1:, 1 : J + 1, :] - lap_field[: I + 1, 1 : J + 1, :]
-    flx_field = np.where(
-        (res1 * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0,
-        0,
-        res1,
-    )
+    flx_field = np.where((res1 * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res1)
 
     res2 = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, : J + 1, :]
-    fly_field = np.where(
-        (res2 * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0,
-        0,
-        res2,
-    )
+    fly_field = np.where((res2 * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res2)
 
     out_field[:, :, :] = in_field[2 : I + 2, 2 : J + 2, :] - coeff[:, :, :] * (
         flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]
@@ -51,18 +43,10 @@ def hdiff_jax_kernel(jnp, in_field, out_field, coeff):
     )
 
     res = lap_field[1:, 1 : J + 1, :] - lap_field[:-1, 1 : J + 1, :]
-    flx_field = jnp.where(
-        (res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0,
-        0,
-        res,
-    )
+    flx_field = jnp.where((res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res)
 
     res = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, :-1, :]
-    fly_field = jnp.where(
-        (res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0,
-        0,
-        res,
-    )
+    fly_field = jnp.where((res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res)
 
     out_field = out_field.at[:, :, :].set(
         in_field[2 : I + 2, 2 : J + 2, :]
@@ -95,18 +79,10 @@ def ground_truth(in_field, out_field, coeff):
     )
 
     res = lap_field[1:, 1 : J + 1, :] - lap_field[:-1, 1 : J + 1, :]
-    flx_field = np.where(
-        (res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0,
-        0,
-        res,
-    )
+    flx_field = np.where((res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res)
 
     res = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, :-1, :]
-    fly_field = np.where(
-        (res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0,
-        0,
-        res,
-    )
+    fly_field = np.where((res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res)
 
     out_field[:, :, :] = in_field[2 : I + 2, 2 : J + 2, :] - coeff[:, :, :] * (
         flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]

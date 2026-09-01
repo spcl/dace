@@ -29,22 +29,8 @@ def test_fused_batch_norm():
     sess_tf = tf.Session(config=config)
     sess_dace = TFSession()
 
-    outputs_dace = sess_dace.run(
-        outputs,
-        feed_dict={
-            inp: test_in,
-            scale: test_scale,
-            offset: test_offset,
-        },
-    )
-    outputs_tf = sess_tf.run(
-        outputs,
-        feed_dict={
-            inp: test_in,
-            scale: test_scale,
-            offset: test_offset,
-        },
-    )
+    outputs_dace = sess_dace.run(outputs, feed_dict={inp: test_in, scale: test_scale, offset: test_offset})
+    outputs_tf = sess_tf.run(outputs, feed_dict={inp: test_in, scale: test_scale, offset: test_offset})
 
     try:
         assert (
@@ -66,13 +52,7 @@ def test_fused_batch_norm():
     gradients = [x_grad, gamma_grad, beta_grad]
     test_outputgrad = np.random.uniform(size=size).astype(np.float32)
     outputs_dace = sess_dace.run(
-        gradients,
-        feed_dict={
-            inp: test_in,
-            outputGrad: test_outputgrad,
-            scale: test_scale,
-            offset: test_offset,
-        },
+        gradients, feed_dict={inp: test_in, outputGrad: test_outputgrad, scale: test_scale, offset: test_offset}
     )
     # TF
     x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(
@@ -87,13 +67,7 @@ def test_fused_batch_norm():
     gradients = [x_grad, gamma_grad, beta_grad]
     # writer = tf.summary.FileWriter("./", sess_tf.graph)
     outputs_tf = sess_tf.run(
-        gradients,
-        feed_dict={
-            inp: test_in,
-            outputGrad: test_outputgrad,
-            scale: test_scale,
-            offset: test_offset,
-        },
+        gradients, feed_dict={inp: test_in, outputGrad: test_outputgrad, scale: test_scale, offset: test_offset}
     )
     try:
         assert (

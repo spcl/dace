@@ -29,12 +29,7 @@ def test_onnx_return_scalars():
     # return value is a scalar
     Y = onnx.helper.make_tensor_value_info('Y', onnx.TensorProto.FLOAT, [])
 
-    node_def = onnx.helper.make_node(
-        'ReduceSum',
-        ['X', "axes"],
-        ['Y'],
-        keepdims=0,
-    )
+    node_def = onnx.helper.make_node('ReduceSum', ['X', "axes"], ['Y'], keepdims=0)
 
     graph_def = onnx.helper.make_graph(
         [node_def],

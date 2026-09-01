@@ -16,9 +16,7 @@ H = dace.symbol('H')
 
 
 def count_nodes(
-    graph: Union[dace.SDFG, dace.SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
-    return_nodes: bool = False,
+    graph: Union[dace.SDFG, dace.SDFGState], node_type: Union[Tuple[Type, ...], Type], return_nodes: bool = False
 ) -> Union[int, List[dace_nodes.Node]]:
     states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
     found_nodes: List[dace_nodes.Node] = []
@@ -78,19 +76,11 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
         state = sdfg.add_state(is_start_block=True)
 
         for name in "ABC":
-            sdfg.add_array(
-                name=name,
-                shape=(10,),
-                dtype=dace.float64,
-                transient=False,
-            )
+            sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
         state.add_mapped_tasklet(
             "comp",
             map_ranges={"__i": "0:10"},
-            inputs={
-                "__in1": dace.Memlet("A[__i]"),
-                "__in2": dace.Memlet("B[__i]"),
-            },
+            inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("B[__i]")},
             code="__out = __in1 + __in2",
             outputs={"__out": dace.Memlet("C[__i]")},
             external_edges=True,
@@ -110,12 +100,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     sizes.update({name: 30 for name in anames_s30})
 
     for name in anames_s10 + anames_s20 + anames_s30:
-        outer_sdfg.add_array(
-            name=name,
-            shape=(sizes[name],),
-            dtype=dace.float64,
-            transient=name.startswith("T"),
-        )
+        outer_sdfg.add_array(name=name, shape=(sizes[name],), dtype=dace.float64, transient=name.startswith("T"))
     T1, T2, T3, T4, T5 = (state.add_access(f"T{i}") for i in range(1, 6))
 
     state.add_mapped_tasklet(
@@ -129,12 +114,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     )
 
     inner_sdfg_1 = _make_nested_sdfg("first_adding")
-    nsdfg_node_1 = state.add_nested_sdfg(
-        sdfg=inner_sdfg_1,
-        inputs={"A", "B"},
-        outputs={"C"},
-        symbol_mapping={},
-    )
+    nsdfg_node_1 = state.add_nested_sdfg(sdfg=inner_sdfg_1, inputs={"A", "B"}, outputs={"C"}, symbol_mapping={})
 
     state.add_edge(state.add_access("I4"), None, nsdfg_node_1, "A", dace.Memlet("I4[0:10]"))
     state.add_edge(state.add_access("I1"), None, nsdfg_node_1, "B", dace.Memlet("I1[0:10]"))
@@ -144,12 +124,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     state.add_nedge(T5, T2, dace.Memlet("T5[0:10] -> [10:20]"))
 
     inner_sdfg_2 = _make_nested_sdfg("second_adding")
-    nsdfg_node_2 = state.add_nested_sdfg(
-        sdfg=inner_sdfg_2,
-        inputs={"A", "B"},
-        outputs={"C"},
-        symbol_mapping={},
-    )
+    nsdfg_node_2 = state.add_nested_sdfg(sdfg=inner_sdfg_2, inputs={"A", "B"}, outputs={"C"}, symbol_mapping={})
 
     state.add_edge(state.add_access("I1"), None, nsdfg_node_2, "A", dace.Memlet("I1[0:10]"))
     state.add_edge(state.add_access("I2"), None, nsdfg_node_2, "B", dace.Memlet("I2[0:10]"))
@@ -164,9 +139,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     return outer_sdfg, state, nsdfg_node_1, nsdfg_node_2
 
 
-def _perform_chain_reduction_inlining(
-    which: int,
-) -> None:
+def _perform_chain_reduction_inlining(which: int) -> None:
     from dace.transformation.interstate import InlineMultistateSDFG
 
     def count_writes(sdfg):
@@ -194,17 +167,9 @@ def _perform_chain_reduction_inlining(
     csdfg_ref(**ref)
 
     if which == 0:
-        InlineMultistateSDFG.apply_to(
-            sdfg=sdfg,
-            verify=True,
-            nested_sdfg=nsdfg_node_1,
-        )
+        InlineMultistateSDFG.apply_to(sdfg=sdfg, verify=True, nested_sdfg=nsdfg_node_1)
     elif which == 1:
-        InlineMultistateSDFG.apply_to(
-            sdfg=sdfg,
-            verify=True,
-            nested_sdfg=nsdfg_node_2,
-        )
+        InlineMultistateSDFG.apply_to(sdfg=sdfg, verify=True, nested_sdfg=nsdfg_node_2)
     elif which == -1:
         nb_applied = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
         assert nb_applied == 2
@@ -669,9 +634,7 @@ def test_inlining_view_input():
 
 
 def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
-    outside_uses_symbol: bool,
-    outside_uses_different_symbol: bool,
-    separate_write_back_state: bool,
+    outside_uses_symbol: bool, outside_uses_different_symbol: bool, separate_write_back_state: bool
 ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     Args:
@@ -693,11 +656,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     inner_state = inner_sdfg.add_state_after(inner_istate, assignments={inner_symbol_name: "inner_scalar"})
 
     inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
-    inner_sdfg.add_scalar(
-        "inner_scalar",
-        dtype=dace.int32,
-        transient=False,
-    )
+    inner_sdfg.add_scalar("inner_scalar", dtype=dace.int32, transient=False)
 
     inner_shapes = {"t": (inner_symbol_name,)}
 
@@ -706,12 +665,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         inner_shapes["b"] = (outer_symbol_name,)
 
     for name in "abt":
-        inner_sdfg.add_array(
-            name,
-            shape=inner_shapes.get(name, (20,)),
-            dtype=dace.float64,
-            transient=(name == "t"),
-        )
+        inner_sdfg.add_array(name, shape=inner_shapes.get(name, (20,)), dtype=dace.float64, transient=(name == "t"))
 
     a, t = (inner_state.add_access(name) for name in "at")
 
@@ -742,37 +696,18 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
     outer_state = outer_sdfg.add_state(is_start_block=True)
 
-    outer_sdfg.add_scalar(
-        "outer_scalar",
-        dace.int32,
-        transient=True,
-    )
+    outer_sdfg.add_scalar("outer_scalar", dace.int32, transient=True)
 
     shape_of_T = (20,)
     if outside_uses_symbol:
         shape_of_T = (outer_symbol_name,)
         outer_sdfg.add_symbol(shape_of_T[0], dace.int32)
 
-    outer_sdfg.add_array(
-        "A",
-        shape=(20,),
-        dtype=dace.float64,
-        transient=False,
-    )
+    outer_sdfg.add_array("A", shape=(20,), dtype=dace.float64, transient=False)
 
-    outer_sdfg.add_array(
-        "T",
-        shape=shape_of_T,
-        dtype=dace.float64,
-        transient=True,
-    )
+    outer_sdfg.add_array("T", shape=shape_of_T, dtype=dace.float64, transient=True)
 
-    outer_sdfg.add_array(
-        "B",
-        shape=(20,),
-        dtype=dace.float64,
-        transient=False,
-    )
+    outer_sdfg.add_array("B", shape=(20,), dtype=dace.float64, transient=False)
 
     A, B, T = (outer_state.add_access(name) for name in "ABT")
     outer_a_shape_scalar = outer_state.add_access("outer_scalar")
@@ -784,53 +719,21 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         symbol_mapping[outer_symbol_name] = outer_symbol_name
 
     nsdfg_node = outer_state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"inner_scalar", "a"},
-        outputs={"b"},
-        symbol_mapping=symbol_mapping,
+        sdfg=inner_sdfg, inputs={"inner_scalar", "a"}, outputs={"b"}, symbol_mapping=symbol_mapping
     )
 
     outer_tasklet_for_setting_size = outer_state.add_tasklet(
-        "outer_tasklet_for_setting_size",
-        inputs={},
-        outputs={"__out"},
-        code="__out = 20",
+        "outer_tasklet_for_setting_size", inputs={}, outputs={"__out"}, code="__out = 20"
     )
     outer_state.add_edge(
-        outer_tasklet_for_setting_size,
-        "__out",
-        outer_a_shape_scalar,
-        None,
-        dace.Memlet("outer_scalar[0]"),
+        outer_tasklet_for_setting_size, "__out", outer_a_shape_scalar, None, dace.Memlet("outer_scalar[0]")
     )
-    outer_state.add_edge(
-        outer_a_shape_scalar,
-        None,
-        nsdfg_node,
-        "inner_scalar",
-        dace.Memlet("outer_scalar[0]"),
-    )
+    outer_state.add_edge(outer_a_shape_scalar, None, nsdfg_node, "inner_scalar", dace.Memlet("outer_scalar[0]"))
 
-    outer_state.add_edge(
-        A,
-        None,
-        nsdfg_node,
-        "a",
-        dace.Memlet("A[0:20]"),
-    )
+    outer_state.add_edge(A, None, nsdfg_node, "a", dace.Memlet("A[0:20]"))
 
-    outer_state.add_edge(
-        nsdfg_node,
-        "b",
-        T,
-        None,
-        dace.Memlet(f"T[0:{shape_of_T[0]}]"),
-    )
-    outer_state.add_nedge(
-        T,
-        B,
-        dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
-    )
+    outer_state.add_edge(nsdfg_node, "b", T, None, dace.Memlet(f"T[0:{shape_of_T[0]}]"))
+    outer_state.add_nedge(T, B, dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True))
 
     outer_sdfg.validate()
 
@@ -838,8 +741,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 
 
 def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
-    outside_and_inner_symbol_have_same_meaning: bool,
-    separate_write_back_state: bool,
+    outside_and_inner_symbol_have_same_meaning: bool, separate_write_back_state: bool
 ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     The SDFGs created by this function are rather similar to
@@ -866,9 +768,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
 
     inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
 
-    inner_shapes = {
-        "t": (inner_symbol_name,),
-    }
+    inner_shapes = {"t": (inner_symbol_name,)}
 
     if outside_and_inner_symbol_have_same_meaning:
         inner_shapes["b"] = (inner_symbol_name,)
@@ -876,12 +776,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         inner_shapes["b"] = (outer_symbol_name,)  # We need that to ensure that we can inline the SDFG.
 
     for name in "abt":
-        inner_sdfg.add_array(
-            name,
-            shape=inner_shapes.get(name, (20,)),
-            dtype=dace.float64,
-            transient=(name == "t"),
-        )
+        inner_sdfg.add_array(name, shape=inner_shapes.get(name, (20,)), dtype=dace.float64, transient=(name == "t"))
 
     a, t = (inner_state.add_access(name) for name in "at")
 
@@ -919,33 +814,16 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     shape_of_T = (outer_symbol_name,)
     outer_sdfg.add_symbol(outer_symbol_name, dace.int32)
 
-    outer_sdfg.add_array(
-        "A",
-        shape=(20,),
-        dtype=dace.float64,
-        transient=False,
-    )
+    outer_sdfg.add_array("A", shape=(20,), dtype=dace.float64, transient=False)
 
-    outer_sdfg.add_array(
-        "T",
-        shape=shape_of_T,
-        dtype=dace.float64,
-        transient=True,
-    )
+    outer_sdfg.add_array("T", shape=shape_of_T, dtype=dace.float64, transient=True)
 
-    outer_sdfg.add_array(
-        "B",
-        shape=(20,),
-        dtype=dace.float64,
-        transient=False,
-    )
+    outer_sdfg.add_array("B", shape=(20,), dtype=dace.float64, transient=False)
 
     A, B, T = (outer_state.add_access(name) for name in "ABT")
 
     if outside_and_inner_symbol_have_same_meaning:
-        symbol_mapping = {
-            inner_symbol_name: outer_symbol_name,
-        }
+        symbol_mapping = {inner_symbol_name: outer_symbol_name}
     else:
         symbol_mapping = {
             outer_symbol_name: outer_symbol_name,  # We need that to ensure that we can inline the inner SDFG.
@@ -954,32 +832,13 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         outer_sdfg.add_symbol(inner_symbol_name, dace.int32)
 
     nsdfg_node = outer_state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"a"},
-        outputs={"b"},
-        symbol_mapping=symbol_mapping,
+        sdfg=inner_sdfg, inputs={"a"}, outputs={"b"}, symbol_mapping=symbol_mapping
     )
 
-    outer_state.add_edge(
-        A,
-        None,
-        nsdfg_node,
-        "a",
-        dace.Memlet("A[0:20]"),
-    )
+    outer_state.add_edge(A, None, nsdfg_node, "a", dace.Memlet("A[0:20]"))
 
-    outer_state.add_edge(
-        nsdfg_node,
-        "b",
-        T,
-        None,
-        dace.Memlet(f"T[0:{shape_of_T[0]}]"),
-    )
-    outer_state.add_nedge(
-        T,
-        B,
-        dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
-    )
+    outer_state.add_edge(nsdfg_node, "b", T, None, dace.Memlet(f"T[0:{shape_of_T[0]}]"))
+    outer_state.add_nedge(T, B, dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True))
 
     outer_sdfg.validate()
 

@@ -694,15 +694,11 @@ def hdiff(
 
     res1 = lap_field[1:, 1 : 128 + 1, :] - lap_field[: 128 + 1, 1 : 128 + 1, :]
     flx_field = np.where(
-        (res1 * (in_field[2 : 128 + 3, 2 : 128 + 2, :] - in_field[1 : 128 + 2, 2 : 128 + 2, :])) > 0,
-        0,
-        res1,
+        (res1 * (in_field[2 : 128 + 3, 2 : 128 + 2, :] - in_field[1 : 128 + 2, 2 : 128 + 2, :])) > 0, 0, res1
     )
     res2 = lap_field[1 : 128 + 1, 1:, :] - lap_field[1 : 128 + 1, : 128 + 1, :]
     fly_field = np.where(
-        (res2 * (in_field[2 : 128 + 2, 2 : 128 + 3, :] - in_field[2 : 128 + 2, 1 : 128 + 2, :])) > 0,
-        0,
-        res2,
+        (res2 * (in_field[2 : 128 + 2, 2 : 128 + 3, :] - in_field[2 : 128 + 2, 1 : 128 + 2, :])) > 0, 0, res2
     )
     out_field[:, :, :] = in_field[2 : 128 + 2, 2 : 128 + 2, :] - coeff[:, :, :] * (
         flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]

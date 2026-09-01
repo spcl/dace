@@ -21,23 +21,13 @@ def _make_test_sdfg() -> dace.SDFG:
     sdfg = dace.SDFG("test_sdfg_" + str(uuid.uuid1()).replace("-", "_"))
     state = sdfg.add_state()
     for name in "abc":
-        sdfg.add_array(
-            name,
-            shape=(10,),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
 
     state.add_mapped_tasklet(
         "comp",
         map_ranges={"__i": "0:10"},
-        inputs={
-            "__in1": dace.Memlet("a[__i]"),
-            "__in2": dace.Memlet("b[__i]"),
-        },
-        outputs={
-            "__out": dace.Memlet("c[__i]"),
-        },
+        inputs={"__in1": dace.Memlet("a[__i]"), "__in2": dace.Memlet("b[__i]")},
+        outputs={"__out": dace.Memlet("c[__i]")},
         code="__out = __in1 + __in2",
         external_edges=True,
     )
@@ -151,10 +141,7 @@ def test_production_folder_mode():
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
 
 
-def _test_build_with_scheme_one_and_then_switch_impl(
-    version1: str,
-    version2: str,
-) -> None:
+def _test_build_with_scheme_one_and_then_switch_impl(version1: str, version2: str) -> None:
     with dace.config.temporary_config() as conf:
         conf.set('compiler', 'build_folder_mode', value=version1)
 
@@ -220,21 +207,12 @@ def _test_build_with_scheme_one_and_then_switch_impl(
 
 
 def test_build_with_scheme_one_and_then_switch():
-    _test_build_with_scheme_one_and_then_switch_impl(
-        version1="development",
-        version2="production",
-    )
-    _test_build_with_scheme_one_and_then_switch_impl(
-        version1="production",
-        version2="development",
-    )
+    _test_build_with_scheme_one_and_then_switch_impl(version1="development", version2="production")
+    _test_build_with_scheme_one_and_then_switch_impl(version1="production", version2="development")
 
 
 def _expected_binary_path(
-    build_folder: pathlib.Path,
-    sdfg_name: str,
-    folder_mode: str,
-    lib_extension: str,
+    build_folder: pathlib.Path, sdfg_name: str, folder_mode: str, lib_extension: str
 ) -> pathlib.Path:
     if folder_mode == "development":
         return build_folder / "build" / f"lib{sdfg_name}.{lib_extension}"
@@ -243,9 +221,7 @@ def _expected_binary_path(
 
 
 def _test_get_binary_name_detects_folder_mode_switch_impl(
-    build_folder: pathlib.Path,
-    version1: str,
-    version2: str,
+    build_folder: pathlib.Path, version1: str, version2: str
 ) -> None:
     sdfg_name = "some_sdfg"
     lib_extension = "so"
@@ -274,14 +250,10 @@ def _test_get_binary_name_detects_folder_mode_switch_impl(
 
 def test_get_binary_name_detects_folder_mode_switch(tmp_path):
     _test_get_binary_name_detects_folder_mode_switch_impl(
-        build_folder=tmp_path / "dev_to_prod",
-        version1="development",
-        version2="production",
+        build_folder=tmp_path / "dev_to_prod", version1="development", version2="production"
     )
     _test_get_binary_name_detects_folder_mode_switch_impl(
-        build_folder=tmp_path / "prod_to_dev",
-        version1="production",
-        version2="development",
+        build_folder=tmp_path / "prod_to_dev", version1="production", version2="development"
     )
 
 
@@ -309,14 +281,8 @@ def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
 
 
 def test_already_loaded_and_comple_again():
-    _test_build_with_scheme_one_and_then_switch_impl(
-        version1="development",
-        version2="development",
-    )
-    _test_build_with_scheme_one_and_then_switch_impl(
-        version1="production",
-        version2="production",
-    )
+    _test_build_with_scheme_one_and_then_switch_impl(version1="development", version2="development")
+    _test_build_with_scheme_one_and_then_switch_impl(version1="production", version2="production")
 
 
 if __name__ == '__main__':

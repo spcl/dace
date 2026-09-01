@@ -14,18 +14,9 @@ def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGSt
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        sdfg.add_array(
-            name=name,
-            shape=(20, 20),
-            dtype=dace.float64,
-            transient=True,
-        )
+        sdfg.add_array(name=name, shape=(20, 20), dtype=dace.float64, transient=True)
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[2:17, 2:2] -> [2:18, 3:3]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[2:17, 2:2] -> [2:18, 3:3]"))
 
     return sdfg, state
 
@@ -61,18 +52,9 @@ def test_an_to_an_memlet_with_negative_size():
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        sdfg.add_array(
-            name=name,
-            shape=(20, 20),
-            dtype=dace.float64,
-            transient=True,
-        )
+        sdfg.add_array(name=name, shape=(20, 20), dtype=dace.float64, transient=True)
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[2:17, 13:2] -> [2:18, 14:3]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[2:17, 13:2] -> [2:18, 14:3]"))
 
     with pytest.raises(
         expected_exception=dace.sdfg.InvalidSDFGEdgeError,

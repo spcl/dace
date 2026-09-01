@@ -65,14 +65,8 @@ def test_pooling():
     np.random.seed(0)
     loss_tensor = np.random.uniform(size=max_pool_outp.shape).astype(np.float32)
     grads_max = tf.gradients(max_pool_outp, input_placeholder, grad_ys=loss_placeholder)
-    dace_output = sess_dace.run(
-        grads_max,
-        feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor},
-    )
-    tf_output = sess_tf.run(
-        grads_max,
-        feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor},
-    )
+    dace_output = sess_dace.run(grads_max, feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor})
+    tf_output = sess_tf.run(grads_max, feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor})
     try:
         assert tf.norm(dace_output[0] - tf_output[0]).eval(session=sess_tf) < 1e-5
     except:

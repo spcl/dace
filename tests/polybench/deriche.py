@@ -10,33 +10,9 @@ H = dace.symbol('H')
 datatype = dace.float32
 
 # Dataset sizes
-sizes = [
-    {
-        W: 64,
-        H: 64,
-    },
-    {
-        W: 192,
-        H: 128,
-    },
-    {
-        W: 720,
-        H: 480,
-    },
-    {
-        W: 4096,
-        H: 2160,
-    },
-    {
-        W: 7680,
-        H: 4320,
-    },
-]
+sizes = [{W: 64, H: 64}, {W: 192, H: 128}, {W: 720, H: 480}, {W: 4096, H: 2160}, {W: 7680, H: 4320}]
 
-args = [
-    ([W, H], datatype),
-    ([W, H], datatype),
-]
+args = [([W, H], datatype), ([W, H], datatype)]
 
 # Constants
 alpha = datatype(0.25)

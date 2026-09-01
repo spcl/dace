@@ -32,8 +32,7 @@ def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3, S5
     for i in range(S1 - S4 + 1):
         for j in range(S2 - S4 + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i : i + S4, j : j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
-                axis=(1, 2, 3),
+                input[:, i : i + S4, j : j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3)
             )
 
     return output
@@ -123,8 +122,7 @@ def conv2d_np(input, weights):
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(
-                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
-                axis=(1, 2, 3),
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3)
             )
 
     return output

@@ -301,12 +301,7 @@ def test_issue_2100():
     def global_matmul(C: dc.float32[N, N] @ dc.StorageType.GPU_Global):
         for i, j in dc.map[0:N:N, 0:N:N] @ dc.ScheduleType.GPU_Device:
             for l in dc.map[0:64] @ dc.ScheduleType.GPU_ThreadBlock:
-                c = dc.ndarray(
-                    [N, N],
-                    dtype=dc.float32,
-                    storage=dc.StorageType.Register,
-                    strides=(N, 1),
-                )
+                c = dc.ndarray([N, N], dtype=dc.float32, storage=dc.StorageType.Register, strides=(N, 1))
 
                 for k in dc.map[0:1] @ dc.ScheduleType.Sequential:
                     c.fill(0.0)

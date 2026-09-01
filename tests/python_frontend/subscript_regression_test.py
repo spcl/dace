@@ -4,12 +4,7 @@ import dace
 
 
 @dace.program
-def dace_func(
-    X: dace.float32[4, 5],
-    Y: dace.float32[4, 3],
-    W: dace.float32[4, 3],
-    S: dace.float32[1],
-):
+def dace_func(X: dace.float32[4, 5], Y: dace.float32[4, 3], W: dace.float32[4, 3], S: dace.float32[1]):
     Xt = np.transpose(X)
     YW = W * Y
     Z = Xt @ YW

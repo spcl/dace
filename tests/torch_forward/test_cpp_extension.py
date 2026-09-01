@@ -87,9 +87,7 @@ def test_extension():
     BUILD_PATH = os.path.join('.dacecache', "pt_extension")
     compiler.generate_program_folder(None, [program], BUILD_PATH)
     torch.utils.cpp_extension.load(
-        name='pt_extension',
-        sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')],
-        is_python_module=False,
+        name='pt_extension', sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')], is_python_module=False
     )
     torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32))
 

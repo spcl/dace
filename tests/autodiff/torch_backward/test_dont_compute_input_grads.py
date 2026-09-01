@@ -28,11 +28,7 @@ def test_skip_input_grads(use_cpp_dispatcher: bool):
     shape = [8, 10]
     input_value = torch.rand(*shape, dtype=torch.float32)
 
-    pytorch_input = torch.empty(
-        *shape,
-        dtype=torch.float32,
-        requires_grad=False,
-    )
+    pytorch_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     pytorch_input.copy_(input_value)
     dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     dace_input.copy_(input_value)

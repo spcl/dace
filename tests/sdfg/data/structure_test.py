@@ -568,11 +568,7 @@ def test_read_struct_member_interstate_edge():
     sdfg = dace.SDFG('test_read_struct_member_interstate_edge')
 
     struct_data = dace.data.Structure(
-        {
-            'start': dace.data.Scalar(dace.int32),
-            'stop': dace.data.Scalar(dace.int32),
-        },
-        't_indices',
+        {'start': dace.data.Scalar(dace.int32), 'stop': dace.data.Scalar(dace.int32)}, 't_indices'
     )
     struct_data.transient = True
     sdfg.add_datadesc('indices', struct_data)

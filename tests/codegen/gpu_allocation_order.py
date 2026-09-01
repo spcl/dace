@@ -26,9 +26,7 @@ def test_allocation_requiring_map_variables():
         "gpu_map", dict(bi="0:128:32"), schedule=dace.dtypes.ScheduleType.GPU_Device
     )
     tb_map_entry, tb_map_exit = state.add_map(
-        "tb",
-        dict(i="bi:bi+32"),
-        schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock,
+        "tb", dict(i="bi:bi+32"), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock
     )
 
     # Add transient helper Array + a corresponding accessNode

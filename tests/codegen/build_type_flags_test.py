@@ -18,11 +18,7 @@ from dace.codegen.compiler import BUILD_TYPE_FLAGS_BY_FAMILY, CMAKE_BUILD_TYPE_F
 from dace.config import Config, set_temporary
 
 #: Every default flag string that must not carry an optimization level.
-ARG_KEYS = (
-    ('compiler', 'cpu', 'args'),
-    ('compiler', 'cuda', 'args'),
-    ('compiler', 'cuda', 'hip_args'),
-)
+ARG_KEYS = (('compiler', 'cpu', 'args'), ('compiler', 'cuda', 'args'), ('compiler', 'cuda', 'hip_args'))
 
 OPT_FLAG = re.compile(r'(?:^|\s)[-/]O')
 

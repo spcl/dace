@@ -51,57 +51,20 @@ def _get_sdfg_with_memlet_tree():
 
     for aname in "ab":
         sdfg.add_array(
-            aname,
-            shape=(10, 2),
-            dtype=dace.float64,
-            storage=dace.dtypes.StorageType.GPU_Global,
-            transient=False,
+            aname, shape=(10, 2), dtype=dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=False
         )
-    sdfg.add_scalar(
-        "s",
-        dtype=dace.float64,
-        transient=True,
-    )
+    sdfg.add_scalar("s", dtype=dace.float64, transient=True)
 
     a, b, s = (state.add_access(name) for name in "abs")
     me, mx = state.add_map("comp", ndrange={"__i": "0:10"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
-    tlet = state.add_tasklet(
-        "tlet",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 1.0",
-    )
+    tlet = state.add_tasklet("tlet", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 1.0")
 
-    state.add_edge(
-        a,
-        None,
-        me,
-        "IN_a1",
-        dace.Memlet("a[0:10, 0]"),
-    )
-    state.add_edge(
-        me,
-        "OUT_a1",
-        tlet,
-        "__in",
-        dace.Memlet("a[__i, 0]"),
-    )
+    state.add_edge(a, None, me, "IN_a1", dace.Memlet("a[0:10, 0]"))
+    state.add_edge(me, "OUT_a1", tlet, "__in", dace.Memlet("a[__i, 0]"))
     me.add_scope_connectors("a1")
 
-    state.add_edge(
-        tlet,
-        "__out",
-        mx,
-        "IN_b1",
-        dace.Memlet("b[__i, 0]"),
-    )
-    state.add_edge(
-        mx,
-        "OUT_b1",
-        b,
-        None,
-        dace.Memlet("b[0:10, 0]"),
-    )
+    state.add_edge(tlet, "__out", mx, "IN_b1", dace.Memlet("b[__i, 0]"))
+    state.add_edge(mx, "OUT_b1", b, None, dace.Memlet("b[0:10, 0]"))
     mx.add_scope_connectors("b1")
 
     state.add_edge(
@@ -115,20 +78,8 @@ def _get_sdfg_with_memlet_tree():
         dace.Memlet("s[0] -> [__i, 0]"),
     )
 
-    state.add_edge(
-        s,
-        None,
-        mx,
-        "IN_b2",
-        dace.Memlet("b[__i, 1] -> [0]"),
-    )
-    state.add_edge(
-        mx,
-        "OUT_b2",
-        b,
-        None,
-        dace.Memlet("b[0:10, 1]"),
-    )
+    state.add_edge(s, None, mx, "IN_b2", dace.Memlet("b[__i, 1] -> [0]"))
+    state.add_edge(mx, "OUT_b2", b, None, dace.Memlet("b[0:10, 1]"))
     mx.add_scope_connectors("b2")
 
     sdfg.validate()

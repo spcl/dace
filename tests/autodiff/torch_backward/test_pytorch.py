@@ -29,11 +29,7 @@ def run_pytorch_module(
 
     input_value = torch.rand(*shape, dtype=torch.float32)
 
-    pytorch_input = torch.empty(
-        *shape,
-        dtype=torch.float32,
-        requires_grad=False,
-    )
+    pytorch_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     pytorch_input.copy_(input_value)
 
     dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)

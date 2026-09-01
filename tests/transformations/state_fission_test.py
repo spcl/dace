@@ -112,19 +112,10 @@ def _make_state_fission_with_access_nodes_sdfg() -> Tuple[
     state = sdfg.add_state()
 
     for name in "abc":
-        sdfg.add_scalar(
-            name,
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_scalar(name, dtype=dace.float64, transient=False)
     a, b, c = (state.add_access(name) for name in "abc")
 
-    tlet = state.add_tasklet(
-        "computation",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 3.0",
-    )
+    tlet = state.add_tasklet("computation", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 3.0")
 
     state.add_edge(a, None, tlet, "__in", dace.Memlet("a[0]"))
     state.add_edge(tlet, "__out", b, None, dace.Memlet("b[0]"))
@@ -149,28 +140,11 @@ def _make_state_fission_with_map_sdfg() -> Tuple[
     state = sdfg.add_state()
 
     for name in "abc":
-        sdfg.add_array(
-            name,
-            shape=(
-                (
-                    20,
-                    10,
-                )
-                if name != "c"
-                else (10,)
-            ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=((20, 10) if name != "c" else (10,)), dtype=dace.float64, transient=False)
     a, b, c = (state.add_access(name) for name in "abc")
 
     me, mx = state.add_map("computation", ndrange={"__i": "0:20", "__j": "0:10"})
-    tlet = state.add_tasklet(
-        "computation",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 3.0",
-    )
+    tlet = state.add_tasklet("computation", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 3.0")
     sdfg.add_scalar("t", dtype=dace.float64, transient=True)
     t = state.add_access("t")
 
@@ -205,38 +179,14 @@ def _make_state_fission_multiple_reads_sdfg() -> Tuple[
     sdfg = dace.SDFG(unique_name("split_with_multiple_reads"))
     state = sdfg.add_state()
 
-    sdfg.add_array(
-        "a",
-        shape=(2,),
-        dtype=dace.float64,
-        transient=False,
-    )
+    sdfg.add_array("a", shape=(2,), dtype=dace.float64, transient=False)
     for name in "bcd":
-        sdfg.add_scalar(
-            name,
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_scalar(name, dtype=dace.float64, transient=False)
     a, b, c, d = (state.add_access(name) for name in "abcd")
 
-    tlet1 = state.add_tasklet(
-        "tlet1",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 3.0",
-    )
-    tlet2 = state.add_tasklet(
-        "tlet2",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 4.0",
-    )
-    tlet3 = state.add_tasklet(
-        "tlet2",
-        inputs={},
-        outputs={"__out"},
-        code="__out = -55.0",
-    )
+    tlet1 = state.add_tasklet("tlet1", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 3.0")
+    tlet2 = state.add_tasklet("tlet2", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 4.0")
+    tlet3 = state.add_tasklet("tlet2", inputs={}, outputs={"__out"}, code="__out = -55.0")
 
     state.add_edge(a, None, tlet1, "__in", dace.Memlet("a[0]"))
     state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
@@ -266,38 +216,14 @@ def _make_state_fission_multiple_writes_sdfg() -> Tuple[
     sdfg = dace.SDFG(unique_name("split_with_multiple_writes"))
     state = sdfg.add_state()
 
-    sdfg.add_scalar(
-        "a",
-        dtype=dace.float64,
-        transient=False,
-    )
+    sdfg.add_scalar("a", dtype=dace.float64, transient=False)
     for name in "bc":
-        sdfg.add_array(
-            name,
-            shape=(3,),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(3,), dtype=dace.float64, transient=False)
     a, b, c = (state.add_access(name) for name in "abc")
 
-    tlet1 = state.add_tasklet(
-        "tlet1",
-        inputs={},
-        outputs={"__out"},
-        code="__out = 2.3",
-    )
-    tlet2 = state.add_tasklet(
-        "tlet2",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 1.0",
-    )
-    tlet3 = state.add_tasklet(
-        "tlet3",
-        inputs={},
-        outputs={"__out"},
-        code="__out = -6.0",
-    )
+    tlet1 = state.add_tasklet("tlet1", inputs={}, outputs={"__out"}, code="__out = 2.3")
+    tlet2 = state.add_tasklet("tlet2", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 1.0")
+    tlet3 = state.add_tasklet("tlet3", inputs={}, outputs={"__out"}, code="__out = -6.0")
 
     state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
 
@@ -319,24 +245,10 @@ def _make_state_fission_with_view_sdfg() -> Tuple[
     sdfg = dace.SDFG(unique_name("split_with_view"))
     state = sdfg.add_state()
 
-    sdfg.add_array(
-        "a",
-        shape=(10,),
-        dtype=dace.float64,
-        transient=False,
-    )
-    sdfg.add_view(
-        "v",
-        shape=(10,),
-        dtype=dace.float64,
-    )
+    sdfg.add_array("a", shape=(10,), dtype=dace.float64, transient=False)
+    sdfg.add_view("v", shape=(10,), dtype=dace.float64)
     for name in "bc":
-        sdfg.add_array(
-            name,
-            shape=(10, 2),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(10, 2), dtype=dace.float64, transient=False)
     a, v, b, c = (state.add_access(name) for name in "avbc")
 
     _, me, _ = state.add_mapped_tasklet(
@@ -367,25 +279,11 @@ def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[
     state = sdfg.add_state()
 
     for name in "ab":
-        sdfg.add_scalar(
-            name,
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_scalar(name, dtype=dace.float64, transient=False)
     ar, b, aw = (state.add_access(name) for name in "aba")
 
-    tlet1 = state.add_tasklet(
-        "tlet1",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 2.3",
-    )
-    tlet2 = state.add_tasklet(
-        "tlet2",
-        inputs={},
-        outputs={"__out"},
-        code="__out = -10.0",
-    )
+    tlet1 = state.add_tasklet("tlet1", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 2.3")
+    tlet2 = state.add_tasklet("tlet2", inputs={}, outputs={"__out"}, code="__out = -10.0")
 
     state.add_edge(ar, None, tlet1, "__in", dace.Memlet("a[0]"))
     state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
@@ -413,37 +311,15 @@ def _make_state_fission_tower_of_viewes() -> Tuple[
     state = sdfg.add_state()
 
     for name in "ab":
-        sdfg.add_array(
-            name,
-            shape=(4, 4, 4),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(4, 4, 4), dtype=dace.float64, transient=False)
 
-    sdfg.add_view(
-        "v1",
-        shape=(4,),
-        dtype=dace.float64,
-    )
-    sdfg.add_view(
-        "v2",
-        shape=(4, 4),
-        dtype=dace.float64,
-    )
-    sdfg.add_view(
-        "v3",
-        shape=(4, 4, 4),
-        dtype=dace.float64,
-    )
+    sdfg.add_view("v1", shape=(4,), dtype=dace.float64)
+    sdfg.add_view("v2", shape=(4, 4), dtype=dace.float64)
+    sdfg.add_view("v3", shape=(4, 4, 4), dtype=dace.float64)
     a, b = (state.add_access(name) for name in "ab")
     v1, v2, v3 = (state.add_access("v" + str(i)) for i in range(1, 4))
 
-    tlet = state.add_tasklet(
-        "computation",
-        inputs={},
-        outputs={"__out"},
-        code="__out = 1.34",
-    )
+    tlet = state.add_tasklet("computation", inputs={}, outputs={"__out"}, code="__out = 1.34")
 
     state.add_edge(tlet, "__out", v1, None, dace.Memlet("v1[2]"))
     state.add_edge(v1, "views", v2, None, dace.Memlet("v1[0:4] -> [2, 0:4]"))
@@ -680,10 +556,7 @@ def _test_state_fission_with_map_2_impl(include: str):
         subgraph_nodes = [tlet]
 
         # Expand the Map such that `tlet` is nested.
-        dataflow.MapExpansion.apply_to(
-            sdfg=sdfg,
-            map_entry=me,
-        )
+        dataflow.MapExpansion.apply_to(sdfg=sdfg, map_entry=me)
         sdfg.validate()
         mes = set(count_nodes(state, nodes.MapEntry, True))
         assert state.number_of_nodes() == 9

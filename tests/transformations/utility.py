@@ -13,9 +13,7 @@ from dace.sdfg import nodes
 
 
 def count_nodes(
-    graph: Union[SDFG, SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
-    return_nodes: bool = False,
+    graph: Union[SDFG, SDFGState], node_type: Union[Tuple[Type, ...], Type], return_nodes: bool = False
 ) -> Union[int, List[nodes.Node]]:
     """Counts the number of nodes of a particular type in `graph`.
 
@@ -47,9 +45,7 @@ def unique_name(name: str) -> str:
     return f"{name}_{unique_sufix}"
 
 
-def make_sdfg_args(
-    sdfg: dace.SDFG,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+def make_sdfg_args(sdfg: dace.SDFG) -> tuple[dict[str, Any], dict[str, Any]]:
     ref = {
         name: (
             np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype())
@@ -63,11 +59,7 @@ def make_sdfg_args(
     return ref, res
 
 
-def compile_and_run_sdfg(
-    sdfg: dace.SDFG,
-    *args: Any,
-    **kwargs: Any,
-) -> dace.codegen.CompiledSDFG:
+def compile_and_run_sdfg(sdfg: dace.SDFG, *args: Any, **kwargs: Any) -> dace.codegen.CompiledSDFG:
     """This function guarantees that the SDFG is compiled and run.
 
     This function will modify the name of the SDFG to ensure that the code is
@@ -86,9 +78,6 @@ def compile_and_run_sdfg(
     return csdfg
 
 
-def compare_sdfg_res(
-    ref: dict[str, Any],
-    res: dict[str, Any],
-) -> bool:
+def compare_sdfg_res(ref: dict[str, Any], res: dict[str, Any]) -> bool:
     """Compares if `res` and  `ref` are the same."""
     return all(np.allclose(ref[name], res[name]) for name in ref.keys())

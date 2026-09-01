@@ -29,16 +29,7 @@ def test_conditional_fake_merge(with_regions):
     state_d = sdfg.add_state('D')
     state_e = sdfg.add_state('E')
 
-    sdfg.add_edge(
-        state_init,
-        state_a,
-        InterstateEdge(
-            assignments={
-                'i': '0',
-                'j': '0',
-            }
-        ),
-    )
+    sdfg.add_edge(state_init, state_a, InterstateEdge(assignments={'i': '0', 'j': '0'}))
     sdfg.add_edge(
         state_a, state_b, InterstateEdge(condition=CodeProperty.from_string('i < 10', language=Language.Python))
     )
@@ -234,15 +225,7 @@ def test_for_inside_branch(with_regions):
     loop_state = sdfg.add_state('loop_state')
     branch_merge = sdfg.add_state('branch_merge')
 
-    sdfg.add_edge(
-        state_init,
-        branch_guard,
-        InterstateEdge(
-            assignments={
-                'i': '0',
-            }
-        ),
-    )
+    sdfg.add_edge(state_init, branch_guard, InterstateEdge(assignments={'i': '0'}))
     sdfg.add_edge(
         branch_guard,
         branch_merge,
@@ -252,10 +235,7 @@ def test_for_inside_branch(with_regions):
         branch_guard,
         loop_guard,
         InterstateEdge(
-            condition=CodeProperty.from_string('not (i < 10)', language=Language.Python),
-            assignments={
-                'j': '0',
-            },
+            condition=CodeProperty.from_string('not (i < 10)', language=Language.Python), assignments={'j': '0'}
         ),
     )
     sdfg.add_edge(
@@ -266,15 +246,7 @@ def test_for_inside_branch(with_regions):
         branch_merge,
         InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)),
     )
-    sdfg.add_edge(
-        loop_state,
-        loop_guard,
-        InterstateEdge(
-            assignments={
-                'j': 'j + 1',
-            }
-        ),
-    )
+    sdfg.add_edge(loop_state, loop_guard, InterstateEdge(assignments={'j': 'j + 1'}))
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -302,24 +274,8 @@ def test_full_merge_inside_loop(with_regions):
     branch_merge = sdfg.add_state('branch_merge')
     loop_end = sdfg.add_state('loop_end')
 
-    sdfg.add_edge(
-        state_init,
-        intermittent,
-        InterstateEdge(
-            assignments={
-                'j': '0',
-            }
-        ),
-    )
-    sdfg.add_edge(
-        intermittent,
-        loop_guard,
-        InterstateEdge(
-            assignments={
-                'i': '0',
-            }
-        ),
-    )
+    sdfg.add_edge(state_init, intermittent, InterstateEdge(assignments={'j': '0'}))
+    sdfg.add_edge(intermittent, loop_guard, InterstateEdge(assignments={'i': '0'}))
     sdfg.add_edge(
         loop_guard, branch_guard, InterstateEdge(condition=CodeProperty.from_string('i < 10', language=Language.Python))
     )
@@ -339,15 +295,7 @@ def test_full_merge_inside_loop(with_regions):
         InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)),
     )
     sdfg.add_edge(branch_state, branch_merge, InterstateEdge())
-    sdfg.add_edge(
-        branch_merge,
-        loop_guard,
-        InterstateEdge(
-            assignments={
-                'i': 'i + 1',
-            }
-        ),
-    )
+    sdfg.add_edge(branch_merge, loop_guard, InterstateEdge(assignments={'i': 'i + 1'}))
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})

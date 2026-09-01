@@ -262,18 +262,7 @@ def ufunc_add_reduce_keepdims(A: dace.int32[2, 2, 2, 2, 2]):
 
 
 def test_ufunc_add_reduce_keepdims():
-    A = np.random.randint(
-        1,
-        10,
-        size=(
-            2,
-            2,
-            2,
-            2,
-            2,
-        ),
-        dtype=np.int32,
-    )
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     s = ufunc_add_reduce_keepdims(A)
     assert np.array_equal(np.add.reduce(A, keepdims=True), s)
 
@@ -284,18 +273,7 @@ def ufunc_add_reduce_initial(A: dace.int32[2, 2, 2, 2, 2]):
 
 
 def test_ufunc_add_reduce_initial():
-    A = np.random.randint(
-        1,
-        10,
-        size=(
-            2,
-            2,
-            2,
-            2,
-            2,
-        ),
-        dtype=np.int32,
-    )
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     s = ufunc_add_reduce_initial(A)
     assert np.array_equal(np.add.reduce(A, initial=5), s)
 
@@ -306,18 +284,7 @@ def ufunc_minimum_reduce_initial(A: dace.int32[2, 2, 2, 2, 2]):
 
 
 def test_ufunc_minimum_reduce_initial():
-    A = np.random.randint(
-        1,
-        10,
-        size=(
-            2,
-            2,
-            2,
-            2,
-            2,
-        ),
-        dtype=np.int32,
-    )
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     s = ufunc_minimum_reduce_initial(A)
     assert np.array_equal(np.minimum.reduce(A, initial=5), s)
 
@@ -328,18 +295,7 @@ def ufunc_minimum_reduce_initial2(A: dace.int32[2, 2, 2, 2, 2]):
 
 
 def test_ufunc_minimum_reduce_initial2():
-    A = np.random.randint(
-        1,
-        10,
-        size=(
-            2,
-            2,
-            2,
-            2,
-            2,
-        ),
-        dtype=np.int32,
-    )
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     A[0, 0, 0, 0, 0] = 0
     s = ufunc_minimum_reduce_initial2(A)
     assert np.array_equal(np.minimum.reduce(A, initial=None), s)
@@ -351,18 +307,7 @@ def ufunc_add_accumulate_simple(A: dace.int32[2, 2, 2, 2, 2]):
 
 
 def test_ufunc_add_accumulate_simple():
-    A = np.random.randint(
-        1,
-        10,
-        size=(
-            2,
-            2,
-            2,
-            2,
-            2,
-        ),
-        dtype=np.int32,
-    )
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     s = ufunc_add_accumulate_simple(A)
     assert np.array_equal(np.add.accumulate(A), s)
 

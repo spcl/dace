@@ -26,11 +26,7 @@ def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
     state1.add_edge(t2, "_out", a2, None, dace.Memlet(f"{scalar2_name}"))
 
     # Add interstate edge with some assignments
-    interstate_assignments = {
-        scalar1_name: sym1_name,
-        sym2_name: scalar2_name,
-        sym3_name: f"{array1_name}[1]",
-    }
+    interstate_assignments = {scalar1_name: sym1_name, sym2_name: scalar2_name, sym3_name: f"{array1_name}[1]"}
     e = sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=interstate_assignments))
     return sdfg, e
 

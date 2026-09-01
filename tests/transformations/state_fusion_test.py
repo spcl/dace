@@ -420,22 +420,12 @@ def test_check_paths():
     q_b0_w = block_0.add_write("q")
     qm_b0 = block_0.add_read("qm")
     qm_b0_w = block_0.add_write("qm")
-    tasklet_b0_on_q = block_0.add_tasklet(
-        "tasklet_b0_on_q",
-        {"p_qm"},
-        {"p_q_w"},
-        "p_q_w = p_qm",
-    )
+    tasklet_b0_on_q = block_0.add_tasklet("tasklet_b0_on_q", {"p_qm"}, {"p_q_w"}, "p_q_w = p_qm")
     block_0.add_edge(qm_b0, None, tasklet_b0_on_q, "p_qm", dace.Memlet("qm[0]"))
     block_0.add_edge(tasklet_b0_on_q, "p_q_w", q_b0_w, None, dace.Memlet("q[0]"))
 
     m1_b0_w = block_0.add_write("m1")
-    tasklet_b0_on_m1 = block_0.add_tasklet(
-        "tasklet_b0_on_m1_qm",
-        {"p_q"},
-        {"p_m1_w", "p_qm_w"},
-        "p_m1_w = p_q",
-    )
+    tasklet_b0_on_m1 = block_0.add_tasklet("tasklet_b0_on_m1_qm", {"p_q"}, {"p_m1_w", "p_qm_w"}, "p_m1_w = p_q")
     block_0.add_edge(q_b0_w, None, tasklet_b0_on_m1, "p_q", dace.Memlet("q[0]"))
     block_0.add_edge(tasklet_b0_on_m1, "p_m1_w", m1_b0_w, None, dace.Memlet("m1[0]"))
     block_0.add_edge(tasklet_b0_on_m1, "p_qm_w", qm_b0_w, None, dace.Memlet("qm[0]"))
@@ -444,38 +434,16 @@ def test_check_paths():
     precip_fall_b5 = block_5.add_read("precip_fall")
     qm_b5 = block_5.add_read("qm")
     q_b5_w = block_5.add_write("q")
-    tasklet_b5_on_q = block_5.add_tasklet(
-        "tasklet_b5_on_q",
-        {"p_precip_fall", "p_qm"},
-        {"p_q_w"},
-        "p_q_w = p_dp1 + 1",
-    )
-    block_5.add_edge(
-        precip_fall_b5,
-        None,
-        tasklet_b5_on_q,
-        "p_precip_fall",
-        dace.Memlet("precip_fall[0]"),
-    )
+    tasklet_b5_on_q = block_5.add_tasklet("tasklet_b5_on_q", {"p_precip_fall", "p_qm"}, {"p_q_w"}, "p_q_w = p_dp1 + 1")
+    block_5.add_edge(precip_fall_b5, None, tasklet_b5_on_q, "p_precip_fall", dace.Memlet("precip_fall[0]"))
     block_5.add_edge(qm_b5, None, tasklet_b5_on_q, "p_qm", dace.Memlet("qm[0]"))
     block_5.add_edge(tasklet_b5_on_q, "p_q_w", q_b5_w, None, dace.Memlet("q[0]"))
 
     m1_b5 = block_5.add_read("m1")
     m1_b5_w = block_5.add_write("m1")
-    tasklet_b5_on_m1 = block_5.add_tasklet(
-        "tasklet_b5_on_m1",
-        {"p_m1", "p_precip_fall"},
-        {"p_m1_w"},
-        "m1_w = p_m1 + 1",
-    )
+    tasklet_b5_on_m1 = block_5.add_tasklet("tasklet_b5_on_m1", {"p_m1", "p_precip_fall"}, {"p_m1_w"}, "m1_w = p_m1 + 1")
     block_5.add_edge(m1_b5, None, tasklet_b5_on_m1, "p_m1", dace.Memlet("m1[0]"))
-    block_5.add_edge(
-        precip_fall_b5,
-        None,
-        tasklet_b5_on_m1,
-        "p_precip_fall",
-        dace.Memlet("precip_fall[0]"),
-    )
+    block_5.add_edge(precip_fall_b5, None, tasklet_b5_on_m1, "p_precip_fall", dace.Memlet("precip_fall[0]"))
     block_5.add_edge(tasklet_b5_on_m1, "p_m1_w", m1_b5_w, None, dace.Memlet("m1[0]"))
 
     do_fuse = StateFusion()._check_paths(

@@ -23,8 +23,5 @@ def pytest_generate_tests(metafunc):
     if "use_cpp_dispatcher" in metafunc.fixturenames:
         metafunc.parametrize(
             "use_cpp_dispatcher",
-            [
-                pytest.param(True, id="use_cpp_dispatcher"),
-                pytest.param(False, id="no_use_cpp_dispatcher"),
-            ],
+            [pytest.param(True, id="use_cpp_dispatcher"), pytest.param(False, id="no_use_cpp_dispatcher")],
         )

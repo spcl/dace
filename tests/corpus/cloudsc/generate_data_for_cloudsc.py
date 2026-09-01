@@ -206,10 +206,7 @@ CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
 }
 
 #: ``[min, max]`` integer range of each integer input array in the reference.
-CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
-    'ktype': (0, 3),
-    'ldcum': (0, 1),
-}
+CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {'ktype': (0, 3), 'ldcum': (0, 1)}
 
 #: Compiler flags for a deterministic IEEE build: ``-O0`` with no fast-math and
 #: no FP contraction (FMA), so the compiler performs no floating-point
