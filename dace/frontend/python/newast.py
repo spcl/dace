@@ -1668,8 +1668,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     if root not in nested_inputs:
                         nested_inputs[root] = (e.dst, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
 
-            # Remove unused non-transients from nested SDFG
+            # Remove unused non-transients from nested SDFG. A container an access node still
+            # refers to is not unused, whatever it is called: the frontend mints a fresh name per
+            # access for a global it reads more than once, and those names are not containers of
+            # the enclosing scope, so they never appear among the inputs or outputs above.
             used = set(nested_inputs.keys()).union(set(nested_outputs.keys()))
+            used |= {n.data.split('.')[0] for s in nested_sdfg.all_states() for n in s.data_nodes()}
             to_remove = [aname for aname, arr in nested_sdfg.arrays.items() if not arr.transient and aname not in used]
             for aname in to_remove:
                 nested_sdfg.remove_data(aname, validate=False)
@@ -4157,11 +4161,20 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
 
                 # First, we do an inverse lookup on the already added closure arrays for `arr`.
+                # The closure's own mapping is consulted too: it is shared across the visitors
+                # parsing a program, whereas ``nested_closure_arrays`` is per visitor, so without
+                # it the same array is given a second name here while the access nodes elsewhere
+                # still carry the first one.
                 is_new_arr = True
                 for k, v in self.nested_closure_arrays.items():
                     if arr is v[0]:
                         is_new_arr = False
                         break
+                if is_new_arr and self.closure is not None and id(arr) in self.closure.array_mapping:
+                    known = self.closure.array_mapping[id(arr)]
+                    if known in self.sdfg.arrays:
+                        is_new_arr = False
+                        aname = known
                 # `arr` has not been added yet: add it with a (possibly) new name.
                 if is_new_arr:
                     outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
