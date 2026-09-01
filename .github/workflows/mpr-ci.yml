@@ -62,7 +62,7 @@ jobs:
         # Deliberately minimal: libyaml + cmake only. NO BLAS, NO LAPACK -- MPR output must not
         # reference them, and installing them would let a leaked library call link and pass.
         apt-packages: libyaml-dev cmake
-        extras: testing
+        groups: testing
 
     - name: MPR lowering, dialect and emission suites (${{ matrix.language }})
       run: |
@@ -95,7 +95,7 @@ jobs:
       with:
         python-version: '3.14'
         apt-packages: libyaml-dev cmake
-        extras: testing
+        groups: testing
 
     - name: CloudSC MPR equivalence
       run: |

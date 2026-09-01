@@ -12,6 +12,8 @@ env:
   # Unpinned, string-keyed set iteration order changes per run, and with it transformation order
   # and codegen -- a red that reproduces on one runner and not the next is undebuggable.
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -135,7 +137,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -204,7 +206,7 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev
           g++-aarch64-linux-gnu
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -251,7 +253,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -295,7 +297,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Install Intel oneAPI MKL
       # The Syrk / Symm nodes are parametrized over the ``MKL`` implementation, whose expansion
@@ -434,7 +436,7 @@ jobs:
       with:
         python-version: '3.14'
         pip-packages: pytest-xdist rustworkx
-        extras: testing
+        groups: testing
 
     - name: Test with pytest (tests/graphlib, rustworkx backend)
       run: |
@@ -473,7 +475,7 @@ jobs:
       with:
         python-version: '3.14'
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest (layout)
       run: |

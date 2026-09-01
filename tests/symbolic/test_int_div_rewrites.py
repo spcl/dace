@@ -51,24 +51,15 @@ def test_inexact_division_is_left_symbolic(fn):
 
 @pytest.mark.parametrize('rounding', [sympy.floor, sympy.ceiling])
 def test_rounding_of_a_non_integer_expression_is_kept(rounding):
-    """A rounding call with nothing to divide by is not an integer division.
-
-    ``floor(e / b)`` used to match with ``b = 1`` for any non-atomic argument, so the rounding was
-    rewritten to ``int_floor(arg, 1)`` and printed as a division by one -- silently dropped
-    (spcl/dace#2524).
-    """
-    x = pystr_to_symbolic('x')
+    """A rounding call with nothing to divide by must survive the rewrite."""
+    x = sympy.Symbol('x')
     expr = rounding(sympy.sin(x))
     assert sympy_intdiv_fix(expr) == expr
 
 
 @pytest.mark.parametrize('rounding,call', [(sympy.floor, 'floor'), (sympy.ceiling, 'ceil')])
 def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
-    """The kept rounding must reach C++ as the matching math-library call.
-
-    ``ceil`` rather than the sympy name: the runtime's one-argument ``ceiling`` overload returns
-    ``DBL_MAX`` for a floating argument, so the bare name would emit a poison value.
-    """
+    """The kept rounding must reach C++ as the matching math-library call."""
     x = pystr_to_symbolic('x')
     assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
 

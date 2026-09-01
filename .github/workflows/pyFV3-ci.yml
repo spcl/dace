@@ -10,6 +10,8 @@ on:
 
 env:
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 defaults:
     run:
@@ -98,13 +100,6 @@ jobs:
         echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
         uv pip install ./pyFV3[ndsl,test]
         uv pip install ./dace
-
-    - name: Print versions
-      run: |
-        gcc --version
-        python --version
-        uv --version
-        uv pip list
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)

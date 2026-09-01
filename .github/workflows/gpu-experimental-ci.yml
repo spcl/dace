@@ -29,7 +29,8 @@ jobs:
     - uses: ./.github/actions/setup-dace-venv
       with:
         pip-packages: flake8 pytest-xdist coverage mpi4py cupy cutensor-cu12
-        extras: testing,ml
+        groups: testing
+        extras: ml
         codecov: 'true'
 
     - name: Test dependencies

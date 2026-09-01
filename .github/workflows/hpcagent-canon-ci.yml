@@ -39,7 +39,7 @@ jobs:
         apt-packages: >-
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
-        extras: testing
+        groups: testing
 
     - name: Check out HPCAgent-Bench
       uses: actions/checkout@v7
