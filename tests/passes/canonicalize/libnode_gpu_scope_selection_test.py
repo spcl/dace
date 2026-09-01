@@ -83,11 +83,26 @@ def test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion():
     assert node.implementation == 'pure', node.implementation
 
 
+def vendor_blas() -> str:
+    """The GPU BLAS this host's backend selects -- ``cuBLAS`` on CUDA, ``rocBLAS`` on HIP.
+
+    Asked rather than assumed: ``canonicalize_fast_library_priority`` takes its GPU row straight
+    from ``auto_optimize``, which is keyed on ``get_gpu_backend()``. Hardcoding one vendor makes the
+    test assert the machine it was written on -- it failed here reading ``rocBLAS`` on an AMD node,
+    which is the pipeline doing exactly the right thing.
+    """
+    from dace.codegen.common import get_gpu_backend
+    try:
+        return 'rocBLAS' if get_gpu_backend() == 'hip' else 'cuBLAS'
+    except Exception:  # noqa: BLE001 -- no backend configured; the CUDA row is the historical default
+        return 'cuBLAS'
+
+
 def test_a_loop_does_not_make_its_body_device_code():
     """A loop re-enters the node, which is why it is ``Sequential`` -- it does not put it on a device."""
     sdfg, node = dot_in_a_host_loop()
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
-    assert node.implementation == 'cuBLAS', node.implementation
+    assert node.implementation == vendor_blas(), node.implementation
 
 
 def merge_in_a_host_loop():
