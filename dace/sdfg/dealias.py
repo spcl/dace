@@ -386,9 +386,13 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 unsqueezed_dims = unsqueeze_memlet(Memlet.from_array(inner_name, view_desc),
                                                    parent_memlet,
                                                    return_dims=True)
-                # Every dimension that was squeezed should be removed from the view shape
+                # Every dimension that was squeezed should be removed from the view shape. A
+                # dimension the parent memlet walks with a step covers that many elements of the
+                # parent per element of the view, so the step multiplies the stride -- without it
+                # a view of ``A[..., 1:N-1:2]`` reads consecutive elements instead of every other.
+                steps = [r[2] for r in parent_memlet.subset.ranges]
                 view_desc.strides = [
-                    parent_desc.strides[i] for i in range(len(parent_desc.shape)) if i not in unsqueezed_dims
+                    parent_desc.strides[i] * steps[i] for i in range(len(parent_desc.shape)) if i not in unsqueezed_dims
                 ]
             except (ValueError, NotImplementedError):
                 # If unsqueezing fails, we keep the original view descriptor
