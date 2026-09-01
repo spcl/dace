@@ -37,10 +37,14 @@ def test_invalid_empty_memlet():
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
     state = sdfg.add_state(is_start_block=True)
-    t, me, mx = state.add_mapped_tasklet('test_map',
-                                         dict(i='0:20'), {'inp': dace.Memlet('A[i]')},
-                                         'out = inp + 1', {'out': dace.Memlet('B[i]')},
-                                         external_edges=True)
+    t, me, mx = state.add_mapped_tasklet(
+        'test_map',
+        dict(i='0:20'),
+        {'inp': dace.Memlet('A[i]')},
+        'out = inp + 1',
+        {'out': dace.Memlet('B[i]')},
+        external_edges=True,
+    )
     unused = state.add_access('A')
     state.add_nedge(me, unused, dace.Memlet())
     e = state.add_nedge(unused, t, dace.Memlet())

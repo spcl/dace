@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Simple program showing the `dace.map` syntax and profiling. """
+"""Simple program showing the `dace.map` syntax and profiling."""
 
 import argparse
 import dace
 import numpy as np
+
 try:
     import scipy.sparse as sp
 except (ImportError, ModuleNotFoundError):
@@ -22,7 +23,7 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
     b = np.zeros([H], dtype=np.float32)
 
     for i in dace.map[0:H]:
-        for j in dace.map[A_row[i]:A_row[i + 1]]:
+        for j in dace.map[A_row[i] : A_row[i + 1]]:
             b[i] += A_val[j] * x[A_col[j]]
 
     return b
@@ -52,16 +53,15 @@ if __name__ == "__main__":
 
     # Randomize sparse matrix structure
     A_row[0] = dace.uint32(0)
-    A_row[1:args.H] = dace.uint32(nnz_per_row)
+    A_row[1 : args.H] = dace.uint32(nnz_per_row)
     A_row[-1] = dace.uint32(nnz_last_row)
     A_row = np.cumsum(A_row, dtype=np.uint32)
 
     # Fill column data
     for i in range(args.H - 1):
-        A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
-            np.sort(np.random.choice(args.W, nnz_per_row, replace=False))
+        A_col[nnz_per_row * i : nnz_per_row * (i + 1)] = np.sort(np.random.choice(args.W, nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (args.H - 1):] = np.sort(np.random.choice(args.W, nnz_last_row, replace=False))
+    A_col[nnz_per_row * (args.H - 1) :] = np.sort(np.random.choice(args.W, nnz_last_row, replace=False))
 
     #########################
 

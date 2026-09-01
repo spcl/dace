@@ -19,7 +19,6 @@ class ExtensibleEnumeration(attr_enum.ExtensibleAttributeEnum):
 
 
 class RegistryTests(unittest.TestCase):
-
     def test_class_registry(self):
         ExtensibleClass.register(Extension)
         self.assertTrue(Extension in ExtensibleClass.extensions())

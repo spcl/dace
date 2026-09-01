@@ -31,15 +31,14 @@ def count_writes(sdfg: dace.SDFG):
 
 
 def _make_nested_sdfg_simple() -> dace.SDFG:
-    """Make a simple nested SDFG.
-    """
+    """Make a simple nested SDFG."""
     sdfg = dace.SDFG("nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
         sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -56,15 +55,14 @@ def _make_nested_sdfg_simple() -> dace.SDFG:
 
 
 def _make_nested_sdfg_adding() -> dace.SDFG:
-    """Make an SDFG that adds the inputs together.
-    """
+    """Make an SDFG that adds the inputs together."""
     sdfg = dace.SDFG("adding_nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "ABC":
         sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -84,15 +82,14 @@ def _make_nested_sdfg_adding() -> dace.SDFG:
 
 
 def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates a nested SDFG that is already isolated.
-    """
+    """Creates a nested SDFG that is already isolated."""
     outer_sdfg = dace.SDFG("already_isolate_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "AB":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -112,15 +109,14 @@ def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dac
 
 
 def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that has a non empty pre set.
-    """
+    """Generates an SDFG that has a non empty pre set."""
     outer_sdfg = dace.SDFG("non_empty_pre_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -160,7 +156,7 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
     for name in "ABCT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -196,15 +192,14 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
 
 
 def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that will have an non empty post state and an empty pre state.
-    """
+    """Generates an SDFG that will have an non empty post state and an empty pre state."""
     outer_sdfg = dace.SDFG("non_empty_post_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -243,7 +238,7 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
     for name in "ABC":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -275,8 +270,7 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
 
 
 def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates an SDFG that has a path around the nested SDFG.
-    """
+    """Creates an SDFG that has a path around the nested SDFG."""
     outer_sdfg = dace.SDFG("multi_path_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
@@ -286,7 +280,7 @@ def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     for name in aname_small + aname_big:
         outer_sdfg.add_array(
             name=name,
-            shape=((10, ) if name in aname_small else (20, )),
+            shape=((10,) if name in aname_small else (20,)),
             dtype=dace.float64,
             transient=(len(name) != 1),
         )

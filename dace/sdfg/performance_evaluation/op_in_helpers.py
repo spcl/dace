@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
+"""Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
-Further, provides a curve fitting method and plotting function. """
+Further, provides a curve fitting method and plotting function."""
+
 import warnings
 from dace.data import Array
 import sympy as sp
@@ -12,7 +13,7 @@ from dace.symbolic import symbol, pystr_to_symbolic
 
 
 class CacheLineTracker:
-    """ A CacheLineTracker maps data container accesses to the corresponding accessed cache line. """
+    """A CacheLineTracker maps data container accesses to the corresponding accessed cache line."""
 
     def __init__(self, L) -> None:
         self.array_info = {}
@@ -34,23 +35,23 @@ class CacheLineTracker:
         for dim in range(len(access)):
             i = access[dim]
             one_d_index += (i + pystr_to_symbolic(arr.offset[dim]).subs(mapping)) * pystr_to_symbolic(
-                arr.strides[dim]).subs(mapping)
+                arr.strides[dim]
+            ).subs(mapping)
 
         # divide by L to get the cache line id
         return self.start_lines[name] + symbolic.int_floor(one_d_index * arr.dtype.bytes, self.L)
 
 
 class Node:
-
     def __init__(self, val: int, n=None) -> None:
         self.v = val
         self.next = n
 
 
 class AccessStack:
-    """ A stack of cache line ids. For each memory access, we search the corresponding cache line id
+    """A stack of cache line ids. For each memory access, we search the corresponding cache line id
     in the stack, report its distance and move it to the top of the stack. If the id was not found,
-    we report a distance of -1. """
+    we report a distance of -1."""
 
     def __init__(self, C) -> None:
         self.top = None
@@ -115,7 +116,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     a = np.linspace(1, max(x) + 5, max(x) * 4)
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    ax[0].scatter(x, cache_misses, label=f'C={C*L}, L={L}')
+    ax[0].scatter(x, cache_misses, label=f'C={C * L}, L={L}')
     b = []
     for curr in a:
         b.append(sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)))
@@ -131,7 +132,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
             c.append(work_map[0].subs(symbol_name, curr) / (cache_misses[i] * L))
     c = np.array(c).astype(np.float64)
 
-    ax[1].scatter(x, c, label=f'C={C*L}, L={L}')
+    ax[1].scatter(x, c, label=f'C={C * L}, L={L}')
     b = []
     for curr in a:
         b.append(sp.N(pystr_to_symbolic(op_in_map).subs(symbol_name, curr)))
@@ -169,7 +170,7 @@ def r_squared(pred, y):
 
 
 def find_best_model(x, y, I, J, symbol_name):
-    """ Find the best model out of all combinations of (i, j) from I and J via leave-one-out cross validation. """
+    """Find the best model out of all combinations of (i, j) from I and J via leave-one-out cross validation."""
     min_error = None
     for i in I:
         for j in J:
@@ -221,8 +222,9 @@ def find_best_model(x, y, I, J, symbol_name):
     if best_i_j[0] == 0 and best_i_j[1] == 0:
         sympy_f = final_p[0]
     else:
-        sympy_f = sp.simplify(final_p[0] * symbol(symbol_name)**best_i_j[0] *
-                              sp.log(symbol(symbol_name), 2)**best_i_j[1] + final_p[1])
+        sympy_f = sp.simplify(
+            final_p[0] * symbol(symbol_name) ** best_i_j[0] * sp.log(symbol(symbol_name), 2) ** best_i_j[1] + final_p[1]
+        )
     # compute r^2
     r_s = r_squared(final_f(x), y)
     return final_f, sympy_f, r_s

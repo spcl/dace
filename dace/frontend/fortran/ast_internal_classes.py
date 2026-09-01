@@ -7,17 +7,17 @@ from typing import List, Optional, Union
 
 
 class FNode(object):
-
     def __init__(self, *args, **kwargs):  # real signature unknown
         self.integrity_exceptions = []
         self.read_vars = []
         self.written_vars = []
-        self.parent: Optional[Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node,
-                                    Module_Node]] = None
+        self.parent: Optional[
+            Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node, Module_Node]
+        ] = None
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    _attributes = ("line_number", )
+    _attributes = ("line_number",)
     _fields = ()
     integrity_exceptions: List
     read_vars: List
@@ -62,16 +62,16 @@ class UnOp_Node(FNode):
         'postfix',
         'type',
     )
-    _fields = ('lval', )
+    _fields = ('lval',)
 
 
 class Main_Program_Node(FNode):
-    _attributes = ("name", )
+    _attributes = ("name",)
     _fields = ("execution_part", "specification_part")
 
 
 class Module_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = (
         'specification_part',
         'subroutine_definitions',
@@ -98,22 +98,22 @@ class Subroutine_Subprogram_Node(FNode):
 
 
 class Module_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ()
 
 
 class Program_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ()
 
 
 class Subroutine_Stmt_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('args', )
+    _attributes = ('name',)
+    _fields = ('args',)
 
 
 class Function_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ('args', 'return')
 
 
@@ -137,11 +137,11 @@ class Specification_Part_Node(FNode):
 
 
 class Execution_Part_Node(FNode):
-    _fields = ('execution', )
+    _fields = ('execution',)
 
 
 class Statement_Node(FNode):
-    _attributes = ('col_offset', )
+    _attributes = ('col_offset',)
     _fields = ()
 
 
@@ -150,7 +150,7 @@ class Array_Subscript_Node(FNode):
         'name',
         'type',
     )
-    _fields = ('indices', )
+    _fields = ('indices',)
 
 
 class Type_Decl_Node(Statement_Node):
@@ -163,22 +163,22 @@ class Type_Decl_Node(Statement_Node):
 
 class Allocate_Shape_Spec_Node(FNode):
     _attributes = ()
-    _fields = ('sizes', )
+    _fields = ('sizes',)
 
 
 class Allocate_Shape_Spec_List(FNode):
     _attributes = ()
-    _fields = ('shape_list', )
+    _fields = ('shape_list',)
 
 
 class Allocation_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('shape', )
+    _attributes = ('name',)
+    _fields = ('shape',)
 
 
 class Allocate_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('allocation_list', )
+    _fields = ('allocation_list',)
 
 
 class Symbol_Decl_Node(Statement_Node):
@@ -202,8 +202,7 @@ class Symbol_Array_Decl_Node(Statement_Node):
     )
     _fields = (
         'sizes',
-        'offsets'
-        'typeref',
+        'offsetstyperef',
         'init',
     )
 
@@ -224,16 +223,16 @@ class Var_Decl_Node(Statement_Node):
 
 
 class Arg_List_Node(FNode):
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Component_Spec_List_Node(FNode):
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Decl_Stmt_Node(Statement_Node):
     _attributes = ()
-    _fields = ('vardecl', )
+    _fields = ('vardecl',)
 
 
 class VarType:
@@ -245,7 +244,7 @@ class Void(VarType):
 
 
 class Literal(FNode):
-    _attributes = ('value', )
+    _attributes = ('value',)
     _fields = ()
 
 
@@ -284,16 +283,16 @@ class Call_Expr_Node(FNode):
 
 class Array_Constructor_Node(FNode):
     _attributes = ()
-    _fields = ('value_list', )
+    _fields = ('value_list',)
 
 
 class Ac_Value_List_Node(FNode):
     _attributes = ()
-    _fields = ('value_list', )
+    _fields = ('value_list',)
 
 
 class Section_Subscript_List_Node(FNode):
-    _fields = ('list')
+    _fields = 'list'
 
 
 class For_Stmt_Node(FNode):
@@ -332,7 +331,7 @@ class Else_Separator_Node(FNode):
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
-    _fields = ('expr', )
+    _fields = ('expr',)
 
 
 class Nonlabel_Do_Stmt_Node(FNode):
@@ -355,32 +354,32 @@ class Loop_Control_Node(FNode):
 
 class Else_If_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('cond', )
+    _fields = ('cond',)
 
 
 class Only_List_Node(FNode):
     _attributes = ()
-    _fields = ('names', )
+    _fields = ('names',)
 
 
 class ParDecl_Node(FNode):
-    _attributes = ('type', )
-    _fields = ('range', )
+    _attributes = ('type',)
+    _fields = ('range',)
 
 
 class Structure_Constructor_Node(FNode):
-    _attributes = ('type', )
+    _attributes = ('type',)
     _fields = ('name', 'args')
 
 
 class Use_Stmt_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('list', )
+    _attributes = ('name',)
+    _fields = ('list',)
 
 
 class Write_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Break_Node(FNode):

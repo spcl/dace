@@ -62,24 +62,27 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
     sdfg.add_array("T", [9], dtype=dace.float32, transient=True)
     sdfg.add_array("O", [3, 3], dtype=dace.float32, transient=False)
 
-    state.add_mapped_tasklet("add_one",
-                             dict(i="0:9"),
-                             dict(inp=dace.Memlet("I[i]")),
-                             "out = inp + 1",
-                             dict(out=dace.Memlet("T[i]")),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "add_one",
+        dict(i="0:9"),
+        dict(inp=dace.Memlet("I[i]")),
+        "out = inp + 1",
+        dict(out=dace.Memlet("T[i]")),
+        external_edges=True,
+    )
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
-                        sdfg.make_array_memlet(copy_subset))
+    copy_state.add_edge(
+        copy_state.add_read("T"), None, copy_state.add_write("O"), None, sdfg.make_array_memlet(copy_subset)
+    )
 
     sdfg.simplify()
     if nonstrict:
         sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
+        assert len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2
 
-    I = np.ones((9, )).astype(np.float32)
+    I = np.ones((9,)).astype(np.float32)
     O = np.zeros((3, 3)).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O.flatten(), I + 1)
@@ -94,25 +97,28 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
     sdfg.add_array("T", [3, 3], dtype=dace.float32, transient=True)
     sdfg.add_array("O", [9], dtype=dace.float32, transient=False)
 
-    state.add_mapped_tasklet("add_one",
-                             dict(i="0:3", j="0:3"),
-                             dict(inp=dace.Memlet("I[i, j]")),
-                             "out = inp + 1",
-                             dict(out=dace.Memlet("T[i, j]")),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "add_one",
+        dict(i="0:3", j="0:3"),
+        dict(inp=dace.Memlet("I[i, j]")),
+        "out = inp + 1",
+        dict(out=dace.Memlet("T[i, j]")),
+        external_edges=True,
+    )
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
-                        sdfg.make_array_memlet(copy_subset))
+    copy_state.add_edge(
+        copy_state.add_read("T"), None, copy_state.add_write("O"), None, sdfg.make_array_memlet(copy_subset)
+    )
 
     sdfg.simplify()
     if nonstrict:
         sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
+        assert len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2
 
     I = np.ones((3, 3)).astype(np.float32)
-    O = np.zeros((9, )).astype(np.float32)
+    O = np.zeros((9,)).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O, (I + 1).flatten())
 
@@ -126,17 +132,20 @@ def test_unsqueeze_view_removal():
 
     tnode = state.add_access("T")
     state.add_edge(tnode, None, state.add_write("O"), None, sdfg.make_array_memlet("O"))
-    state.add_mapped_tasklet("set_one",
-                             dict(i="0:9"), {},
-                             "out = 1",
-                             dict(out=dace.Memlet("T[i]")),
-                             external_edges=True,
-                             output_nodes=dict(T=tnode))
+    state.add_mapped_tasklet(
+        "set_one",
+        dict(i="0:9"),
+        {},
+        "out = 1",
+        dict(out=dace.Memlet("T[i]")),
+        external_edges=True,
+        output_nodes=dict(T=tnode),
+    )
 
     sdfg.apply_transformations_repeated(UnsqueezeViewRemove)
 
     # Ensure view is removed
-    assert (len([n for n in sdfg.node(0).data_nodes() if isinstance(n.desc(sdfg), data.View)]) == 0)
+    assert len([n for n in sdfg.node(0).data_nodes() if isinstance(n.desc(sdfg), data.View)]) == 0
 
     O = np.zeros((1, 9, 1)).astype(np.float32)
     sdfg(O=O)

@@ -9,7 +9,7 @@ from dace.sdfg.nodes import Tasklet
 
 
 def one_variable_simple_test(const_value: int = 0):
-    """ Test with one variable which has formula and const branch. Uses the given const value """
+    """Test with one variable which has formula and const branch. Uses the given const value"""
     sdfg = dace.SDFG('one_variable_simple_test')
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
     guard = sdfg.add_state('guard', is_start_block=True)
@@ -20,19 +20,16 @@ def one_variable_simple_test(const_value: int = 0):
 
     # Add tasklet inside states
     formula_tasklet = formula_state.add_tasklet('formula_assign', {'b'}, {'a'}, 'a = 2*b')
-    formula_state.add_memlet_path(formula_state.add_read('B'),
-                                  formula_tasklet,
-                                  memlet=Memlet(data='B', subset='0'),
-                                  dst_conn='b')
-    formula_state.add_memlet_path(formula_tasklet,
-                                  formula_state.add_write('A'),
-                                  memlet=Memlet(data='A', subset='0'),
-                                  src_conn='a')
+    formula_state.add_memlet_path(
+        formula_state.add_read('B'), formula_tasklet, memlet=Memlet(data='B', subset='0'), dst_conn='b'
+    )
+    formula_state.add_memlet_path(
+        formula_tasklet, formula_state.add_write('A'), memlet=Memlet(data='A', subset='0'), src_conn='a'
+    )
     const_tasklet = const_state.add_tasklet('const_assign', {}, {'a'}, f"a = {const_value}")
-    const_state.add_memlet_path(const_tasklet,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
+    const_state.add_memlet_path(
+        const_tasklet, const_state.add_write('A'), memlet=Memlet(data='A', subset='0'), src_conn='a'
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='B[0] < 0.5'))
@@ -57,7 +54,7 @@ def one_variable_simple_test(const_value: int = 0):
 
 
 def multiple_variable_test():
-    """ Test with multiple variables where not all appear in the const branch """
+    """Test with multiple variables where not all appear in the const branch"""
     sdfg = dace.SDFG('one_variable_simple_test')
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
     guard = sdfg.add_state('guard', is_start_block=True)
@@ -83,15 +80,13 @@ def multiple_variable_test():
     formula_state.add_memlet_path(formula_tasklet_c, C, memlet=Memlet(data='C', subset='0'), src_conn='c')
 
     const_tasklet_a = const_state.add_tasklet('const_assign', {}, {'a'}, 'a = 0')
-    const_state.add_memlet_path(const_tasklet_a,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
+    const_state.add_memlet_path(
+        const_tasklet_a, const_state.add_write('A'), memlet=Memlet(data='A', subset='0'), src_conn='a'
+    )
     const_tasklet_b = const_state.add_tasklet('const_assign', {}, {'b'}, 'b = 0')
-    const_state.add_memlet_path(const_tasklet_b,
-                                const_state.add_write('B'),
-                                memlet=Memlet(data='B', subset='0'),
-                                src_conn='b')
+    const_state.add_memlet_path(
+        const_tasklet_b, const_state.add_write('B'), memlet=Memlet(data='B', subset='0'), src_conn='b'
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='D[0] < 0.5'))
@@ -119,7 +114,7 @@ def multiple_variable_test():
 
 
 def multiple_variable_not_all_const_test():
-    """ Test with multiple variables where not all get const-assigned in const branch """
+    """Test with multiple variables where not all get const-assigned in const branch"""
     sdfg = dace.SDFG('one_variable_simple_test')
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
     guard = sdfg.add_state('guard', is_start_block=True)
@@ -140,19 +135,16 @@ def multiple_variable_not_all_const_test():
     formula_state.add_memlet_path(formula_tasklet_b, B, memlet=Memlet(data='B', subset='0'), src_conn='b')
 
     const_tasklet_a = const_state.add_tasklet('const_assign', {}, {'a'}, 'a = 0')
-    const_state.add_memlet_path(const_tasklet_a,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
+    const_state.add_memlet_path(
+        const_tasklet_a, const_state.add_write('A'), memlet=Memlet(data='A', subset='0'), src_conn='a'
+    )
     const_tasklet_b = const_state.add_tasklet('const_assign', {'c'}, {'b'}, 'b = 1.5 * c')
-    const_state.add_memlet_path(const_state.add_read('C'),
-                                const_tasklet_b,
-                                memlet=Memlet(data='C', subset='0'),
-                                dst_conn='c')
-    const_state.add_memlet_path(const_tasklet_b,
-                                const_state.add_write('B'),
-                                memlet=Memlet(data='B', subset='0'),
-                                src_conn='b')
+    const_state.add_memlet_path(
+        const_state.add_read('C'), const_tasklet_b, memlet=Memlet(data='C', subset='0'), dst_conn='c'
+    )
+    const_state.add_memlet_path(
+        const_tasklet_b, const_state.add_write('B'), memlet=Memlet(data='B', subset='0'), src_conn='b'
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='C[0] < 0.5'))

@@ -2,6 +2,7 @@
 """
 Tests the extensible attributed enum class.
 """
+
 from dataclasses import dataclass
 from enum import auto, Enum
 
@@ -189,7 +190,7 @@ def test_serialization_nestedclass():
             'range_km': 5000,
             'capacity': 180,
             'is_plane': 'FALSE',
-        }
+        },
     }
     plane_restored = serialize.from_json(plane_json)
     assert plane_restored == plane

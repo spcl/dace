@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Preprocessing: This module is responsible for preprocessing a graph to detect some SVE-specific constructs.
-    Currently, it is only used for fused operations.
+Preprocessing: This module is responsible for preprocessing a graph to detect some SVE-specific constructs.
+Currently, it is only used for fused operations.
 """
 
 import ast
@@ -11,7 +11,6 @@ import dace.dtypes
 
 
 class SVEBinOpFuser(ast.NodeTransformer):
-
     def __init__(self, defined_symbols):
         self.defined_symbols = defined_symbols
 

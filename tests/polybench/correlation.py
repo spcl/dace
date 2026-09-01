@@ -6,7 +6,7 @@ import polybench
 M = dace.symbol('M')
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -65,23 +65,23 @@ def correlation(data: datatype[N, M], corr: datatype[M, M], mean: datatype[M], s
         corrout = 1.0
 
     @dace.mapscope
-    def comp_corr_row(i: _[0:M - 1]):
+    def comp_corr_row(i: _[0 : M - 1]):
 
         @dace.mapscope
-        def comp_corr_col(j: _[i + 1:M]):
+        def comp_corr_col(j: _[i + 1 : M]):
 
             @dace.map
             def comp_cov_k(k: _[0:N]):
                 indi << data[k, i]
                 indj << data[k, j]
                 cov_ij >> corr(1, lambda x, y: x + y, 0)[i, j]
-                cov_ij = (indi * indj)
+                cov_ij = indi * indj
 
     @dace.mapscope
-    def symmetrize(i: _[0:M - 1]):
+    def symmetrize(i: _[0 : M - 1]):
 
         @dace.map
-        def symmetrize_col(j: _[i + 1:M]):
+        def symmetrize_col(j: _[i + 1 : M]):
             corrin << corr[i, j]
             corrout >> corr[j, i]
             corrout = corrin

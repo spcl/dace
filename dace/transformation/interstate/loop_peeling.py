@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop peeling transformation """
+"""Loop peeling transformation"""
 
 import sympy as sp
 from typing import List, Optional

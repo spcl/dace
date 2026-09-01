@@ -32,7 +32,7 @@ def test_edge_split_loop_generation():
     def looptest():
         A = dace.ndarray([10], dtype=dace.int32)
         i = 0
-        while (i < 10):
+        while i < 10:
             A[i] = i
             i += 2
         return A
@@ -44,7 +44,7 @@ def test_edge_split_loop_generation():
 
     A = looptest()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert (np.array_equal(A[::2], A_ref[::2]))
+    assert np.array_equal(A[::2], A_ref[::2])
 
 
 @pytest.mark.parametrize('mode', ('FalseTrue', 'TrueFalse', 'SwitchCase'))
@@ -61,7 +61,7 @@ def test_edge_sympy_function(mode):
     state_br2_1 = sdfg.add_state_after(state_br2)
     state_merge = sdfg.add_state()
 
-    sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())  #assignments=dict(cnd=1)))
+    sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())  # assignments=dict(cnd=1)))
     if mode == 'FalseTrue':
         sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Ne(cnd, 0)', dict(N=2)))
         sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Eq(cnd, 0)', dict(N=3)))
@@ -86,8 +86,13 @@ def test_single_outedge_branch():
     sdfg.add_array('result', [1], dace.float64)
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
-    state2.add_edge(state2.add_tasklet('save', {}, {'out'}, 'out = 2'), 'out', state2.add_write('result'), None,
-                    dace.Memlet('result'))
+    state2.add_edge(
+        state2.add_tasklet('save', {}, {'out'}, 'out = 2'),
+        'out',
+        state2.add_write('result'),
+        None,
+        dace.Memlet('result'),
+    )
 
     sdfg.add_edge(state1, state2, dace.InterstateEdge('1 > 0'))
 

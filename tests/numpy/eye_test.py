@@ -7,7 +7,6 @@ N = dace.symbol('N')
 
 
 class MyTestCase(unittest.TestCase):
-
     def test_simple(self):
 
         @dace.program

@@ -22,7 +22,6 @@ DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
 class _SymbolDTypeContext(threading.local):
-
     def __init__(self):
 
         # The lowest level in the stack is reserved for "no stack active".
@@ -34,10 +33,9 @@ class _SymbolDTypeContext(threading.local):
 
         :param authority: Mapping from symbol name to its authoritative dtype.
         """
-        new_stack_level = types.MappingProxyType({
-            n: dt
-            for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
-        })
+        new_stack_level = types.MappingProxyType(
+            {n: dt for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)}
+        )
         self.ctx_stack.append(new_stack_level)
         return self.ctx_stack[-1]
 
@@ -99,19 +97,23 @@ _SERIALIZED_UNDEFINED_SYMBOL = '__DACE_SERIALIZED_UNDEFINED_SYMBOL'
 _SERIALIZED_SYMBOL = re.compile(r'\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)')
 _SERIALIZED_TYPED_CONSTANT_VALUE = r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+'
 _SERIALIZED_TYPED_CONSTANT_SUFFIX = r'|'.join(
-    sorted((re.escape(suffix) for suffix in dtypes.LITERAL_SUFFIX_TO_TYPECLASS), key=len, reverse=True))
+    sorted((re.escape(suffix) for suffix in dtypes.LITERAL_SUFFIX_TO_TYPECLASS), key=len, reverse=True)
+)
 _SERIALIZED_TYPED_CONSTANT = re.compile(
     rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
 )
 _SERIALIZED_COMPLEX_FLOAT = r'-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
-_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*)?'
-                                                rf'(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)(?P<csuffix>c64|c128)\b')
+_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(
+    rf'\(\s*(?:(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*)?'
+    rf'(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)(?P<csuffix>c64|c128)\b'
+)
 # Tokens in a Python expression string that require AST-based rewriting before
 # being handed to SymPy (boolean ops, comparisons, bitwise ops, attribute/subscript, etc.).
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]'
+)
 
 
 def _is_sympy_number(expr) -> bool:
@@ -139,8 +141,8 @@ else:
 
 
 class symbol(sympy.Symbol):
-    """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
-        information. """
+    """Defines a symbolic variable. Extends SymPy symbols with DaCe-related
+    information."""
 
     s_currentsymbol = 0
 
@@ -250,7 +252,7 @@ class symbol(sympy.Symbol):
 
 
 class UndefinedSymbol(symbol):
-    """ Defines an undefined symbolic expression whose value is deferred to runtime.
+    """Defines an undefined symbolic expression whose value is deferred to runtime.
 
     Similar to NaN values, any operation on an undefined symbol results in an
     undefined symbol. When used in code generation, an informative exception
@@ -417,8 +419,7 @@ class TypedConstant(sympy.AtomicExpr):
 
 
 class SymExpr(object):
-    """ Symbolic expressions with support for an overapproximation expression.
-    """
+    """Symbolic expressions with support for an overapproximation expression."""
 
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
@@ -530,7 +531,7 @@ class SymExpr(object):
             return SymExpr(self.expr**other.expr, self.approx**other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr**other, self.approx**other)
-        return self**pystr_to_symbolic(other)
+        return self ** pystr_to_symbolic(other)
 
     def __eq__(self, other):
         if isinstance(other, sympy.Expr):
@@ -659,20 +660,21 @@ def _checkEqualIvo(lst):
 
 
 def symtype(expr):
-    """ Returns the inferred symbol type from a symbolic expression. """
+    """Returns the inferred symbol type from a symbolic expression."""
     stypes = [s.dtype for s in symlist(expr).values()]
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
     elif _checkEqualIvo(stypes):
         return stypes[0]
     else:
-        raise TypeError('Cannot infer symbolic type from expression "%s"'
-                        ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
+        raise TypeError(
+            'Cannot infer symbolic type from expression "%s"'
+            ' with symbols [%s]' % (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)]))
+        )
 
 
 def symlist(values):
-    """ Finds symbol dependencies of expressions. """
+    """Finds symbol dependencies of expressions."""
     result = {}
     try:
         values = iter(values)
@@ -706,8 +708,9 @@ def symlist(values):
     return result
 
 
-def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
-                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
+def evaluate(
+    expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str], Union[int, float]]
+) -> Union[int, float, numpy.number]:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -738,8 +741,7 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
-        k: v
-        for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
+        k: v for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
     }
     # Convert strings to SymPy symbols (for SymPy 1.12)
     syms = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in syms.items()}
@@ -748,8 +750,8 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
 
 
 def issymbolic(value, constants=None):
-    """ Returns True if an expression is symbolic with respect to its contents
-        and a given dictionary of constant values. """
+    """Returns True if an expression is symbolic with respect to its contents
+    and a given dictionary of constant values."""
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
@@ -839,7 +841,7 @@ def resolve_symbol_to_constant(symb, start_sdfg):
 
 
 def symbols_in_ast(tree: ast.AST):
-    """ Walks an AST and finds all names, excluding function names. """
+    """Walks an AST and finds all names, excluding function names."""
     symbols = []
     skip = set()
     for node in ast.walk(tree):
@@ -853,15 +855,15 @@ def symbols_in_ast(tree: ast.AST):
 
 
 def symbol_name_or_value(val):
-    """ Returns the symbol name if symbol, otherwise the value as a string. """
+    """Returns the symbol name if symbol, otherwise the value as a string."""
     if isinstance(val, symbol):
         return val.name
     return str(val)
 
 
 def sympy_to_dace(exprs, symbol_map=None):
-    """ Convert all `sympy.Symbol`s to DaCe symbols, according to
-        `symbol_map`. """
+    """Convert all `sympy.Symbol`s to DaCe symbols, according to
+    `symbol_map`."""
     repl = {}
     symbol_map = symbol_map or {}
 
@@ -890,7 +892,7 @@ def sympy_to_dace(exprs, symbol_map=None):
 
 
 def is_sympy_userfunction(expr):
-    """ Returns True if the expression is a SymPy function. """
+    """Returns True if the expression is a SymPy function."""
     try:
         return issubclass(type(type(expr)), sympy.core.function.UndefinedFunction)
     except AttributeError:
@@ -898,9 +900,9 @@ def is_sympy_userfunction(expr):
 
 
 def swalk(expr, enter_functions=False):
-    """ Walk over a symbolic expression tree (similar to `ast.walk`).
-        Returns an iterator that yields the values and recurses into functions,
-        if specified.
+    """Walk over a symbolic expression tree (similar to `ast.walk`).
+    Returns an iterator that yields the values and recurses into functions,
+    if specified.
     """
     yield expr
     for arg in expr.args:
@@ -911,13 +913,28 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round'
+    'int_floor',
+    'int_ceil',
+    'abs',
+    'Abs',
+    'min',
+    'Min',
+    'max',
+    'Max',
+    'not',
+    'Not',
+    'Eq',
+    'NotEq',
+    'Ne',
+    'AND',
+    'OR',
+    'pow',
+    'round',
 }
 
 
 def contains_sympy_functions(expr):
-    """ Returns True if expression contains Sympy functions. """
+    """Returns True if expression contains Sympy functions."""
     if isinstance(expr, Subscript):
         # A subscript is a data-container access.
         return True
@@ -953,7 +970,7 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
-        if (is_sympy_userfunction(atom) and str(atom.func) not in _builtin_userfunctions):
+        if is_sympy_userfunction(atom) and str(atom.func) not in _builtin_userfunctions:
             result.add(str(atom.func))
     return result
 
@@ -992,6 +1009,7 @@ def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[
     if not isinstance(expr, sympy.Basic):
         return set()
     from dace import data  # avoid import loop
+
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
@@ -1020,8 +1038,8 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
 
 
 def sympy_numeric_fix(expr):
-    """ Fix for printing out integers as floats with ".00000000".
-        Converts the float constants in a given expression to integers. """
+    """Fix for printing out integers as floats with ".00000000".
+    Converts the float constants in a given expression to integers."""
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
@@ -1049,7 +1067,6 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1077,14 +1094,14 @@ class int_floor(sympy.Function):
 
 
 class __int_floor(int_floor):
-    """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
-        it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
-        ``int_floor(a, b)`` keeps its function spelling. """
+    """Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
+    it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
+    ``int_floor(a, b)`` keeps its function spelling."""
+
     pass
 
 
 class int_ceil(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1111,7 +1128,6 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1129,7 +1145,6 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1147,7 +1162,6 @@ class AND(sympy.Function):
 
 
 class IfExpr(sympy.Function):
-
     @classmethod
     def eval(cls, x, y, z):
         """
@@ -1159,7 +1173,7 @@ class IfExpr(sympy.Function):
         :return: Return value (literal or symbolic).
         """
         if x.is_Boolean:
-            return (y if x else z)
+            return y if x else z
 
     def _eval_is_real(self):
         if self.args[1].is_real is True and self.args[2].is_real is True:
@@ -1203,7 +1217,6 @@ class bitwise_invert(sympy.Function):
 
 
 class left_shift(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1220,7 +1233,6 @@ class left_shift(sympy.Function):
 
 
 class right_shift(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         """
@@ -1265,7 +1277,6 @@ class __right_shift(right_shift):
 
 
 class ROUND(sympy.Function):
-
     @classmethod
     def eval(cls, x):
         """
@@ -1331,8 +1342,8 @@ class Subscript(sympy.Function):
 
 
 def sympy_intdiv_fix(expr):
-    """ Fix for SymPy printing out reciprocal values when they should be
-        integral in "ceiling/floor" sympy functions.
+    """Fix for SymPy printing out reciprocal values when they should be
+    integral in "ceiling/floor" sympy functions.
     """
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
@@ -1416,8 +1427,8 @@ def sympy_intdiv_fix(expr):
 
 
 def sympy_divide_fix(expr):
-    """ Fix SymPy printouts where integer division such as "tid/2" turns
-        into ".5*tid".
+    """Fix SymPy printouts where integer division such as "tid/2" turns
+    into ".5*tid".
     """
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
@@ -1439,7 +1450,8 @@ def sympy_divide_fix(expr):
                 continue
             nexpr = nexpr.subs(
                 candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:])), int(1 / candidate.args[ri])))
+                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri])),
+            )
             processed += 1
 
     return nexpr
@@ -1568,6 +1580,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     """
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
+
     _ast_to_sympy_comparators = {
         ast.Eq: 'Eq',
         ast.Gt: 'Gt',
@@ -1598,8 +1611,9 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
         elif isinstance(node.op, ast.Invert):
-            func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()),
-                                          node)
+            func_node = ast.copy_location(
+                ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node
+            )
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
 
@@ -1614,21 +1628,26 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         node.right = self._convert_boolop_to_ifexpr(node.right)
 
         if type(node.op) in self._ast_to_sympy_functions:
-            func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()),
-                                          node)
+            func_node = ast.copy_location(
+                ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node
+            )
 
-            new_node = ast.Call(func=func_node,
-                                args=[self.visit(value) for value in (node.left, node.right)],
-                                keywords=[])
+            new_node = ast.Call(
+                func=func_node, args=[self.visit(value) for value in (node.left, node.right)], keywords=[]
+            )
             return ast.copy_location(new_node, node)
         return self.generic_visit(node)
 
     def _convert_boolop_to_ifexpr(self, node: ast.AST):
         if isinstance(node, ast.Compare):
             return ast.copy_location(
-                ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load),
-                         args=[node, ast.Constant(value=1), ast.Constant(value=0)],
-                         keywords=[]), node)
+                ast.Call(
+                    func=ast.Name(id='IfExpr', ctx=ast.Load),
+                    args=[node, ast.Constant(value=1), ast.Constant(value=0)],
+                    keywords=[],
+                ),
+                node,
+            )
         return node
 
     def visit_BoolOp(self, node):
@@ -1686,11 +1705,11 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
     def visit_IfExp(self, node):
-        new_node = ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load),
-                            args=[self.visit(node.test),
-                                  self.visit(node.body),
-                                  self.visit(node.orelse)],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id='IfExpr', ctx=ast.Load),
+            args=[self.visit(node.test), self.visit(node.body), self.visit(node.orelse)],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
 
     def visit_Subscript(self, node):
@@ -1705,22 +1724,28 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         # Range/slice expressions cannot be represented as symbolic expressions.
         for idx in indices:
             if isinstance(idx, ast.Slice):
-                raise SyntaxError(f'Range/slice expressions are not supported in symbolic expressions '
-                                  f'(got slice in subscript of "{ast.unparse(node)}")')
+                raise SyntaxError(
+                    f'Range/slice expressions are not supported in symbolic expressions '
+                    f'(got slice in subscript of "{ast.unparse(node)}")'
+                )
 
         # Recursively visit the subscripted value (handles attributes and nested
         # subscripts via visit_Attribute / visit_Subscript).
         value = self.visit(node.value)
 
-        new_node = ast.Call(func=ast.Name(id='Subscript', ctx=ast.Load),
-                            args=[value] + [self.visit(idx) for idx in indices],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id='Subscript', ctx=ast.Load),
+            args=[value] + [self.visit(idx) for idx in indices],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
 
     def visit_Attribute(self, node):
-        new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
-                            args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id='Attr', ctx=ast.Load),
+            args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
 
 
@@ -1731,9 +1756,13 @@ def _construct_function_uncached(func, *args, **kwargs):
     # cache entry built from an equal-named, different-dtype symbol would
     # silently substitute that symbol into the result. Symbol-free arguments
     # hash soundly and keep the regular (evaluating) constructors.
-    if (isinstance(func, type) and issubclass(func, sympy.core.function.Application)
-            and not (set(kwargs) - {'evaluate'}) and not kwargs.get('evaluate', False)
-            and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)):
+    if (
+        isinstance(func, type)
+        and issubclass(func, sympy.core.function.Application)
+        and not (set(kwargs) - {'evaluate'})
+        and not kwargs.get('evaluate', False)
+        and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)
+    ):
         return sympy.Basic.__new__(func, *args)
     return func(*args, **kwargs)
 
@@ -1776,8 +1805,12 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         b = sympy.sympify(b)
         # Evaluate pure-numeric powers (8**-1 -> 1/8) so coefficients stay reduced Rationals; an
         # unevaluated Pow reorders surrounding Mul terms on round-trip. TypedConstants keep dtype.
-        if (_is_sympy_number(a) and _is_sympy_number(b) and not isinstance(a, TypedConstant)
-                and not isinstance(b, TypedConstant)):
+        if (
+            _is_sympy_number(a)
+            and _is_sympy_number(b)
+            and not isinstance(a, TypedConstant)
+            and not isinstance(b, TypedConstant)
+        ):
             return a**b
         if hasattr(sympy.Pow, '_from_args'):
             return sympy.Pow._from_args((a, b))
@@ -1827,7 +1860,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     @staticmethod
     def _binop_sub(a, b):
         return _SerializedSymbolicParser._add(
-            *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b)))
+            *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b))
+        )
 
     @staticmethod
     def _binop_div(a, b):
@@ -1932,7 +1966,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if node.id == _SERIALIZED_UNDEFINED_SYMBOL:
             return UndefinedSymbol()
         if node.id.startswith(_SERIALIZED_SYMBOL_PREFIX):
-            return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
+            return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX) :])
         try:
             return getattr(dtypes, node.id)
         except AttributeError as ex:
@@ -1972,12 +2006,14 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     def visit_Compare(self, node):
         if len(node.ops) != 1 or len(node.comparators) != 1:
             raise NotImplementedError('Chained comparisons are not supported in symbolic deserialization')
-        return _construct_function_uncached(self._comparators[type(node.ops[0])], self.visit(node.left),
-                                            self.visit(node.comparators[0]))
+        return _construct_function_uncached(
+            self._comparators[type(node.ops[0])], self.visit(node.left), self.visit(node.comparators[0])
+        )
 
     def visit_IfExp(self, node):
-        return _construct_function_uncached(IfExpr, self.visit(node.test), self.visit(node.body),
-                                            self.visit(node.orelse))
+        return _construct_function_uncached(
+            IfExpr, self.visit(node.test), self.visit(node.body), self.visit(node.orelse)
+        )
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
@@ -2002,7 +2038,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             symname = node.args[0].id
             if not symname.startswith(_SERIALIZED_SYMBOL_PREFIX):
                 raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
-            symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
+            symname = symname[len(_SERIALIZED_SYMBOL_PREFIX) :]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
             return symbol(symname, dtype=dtype, **kwargs)
@@ -2011,7 +2047,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             args = [self.visit(arg) for arg in node.args]
             return SymExpr(*args)
 
-        if (isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1):
+        if isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1:
             return _cast_symbolic_value(self.visit(node.args[0]), dtypes.CTYPE_TO_TYPECLASS[node.func.id])
 
         if isinstance(node.func, ast.Name) and node.func.id == 'complex' and len(node.args) == 2:
@@ -2067,7 +2103,6 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
-
     def _print_Symbol(self, expr):
         if expr.name == '?':
             return '$?'
@@ -2213,7 +2248,8 @@ def deserialize_symbolic(expr) -> SymbolicType:
     expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
     expr = _SERIALIZED_TYPED_COMPLEX_CONSTANT.sub(_rewrite_typed_complex, expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
-        lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
+        lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr
+    )
     return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
 
 
@@ -2347,8 +2383,8 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
-    """ Several notational corrections for integer math and C++ translation
-        that sympy.printing.cxxcode does not provide. """
+    """Several notational corrections for integer math and C++ translation
+    that sympy.printing.cxxcode does not provide."""
 
     def __init__(self, arrays, cpp_mode=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -2506,8 +2542,15 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
     # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
     # the first two and booleans are not ``Number``s, so the generic path below would
     # wrap them in parentheses that no longer round-trip. Print them bare instead.
-    if isinstance(sym, (sympy.core.numbers.Infinity, sympy.core.numbers.NegativeInfinity, sympy.core.numbers.NaN,
-                        sympy.logic.boolalg.BooleanAtom)):
+    if isinstance(
+        sym,
+        (
+            sympy.core.numbers.Infinity,
+            sympy.core.numbers.NegativeInfinity,
+            sympy.core.numbers.NaN,
+            sympy.logic.boolalg.BooleanAtom,
+        ),
+    ):
         return DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
     try:
@@ -2517,8 +2560,12 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
 
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
-        if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
-                sym, (sympy.Number, TypedConstant)) or dtypes.isconstant(sym):
+        if (
+            isinstance(sym, symbol)
+            or isinstance(sym, sympy.Symbol)
+            or isinstance(sym, (sympy.Number, TypedConstant))
+            or dtypes.isconstant(sym)
+        ):
             return sstr
         else:
             return '(' + sstr + ')'
@@ -2527,9 +2574,11 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
         return '(' + sstr + ')'
 
 
-def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
-                 replace_callback: Callable[[Dict[str, str]], None],
-                 value_as_string: bool = False) -> None:
+def safe_replace(
+    mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
+    replace_callback: Callable[[Dict[str, str]], None],
+    value_as_string: bool = False,
+) -> None:
     """
     Safely replaces symbolic expressions that may clash with each other via a
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be

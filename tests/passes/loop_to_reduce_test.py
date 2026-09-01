@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for LoopToReduce."""
+
 import dace
 from dace import memlet as mm
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -18,7 +19,7 @@ def _count_loops(sdfg: dace.SDFG) -> int:
 def _assert_single_sum_reduce_identity_none(sdfg: dace.SDFG):
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1, reduces
-    (red, ) = reduces
+    (red,) = reduces
     assert red.wcr == "lambda a, b: a + b"
     assert red.identity is None
 
@@ -93,7 +94,7 @@ def test_frontend_augassign_array_slice_is_lifted():
 
     reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     (red, state) = reduces[0]
-    (out_edge, ) = state.out_edges(red)
+    (out_edge,) = state.out_edges(red)
     assert out_edge.data.data == "C"
     assert str(out_edge.data.subset) in {"3", "3:4", "3:3"}
 
@@ -128,7 +129,7 @@ def test_interstate_edge_direct_index_is_lifted():
     assert _count_loops(sdfg) == 0
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1
-    (red, ) = reduces
+    (red,) = reduces
     assert red.wcr == "lambda a, b: a + b"
     assert red.identity is None
 
@@ -161,7 +162,7 @@ def _build_conditional_minmax_sdfg(cond_expr: str):
 def _assert_single_reduce_with_wcr(sdfg: dace.SDFG, expected_wcr: str):
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1, reduces
-    (red, ) = reduces
+    (red,) = reduces
     assert red.wcr == expected_wcr, red.wcr
     assert red.identity is None
 
@@ -362,6 +363,7 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar():
     ``_red_tmp_<sym>`` scalar, seeds it from the symbol, and assigns the
     symbol back on the outgoing interstate edge."""
     from dace.libraries.standard.nodes.reduce import Reduce as _Reduce
+
     sdfg = _build_any_pattern_sdfg()
     LoopToReduce(permissive=True).apply_pass(sdfg, {})
     sdfg.validate()
@@ -375,7 +377,7 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar():
     reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, _Reduce)]
     assert len(reduces) == 1
     red, state = reduces[0]
-    (out_edge, ) = state.out_edges(red)
+    (out_edge,) = state.out_edges(red)
     assert out_edge.data.data == bridge_names[0]
 
     # Outgoing interstate edge assigns the original symbol from the bridge.

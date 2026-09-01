@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+
 try:
     import polybench
 except ImportError:
@@ -8,38 +9,29 @@ except ImportError:
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    tsteps: 20,
-    N: 30
-}, {
-    tsteps: 40,
-    N: 90
-}, {
-    tsteps: 100,
-    N: 250
-}, {
-    tsteps: 500,
-    N: 1300
-}, {
-    tsteps: 1000,
-    N: 2800
-}]
+sizes = [
+    {tsteps: 20, N: 30},
+    {tsteps: 40, N: 90},
+    {tsteps: 100, N: 250},
+    {tsteps: 500, N: 1300},
+    {tsteps: 1000, N: 2800},
+]
 args = [
     ([N, N], datatype),
-    ([N, N], datatype)  #, N, tsteps
+    ([N, N], datatype),  # , N, tsteps
 ]
 
 
 @dace.program
-def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
+def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  # , N, tsteps):
     for t in range(tsteps):
 
         @dace.map
-        def a(i: _[1:N - 1], j: _[1:N - 1]):
+        def a(i: _[1 : N - 1], j: _[1 : N - 1]):
             a1 << A[i, j]
             a2 << A[i, j - 1]
             a3 << A[i, j + 1]
@@ -50,7 +42,7 @@ def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
             b = 0.2 * (a1 + a2 + a3 + a4 + a5)
 
         @dace.map
-        def b(i: _[1:N - 1], j: _[1:N - 1]):
+        def b(i: _[1 : N - 1], j: _[1 : N - 1]):
             a1 << B[i, j]
             a2 << B[i, j - 1]
             a3 << B[i, j + 1]

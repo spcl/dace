@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    AST to SVE: This module is responsible for converting an AST into SVE code.
+AST to SVE: This module is responsible for converting an AST into SVE code.
 """
 
 import dace
@@ -22,21 +22,22 @@ from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedT
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
-
-    def __init__(self,
-                 sdfg: SDFG,
-                 dfg,
-                 map,
-                 cpu_codegen,
-                 tree: ast.AST,
-                 file: IO[str],
-                 code,
-                 memlets,
-                 pred_name,
-                 counter_type,
-                 defined_symbols=None,
-                 stream_associations=None,
-                 wcr_associations=None):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        dfg,
+        map,
+        cpu_codegen,
+        tree: ast.AST,
+        file: IO[str],
+        code,
+        memlets,
+        pred_name,
+        counter_type,
+        defined_symbols=None,
+        stream_associations=None,
+        wcr_associations=None,
+    ):
 
         self.sdfg = sdfg
         self.dfg = dfg
@@ -72,13 +73,15 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Make sure all internal calls are defined for the inference
         defined_symbols.update(util.get_internal_symbols())
 
-        super().__init__(preprocessed,
-                         0,
-                         cppunparse.CPPLocals(),
-                         file,
-                         expr_semicolon=True,
-                         type_inference=True,
-                         defined_symbols=defined_symbols)
+        super().__init__(
+            preprocessed,
+            0,
+            cppunparse.CPPLocals(),
+            file,
+            expr_semicolon=True,
+            type_inference=True,
+            defined_symbols=defined_symbols,
+        )
 
     def get_defined_symbols(self) -> collections.OrderedDict:
         sym = self.defined_symbols.copy()
@@ -159,7 +162,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 if expect.type in [np.bool_, bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
-                    #self.write(f'svptrue_{suffix}()')
+                    # self.write(f'svptrue_{suffix}()')
                     self.dispatch_expect(tree, expect.base_type)
                     self.write(f' ? svptrue_{suffix}() : svpfalse_b()')
                 else:
@@ -237,7 +240,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Find all branches (except for the last else, because it is treated differently)
         branches = [t]
-        while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
+        while t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If):
             t = t.orelse[0]
             branches.append(t)
 
@@ -314,19 +317,21 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # 1. Reduce the SVE register using SVE instructions into a scalar
             # 2. WCR the scalar to memory using DaCe functionality
             dst_node = self.dfg.memlet_path(edge)[-1].dst
-            if (isinstance(dst_node, nodes.AccessNode)
-                    and dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register):
+            if (
+                isinstance(dst_node, nodes.AccessNode)
+                and dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register
+            ):
                 return
 
             wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg, edge.data, not nc, None, '@', dtype=dtype)
-            self.fill(wcr[:wcr.find('@')])
+            self.fill(wcr[: wcr.find('@')])
             self.write(util.REDUCTION_TYPE_TO_SVE[reduction_type])
             self.write('(')
             self.write(self.pred_name)
             self.write(', ')
             self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
             self.write(')')
-            self.write(wcr[wcr.find('@') + 1:])
+            self.write(wcr[wcr.find('@') + 1 :])
             self.write(';')
         else:
             ######################
@@ -462,8 +467,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Call does not involve any vectors (to our knowledge)
             # Replace default modules (e.g., math) with dace::math::
             attr_name = astutils.rname(t)
-            module_name = attr_name[:attr_name.rfind(".")]
-            func_name = attr_name[attr_name.rfind(".") + 1:]
+            module_name = attr_name[: attr_name.rfind(".")]
+            func_name = attr_name[attr_name.rfind(".") + 1 :]
             if module_name not in dtypes._ALLOWED_MODULES:
                 raise NotImplementedError(f'Module {module_name} is not implemented')
             cpp_mod_name = dtypes._ALLOWED_MODULES[module_name]

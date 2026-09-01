@@ -106,9 +106,12 @@ def _gen_sdfg_with_copy_in_and_out():
 
     interesting_type = dace.opaque("interesting_type")
 
-    for name, is_transient, dtype in [("A", False, dace.float64), ("iA", True, interesting_type),
-                                      ("B", False, dace.float64), ("iB", True, interesting_type)]:
-
+    for name, is_transient, dtype in [
+        ("A", False, dace.float64),
+        ("iA", True, interesting_type),
+        ("B", False, dace.float64),
+        ("iB", True, interesting_type),
+    ]:
         sdfg.add_array(
             name,
             dtype=dtype,
@@ -180,8 +183,8 @@ def test_non_trivial_copy_execution():
     sdfg = _gen_sdfg_with_copy_in_and_out()
     sdfg.validate()
     csdfg = sdfg.compile()
-    A = numpy.ndarray((10, ), dtype=float)
-    B = numpy.ndarray((10, ), dtype=float)
+    A = numpy.ndarray((10,), dtype=float)
+    B = numpy.ndarray((10,), dtype=float)
     for i in range(10):
         A[i] = 1
         B[i] = -1

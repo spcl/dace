@@ -98,9 +98,9 @@ def create_increment_sdfg_with_views():
 
 @pytest.mark.parametrize(
     "sdfg_creator",
-    [create_assign_sdfg, create_increment_sdfg, create_assign_sdfg_with_views, create_increment_sdfg_with_views])
+    [create_assign_sdfg, create_increment_sdfg, create_assign_sdfg_with_views, create_increment_sdfg_with_views],
+)
 class TestHostDataHostMapParams:
-
     def test_host_data(self, sdfg_creator):
         """Test that arrays marked as host_data remain on host after GPU transformation."""
         A, sdfg = sdfg_creator()

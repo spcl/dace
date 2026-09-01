@@ -8,7 +8,7 @@ from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
-from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_codegen_gemm_opts
 from .. import environments
 import numpy as np
 import warnings
@@ -39,15 +39,17 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
 
 @dace.library.expansion
 class ExpandGemmPure(ExpandTransformation):
-
     environments = []
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
-         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        (
+            (edge_a, outer_array_a, shape_a, strides_a, _, _),
+            (edge_b, outer_array_b, shape_b, strides_b, _, _),
+            cdata,
+        ) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -68,8 +70,9 @@ class ExpandGemmPure(ExpandTransformation):
         res = equal(trans_shape_a[1], trans_shape_b[0])
         if res is None:
             warnings.warn(
-                f"First matrix columns {trans_shape_a[1]} may not match "
-                f"second matrix rows {trans_shape_b[0]}", UserWarning)
+                f"First matrix columns {trans_shape_a[1]} may not match second matrix rows {trans_shape_b[0]}",
+                UserWarning,
+            )
         elif not res:
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
@@ -98,12 +101,13 @@ class ExpandGemmPure(ExpandTransformation):
         # Initialization / beta map
         if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
-                'gemm_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(shape_c)
-                }, {},
-                'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-                external_edges=True)
+                'gemm_init',
+                {'_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(shape_c)},
+                {},
+                'out = 0',
+                {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True,
+            )
         elif equal_valued(1, node.beta):
             # Do nothing for initialization, only update the values
             pass
@@ -123,27 +127,30 @@ class ExpandGemmPure(ExpandTransformation):
             else:
                 raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
 
-            init_state.add_mapped_tasklet("gemm_init", {
-                "__i%d" % i: "0:%s" % s
-                for i, s in enumerate([M, N])
-            }, {
-                "__c": dace.Memlet.simple("_c", memlet_idx),
-            },
-                                          add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
-                                          external_edges=True)
+            init_state.add_mapped_tasklet(
+                "gemm_init",
+                {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N])},
+                {
+                    "__c": dace.Memlet.simple("_c", memlet_idx),
+                },
+                add_program,
+                {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
+                external_edges=True,
+            )
 
         # Multiplication map
-        state.add_mapped_tasklet("gemm", {
-            "__i%d" % i: "0:%s" % s
-            for i, s in enumerate([M, N, K])
-        }, {
-            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-        },
-                                 mul_program,
-                                 {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
-                                 external_edges=True,
-                                 output_nodes=output_nodes)
+        state.add_mapped_tasklet(
+            "gemm",
+            {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N, K])},
+            {
+                "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+                "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1"),
+            },
+            mul_program,
+            {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
+            external_edges=True,
+            output_nodes=output_nodes,
+        )
 
         return sdfg
 
@@ -155,7 +162,6 @@ class ExpandGemmPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGemmOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -192,9 +198,11 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             opt['alpha'] = '&__alpha'
             opt['beta'] = '&__beta'
 
-        code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
-                 "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
-                 "_c, {ldc});").format_map(opt)
+        code += (
+            "cblas_{func}(CblasColMajor, {ta}, {tb}, "
+            "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+            "_c, {ldc});"
+        ).format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
@@ -217,7 +225,6 @@ class ExpandGemmMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGemmGPUBLAS(ExpandTransformation):
-
     environments = []
 
     @classmethod
@@ -244,8 +251,10 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             raise ValueError('Unsupported input/output arrays')
 
         # If buffers are not on the GPU, copy them
-        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
-                         for desc in (adesc, bdesc, cdesc))
+        needs_copy = any(
+            desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
+            for desc in (adesc, bdesc, cdesc)
+        )
 
         dtype = adesc.dtype.base_type
         func = cls.funcname(to_blastype(dtype.type))
@@ -273,7 +282,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # Handle alpha / beta
         constants = {
             1.0: f"__state->{cls.backend}blas_handle.Constants().{factort}Pone()",
-            #-1.0: f"__state->cublas_handle.Constants().{factort}Mone()",
+            # -1.0: f"__state->cublas_handle.Constants().{factort}Mone()",
             0.0: f"__state->{cls.backend}blas_handle.Constants().{factort}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
@@ -308,7 +317,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             opt['arr_prefix'] = arr_prefix = '_conn'
 
         # Matrix multiplication
-        if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
+        if node.compute_type is None and node.accumulator_type is None and node.algorithm is None:
             opt['backend'] = cls.backend
             opt['backend_op_ta'] = cls.backend_op(opt['ta'])
             opt['backend_op_tb'] = cls.backend_op(opt['tb'])
@@ -355,7 +364,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 {algorithm}));
             '''
 
-        code = (call_prefix + call + call_suffix)
+        code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -463,7 +472,6 @@ class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
 
 @dace.library.expansion
 class ExpandGemmPBLAS(ExpandTransformation):
-
     environments = []
 
     @staticmethod
@@ -501,7 +509,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
 @dace.library.node
 class Gemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C. C should be unidirectionally
-       broadcastable (ONNX terminology) to A @ B.
+    broadcastable (ONNX terminology) to A @ B.
     """
 
     # Global properties
@@ -518,31 +526,36 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     # Object fields
     transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
-    alpha = properties.Property(allow_none=False,
-                                default=1,
-                                desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(allow_none=False,
-                               default=0,
-                               desc="A scalar which will be multiplied with C before adding C")
+    alpha = properties.Property(
+        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+    )
+    beta = properties.Property(
+        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding C"
+    )
     cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _c in connector when beta != 0")
-    algorithm = properties.Property(dtype=str,
-                                    allow_none=True,
-                                    default=None,
-                                    desc="If applicable, chooses the vendor-provided implementation "
-                                    "(algorithm) for the multiplication")
+    algorithm = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="If applicable, chooses the vendor-provided implementation (algorithm) for the multiplication",
+    )
     accumulator_type = properties.TypeClassProperty(
-        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication")
-    compute_type = properties.Property(default=None,
-                                       dtype=str,
-                                       allow_none=True,
-                                       desc="If applicable, overrides computation type (CUBLAS-specific, see "
-                                       "``cublasComputeType_t``)")
+        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication"
+    )
+    compute_type = properties.Property(
+        default=None,
+        dtype=str,
+        allow_none=True,
+        desc="If applicable, overrides computation type (CUBLAS-specific, see ``cublasComputeType_t``)",
+    )
 
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
-        super().__init__(name,
-                         location=location,
-                         inputs=({"_a", "_b", "_c"} if not equal_valued(0, beta) and cin else {"_a", "_b"}),
-                         outputs={"_c"})
+        super().__init__(
+            name,
+            location=location,
+            inputs=({"_a", "_b", "_c"} if not equal_valued(0, beta) and cin else {"_a", "_b"}),
+            outputs={"_c"},
+        )
         self.transA = True if transA else False
         self.transB = True if transB else False
         self.alpha = alpha
@@ -576,8 +589,9 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
         res = equal(size0[1], size1[0])
         if res is None:
-            warnings.warn(f'First matrix columns {size0[1]} and second matrix rows {size1[0]} may not match',
-                          UserWarning)
+            warnings.warn(
+                f'First matrix columns {size0[1]} and second matrix rows {size1[0]} may not match', UserWarning
+            )
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         size3 = out_memlet.subset.size()
@@ -604,16 +618,9 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemm_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 B,
-                 C,
-                 alpha,
-                 beta,
-                 trans_a=False,
-                 trans_b=False):
+def gemm_libnode(
+    pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, B, C, alpha, beta, trans_a=False, trans_b=False
+):
     # Add nodes
     A_in, B_in = (state.add_read(name) for name in (A, B))
     C_out = state.add_write(C)

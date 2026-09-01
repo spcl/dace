@@ -97,10 +97,20 @@ def test_2d_access_sdfgapi():
     begin_state = sdfg.add_state()
     state_true = sdfg.add_state()
     state_false = sdfg.add_state()
-    state_true.add_edge(state_true.add_tasklet('assign', {}, {'a'}, 'a = 100.0'), 'a', state_true.add_write('A'), None,
-                        dace.Memlet('A[0, 0]'))
-    state_false.add_edge(state_false.add_tasklet('assign', {}, {'a'}, 'a = -100.0'), 'a', state_false.add_write('A'),
-                         None, dace.Memlet('A[0, 0]'))
+    state_true.add_edge(
+        state_true.add_tasklet('assign', {}, {'a'}, 'a = 100.0'),
+        'a',
+        state_true.add_write('A'),
+        None,
+        dace.Memlet('A[0, 0]'),
+    )
+    state_false.add_edge(
+        state_false.add_tasklet('assign', {}, {'a'}, 'a = -100.0'),
+        'a',
+        state_false.add_write('A'),
+        None,
+        dace.Memlet('A[0, 0]'),
+    )
 
     sdfg.add_edge(begin_state, state_true, dace.InterstateEdge('A[1,1] < 0.5'))
     sdfg.add_edge(begin_state, state_false, dace.InterstateEdge('A[1,1] >= 0.5'))
@@ -133,8 +143,9 @@ def test_2d_assignment():
     sdfg.add_array('A', [4, 2], dace.float64)
     state = sdfg.add_state()
     state2 = sdfg.add_state()
-    state2.add_edge(state2.add_tasklet('assign', {}, {'a'}, 'a = i'), 'a', state2.add_write('A'), None,
-                    dace.Memlet('A[0, 0]'))
+    state2.add_edge(
+        state2.add_tasklet('assign', {}, {'a'}, 'a = i'), 'a', state2.add_write('A'), None, dace.Memlet('A[0, 0]')
+    )
     sdfg.add_edge(state, state2, dace.InterstateEdge(assignments=dict(i='A[1, 1]')))
 
     A = np.random.rand(4, 2)
@@ -267,8 +278,10 @@ def test_ifchain_manual():
         assert 'else if' in code
 
 
-@pytest.mark.skip(reason="Switch-case are not allowed in the ConditionalBlock semantics, and are thus not " +
-                  "generated with the new ControlFlowRaising pass.")
+@pytest.mark.skip(
+    reason="Switch-case are not allowed in the ConditionalBlock semantics, and are thus not "
+    + "generated with the new ControlFlowRaising pass."
+)
 def test_switchcase():
     sdfg = dace.SDFG('switchcase')
     sdfg.add_array('A', [2], dace.int32)
@@ -354,8 +367,8 @@ def test_optional_parameters():
         optional_parameters_func(A, B)
 
     sdfg: dace.SDFG = optional_parameters_program.to_sdfg()
-    A = np.zeros((3, ), dtype=np.int32)
-    B = np.zeros((3, ), dtype=np.int32)
+    A = np.zeros((3,), dtype=np.int32)
+    B = np.zeros((3,), dtype=np.int32)
 
     sdfg(A, B)
     assert A[0] == 0
@@ -374,6 +387,6 @@ if __name__ == '__main__':
     test_dowhile()
     test_ifchain()
     test_ifchain_manual()
-    #test_switchcase()
+    # test_switchcase()
     test_fsm()
     test_optional_parameters()

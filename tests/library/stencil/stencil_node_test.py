@@ -14,20 +14,22 @@ def make_sdfg_1d(implementation: str, vector_length: int):
     vtype = dace.vector(dace.typeclass(DTYPE), vector_length) if vector_length > 1 else DTYPE
 
     sdfg = dace.SDFG(f"stencil_node_test_1d_w{vector_length}")
-    _, a_desc = sdfg.add_array("a", (SIZE / vector_length, ), dtype=vtype)
-    _, res_desc = sdfg.add_array("res", (SIZE / vector_length, ), dtype=vtype)
+    _, a_desc = sdfg.add_array("a", (SIZE / vector_length,), dtype=vtype)
+    _, res_desc = sdfg.add_array("res", (SIZE / vector_length,), dtype=vtype)
 
     state = sdfg.add_state("stencil_node_test_1d")
     a = state.add_read("a")
     res = state.add_write("res")
 
-    stencil_node = Stencil("stencil_test",
-                           """\
+    stencil_node = Stencil(
+        "stencil_test",
+        """\
 tmp0 = (a[0] + a[1])
 tmp1 = (tmp0 + a[2])
 res[1] = (dace.float32(0.3333) * tmp1)""",
-                           inputs={"a"},
-                           outputs={"res"})
+        inputs={"a"},
+        outputs={"res"},
+    )
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
@@ -43,7 +45,7 @@ def make_sdfg_2d(implementation: str, vector_length: int):
 
     sdfg = dace.SDFG(f"stencil_node_test_2d_w{vector_length}")
     _, a_desc = sdfg.add_array("a", (ROWS, COLS / vector_length), dtype=vtype)
-    _, b_desc = sdfg.add_array("b", (ROWS, ), dtype=DTYPE)
+    _, b_desc = sdfg.add_array("b", (ROWS,), dtype=DTYPE)
     sdfg.add_symbol("c", DTYPE)
     _, d_desc = sdfg.add_array("d", (ROWS, COLS / vector_length), dtype=vtype)
     _, res_desc = sdfg.add_array("res", (ROWS, COLS / vector_length), dtype=vtype)
@@ -54,9 +56,11 @@ def make_sdfg_2d(implementation: str, vector_length: int):
     d = state.add_read("d")
     res = state.add_write("res")
 
-    stencil_node = Stencil("stencil_test",
-                           "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]) + d[0, -1] + d[0, 1]",
-                           iterator_mapping={"b": (True, False)})
+    stencil_node = Stencil(
+        "stencil_test",
+        "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]) + d[0, -1] + d[0, 1]",
+        iterator_mapping={"b": (True, False)},
+    )
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
@@ -69,9 +73,9 @@ def make_sdfg_2d(implementation: str, vector_length: int):
 
 
 def run_stencil_1d(sdfg, size):
-    a = np.zeros((size, ), dtype=DTYPE)
+    a = np.zeros((size,), dtype=DTYPE)
     a[1:-1] = np.arange(1, size - 1, dtype=DTYPE).reshape((size - 2))
-    res = np.zeros((size, ), dtype=DTYPE)
+    res = np.zeros((size,), dtype=DTYPE)
     sdfg.expand_library_nodes()
     sdfg(a=a, res=res, size=size)
     expected = 0.3333 * (a[:-2] + a[1:-1] + a[2:])
@@ -85,7 +89,7 @@ def test_stencil_node_1d():
 def run_stencil_2d(sdfg, rows, cols, specialize: bool):
     a = np.zeros((rows, cols), dtype=DTYPE)
     a[1:-1, 1:-1] = np.arange(1, (rows - 2) * (cols - 2) + 1, dtype=DTYPE).reshape((rows - 2, cols - 2))
-    b = np.empty((rows, ), dtype=DTYPE)
+    b = np.empty((rows,), dtype=DTYPE)
     b[:] = 1
     c = DTYPE(0.25)
     d = 0.5 * np.ones((rows, cols), dtype=DTYPE)
@@ -94,7 +98,7 @@ def run_stencil_2d(sdfg, rows, cols, specialize: bool):
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows)
     else:
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows, cols=cols)
-    expected = (0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) + 1)
+    expected = 0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) + 1
     assert np.allclose(expected, res[1:-1, 1:-1])
 
 

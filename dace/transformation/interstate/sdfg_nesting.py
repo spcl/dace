@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" SDFG nesting transformation. """
+"""SDFG nesting transformation."""
 
 import ast
 from copy import deepcopy as dc
@@ -59,8 +59,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
-    def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
-                       memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
+    def _check_strides(
+        inner_strides: List[symbolic.SymbolicType],
+        outer_strides: List[symbolic.SymbolicType],
+        memlet: Memlet,
+        nested_sdfg: nodes.NestedSDFG,
+    ) -> bool:
         """
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
@@ -110,7 +114,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for edge in graph.in_edges(nested_sdfg):
             if edge.dst_conn in in_connectors:
                 return False
-            if (edge.data.is_empty() and not isinstance(edge.src, nodes.EntryNode)):
+            if edge.data.is_empty() and not isinstance(edge.src, nodes.EntryNode):
                 return False
             # NOTE: Empty memlets do not attach to connectors
             if edge.dst_conn or not edge.data.is_empty():
@@ -118,7 +122,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
                 return False
-            if (edge.data.is_empty() and not isinstance(edge.dst, nodes.ExitNode)):
+            if edge.data.is_empty() and not isinstance(edge.dst, nodes.ExitNode):
                 return False
             # NOTE: Empty memlets do not attach to connectors
             if edge.src_conn or not edge.data.is_empty():
@@ -131,12 +135,17 @@ class InlineSDFG(transformation.SingleStateTransformation):
             nstate = nested_sdfg.sdfg.node(0)
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
-                    if (node.data in out_connectors and nstate.out_degree(node) > 0
-                            and (node.data not in in_connectors or nstate.in_degree(node) > 0)):
+                    if (
+                        node.data in out_connectors
+                        and nstate.out_degree(node) > 0
+                        and (node.data not in in_connectors or nstate.in_degree(node) > 0)
+                    ):
                         return False
-                    if (node.data in in_connectors
-                            and any(e.dst.data in all_connectors
-                                    for e in nstate.out_edges(node) if isinstance(e.dst, nodes.AccessNode))):
+                    if node.data in in_connectors and any(
+                        e.dst.data in all_connectors
+                        for e in nstate.out_edges(node)
+                        if isinstance(e.dst, nodes.AccessNode)
+                    ):
                         return False
 
         # Ensure that every connector has at least one corresponding access
@@ -201,22 +210,20 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         return True
 
-    def _remove_edge_path(self,
-                          state: SDFGState,
-                          edge_map: Dict[str, MultiConnectorEdge],
-                          unused: Set[str],
-                          reverse: bool = False) -> List[MultiConnectorEdge]:
-        """ Remove all edges along a path, until memlet tree contains siblings
-            that should not be removed. Removes resulting isolated nodes as
-            well. Operates in place.
+    def _remove_edge_path(
+        self, state: SDFGState, edge_map: Dict[str, MultiConnectorEdge], unused: Set[str], reverse: bool = False
+    ) -> List[MultiConnectorEdge]:
+        """Remove all edges along a path, until memlet tree contains siblings
+        that should not be removed. Removes resulting isolated nodes as
+        well. Operates in place.
 
-            :param state: The state in which to remove edges.
-            :param edge_map: Mapping from identifier to edge, used as a
-                             predicate for removal.
-            :param unused: Set of edge identifiers to remove.
-            :param reverse: If False, removes forward in path, otherwise
-                            backward.
-            :return: List of edges from removed nodes at the path's end.
+        :param state: The state in which to remove edges.
+        :param edge_map: Mapping from identifier to edge, used as a
+                         predicate for removal.
+        :param unused: Set of edge identifiers to remove.
+        :param reverse: If False, removes forward in path, otherwise
+                        backward.
+        :return: List of edges from removed nodes at the path's end.
         """
 
         if reverse:
@@ -232,14 +239,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if identifier in unused:
                 path = state.memlet_path(edge)
                 pedge = None
-                for pedge in (reversed(path) if reverse else path):
+                for pedge in reversed(path) if reverse else path:
                     # If there are no other edges, it is safe to remove
                     if len([e for e in edge_func(pedge) if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
                         state.remove_edge_and_connectors(pedge)
                         # If both are scope nodes and no more edges connect them, add empty memlet
-                        if (isinstance(pedge.src, (nodes.EntryNode, nodes.ExitNode))
-                                and isinstance(pedge.dst, (nodes.EntryNode, nodes.ExitNode))):
+                        if isinstance(pedge.src, (nodes.EntryNode, nodes.ExitNode)) and isinstance(
+                            pedge.dst, (nodes.EntryNode, nodes.ExitNode)
+                        ):
                             state.add_nedge(pedge.src, pedge.dst, Memlet())
                     else:
                         break
@@ -265,7 +273,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nstate: SDFGState = nsdfg.nodes()[0]
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
-        nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
+        nsdfg_scope_exit = state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -347,8 +355,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if len(array.shape) > len(edge.data.subset):
                     reshapes.add(aname)
                     continue
-            if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
-                                                                  edge.data, nsdfg_node):
+            if edge is not None and not InlineSDFG._check_strides(
+                array.strides, sdfg.arrays[edge.data.data].strides, edge.data, nsdfg_node
+            ):
                 reshapes.add(aname)
         # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
         # influences the behavior of the access nodes and thus the reshapes through views are necessary.
@@ -378,7 +387,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
                     new_name = node.data
-                    if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                    if new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants:
                         new_name = f'{nsdfg.label}_{node.data}'
 
                     name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
@@ -386,12 +395,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # All transients of edges between code nodes are also added to parent
         for edge in nstate.edges():
-            if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
+            if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
                 if edge.data.data is not None:
                     datadesc = nsdfg.arrays[edge.data.data]
                     if edge.data.data not in transients and datadesc.transient:
                         new_name = edge.data.data
-                        if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                        if new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants:
                             new_name = f'{nsdfg.label}_{edge.data.data}'
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
@@ -404,14 +413,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
         source_accesses = set()
         sink_accesses = set()
         for node in nstate.source_nodes():
-            if (isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes):
+            if isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes:
                 try:
                     new_incoming_edges[node] = inputs[node.data]
                     source_accesses.add(node)
                 except KeyError:
                     pass
         for node in nstate.sink_nodes():
-            if (isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes):
+            if isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes:
                 try:
                     new_outgoing_edges[node] = outputs[node.data]
                     sink_accesses.add(node)
@@ -446,18 +455,20 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 newname = f'{nsdfg.name}_ret{dname[8:]}'
             else:
                 newname = dname
-            newname, _ = sdfg.add_view(newname,
-                                       desc.shape,
-                                       desc.dtype,
-                                       storage=desc.storage,
-                                       strides=desc.strides,
-                                       offset=desc.offset,
-                                       debuginfo=desc.debuginfo,
-                                       allow_conflicts=desc.allow_conflicts,
-                                       total_size=desc.total_size,
-                                       alignment=desc.alignment,
-                                       may_alias=desc.may_alias,
-                                       find_new_name=True)
+            newname, _ = sdfg.add_view(
+                newname,
+                desc.shape,
+                desc.dtype,
+                storage=desc.storage,
+                strides=desc.strides,
+                offset=desc.offset,
+                debuginfo=desc.debuginfo,
+                allow_conflicts=desc.allow_conflicts,
+                total_size=desc.total_size,
+                alignment=desc.alignment,
+                may_alias=desc.may_alias,
+                find_new_name=True,
+            )
             repldict[dname] = newname
 
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}
@@ -517,18 +528,21 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # If both source and sink nodes are inputs/outputs, reconnect once
         edges_to_ignore = self._modify_access_to_access(new_incoming_edges, nsdfg, nstate, state, orig_data)
-        edges_to_ignore |= self._modify_access_to_access(new_outgoing_edges, nsdfg, nstate, state, orig_data, False,
-                                                         edges_to_ignore)
+        edges_to_ignore |= self._modify_access_to_access(
+            new_outgoing_edges, nsdfg, nstate, state, orig_data, False, edges_to_ignore
+        )
 
         source_to_outer = {n: e.src for n, e in new_incoming_edges.items()}
         sink_to_outer = {n: e.dst for n, e in new_outgoing_edges.items()}
         # If a source/sink node is one of the inputs/outputs, reconnect it,
         # replacing memlets in outgoing/incoming paths
         modified_edges = set()
-        modified_edges |= self._modify_memlet_path(new_incoming_edges, nstate, state, sink_to_outer, True,
-                                                   edges_to_ignore)
-        modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate, state, source_to_outer, False,
-                                                   edges_to_ignore)
+        modified_edges |= self._modify_memlet_path(
+            new_incoming_edges, nstate, state, sink_to_outer, True, edges_to_ignore
+        )
+        modified_edges |= self._modify_memlet_path(
+            new_outgoing_edges, nstate, state, source_to_outer, False, edges_to_ignore
+        )
 
         # Reshape: add connections to viewed data
         self._modify_reshape_data(reshapes, repldict, inputs, nstate, state, True)
@@ -556,14 +570,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
                     # NOTE: Node is destination
                     for edge in state.in_edges(node):
-                        if (edge not in modified_edges and edge.data.data == node.data):
+                        if edge not in modified_edges and edge.data.data == node.data:
                             for e in state.memlet_tree(edge):
                                 if e._data.get_dst_subset(e, state):
                                     new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True)
                                     e._data.dst_subset = new_memlet.subset
                     # NOTE: Node is source
                     for edge in state.out_edges(node):
-                        if (edge not in modified_edges and edge.data.data == node.data):
+                        if edge not in modified_edges and edge.data.data == node.data:
                             for e in state.memlet_tree(edge):
                                 if e._data.get_src_subset(e, state):
                                     new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True)
@@ -589,26 +603,23 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
         inverse_repldict = {v: k for k, v in repldict.items()}
-        removed_in_edges = self._remove_edge_path(state,
-                                                  inputs,
-                                                  set(inputs.keys()) -
-                                                  {inverse_repldict[n.data]
-                                                   for n in source_accesses},
-                                                  reverse=True)
-        removed_out_edges = self._remove_edge_path(state,
-                                                   outputs,
-                                                   set(outputs.keys()) -
-                                                   {inverse_repldict[n.data]
-                                                    for n in sink_accesses},
-                                                   reverse=False)
+        removed_in_edges = self._remove_edge_path(
+            state, inputs, set(inputs.keys()) - {inverse_repldict[n.data] for n in source_accesses}, reverse=True
+        )
+        removed_out_edges = self._remove_edge_path(
+            state, outputs, set(outputs.keys()) - {inverse_repldict[n.data] for n in sink_accesses}, reverse=False
+        )
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [x for x in nx.topological_sort(nstate._nx) if isinstance(x, nodes.AccessNode)]
         for edge in removed_in_edges:
             # Find first access node that refers to this edge
             try:
-                node = next(n for n in order
-                            if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data))
+                node = next(
+                    n
+                    for n in order
+                    if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data)
+                )
             except StopIteration:
                 continue
                 # raise NameError(f'Access node with data "{edge.data.data}" not found in'
@@ -627,8 +638,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
-                node = next(n for n in reversed(order)
-                            if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data))
+                node = next(
+                    n
+                    for n in reversed(order)
+                    if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data)
+                )
             except StopIteration:
                 continue
                 # raise NameError(f'Access node with data "{edge.data.data}" not found in'
@@ -657,14 +671,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
-    def _modify_access_to_access(self,
-                                 input_edges: Dict[nodes.Node, MultiConnectorEdge],
-                                 nsdfg: SDFG,
-                                 nstate: SDFGState,
-                                 state: SDFGState,
-                                 orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
-                                 inputs: bool = True,
-                                 edges_to_ignore: Set[MultiConnectorEdge] = None) -> Set[MultiConnectorEdge]:
+    def _modify_access_to_access(
+        self,
+        input_edges: Dict[nodes.Node, MultiConnectorEdge],
+        nsdfg: SDFG,
+        nstate: SDFGState,
+        state: SDFGState,
+        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
+        inputs: bool = True,
+        edges_to_ignore: Set[MultiConnectorEdge] = None,
+    ) -> Set[MultiConnectorEdge]:
         """
         Deals with access->access edges where both sides are non-transient.
         """
@@ -682,15 +698,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if inner_edge.dst not in orig_data:
                             continue
                         inner_data = orig_data[inner_edge.dst]
-                        if (isinstance(inner_edge.dst, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient):
+                        if isinstance(inner_edge.dst, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient:
                             matching_edge: MultiConnectorEdge = next(
-                                state.out_edges_by_connector(nsdfg_node, inner_data))
+                                state.out_edges_by_connector(nsdfg_node, inner_data)
+                            )
                             # Create memlet by unsqueezing both w.r.t. src and
                             # dst subsets
                             in_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, use_src_subset=True)
-                            out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                                  matching_edge.data,
-                                                                  use_dst_subset=True)
+                            out_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data, matching_edge.data, use_dst_subset=True
+                            )
                             new_memlet = in_memlet
                             new_memlet.other_subset = out_memlet.subset
 
@@ -708,15 +725,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if inner_edge.src not in orig_data:
                             continue
                         inner_data = orig_data[inner_edge.src]
-                        if (isinstance(inner_edge.src, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient):
+                        if isinstance(inner_edge.src, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient:
                             matching_edge: MultiConnectorEdge = next(
-                                state.out_edges_by_connector(nsdfg_node, inner_data))
+                                state.out_edges_by_connector(nsdfg_node, inner_data)
+                            )
                             # Create memlet by unsqueezing both w.r.t. src and
                             # dst subsets
                             in_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, use_src_subset=True)
-                            out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                                  matching_edge.data,
-                                                                  use_dst_subset=True)
+                            out_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data, matching_edge.data, use_dst_subset=True
+                            )
                             new_memlet = in_memlet
                             new_memlet.other_subset = out_memlet.subset
 
@@ -741,12 +759,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         inputs: bool,
         edges_to_ignore: Set[MultiConnectorEdge],
     ) -> Set[MultiConnectorEdge]:
-        """ Modifies memlet paths in an inlined SDFG. Returns set of modified
-            edges.
+        """Modifies memlet paths in an inlined SDFG. Returns set of modified
+        edges.
         """
         result = set()
         for node, top_edge in new_edges.items():
-            inner_edges = (nstate.out_edges(node) if inputs else nstate.in_edges(node))
+            inner_edges = nstate.out_edges(node) if inputs else nstate.in_edges(node)
             for inner_edge in inner_edges:
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
@@ -765,8 +783,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         # don't add edges twice
                         continue
 
-                    new_edge = state.add_edge(inner_edge.src, inner_edge.src_conn, top_edge.dst, top_edge.dst_conn,
-                                              new_memlet)
+                    new_edge = state.add_edge(
+                        inner_edge.src, inner_edge.src_conn, top_edge.dst, top_edge.dst_conn, new_memlet
+                    )
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward
@@ -782,9 +801,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         return result
 
-    def _modify_reshape_data(self, reshapes: Set[str], repldict: Dict[str, str], new_edges: Dict[str,
-                                                                                                 MultiConnectorEdge],
-                             nstate: SDFGState, state: SDFGState, inputs: bool):
+    def _modify_reshape_data(
+        self,
+        reshapes: Set[str],
+        repldict: Dict[str, str],
+        new_edges: Dict[str, MultiConnectorEdge],
+        nstate: SDFGState,
+        state: SDFGState,
+        inputs: bool,
+    ):
         anodes = nstate.source_nodes() if inputs else nstate.sink_nodes()
         reshp = {repldict[r]: r for r in reshapes}
         for node in anodes:
@@ -822,14 +847,17 @@ class InlineTransients(transformation.SingleStateTransformation):
         for e in graph.all_edges(nsdfg):
             if e.data.is_empty():
                 continue
-            conn = (e.src_conn if e.src is nsdfg else e.dst_conn)
+            conn = e.src_conn if e.src is nsdfg else e.dst_conn
             desc = sdfg.arrays[e.data.data]
             # Needs to be transient
             if not desc.transient:
                 continue
             # Needs to be allocated in "Scope" or "Persistent" lifetime
-            if (desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.Persistent,
-                                      dtypes.AllocationLifetime.External)):
+            if desc.lifetime not in (
+                dtypes.AllocationLifetime.Scope,
+                dtypes.AllocationLifetime.Persistent,
+                dtypes.AllocationLifetime.External,
+            ):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now
@@ -973,8 +1001,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
     @staticmethod
     def _candidates(
-            state: SDFGState,
-            nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
+        state: SDFGState, nsdfg: nodes.NestedSDFG
+    ) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
@@ -1074,11 +1102,15 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     for ns in nsdfg.sdfg.states():
                         ns.ranges = {}
                     from dace.sdfg.propagation import _annotate_loop_ranges
+
                     _annotate_loop_ranges(nsdfg.sdfg, [])
 
                     memlet = propagation.propagate_subset(
-                        [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
-                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
+                        [cand],
+                        nsdfg.sdfg.arrays[cname],
+                        sorted(nstate.ranges.keys()),
+                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]),
+                    )
                     if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
                         ignore.add(cname)
                         continue
@@ -1090,8 +1122,9 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
-                                   set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(
+                    nsdfg.symbol_mapping.keys()
+                )
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1100,13 +1133,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
-        return ({
-            k: (dc(v), ind)
-            for k, (v, _, ind) in in_candidates.items() if k not in ignore
-        }, {
-            k: (dc(v), ind)
-            for k, (v, _, ind) in out_candidates.items() if k not in ignore
-        })
+        return (
+            {k: (dc(v), ind) for k, (v, _, ind) in in_candidates.items() if k not in ignore},
+            {k: (dc(v), ind) for k, (v, _, ind) in out_candidates.items() if k not in ignore},
+        )
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
@@ -1120,8 +1150,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
         refined = set()
 
-        def _offset_refine(torefine: Dict[str, Tuple[Memlet, Set[int]]],
-                           outer_edges: Callable[[nodes.NestedSDFG, str], Iterable[MultiConnectorEdge[Memlet]]]):
+        def _offset_refine(
+            torefine: Dict[str, Tuple[Memlet, Set[int]]],
+            outer_edges: Callable[[nodes.NestedSDFG, str], Iterable[MultiConnectorEdge[Memlet]]],
+        ):
             # Offset memlets inside negatively by "refine", modify outer
             # memlets to be "refine"
             for aname, (refine, indices) in torefine.items():
@@ -1130,10 +1162,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 except StopIteration:
                     continue
                 new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
-                outer_edge.data.subset = subsets.Range([
-                    ns if i in indices else os
-                    for i, (os, ns) in enumerate(zip(outer_edge.data.subset, new_memlet.subset))
-                ])
+                outer_edge.data.subset = subsets.Range(
+                    [
+                        ns if i in indices else os
+                        for i, (os, ns) in enumerate(zip(outer_edge.data.subset, new_memlet.subset))
+                    ]
+                )
                 if aname in refined:
                     continue
                 # Refine internal memlets
@@ -1166,8 +1200,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 @make_properties
 @transformation.explicit_cf_compatible
 class NestSDFG(transformation.MultiStateTransformation):
-    """ Implements SDFG Nesting, taking an SDFG as an input and creating a
-        nested SDFG node from it. """
+    """Implements SDFG Nesting, taking an SDFG as an input and creating a
+    nested SDFG node from it."""
 
     promote_global_trans = Property(dtype=bool, default=False, desc="Promotes transients to be allocated once")
 
@@ -1197,8 +1231,8 @@ class NestSDFG(transformation.MultiStateTransformation):
         for state in nested_sdfg.states():
             #  Input and output nodes are added as input and output nodes of the nested SDFG
             for node in state.nodes():
-                if (isinstance(node, nodes.AccessNode) and not node.desc(nested_sdfg).transient):
-                    if (state.out_degree(node) > 0):  # input node
+                if isinstance(node, nodes.AccessNode) and not node.desc(nested_sdfg).transient:
+                    if state.out_degree(node) > 0:  # input node
                         arrname = node.data
                         arrname_nested = f"__{arrname}_in"
                         if arrname not in inputs:
@@ -1207,7 +1241,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                             nested_sdfg.arrays[arrname_nested] = dc(arrobj)
                             inputs[arrname] = arrname_nested
                         node_data_name = arrname_nested
-                    if (state.in_degree(node) > 0):  # output node
+                    if state.in_degree(node) > 0:  # output node
                         arrname = node.data
                         arrname_nested = f"__{arrname}_out"
                         if arrname not in outputs:
@@ -1222,8 +1256,11 @@ class NestSDFG(transformation.MultiStateTransformation):
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
-                    if (isinstance(node, nodes.AccessNode) and node.desc(nested_sdfg).transient
-                            and not isinstance(node.desc(nested_sdfg), data.View)):
+                    if (
+                        isinstance(node, nodes.AccessNode)
+                        and node.desc(nested_sdfg).transient
+                        and not isinstance(node.desc(nested_sdfg), data.View)
+                    ):
                         nodedesc = node.desc(nested_sdfg)
 
                         # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
@@ -1240,7 +1277,6 @@ class NestSDFG(transformation.MultiStateTransformation):
 
                                 if symbolic.issymbolic(sz):
                                     for s in newsz.free_symbols:
-
                                         replacement_limit_value = None
                                         to_solve_limit_value = copy.deepcopy(s)
                                         replacement_initial_value = None
@@ -1261,7 +1297,10 @@ class NestSDFG(transformation.MultiStateTransformation):
                                             replacement_initial_value = state.ranges[str(to_solve_initial_value)][0][0]
                                             to_solve_initial_value = replacement_initial_value
 
-                                        if replacement_initial_value is not None and replacement_limit_value is not None:
+                                        if (
+                                            replacement_initial_value is not None
+                                            and replacement_limit_value is not None
+                                        ):
                                             # We compute the shape by considering both the range initial and limit value
 
                                             # Note: here we are lenient. We can't evaluate the maximum of the two,
@@ -1274,7 +1313,8 @@ class NestSDFG(transformation.MultiStateTransformation):
                                             if newsz_limit.is_negative or newsz_limit.is_zero:
                                                 if newsz_initial.is_negative and newsz_initial.is_zero:
                                                     raise ValueError(
-                                                        f"Can not over-approximate shape for transient{node.data}")
+                                                        f"Can not over-approximate shape for transient{node.data}"
+                                                    )
                                                 newsz = newsz_initial
                                             else:
                                                 newsz = newsz_limit
@@ -1321,14 +1361,14 @@ class NestSDFG(transformation.MultiStateTransformation):
                 src = state.memlet_path(edge)[0].src
                 dst = state.memlet_path(edge)[-1].dst
                 if isinstance(src, nodes.AccessNode):
-                    if (mem.data in inputs.keys() and src.data == inputs[mem.data]):
+                    if mem.data in inputs.keys() and src.data == inputs[mem.data]:
                         mem.data = inputs[mem.data]
-                    elif (mem.data in outputs.keys()
-                          and (src.data == outputs[mem.data] or
-                               (isinstance(dst, nodes.AccessNode) and dst.data == outputs[mem.data]))):
+                    elif mem.data in outputs.keys() and (
+                        src.data == outputs[mem.data]
+                        or (isinstance(dst, nodes.AccessNode) and dst.data == outputs[mem.data])
+                    ):
                         mem.data = outputs[mem.data]
-                elif (isinstance(dst, nodes.AccessNode) and mem.data in outputs.keys()
-                      and dst.data == outputs[mem.data]):
+                elif isinstance(dst, nodes.AccessNode) and mem.data in outputs.keys() and dst.data == outputs[mem.data]:
                     mem.data = outputs[mem.data]
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
@@ -1364,11 +1404,13 @@ class NestSDFG(transformation.MultiStateTransformation):
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
-            outer_state.add_edge(arrnode, None, nested_node, val,
-                                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+            outer_state.add_edge(
+                arrnode, None, nested_node, val, memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg))
+            )
         for key, val in outputs.items():
             arrnode = outer_state.add_write(key)
-            outer_state.add_edge(nested_node, val, arrnode, None,
-                                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+            outer_state.add_edge(
+                nested_node, val, arrnode, None, memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg))
+            )
 
         return nested_node

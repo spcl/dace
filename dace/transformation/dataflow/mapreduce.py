@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement the map-reduce-fusion
-    transformation. """
+"""Contains classes and functions that implement the map-reduce-fusion
+transformation."""
 
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
@@ -16,21 +16,23 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 @make_properties
 class MapReduceFusion(pm.SingleStateTransformation):
-    """ Implements the map-reduce-fusion transformation.
-        Fuses a map with an immediately following reduction, where the array
-        between the map and the reduction is not used anywhere else.
+    """Implements the map-reduce-fusion transformation.
+    Fuses a map with an immediately following reduction, where the array
+    between the map and the reduction is not used anywhere else.
     """
 
-    no_init = Property(dtype=bool,
-                       default=False,
-                       desc='If enabled, does not create initialization states '
-                       'for reduce nodes with identity')
+    no_init = Property(
+        dtype=bool,
+        default=False,
+        desc='If enabled, does not create initialization states for reduce nodes with identity',
+    )
 
     tasklet = pm.PatternNode(nodes.Tasklet)
     tmap_exit = pm.PatternNode(nodes.MapExit)
     in_array = pm.PatternNode(nodes.AccessNode)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
+
     reduce = pm.PatternNode(stdlib.Reduce)
 
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -55,9 +57,10 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (len(
-            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                               or in_array.data in sdfg.shared_transients()):
+        if not permissive and (
+            len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+            or in_array.data in sdfg.shared_transients()
+        ):
             return False
 
         # If memlet already has WCR and it is different from reduce node,
@@ -124,31 +127,40 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Add edge from map exit to output array
         graph.add_edge(
-            memlet_edge.dst, 'OUT_' + memlet_edge.dst_conn[3:], array_edge.dst, array_edge.dst_conn,
-            Memlet.simple(array_edge.data.data,
-                          array_edge.data.subset,
-                          num_accesses=array_edge.data.num_accesses,
-                          wcr_str=reduce_node.wcr))
+            memlet_edge.dst,
+            'OUT_' + memlet_edge.dst_conn[3:],
+            array_edge.dst,
+            array_edge.dst_conn,
+            Memlet.simple(
+                array_edge.data.data,
+                array_edge.data.subset,
+                num_accesses=array_edge.data.num_accesses,
+                wcr_str=reduce_node.wcr,
+            ),
+        )
 
         # Add initialization state as necessary
         if not self.no_init and reduce_node.identity is not None:
             init_state = graph.parent_graph.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 'freduce_init',
-                [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)], {},
-                '__out = %s' % reduce_node.identity, {
-                    '__out':
-                    Memlet.simple(array_edge.data.data, ','.join(
-                        ['o%d' % i for i in range(len(array_edge.data.subset))]))
+                [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)],
+                {},
+                '__out = %s' % reduce_node.identity,
+                {
+                    '__out': Memlet.simple(
+                        array_edge.data.data, ','.join(['o%d' % i for i in range(len(array_edge.data.subset))])
+                    )
                 },
-                external_edges=True)
+                external_edges=True,
+            )
 
 
 class MapWCRFusion(pm.SingleStateTransformation):
-    """ Implements the map expanded-reduce fusion transformation.
-        Fuses a map with an immediately following reduction, where the array
-        between the map and the reduction is not used anywhere else, and the
-        reduction is divided to two maps with a WCR, denoting partial reduction.
+    """Implements the map expanded-reduce fusion transformation.
+    Fuses a map with an immediately following reduction, where the array
+    between the map and the reduction is not used anywhere else, and the
+    reduction is divided to two maps with a WCR, denoting partial reduction.
     """
 
     tasklet = pm.PatternNode(nodes.Tasklet)
@@ -165,8 +177,17 @@ class MapWCRFusion(pm.SingleStateTransformation):
     def expressions(cls):
         return [
             # Map, then partial reduction of axes
-            sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.rmap_out_entry, cls.rmap_in_entry,
-                                   cls.rmap_in_tasklet, cls.rmap_in_cr, cls.rmap_out_exit, cls.out_array)
+            sdutil.node_path_graph(
+                cls.tasklet,
+                cls.tmap_exit,
+                cls.in_array,
+                cls.rmap_out_entry,
+                cls.rmap_in_entry,
+                cls.rmap_in_tasklet,
+                cls.rmap_in_cr,
+                cls.rmap_out_exit,
+                cls.out_array,
+            )
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -188,9 +209,10 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (len(
-            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                               or in_array.data in sdfg.shared_transients()):
+        if not permissive and (
+            len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+            or in_array.data in sdfg.shared_transients()
+        ):
             return False
 
         # Verify that reduction ranges match tasklet map
@@ -208,17 +230,27 @@ class MapWCRFusion(pm.SingleStateTransformation):
         # To apply, collapse the second map and then fuse the two resulting maps
         map_collapse = MapCollapse()
         map_collapse.setup_match(
-            sdfg, self.cfg_id, self.state_id, {
+            sdfg,
+            self.cfg_id,
+            self.state_id,
+            {
                 MapCollapse.outer_map_entry: graph.node_id(self.rmap_out_entry),
                 MapCollapse.inner_map_entry: graph.node_id(self.rmap_in_entry),
-            }, 0)
+            },
+            0,
+        )
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
         map_fusion = MapFusionVertical()
         map_fusion.setup_match(
-            sdfg, self.cfg_id, self.state_id, {
+            sdfg,
+            self.cfg_id,
+            self.state_id,
+            {
                 MapFusionVertical.first_map_exit: graph.node_id(self.tmap_exit),
                 MapFusionVertical.array: graph.node_id(self.in_array),
                 MapFusionVertical.second_map_entry: graph.node_id(map_entry),
-            }, 0)
+            },
+            0,
+        )
         map_fusion.apply(graph, sdfg)

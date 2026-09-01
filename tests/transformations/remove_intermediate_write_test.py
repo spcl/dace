@@ -9,8 +9,8 @@ from dace.transformation.dataflow import RemoveIntermediateWrite
 def test_write_before_map_exit():
 
     sdfg = dace.SDFG('test_write_before_map_exit')
-    sdfg.add_array('A', (10, ), dace.int32)
-    sdfg.add_array('B', (10, ), dace.int32)
+    sdfg.add_array('A', (10,), dace.int32)
+    sdfg.add_array('B', (10,), dace.int32)
 
     state = sdfg.add_state('state')
     me, mx = state.add_map('map', dict(i='0:10'))
@@ -24,8 +24,8 @@ def test_write_before_map_exit():
     A = np.arange(10, dtype=np.int32)
     ref = A
 
-    before_val = np.empty((10, ), dtype=np.int32)
-    after_val = np.empty((10, ), dtype=np.int32)
+    before_val = np.empty((10,), dtype=np.int32)
+    after_val = np.empty((10,), dtype=np.int32)
 
     sdfg_before = copy.deepcopy(sdfg)
     sdfg_before(A=A, B=before_val)
@@ -73,7 +73,7 @@ def test_write_before_nested_map_exit_2():
     sdfg = dace.SDFG('test_write_before_nested_map_exit_2')
     sdfg.add_array('A', (10, 10), dace.int32)
     sdfg.add_array('B', (10, 10), dace.int32)
-    sdfg.add_array('C', (10, ), dace.int32, transient=True)
+    sdfg.add_array('C', (10,), dace.int32, transient=True)
 
     state = sdfg.add_state('state')
     me0, mx0 = state.add_map('map', dict(i='0:10'))

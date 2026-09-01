@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement transformations relating to streams
-    and transient nodes. """
+"""Contains classes that implement transformations relating to streams
+and transient nodes."""
 
 import copy
 import warnings
@@ -17,17 +17,16 @@ from dace.transformation import transformation as xf
 
 @make_properties
 class LocalStorage(xf.SingleStateTransformation, ABC):
-    """ Implements the Local Storage prototype transformation, which adds a
-        transient data node between two nodes.
+    """Implements the Local Storage prototype transformation, which adds a
+    transient data node between two nodes.
     """
 
     node_a = xf.PatternNode(nodes.Node)
     node_b = xf.PatternNode(nodes.Node)
 
-    array = Property(dtype=str,
-                     desc="Array to create local storage for (if empty, first available)",
-                     default=None,
-                     allow_none=True)
+    array = Property(
+        dtype=str, desc="Array to create local storage for (if empty, first available)", default=None, allow_none=True
+    )
 
     prefix = Property(dtype=str, default="trans_", allow_none=True, desc='Prefix for new data node')
 
@@ -63,8 +62,11 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
 
         array = self.array
         if array is None or len(array) == 0:
-            array = next(e.data.data for e in graph.edges_between(node_a, node_b)
-                         if e.data.data is not None and e.data.wcr is None)
+            array = next(
+                e.data.data
+                for e in graph.edges_between(node_a, node_b)
+                if e.data.data is not None and e.data.wcr is None
+            )
 
         original_edge = None
         invariant_memlet = None
@@ -88,7 +90,8 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
                 name=prefix + invariant_memlet.data,
                 shape=[symbolic.overapproximate(r).simplify() for r in invariant_memlet.bounding_box_size()],
                 dtype=sdfg.arrays[invariant_memlet.data].dtype,
-                find_new_name=True)
+                find_new_name=True,
+            )
 
         else:
             new_data = prefix + invariant_memlet.data
@@ -120,14 +123,14 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
 
 @make_properties
 class InLocalStorage(LocalStorage):
-    """ Implements the InLocalStorage transformation, which adds a transient
-        data node between two scope entry nodes.
+    """Implements the InLocalStorage transformation, which adds a transient
+    data node between two scope entry nodes.
     """
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b
-        if (isinstance(node_a, nodes.EntryNode) and isinstance(node_b, nodes.EntryNode)):
+        if isinstance(node_a, nodes.EntryNode) and isinstance(node_b, nodes.EntryNode):
             # Empty memlets cannot match
             for edge in graph.edges_between(node_a, node_b):
                 if edge.data.data is not None:
@@ -137,16 +140,15 @@ class InLocalStorage(LocalStorage):
 
 @make_properties
 class OutLocalStorage(LocalStorage):
-    """ Implements the OutLocalStorage transformation, which adds a transient
-        data node between two scope exit nodes.
+    """Implements the OutLocalStorage transformation, which adds a transient
+    data node between two scope exit nodes.
     """
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b
 
-        if (isinstance(node_a, nodes.ExitNode) and isinstance(node_b, nodes.ExitNode)):
-
+        if isinstance(node_a, nodes.ExitNode) and isinstance(node_b, nodes.ExitNode):
             for edge in graph.edges_between(node_a, node_b):
                 # Empty memlets cannot match; WCR edges not supported (use
                 # AccumulateTransient instead)

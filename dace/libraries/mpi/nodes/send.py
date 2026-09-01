@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
 
 @dace.library.expansion
 class ExpandSendMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -39,18 +38,19 @@ class ExpandSendMPI(ExpandTransformation):
             code += f"""// MPI_Type_free(&newtype);
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 
 @dace.library.node
 class Send(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandSendMPI,

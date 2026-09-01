@@ -10,24 +10,33 @@ def test_fortran_frontend_view_test():
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
     """
     test_name = "view_test"
-    test_string = """
-                    PROGRAM """ + test_name + """_program
+    test_string = (
+        """
+                    PROGRAM """
+        + test_name
+        + """_program
 implicit none
 double precision a(10,11,12)
 double precision res(2,2,2)
 
-CALL """ + test_name + """_function(a,res)
+CALL """
+        + test_name
+        + """_function(a,res)
 
 end
 
-SUBROUTINE """ + test_name + """_function(aa,res)
+SUBROUTINE """
+        + test_name
+        + """_function(aa,res)
 
 double precision aa(10,11,12)
 double precision res(2,2,2)
 
 call viewlens(aa(:,:,1),res)
 
-end SUBROUTINE """ + test_name + """_function
+end SUBROUTINE """
+        + test_name
+        + """_function
 
 SUBROUTINE viewlens(aa,res)
 
@@ -49,6 +58,7 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
+    )
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.validate()
     sdfg.simplify(verbose=True)
@@ -56,9 +66,9 @@ END SUBROUTINE viewlens
     b = np.full([2, 2, 2], 42, order="F", dtype=np.float64)
     b[0, 0, 0] = 1
     sdfg(aa=a, res=b)
-    assert (a[0, 0, 1] == 42)
-    assert (a[0, 0, 0] == 4620)
-    assert (b[0, 0, 0] == 4620)
+    assert a[0, 0, 1] == 42
+    assert a[0, 0, 0] == 4620
+    assert b[0, 0, 0] == 4620
 
 
 def test_fortran_frontend_view_test_2():
@@ -66,17 +76,24 @@ def test_fortran_frontend_view_test_2():
     Tests to check whether Fortran array slices are correctly translates to DaCe views. This case necessitates multiple views per array in the same context.
     """
     test_name = "view2_test"
-    test_string = """
-                    PROGRAM """ + test_name + """_program
+    test_string = (
+        """
+                    PROGRAM """
+        + test_name
+        + """_program
 implicit none
 integer, parameter :: n=10
 double precision a(n,11,12),b(n,11,12),c(n,11,12)
 
-CALL """ + test_name + """_function(a,b,c,n)
+CALL """
+        + test_name
+        + """_function(a,b,c,n)
 
 end
 
-SUBROUTINE """ + test_name + """_function(aa,bb,cc,n)
+SUBROUTINE """
+        + test_name
+        + """_function(aa,bb,cc,n)
 
 integer, parameter :: n=10
 double precision a(n,11,12),b(n,11,12),c(n,11,12)
@@ -87,7 +104,9 @@ j=1
 k=2
     call viewlens(aa(:,:,k),bb(:,:,k),cc(:,:,k))
 
-end SUBROUTINE """ + test_name + """_function
+end SUBROUTINE """
+        + test_name
+        + """_function
 
 SUBROUTINE viewlens(aa,bb,cc)
 
@@ -105,6 +124,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
+    )
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.validate()
     sdfg.simplify(verbose=True)
@@ -114,25 +134,32 @@ END SUBROUTINE viewlens
 
     b[0, 0, 0] = 1
     sdfg(aa=a, bb=b, cc=c, n=10)
-    assert (c[0, 0, 0] == 43)
-    assert (c[1, 1, 1] == 84)
+    assert c[0, 0, 0] == 43
+    assert c[1, 1, 1] == 84
 
 
 def test_fortran_frontend_view_test_3():
     """
-    Tests to check whether Fortran array slices are correctly translates to DaCe views. This test generates multiple views from the same array in the same context.    """
+    Tests to check whether Fortran array slices are correctly translates to DaCe views. This test generates multiple views from the same array in the same context."""
     test_name = "view3_test"
-    test_string = """
-                    PROGRAM """ + test_name + """_program
+    test_string = (
+        """
+                    PROGRAM """
+        + test_name
+        + """_program
 implicit none
 integer, parameter :: n=10
 double precision a(n,n+1,12),b(n,n+1,12)
 
-CALL """ + test_name + """_function(a,b,n)
+CALL """
+        + test_name
+        + """_function(a,b,n)
 
 end
 
-SUBROUTINE """ + test_name + """_function(aa,bb,n)
+SUBROUTINE """
+        + test_name
+        + """_function(aa,bb,n)
 
 integer, parameter :: n=10
 double precision a(n,n+1,12),b(n,n+1,12)
@@ -141,7 +168,9 @@ integer j,k
 j=1
     call viewlens(aa(:,:,j),bb(:,:,j),bb(:,:,j+1))
 
-end SUBROUTINE """ + test_name + """_function
+end SUBROUTINE """
+        + test_name
+        + """_function
 
 SUBROUTINE viewlens(aa,bb,cc)
 
@@ -159,6 +188,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
+    )
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.validate()
     sdfg.simplify(verbose=True)
@@ -167,12 +197,11 @@ END SUBROUTINE viewlens
 
     b[0, 0, 0] = 1
     sdfg(aa=a, bb=b, n=10)
-    assert (b[0, 0, 0] == 1)
-    assert (b[0, 0, 1] == 43)
+    assert b[0, 0, 0] == 1
+    assert b[0, 0, 1] == 43
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_view_test()
     test_fortran_frontend_view_test_2()
     test_fortran_frontend_view_test_3()

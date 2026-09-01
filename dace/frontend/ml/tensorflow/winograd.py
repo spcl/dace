@@ -8,7 +8,7 @@ from math import ceil
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):
-    """ Add CUBLAS and CUSOLVER handles to the SDFG. """
+    """Add CUBLAS and CUSOLVER handles to the SDFG."""
     sdfg.set_global_code("""
         #include <iostream>
         #include <cublas_v2.h>
@@ -374,8 +374,8 @@ def printer(*inp):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired
-        characters with "_".
+    """To match DaCe variable naming conventions, replaces all undesired
+    characters with "_".
     """
     newstring = string
     if string[0].isdigit():
@@ -454,16 +454,24 @@ def winograd_convolution(dace_session, tf_node):
     ########Tiling the image#################################
     inputViewParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%"
+        "(i3/"
+        + str(outputShape[0])
+        + ")%"
         # + str(output_shape[0] * ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" + str(OUTPUT_TILE_SIZE) + "+i0",
+        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + "*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i0",
         # + str(
         #    ceil(output_shape[1] / OUTPUT_TILE_SIZE)
         #    * ceil(output_shape[2] / OUTPUT_TILE_SIZE)
         # ),
         "int_floor(i3,"
         # + str(ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" + str(OUTPUT_TILE_SIZE) + "+i1",
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + ")*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i1",
         "i2",
     ]
     inputView = state.add_transient(
@@ -480,7 +488,7 @@ def winograd_convolution(dace_session, tf_node):
     dace_session.add_in_memlets([inputNodes[0]], mapEntry, tasklet, [inputDims[0]], [inputViewParams])
     dace_session.add_out_memlets([inputView], mapExit, tasklet, [inputViewDims], [inputParams[0]])
     ##################Transforming all input tiles#########################
-    #[TODO] try to re-use memory
+    # [TODO] try to re-use memory
     vNode = state.add_transient(
         "V_output" + "_".join([str(_s) for _s in inputViewShape]),
         inputViewShape,
@@ -705,10 +713,18 @@ def winograd_convolution(dace_session, tf_node):
     ###################Un-Tile the output to NHWC format###################
     outputParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%" + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
-        str(OUTPUT_TILE_SIZE) + "+i0",
-        "int_floor(i3," + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" + str(OUTPUT_TILE_SIZE) +
-        "+i1",
+        "(i3/"
+        + str(outputShape[0])
+        + ")%"
+        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + "*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i0",
+        "int_floor(i3,"
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + ")*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i1",
         "i2",
     ]
     mapRange = ["0:" + str(_s) for _s in transformedOutputNode.desc(dace_session.graph).shape]
@@ -729,11 +745,13 @@ def winograd_convolution(dace_session, tf_node):
         language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):
-        _n_cpu = state.add_transient(_n.data + "_cpucopy",
-                                     _n.desc(dace_session.graph).shape,
-                                     _n.desc(dace_session.graph).dtype,
-                                     storage=dace.StorageType.CPU_Heap,
-                                     lifetime=dtypes.AllocationLifetime.SDFG)
+        _n_cpu = state.add_transient(
+            _n.data + "_cpucopy",
+            _n.desc(dace_session.graph).shape,
+            _n.desc(dace_session.graph).dtype,
+            storage=dace.StorageType.CPU_Heap,
+            lifetime=dtypes.AllocationLifetime.SDFG,
+        )
         state.add_edge(_n, None, _n_cpu, None, Memlet.from_array(_n, _n.desc(dace_session.graph)))
         state.add_edge(
             _n_cpu,
@@ -747,4 +765,5 @@ def winograd_convolution(dace_session, tf_node):
         callback_input_types.append(somenode.desc(dace_session.graph))
     dace_session.callbackFunctionDict[string_builder(tf_node.name) + "_printer"] = printer
     dace_session.callbackTypeDict[string_builder(tf_node.name) + "_printer"] = dace.data.Scalar(
-        dace.callback(None, *callback_input_types))
+        dace.callback(None, *callback_input_types)
+    )

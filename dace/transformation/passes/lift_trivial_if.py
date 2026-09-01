@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
+
 import ast
 import re
 from functools import lru_cache
@@ -133,6 +134,7 @@ class LiftTrivialIf(ppl.Pass):
         the inclusive bounds under normal (no-break) termination."""
         from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
+
         ranges = []
         graph = cfb.parent_graph
         seen = set()
@@ -338,9 +340,9 @@ class LiftTrivialIf(ppl.Pass):
                     # Either one of them must be none
                     if cond1 is not None and cond2 is not None:
                         continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (((cond1, cfg1),
-                                                                             (cond2, cfg2)) if cond1 is not None else
-                                                                            ((cond2, cfg2), (cond1, cfg1)))
+                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
+                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
+                    )
 
                     if self._trivially_true(not_none_cond, cfb):  # 2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))

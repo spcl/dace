@@ -31,7 +31,8 @@ class ControlFlowRaising(ppl.Pass):
     raise_sink_node_returns = properties.Property(
         dtype=bool,
         default=False,
-        desc='Whether or not to lift sink nodes in an SDFG context to explicit return blocks.')
+        desc='Whether or not to lift sink nodes in an SDFG context to explicit return blocks.',
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -121,7 +122,8 @@ class ControlFlowRaising(ppl.Pass):
                 # already have lifted all loops, so this should not occur in practice and this warning would be cause
                 # for closer inspection.
                 warnings.warn(
-                    f'Control flow raising: Skipping lifting conditionals for region {region.name} with cycles.')
+                    f'Control flow raising: Skipping lifting conditionals for region {region.name} with cycles.'
+                )
                 continue
 
             # If there are multiple sinks, create a dummy exit node for finding branch merges. If there is at least one
@@ -161,7 +163,8 @@ class ControlFlowRaising(ppl.Pass):
                             if i == len(oedges) - 1 and oe.data.condition_sympy() == sympy.Not(full_cond_expression):
                                 if uncond_generated:
                                     warnings.warn(
-                                        f'Control flow raising: Found multiple unconditional branches in {block.label}')
+                                        f'Control flow raising: Found multiple unconditional branches in {block.label}'
+                                    )
                                 uncond_generated = True
                                 cond = None
                             else:
@@ -173,7 +176,8 @@ class ControlFlowRaising(ppl.Pass):
                         else:
                             if uncond_generated:
                                 warnings.warn(
-                                    f'Control flow raising: Found multiple unconditional branches in {block.label}')
+                                    f'Control flow raising: Found multiple unconditional branches in {block.label}'
+                                )
                             uncond_generated = True
                             cond = None
 
@@ -293,7 +297,9 @@ class ControlFlowRaising(ppl.Pass):
 
     def report(self, pass_retval: Optional[Tuple[int, int, int]]):
         if pass_retval and any([x > 0 for x in pass_retval]):
-            return (f'Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, ' +
-                    f'and {pass_retval[3]} unstructured control flow regions')
+            return (
+                f'Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, '
+                + f'and {pass_retval[3]} unstructured control flow regions'
+            )
         else:
             return 'No control flow lifted'

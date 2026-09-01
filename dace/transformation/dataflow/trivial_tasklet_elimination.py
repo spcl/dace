@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the trivial-tasklet-elimination transformation. """
+"""Contains classes that implement the trivial-tasklet-elimination transformation."""
 
 from dace import data
 from dace.sdfg import nodes
@@ -10,10 +10,10 @@ from dace.properties import make_properties
 
 @make_properties
 class TrivialTaskletElimination(transformation.SingleStateTransformation):
-    """ Implements the Trivial-Tasklet Elimination pattern.
+    """Implements the Trivial-Tasklet Elimination pattern.
 
-        Trivial-Tasklet Elimination removes tasklets that just copy the input
-        to the output without WCR.
+    Trivial-Tasklet Elimination removes tasklets that just copy the input
+    to the output without WCR.
     """
 
     read = transformation.PatternNode(nodes.AccessNode)

@@ -5,23 +5,23 @@ import polybench
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
 sizes = [{tsteps: 20, N: 10}, {tsteps: 40, N: 20}, {tsteps: 100, N: 40}, {tsteps: 500, N: 120}, {tsteps: 1000, N: 200}]
 args = [
     ([N, N, N], datatype),
-    ([N, N, N], datatype)  #, N, tsteps
+    ([N, N, N], datatype),  # , N, tsteps
 ]
 
 
 @dace.program
-def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  #, N, tsteps):
+def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  # , N, tsteps):
     for t in range(tsteps):
 
         @dace.map
-        def a(i: _[1:N - 1], j: _[1:N - 1], k: _[1:N - 1]):
+        def a(i: _[1 : N - 1], j: _[1 : N - 1], k: _[1 : N - 1]):
             a11 << A[i + 1, j, k]
             a12 << A[i - 1, j, k]
             a21 << A[i, j + 1, k]
@@ -31,13 +31,15 @@ def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  #, N, tsteps):
             a << A[i, j, k]
             b >> B[i, j, k]
 
-            b = 0.125 * (a11 - datatype(2.0) * a + a12) +\
-                0.125 * (a21 - datatype(2.0) * a + a22) +\
-                0.125 * (a31 - datatype(2.0) * a + a32) +\
-                a
+            b = (
+                0.125 * (a11 - datatype(2.0) * a + a12)
+                + 0.125 * (a21 - datatype(2.0) * a + a22)
+                + 0.125 * (a31 - datatype(2.0) * a + a32)
+                + a
+            )
 
         @dace.map
-        def a(i: _[1:N - 1], j: _[1:N - 1], k: _[1:N - 1]):
+        def a(i: _[1 : N - 1], j: _[1 : N - 1], k: _[1 : N - 1]):
             a11 << B[i + 1, j, k]
             a12 << B[i - 1, j, k]
             a21 << B[i, j + 1, k]
@@ -47,10 +49,12 @@ def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  #, N, tsteps):
             a << B[i, j, k]
             b >> A[i, j, k]
 
-            b = 0.125 * (a11 - datatype(2.0) * a + a12) +\
-                0.125 * (a21 - datatype(2.0) * a + a22) +\
-                0.125 * (a31 - datatype(2.0) * a + a32) +\
-                a
+            b = (
+                0.125 * (a11 - datatype(2.0) * a + a12)
+                + 0.125 * (a21 - datatype(2.0) * a + a22)
+                + 0.125 * (a31 - datatype(2.0) * a + a32)
+                + a
+            )
 
 
 def init_array(A, B, n, tsteps):

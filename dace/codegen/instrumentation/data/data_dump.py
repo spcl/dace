@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 
 class DataInstrumentationProviderMixin:
-
     def _setup_gpu_runtime(self, sdfg: SDFG, global_stream: CodeIOStream):
         if self.gpu_runtime_init:
             return
@@ -36,7 +35,7 @@ class DataInstrumentationProviderMixin:
         sdfg.append_global_code('\n#include <%s>' % header_name, None)
 
     def _generate_device_sync(self, sdfg: SDFG, global_stream: CodeIOStream) -> str:
-        """ Waits for every stream, or returns an empty string if the SDFG has no device data.
+        """Waits for every stream, or returns an empty string if the SDFG has no device data.
 
         The generated streams are non-blocking, so nothing orders instrumentation against the copies
         and kernels that fill the buffer: a host buffer may still be the target of an in-flight
@@ -48,7 +47,7 @@ class DataInstrumentationProviderMixin:
         return f'{self.backend}DeviceSynchronize();\n'
 
     def _generate_copy_to_host(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
-        """ Copies to host and returns (preamble, postamble, name of new host pointer). """
+        """Copies to host and returns (preamble, postamble, name of new host pointer)."""
         new_ptr = f'__dinstr_{node.data}'
         new_desc = dt.Array(desc.dtype, [desc.total_size - desc.start_offset])
         csize = cpp.sym2cpp(desc.total_size - desc.start_offset)
@@ -68,7 +67,7 @@ class DataInstrumentationProviderMixin:
         return preamble, postamble, new_ptr
 
     def _generate_copy_to_device(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
-        """ Copies restored data to device and returns (preamble, postamble, name of new host pointer). """
+        """Copies restored data to device and returns (preamble, postamble, name of new host pointer)."""
         new_ptr = f'__dinstr_{node.data}'
         new_desc = dt.Array(desc.dtype, [desc.total_size - desc.start_offset])
         csize = cpp.sym2cpp(desc.total_size - desc.start_offset)
@@ -90,7 +89,7 @@ class DataInstrumentationProviderMixin:
 
 @registry.autoregister_params(type=dtypes.DataInstrumentationType.Save)
 class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
-    """ Data instrumentation code generator that stores arrays to a file. """
+    """Data instrumentation code generator that stores arrays to a file."""
 
     def __init__(self):
         super().__init__()
@@ -98,8 +97,9 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         self.uses_gpu = False
         self.framecode: 'DaCeCodeGenerator' = None
 
-    def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
-                      codegen: 'DaCeCodeGenerator'):
+    def on_sdfg_begin(
+        self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen: 'DaCeCodeGenerator'
+    ):
         # Initialize serializer versioning object
         if sdfg.parent is None:
             self.framecode = codegen
@@ -113,8 +113,14 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         if sdfg.parent is None:
             sdfg.append_exit_code('delete __state->serializer;\n')
 
-    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                       global_stream: CodeIOStream):
+    def on_state_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ):
         if state.symbol_instrument == dtypes.DataInstrumentationType.No_Instrumentation:
             return
 
@@ -136,12 +142,21 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         local_stream.write(condition_preamble, cfg, state_id)
         defined_symbols = state.defined_symbols()
         for sym, _ in defined_symbols.items():
-            local_stream.write(f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg,
-                               state_id)
+            local_stream.write(
+                f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg, state_id
+            )
         local_stream.write(condition_postamble, cfg, state_id)
 
-    def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.AccessNode,
-                    outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream):
+    def on_node_end(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.AccessNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         condition_preamble, condition_postamble = '', ''
@@ -187,14 +202,18 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         inner_stream.write(preamble, cfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
-            f'"{node.data}", "{uuid}", {shape}, {strides});\n', cfg, state_id, node_id)
+            f'"{node.data}", "{uuid}", {shape}, {strides});\n',
+            cfg,
+            state_id,
+            node_id,
+        )
         inner_stream.write(postamble, cfg, state_id, node_id)
         inner_stream.write(condition_postamble, cfg, state_id, node_id)
 
 
 @registry.autoregister_params(type=dtypes.DataInstrumentationType.Restore)
 class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
-    """ Data instrumentation that restores arrays from a file, generated by the ``Save`` data instrumentation type. """
+    """Data instrumentation that restores arrays from a file, generated by the ``Save`` data instrumentation type."""
 
     def __init__(self):
         super().__init__()
@@ -209,8 +228,9 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         }}
         '''
 
-    def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
-                      codegen: 'DaCeCodeGenerator'):
+    def on_sdfg_begin(
+        self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen: 'DaCeCodeGenerator'
+    ):
         # Initialize serializer versioning object
         if sdfg.parent is None:
             self.framecode = codegen
@@ -226,8 +246,14 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         if sdfg.parent is None:
             sdfg.append_exit_code('delete __state->serializer;\n')
 
-    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                       global_stream: CodeIOStream):
+    def on_state_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ):
         if state.symbol_instrument == dtypes.DataInstrumentationType.No_Instrumentation:
             return
 
@@ -251,11 +277,21 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         for sym, sym_type in defined_symbols.items():
             local_stream.write(
                 f'{cpp.sym2cpp(sym)} = __state->serializer->restore_symbol<{sym_type.ctype}>("{sym}", "{state_id}");\n',
-                cfg, state_id)
+                cfg,
+                state_id,
+            )
         local_stream.write(condition_postamble, cfg, state_id)
 
-    def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.AccessNode,
-                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream):
+    def on_node_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.AccessNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         condition_preamble, condition_postamble = '', ''
@@ -297,6 +333,10 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         inner_stream.write(preamble, cfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
-            f'"{node.data}", "{uuid}");\n', cfg, state_id, node_id)
+            f'"{node.data}", "{uuid}");\n',
+            cfg,
+            state_id,
+            node_id,
+        )
         inner_stream.write(postamble, cfg, state_id, node_id)
         inner_stream.write(condition_postamble, cfg, state_id, node_id)

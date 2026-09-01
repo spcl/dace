@@ -51,9 +51,9 @@ def test_mapcollapse_dep_edges():
     maps = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
     assert len(maps) == 1
     map_entry = maps.pop()
-    assert map_entry.map.range == dace.subsets.Range([
-        (0, 4, 1), (0, 4, 1), (0, 4, 1)
-    ]), f"Excepted 3 ranges all with range 0:5:1, got {map_entry.map.range}"
+    assert map_entry.map.range == dace.subsets.Range([(0, 4, 1), (0, 4, 1), (0, 4, 1)]), (
+        f"Excepted 3 ranges all with range 0:5:1, got {map_entry.map.range}"
+    )
     assert map_entry.map.params == ["i", "j", "k"]
     sdfg.validate()
 

@@ -23,8 +23,8 @@ example_expressions = [
     "levmask_out_0 = 0",
     "z_v_grad_w_out_0 = (((z_v_grad_w_0_in_0 * p_metrics_0_in_deepatmo_gradh_ifc_0) + (p_diag_0_in_vn_ie_0 * ((p_diag_1_in_vn_ie_0 * p_metrics_1_in_deepatmo_invr_ifc_0) - p_patch_0_in_edges_ft_e_0))) + (z_vt_ie_0_in_0 * ((z_vt_ie_1_in_0 * p_metrics_2_in_deepatmo_invr_ifc_0) + p_patch_1_in_edges_fn_e_0)))",
     "p_diag_out_ddt_w_adv_pc_0 = (p_diag_0_in_ddt_w_adv_pc_0 + ((difcoef_0_in * p_patch_0_in_cells_area_0) * ((((p_prog_0_in_w_0 * p_int_0_in_geofac_n2s_0) + (p_prog_1_in_w_0 * p_int_1_in_geofac_n2s_0)) + (p_prog_2_in_w_0 * p_int_2_in_geofac_n2s_0)) + (p_prog_3_in_w_0 * p_int_3_in_geofac_n2s_0))))",
-    #"tmp_call_17_out = abs(w_con_e_0_in) * 2.0", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
-    #"tmp_call_15_out = abs(w_con_e_0_in)", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
+    # "tmp_call_17_out = abs(w_con_e_0_in) * 2.0", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
+    # "tmp_call_15_out = abs(w_con_e_0_in)", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
 ]
 
 # Double-split tasklet test case
@@ -51,22 +51,18 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 
     assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
     for var in lhs_vars + rhs_vars:
-        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64)
 
     state = sdfg.add_state(label="main")
     state.add_mapped_tasklet(
         name="wrapper_map",
         map_ranges={"i": dace.subsets.Range([(0, 0, 1)])},
-        inputs={rhs_var: dace.memlet.Memlet(expr=f"{rhs_var}_ARR[i]")
-                for rhs_var in rhs_vars},
+        inputs={rhs_var: dace.memlet.Memlet(expr=f"{rhs_var}_ARR[i]") for rhs_var in rhs_vars},
         code=expression_str,
-        outputs={lhs_var: dace.memlet.Memlet(expr=f"{lhs_var}_ARR[i]")
-                 for lhs_var in lhs_vars},
+        outputs={lhs_var: dace.memlet.Memlet(expr=f"{lhs_var}_ARR[i]") for lhs_var in lhs_vars},
         external_edges=True,
-        input_nodes={rhs_var: state.add_access(f"{rhs_var}_ARR")
-                     for rhs_var in rhs_vars},
-        output_nodes={lhs_var: state.add_access(f"{lhs_var}_ARR")
-                      for lhs_var in lhs_vars},
+        input_nodes={rhs_var: state.add_access(f"{rhs_var}_ARR") for rhs_var in rhs_vars},
+        output_nodes={lhs_var: state.add_access(f"{lhs_var}_ARR") for lhs_var in lhs_vars},
     )
 
     for n in state.nodes():
@@ -80,8 +76,9 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 _double_tasklet_sdfg_counter = 0
 
 
-def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
-                                  direct_connection_between_tasklets: bool = False) -> dace.SDFG:
+def _generate_double_tasklet_sdfg(
+    expression_strs: typing.Tuple[str, str], direct_connection_between_tasklets: bool = False
+) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
@@ -95,7 +92,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         lhs_vars, rhs_vars = _get_vars(expression_str)
         for var in lhs_vars:
             assert var != "tmp"
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64)
         if i == len(expression_strs) - 1:
             for var in lhs_vars:
                 out_accesses.add(state.add_access(var + "_ARR"))
@@ -103,7 +100,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         for var in rhs_vars:
             if var == "tmp":
                 continue
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64)
             in_accesses.add(state.add_access(var + "_ARR"))
 
     if not direct_connection_between_tasklets:
@@ -114,12 +111,22 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
     )
 
     for in_access in in_accesses:
-        state.add_edge(in_access, None, map_entry, f"IN_{in_access.data}",
-                       dace.memlet.Memlet.from_array(in_access.data, sdfg.arrays[in_access.data]))
+        state.add_edge(
+            in_access,
+            None,
+            map_entry,
+            f"IN_{in_access.data}",
+            dace.memlet.Memlet.from_array(in_access.data, sdfg.arrays[in_access.data]),
+        )
         map_entry.add_in_connector(f"IN_{in_access.data}")
     for out_access in out_accesses:
-        state.add_edge(map_exit, f"OUT_{out_access.data}", out_access, None,
-                       dace.memlet.Memlet.from_array(out_access.data, sdfg.arrays[out_access.data]))
+        state.add_edge(
+            map_exit,
+            f"OUT_{out_access.data}",
+            out_access,
+            None,
+            dace.memlet.Memlet.from_array(out_access.data, sdfg.arrays[out_access.data]),
+        )
         map_exit.add_out_connector(f"OUT_{out_access.data}")
 
     added_tasklets = list()
@@ -140,8 +147,13 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
 
         if i == 0:
             for rhs_var in rhs_vars:
-                state.add_edge(map_entry, f"OUT_{rhs_var}_ARR", t, rhs_var,
-                               dace.memlet.Memlet.from_array(f"{rhs_var}_ARR", sdfg.arrays[f"{rhs_var}_ARR"]))
+                state.add_edge(
+                    map_entry,
+                    f"OUT_{rhs_var}_ARR",
+                    t,
+                    rhs_var,
+                    dace.memlet.Memlet.from_array(f"{rhs_var}_ARR", sdfg.arrays[f"{rhs_var}_ARR"]),
+                )
                 map_entry.add_out_connector(f"OUT_{rhs_var}_ARR")
                 t.add_in_connector(rhs_var)
             if not direct_connection_between_tasklets:
@@ -162,13 +174,23 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
                         # Handled already on the out connection
                         pass
                 else:
-                    state.add_edge(map_entry, f"OUT_{rhs_var}_ARR", t, rhs_var,
-                                   dace.memlet.Memlet.from_array(f"{rhs_var}_ARR", sdfg.arrays[f"{rhs_var}_ARR"]))
+                    state.add_edge(
+                        map_entry,
+                        f"OUT_{rhs_var}_ARR",
+                        t,
+                        rhs_var,
+                        dace.memlet.Memlet.from_array(f"{rhs_var}_ARR", sdfg.arrays[f"{rhs_var}_ARR"]),
+                    )
                     map_entry.add_out_connector(f"OUT_{rhs_var}_ARR")
                     t.add_in_connector(rhs_var)
             for lhs_var in lhs_vars:
-                state.add_edge(t, lhs_var, map_exit, f"IN_{lhs_var}_ARR",
-                               dace.memlet.Memlet.from_array(f"{lhs_var}_ARR", sdfg.arrays[f"{lhs_var}_ARR"]))
+                state.add_edge(
+                    t,
+                    lhs_var,
+                    map_exit,
+                    f"IN_{lhs_var}_ARR",
+                    dace.memlet.Memlet.from_array(f"{lhs_var}_ARR", sdfg.arrays[f"{lhs_var}_ARR"]),
+                )
                 t.add_out_connector(lhs_var)
                 map_exit.add_in_connector(f"IN_{lhs_var}_ARR")
         else:
@@ -186,7 +208,8 @@ def _one_assign_one_op(code: str) -> bool:
 
     assigns = sum(isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) for n in ast.walk(tree))
     ops = sum(
-        isinstance(n, (ast.Call, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.Lambda)) for n in ast.walk(tree))
+        isinstance(n, (ast.Call, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.Lambda)) for n in ast.walk(tree)
+    )
     return (assigns, ops)
 
 
@@ -194,8 +217,9 @@ def _check_tasklet_properties(sdfg: dace.SDFG):
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.Tasklet):
             assert n.language == dace.dtypes.Language.Python
-            assert _one_assign_one_op(n.code.as_string) == (1, 1) or _one_assign_one_op(n.code.as_string) == (
-                1, 0), f"{n.code.as_string} has (assigns, ops): {_one_assign_one_op(n.code.as_string)}"
+            assert _one_assign_one_op(n.code.as_string) == (1, 1) or _one_assign_one_op(n.code.as_string) == (1, 0), (
+                f"{n.code.as_string} has (assigns, ops): {_one_assign_one_op(n.code.as_string)}"
+            )
 
 
 def _run_compile_and_comparison_test(sdfg: dace.SDFG):
@@ -256,7 +280,9 @@ def tasklet_in_nested_sdfg(
 
 
 @dace.program
-def cast_tasklet_first_in_a_map(a: dace.float64[S, S], ):
+def cast_tasklet_first_in_a_map(
+    a: dace.float64[S, S],
+):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
         a[i, j] = dace.float64(i) + ((dace.float64(j) + 5.2) * 2.7)
 

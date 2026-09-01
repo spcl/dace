@@ -13,7 +13,6 @@ from dace.utils import until
 
 
 class SerializableObject(object):
-
     json_obj = {}
     typename = None
 
@@ -32,7 +31,7 @@ class SerializableObject(object):
 
 
 class NumpySerializer:
-    """ Helper class to load/store numpy arrays from JSON. """
+    """Helper class to load/store numpy arrays from JSON."""
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -86,8 +85,10 @@ def get_serializer(type_name):
     if type_name in basic_dtypes:
         return basic_dtypes[type_name]
 
-    raise KeyError(f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
-                   'Please implement serialization by decorating the class with ``@serializable``.')
+    raise KeyError(
+        f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
+        'Please implement serialization by decorating the class with ``@serializable``.'
+    )
 
 
 # Decorator for objects that should be serializable, but don't call
@@ -113,9 +114,11 @@ def to_json(obj):
         return NumpySerializer.to_json(obj)
     elif type(obj).__name__ == 'SymExpr':
         from dace import symbolic
+
         return symbolic.serialize_symbolic(obj)
     elif isinstance(obj, sympy.Basic):
         from dace import symbolic
+
         return symbolic.serialize_symbolic(obj)
     elif is_dataclass(obj):
         # Serialize dataclass as a dictionary
@@ -231,7 +234,7 @@ def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
         if not save_all_fields:
-            is_default = (v == x.default)
+            is_default = v == x.default
             if isinstance(is_default, np.ndarray):
                 is_default = np.all(is_default)
             if is_default:  # Skip default fields
@@ -272,8 +275,9 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
             elif prop.allow_none:
                 val = None
             else:
-                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
-                               prop_name)
+                raise KeyError(
+                    "Missing property for object of type " + type(object_with_properties).__name__ + ": " + prop_name
+                )
 
         if not missing_prop:
             if isinstance(val, dict):
@@ -286,8 +290,11 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                     # dictionary has been fully deserialized, and on raw json
                     # objects. In the interest of time, we're not failing here, but
                     # should untangle this eventually
-                    warnings.warn("Failed to parse object {}"
-                                  " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
+                    warnings.warn(
+                        "Failed to parse object {} for property {} of type {}. Error was: {}".format(
+                            val, prop_name, prop, err
+                        )
+                    )
                     raise
 
         setattr(object_with_properties, prop_name, val)

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Example that defines a CUBLAS C++ tasklet. """
+"""Example that defines a CUBLAS C++ tasklet."""
+
 import dace as dc
 import numpy as np
 import os
@@ -50,7 +51,8 @@ tasklet = state.add_tasklet(
                 c, M);
     ''',
     # Language (C++ in this case)
-    language=dc.Language.CPP)
+    language=dc.Language.CPP,
+)
 
 # Add CPU arrays, GPU arrays, and connect to tasklet
 A = state.add_read('A')

@@ -2,6 +2,7 @@
 """
 Tests related to try_parse_state_struct
 """
+
 import ctypes
 import os
 
@@ -43,7 +44,6 @@ def _cuda_helper():
     checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"))
 
     class CudaHelper:
-
         def __init__(self):
             self.dll = checker_dll
             checker_dll.load()
@@ -57,8 +57,12 @@ def _cuda_helper():
         def host_to_gpu(self, gpu_ptr: int, numpy_array: np.ndarray):
             size = ctypes.sizeof(dtypes._FFI_CTYPES[numpy_array.dtype.type]) * numpy_array.size
             result = ctypes.c_int(
-                self._host_to_gpu(ctypes.c_void_p(gpu_ptr), ctypes.c_void_p(numpy_array.__array_interface__["data"][0]),
-                                  ctypes.c_size_t(size)))
+                self._host_to_gpu(
+                    ctypes.c_void_p(gpu_ptr),
+                    ctypes.c_void_p(numpy_array.__array_interface__["data"][0]),
+                    ctypes.c_size_t(size),
+                )
+            )
             if result.value != 0:
                 raise ValueError("host_to_gpu returned nonzero result!")
 
@@ -70,10 +74,9 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
 
     @dace.program
     def persistent_transient(A: dace.float32[3, 3]):
-        persistent_transient = dace.define_local([3, 5],
-                                                 dace.float32,
-                                                 lifetime=dace.AllocationLifetime.Persistent,
-                                                 storage=dace.StorageType.GPU_Global)
+        persistent_transient = dace.define_local(
+            [3, 5], dace.float32, lifetime=dace.AllocationLifetime.Persistent, storage=dace.StorageType.GPU_Global
+        )
         return A @ persistent_transient
 
     sdfg: dace.SDFG = persistent_transient.to_sdfg()

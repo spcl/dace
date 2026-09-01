@@ -36,8 +36,7 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
-            raise ValueError("Matrix multiplication connector "
-                             "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector \"{}\" not found.".format(name))
     return res_lhs, res_rhs, res_out
 
 
@@ -132,13 +131,14 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
 
 
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
-    """ Get option map for GEMM code generation (with column-major order). """
+    """Get option map for GEMM code generation (with column-major order)."""
     # Avoid import loops
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
-                                                                   _) = _get_matmul_operands(node, state, sdfg)
+    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _, _) = _get_matmul_operands(
+        node, state, sdfg
+    )
 
     if node.transA:
         ashape = list(reversed(ashape))
@@ -188,7 +188,6 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
 
 @dace.library.expansion
 class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
-
     environments = []
 
     @staticmethod
@@ -204,29 +203,32 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
+
             beta = node.beta
             cin = True
             if '_cin' not in node.in_connectors:
                 cin = False
             if c[0].data.wcr:
                 from dace.frontend import operations
+
                 redtype = operations.detect_reduction_type(c[0].data.wcr)
                 if redtype == dace.dtypes.ReductionType.Sum:
                     beta = 1.0
                     cin = False
                 else:
-                    warnings.warn("Unsupported WCR in output of MatMul "
-                                  "library node: {}".format(c[0].data.wcr))
+                    warnings.warn("Unsupported WCR in output of MatMul library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
             # Batched matrix multiplication with broadcasting support
             # Handles: [b, m, k] @ [b, k, n], [b, m, k] @ [k, n], [m, k] @ [b, k, n], [b1, b2, m, k] @ [b1, b2, k, n], etc.
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+
             result = BatchedMatMul(node.name + 'bmm', location=node.location)
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
+
             # Rename inputs to match dot naming
             a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
@@ -235,6 +237,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
+
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
@@ -243,14 +246,16 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
+
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
             result = Dot(node.name + 'dot', location=node.location)
         else:
-            raise NotImplementedError("Matrix multiplication not implemented "
-                                      "for shapes: {} and {}".format(size_a, size_b))
+            raise NotImplementedError(
+                "Matrix multiplication not implemented for shapes: {} and {}".format(size_a, size_b)
+            )
 
         result.alpha = node.alpha
         result.beta = node.beta
@@ -260,9 +265,9 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
 @dace.library.node
 class MatMul(dace.sdfg.nodes.LibraryNode):
     """This is a "meta-node" which delegates to different implementations of
-       matrix multiplication in the mathematical sense to the appropriate
-       computational operators, namely GEMM, batched matrix multiplication,
-       GEMV, and DOT."""
+    matrix multiplication in the mathematical sense to the appropriate
+    computational operators, namely GEMM, batched matrix multiplication,
+    GEMV, and DOT."""
 
     # Global properties
     implementations = {
@@ -270,12 +275,12 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "specialize"
 
-    alpha = properties.Property(allow_none=False,
-                                default=1,
-                                desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(allow_none=False,
-                               default=0,
-                               desc="A scalar which will be multiplied with C before adding C")
+    alpha = properties.Property(
+        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+    )
+    beta = properties.Property(
+        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding C"
+    )
 
     def __init__(self, name, location=None, alpha=1, beta=0):
         self.alpha = alpha

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the orthogonal
-    tiling transformation. """
+"""This module contains classes and functions that implement the orthogonal
+tiling transformation."""
 
 from dace import symbolic
 from dace.properties import make_properties, Property, ShapeProperty
@@ -13,20 +13,21 @@ from dace.transformation import transformation
 
 @make_properties
 class MapTiling(transformation.SingleStateTransformation):
-    """ Implements the orthogonal tiling transformation.
+    """Implements the orthogonal tiling transformation.
 
-        Orthogonal tiling is a type of nested map fission that creates tiles
-        in every dimension of the matched Map.
+    Orthogonal tiling is a type of nested map fission that creates tiles
+    in every dimension of the matched Map.
     """
+
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
     prefix = Property(dtype=str, default="tile", desc="Prefix for new range symbols")
     tile_sizes = ShapeProperty(dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
 
-    strides = ShapeProperty(dtype=tuple,
-                            default=tuple(),
-                            desc="Tile stride (enables overlapping tiles). If empty, matches tile")
+    strides = ShapeProperty(
+        dtype=tuple, default=tuple(), desc="Tile stride (enables overlapping tiles). If empty, matches tile"
+    )
 
     tile_offset = ShapeProperty(dtype=tuple, default=None, desc="Negative Stride offset per dimension", allow_none=True)
 
@@ -55,6 +56,7 @@ class MapTiling(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
+
         stripmine_subgraph = {StripMining.map_entry: self.subgraph[MapTiling.map_entry]}
         cfg_id = graph.parent_graph.cfg_id
         last_map_entry = None
@@ -114,7 +116,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
                     MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
-                    MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
+                    MapCollapse.inner_map_entry: graph.node_id(new_map_entry),
                 }
                 mapcollapse = MapCollapse()
                 mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)

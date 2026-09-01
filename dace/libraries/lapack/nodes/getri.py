@@ -23,7 +23,6 @@ class ExpandGetriPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetriOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -41,17 +40,14 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetriMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -69,17 +65,14 @@ class ExpandGetriMKL(ExpandTransformation):
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Getri(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandGetriOpenBLAS,

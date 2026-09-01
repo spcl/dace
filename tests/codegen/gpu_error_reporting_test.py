@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests that a GPU failure inside a compiled SDFG reaches the caller, and reaches the right caller."""
+
 import numpy as np
 import pytest
 

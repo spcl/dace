@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
+SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
+
 from dace.sdfg.state import SDFGState
 from dace import symbolic
 from dace.properties import make_properties, SymbolicProperty
@@ -24,11 +25,11 @@ import dace.sdfg.analysis.vector_inference as vector_inference
 
 @make_properties
 class SVEVectorization(transformation.SingleStateTransformation):
-    """ Implements the Arm SVE vectorization transform.
+    """Implements the Arm SVE vectorization transform.
 
-        Takes a map entry of a possibly multidimensional map and enforces a
-        vectorization on the innermost param for the SVE codegen.
-"""
+    Takes a map entry of a possibly multidimensional map and enforces a
+    vectorization on the innermost param for the SVE codegen.
+    """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
@@ -131,12 +132,14 @@ class SVEVectorization(transformation.SingleStateTransformation):
 
         # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            vector_inference.infer_vectors(sdfg,
-                                           state,
-                                           map_entry,
-                                           self.vec_len,
-                                           flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                                           apply=False)
+            vector_inference.infer_vectors(
+                sdfg,
+                state,
+                map_entry,
+                self.vec_len,
+                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                apply=False,
+            )
         except vector_inference.VectorInferenceException as ex:
             return False
 
@@ -148,8 +151,9 @@ class SVEVectorization(transformation.SingleStateTransformation):
 
         # Expand the innermost map if multidimensional
         if len(current_map.params) > 1:
-            ext, rem = dace.transformation.helpers.extract_map_dims(sdfg, map_entry,
-                                                                    list(range(len(current_map.params) - 1)))
+            ext, rem = dace.transformation.helpers.extract_map_dims(
+                sdfg, map_entry, list(range(len(current_map.params) - 1))
+            )
             map_entry = rem
             current_map = map_entry.map
 
@@ -163,9 +167,6 @@ class SVEVectorization(transformation.SingleStateTransformation):
         infer_types.apply_connector_types(inferred)
 
         # Infer vector connectors and AccessNodes and apply them
-        vector_inference.infer_vectors(sdfg,
-                                       state,
-                                       map_entry,
-                                       self.vec_len,
-                                       flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                                       apply=True)
+        vector_inference.infer_vectors(
+            sdfg, state, map_entry, self.vec_len, flags=vector_inference.VectorInferenceFlags.Allow_Stride, apply=True
+        )

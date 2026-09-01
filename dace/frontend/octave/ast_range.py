@@ -5,7 +5,6 @@ from .ast_node import AST_Node
 
 
 class AST_RangeExpression(AST_Node):
-
     def __init__(self, context, lhs, rhs):
         AST_Node.__init__(self, context)
         self.lhs = lhs
@@ -20,6 +19,7 @@ class AST_RangeExpression(AST_Node):
 
     def get_dims(self):
         from .ast_values import AST_Constant
+
         if isinstance(self.lhs, AST_Constant) and isinstance(self.rhs, AST_Constant):
             l = self.rhs.get_value() - self.lhs.get_value() + 1
             return [1, l]
@@ -46,6 +46,7 @@ class AST_RangeExpression(AST_Node):
         # If lhs and rhs are constant, generate a matrix
         from .ast_values import AST_Constant
         from .ast_matrix import AST_Matrix_Row, AST_Matrix
+
         if isinstance(self.lhs, AST_Constant) and isinstance(self.rhs, AST_Constant):
             lval = self.lhs.get_value()
             rval = self.rhs.get_value()
@@ -56,7 +57,6 @@ class AST_RangeExpression(AST_Node):
             new.next = self.next
             new.generate_code(sdfg, state)
         else:
-            raise NotImplementedError("Code generation for Range with non-constant bounds not "
-                                      "implemented")
+            raise NotImplementedError("Code generation for Range with non-constant bounds not implemented")
 
     __str__ = __repr__

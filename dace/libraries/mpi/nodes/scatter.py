@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @library.expansion
 class ExpandScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -38,7 +37,6 @@ class ExpandScatterMPI(ExpandTransformation):
 
 @library.node
 class Scatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandScatterMPI,
@@ -83,7 +81,6 @@ class Scatter(MPINode):
 
 @library.expansion
 class ExpandBlockScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -114,17 +111,18 @@ class ExpandBlockScatterMPI(ExpandTransformation):
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class BlockScatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBlockScatterMPI,

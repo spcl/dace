@@ -30,12 +30,15 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
     CATEGORY: str = 'Simplification'
 
-    skip_library_nodes = properties.Property(dtype=bool,
-                                             default=False,
-                                             desc='If True, does not remove library nodes if their results are unused. '
-                                             'Otherwise removes library nodes without side effects.')
+    skip_library_nodes = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='If True, does not remove library nodes if their results are unused. '
+        'Otherwise removes library nodes without side effects.',
+    )
     remove_persistent_memory = properties.Property(
-        dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead')
+        dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead'
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -62,14 +65,16 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         #  * Read/write access sets per block
         sdfg = region if isinstance(region, SDFG) else region.sdfg
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
-            ap.ControlFlowBlockReachability.__name__][region.cfg_id]
+            ap.ControlFlowBlockReachability.__name__
+        ][region.cfg_id]
         access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse region backwards
         try:
             state_order: List[SDFGState] = list(
-                cfg.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=True))
+                cfg.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=True)
+            )
         except KeyError:
             return None
         for state in reversed(state_order):
@@ -151,7 +156,8 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                     if ctype is None:
                                         raise NotImplementedError(
                                             f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                            'tasklet due to connector type inference failure.')
+                                            'tasklet due to connector type inference failure.'
+                                        )
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
                                 elif leaf.src.code.language == dtypes.Language.Python:
                                     if ctype is not None:
@@ -164,12 +170,15 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
                                             # then add the hint expression
-                                            leaf.src.code.code = ast.parse(
-                                                f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
-                                            ).body + leaf.src.code.code
+                                            leaf.src.code.code = (
+                                                ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body
+                                                + leaf.src.code.code
+                                            )
                                 else:
-                                    raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                              'tasklet due to its code language.')
+                                    raise NotImplementedError(
+                                        f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                        'tasklet due to its code language.'
+                                    )
                             state.remove_memlet_path(leaf)
 
                     # Remove the node itself as necessary
@@ -197,9 +206,13 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             # Update read sets for the predecessor states to reuse
             remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
             remaining_data_containers = set(node.data for node in remaining_access_nodes)
-            removed_data_containers = set(n.data for n in result[state]
-                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
-                                          and n.data not in remaining_data_containers)
+            removed_data_containers = set(
+                n.data
+                for n in result[state]
+                if isinstance(n, nodes.AccessNode)
+                and n not in remaining_access_nodes
+                and n.data not in remaining_data_containers
+            )
             access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None
@@ -208,8 +221,15 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         n = sum(len(v) for v in pass_retval.values())
         return f'Eliminated {n} nodes in {len(pass_retval)} states: {pass_retval}'
 
-    def _is_node_dead(self, node: nodes.Node, sdfg: SDFG, state: SDFGState, dead_nodes: Set[nodes.Node],
-                      no_longer_used: Set[str], access_set: Tuple[Set[str], Set[str]]) -> bool:
+    def _is_node_dead(
+        self,
+        node: nodes.Node,
+        sdfg: SDFG,
+        state: SDFGState,
+        dead_nodes: Set[nodes.Node],
+        no_longer_used: Set[str],
+        access_set: Tuple[Set[str], Set[str]],
+    ) -> bool:
         # Conditions for dead node:
         # * All successors are dead
         # * Access node that can no longer be read
@@ -278,8 +298,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                 return False
 
                     # If data is connected to a nested SDFG or library node as an input/output, do not remove
-                    if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))
-                            and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
+                    if isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode)) and any(
+                        ie.data.data == node.data for ie in state.in_edges(l.src)
+                    ):
                         return False
 
             # If it is a stream and is read somewhere in the state, it may be popped after pushing

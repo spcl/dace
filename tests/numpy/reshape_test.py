@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for reshaping and reinterpretation of existing arrays. """
+"""Tests for reshaping and reinterpretation of existing arrays."""
+
 import dace
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ N = dace.symbol('N')
 
 
 def test_reshape():
-    """ Array->View->Tasklet """
+    """Array->View->Tasklet"""
 
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
@@ -24,7 +25,7 @@ def test_reshape():
 
 
 def test_reshape_dst():
-    """ Tasklet->View->Array """
+    """Tasklet->View->Array"""
 
     @dace.program
     def reshpdst(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
@@ -39,7 +40,7 @@ def test_reshape_dst():
 
 
 def test_reshape_dst_explicit():
-    """ Tasklet->View->Array """
+    """Tasklet->View->Array"""
     sdfg = dace.SDFG('reshapedst')
     sdfg.add_array('A', [2, 3, 4], dace.float64)
     sdfg.add_view('Bv', [2, 3, 4], dace.float64)
@@ -85,7 +86,7 @@ def test_reshape_copy(memlet_dst):
 
 
 def test_reshape_copy_scoped():
-    """ Array->View->Array where one array is located within a map scope. """
+    """Array->View->Array where one array is located within a map scope."""
     sdfg = dace.SDFG('reshpcpy')
     sdfg.add_array('A', [2, 3], dace.float64)
     sdfg.add_array('B', [6], dace.float64)
@@ -109,7 +110,7 @@ def test_reshape_copy_scoped():
 
 
 def test_reshape_subset():
-    """ Tests reshapes on subsets of arrays. """
+    """Tests reshapes on subsets of arrays."""
 
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[12]):
@@ -125,19 +126,21 @@ def test_reshape_subset():
 
 
 def test_reshape_subset_explicit():
-    """ Tests reshapes on subsets of arrays. """
+    """Tests reshapes on subsets of arrays."""
     sdfg = dace.SDFG('reshp')
     sdfg.add_array('A', [2, 3, 4], dace.float64)
     sdfg.add_array('B', [12], dace.float64)
     sdfg.add_view('Av', [12], dace.float64)
     state = sdfg.add_state()
 
-    state.add_mapped_tasklet('compute',
-                             dict(i='0:12'),
-                             dict(a=dace.Memlet('Av[i]'), b=dace.Memlet('B[i]')),
-                             'out = a + b',
-                             dict(out=dace.Memlet('B[i]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'compute',
+        dict(i='0:12'),
+        dict(a=dace.Memlet('Av[i]'), b=dace.Memlet('B[i]')),
+        'out = a + b',
+        dict(out=dace.Memlet('B[i]')),
+        external_edges=True,
+    )
     v = next(n for n in state.source_nodes() if n.data == 'Av')
     state.add_nedge(state.add_read('A'), v, dace.Memlet('A[1, 0:3, 0:4]'))
 
@@ -189,9 +192,11 @@ def test_reinterpret_invalid():
         C[:] += 1
 
     A = np.random.rand(5).astype(np.float32)
-    with pytest.raises(ValueError,
-                       match="When changing to a larger dtype, its size must be a divisor of the total size "
-                       "in bytes of the last axis of the array."):
+    with pytest.raises(
+        ValueError,
+        match="When changing to a larger dtype, its size must be a divisor of the total size "
+        "in bytes of the last axis of the array.",
+    ):
         reint_invalid(A)
 
 
@@ -210,7 +215,9 @@ def test_reinterpret_symbolic_stride_uses_int_floor():
 
     sdfg = reint.to_sdfg(simplify=False)
     exprs = [
-        str(e) for d in sdfg.arrays.values() if isinstance(d, dace.data.View)
+        str(e)
+        for d in sdfg.arrays.values()
+        if isinstance(d, dace.data.View)
         for e in (*d.shape, *d.strides, d.total_size)
     ]
     assert any('int_floor' in e for e in exprs), exprs

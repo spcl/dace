@@ -11,13 +11,14 @@ nnz = dace.symbol('nnz')
 
 
 @dace.program
-def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W],
-         b: dace.float32[H]):
+def spmv(
+    A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W], b: dace.float32[H]
+):
 
     @dace.mapscope(_[0:H])
     def compute_row(i):
 
-        @dace.map(_[A_row[i]:A_row[i + 1]])
+        @dace.map(_[A_row[i] : A_row[i + 1]])
         def compute(j):
             a << A_val[j]
             in_x << x[A_col[j]]
@@ -56,10 +57,9 @@ def test_spmv():
 
     # Fill column data
     for i in range(H - 1):
-        A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
-            np.sort(np.random.choice(W, nnz_per_row, replace=False))
+        A_col[nnz_per_row * i : nnz_per_row * (i + 1)] = np.sort(np.random.choice(W, nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (H - 1):] = np.sort(np.random.choice(W, nnz_last_row, replace=False))
+    A_col[nnz_per_row * (H - 1) :] = np.sort(np.random.choice(W, nnz_last_row, replace=False))
 
     A_val[:] = np.random.rand(nnz).astype(dace.float32.type)
     #########################

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Explicitly distributed Jacobi-2D sample."""
+"""Explicitly distributed Jacobi-2D sample."""
+
 import dace as dc
 import numpy as np
 import os
@@ -47,7 +48,7 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
     lB = np.zeros((lNx + 2, lNy + 2), dtype=B.dtype)
     tAB = np.empty((lNx, lNy), dtype=A.dtype)
 
-    req = np.empty((8, ), dtype=MPI_Request)
+    req = np.empty((8,), dtype=MPI_Request)
 
     Av = np.reshape(A, (Px, lNx, Py, lNy))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
@@ -60,7 +61,6 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
     lB[1:-1, 1:-1] = tAB
 
     for t in range(1, TSTEPS):
-
         dc.comm.Isend(lA[1, 1:-1], nn, 0, req[0])
         dc.comm.Isend(lA[-2, 1:-1], ns, 1, req[1])
         dc.comm.Isend(lA[1:-1, 1], nw, 2, req[2])
@@ -72,10 +72,13 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
 
         dc.comm.Waitall(req)
 
-        lB[1 + noff:-1 - soff, 1 + woff:-1 -
-           eoff] = 0.2 * (lA[1 + noff:-1 - soff, 1 + woff:-1 - eoff] + lA[1 + noff:-1 - soff, woff:-2 - eoff] +
-                          lA[1 + noff:-1 - soff, 2 + woff:-eoff] + lA[2 + noff:-soff, 1 + woff:-1 - eoff] +
-                          lA[noff:-2 - soff, 1 + woff:-1 - eoff])
+        lB[1 + noff : -1 - soff, 1 + woff : -1 - eoff] = 0.2 * (
+            lA[1 + noff : -1 - soff, 1 + woff : -1 - eoff]
+            + lA[1 + noff : -1 - soff, woff : -2 - eoff]
+            + lA[1 + noff : -1 - soff, 2 + woff : -eoff]
+            + lA[2 + noff : -soff, 1 + woff : -1 - eoff]
+            + lA[noff : -2 - soff, 1 + woff : -1 - eoff]
+        )
 
         dc.comm.Isend(lB[1, 1:-1], nn, 0, req[0])
         dc.comm.Isend(lB[-2, 1:-1], ns, 1, req[1])
@@ -88,10 +91,13 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
 
         dc.comm.Waitall(req)
 
-        lA[1 + noff:-1 - soff, 1 + woff:-1 -
-           eoff] = 0.2 * (lB[1 + noff:-1 - soff, 1 + woff:-1 - eoff] + lB[1 + noff:-1 - soff, woff:-2 - eoff] +
-                          lB[1 + noff:-1 - soff, 2 + woff:-eoff] + lB[2 + noff:-soff, 1 + woff:-1 - eoff] +
-                          lB[noff:-2 - soff, 1 + woff:-1 - eoff])
+        lA[1 + noff : -1 - soff, 1 + woff : -1 - eoff] = 0.2 * (
+            lB[1 + noff : -1 - soff, 1 + woff : -1 - eoff]
+            + lB[1 + noff : -1 - soff, woff : -2 - eoff]
+            + lB[1 + noff : -1 - soff, 2 + woff : -eoff]
+            + lB[2 + noff : -soff, 1 + woff : -1 - eoff]
+            + lB[noff : -2 - soff, 1 + woff : -1 - eoff]
+        )
 
     tAB[:] = lA[1:-1, 1:-1]
     dc.comm.Gather(tAB, A2)
@@ -117,7 +123,6 @@ def time_to_ms(raw):
 grid = {1: (1, 1), 2: (2, 1), 4: (2, 2), 8: (4, 2), 16: (4, 4)}
 
 if __name__ == "__main__":
-
     TSTEPS, N = 100, 280
 
     from mpi4py import MPI
@@ -128,12 +133,14 @@ if __name__ == "__main__":
 
     if size not in grid:
         if rank == 0:
-            print("This sample is designed to run with 1, 2, 4, 8, or 16 MPI ranks. "
-                  "If you would like to run with a different number of ranks, "
-                  "please edit this file and insert the rows and columns of the "
-                  "desired grid in the 'grid' dictionary. Please note that, if the "
-                  "grid sizes do not divide evenly the matrix sizes, the sample may "
-                  "not work properly.")
+            print(
+                "This sample is designed to run with 1, 2, 4, 8, or 16 MPI ranks. "
+                "If you would like to run with a different number of ranks, "
+                "please edit this file and insert the rows and columns of the "
+                "desired grid in the 'grid' dictionary. Please note that, if the "
+                "grid sizes do not divide evenly the matrix sizes, the sample may "
+                "not work properly."
+            )
         sys.exit(0)
 
     Px, Py = grid[size]
@@ -183,32 +190,36 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
-    mpi_func(A=A,
-             B=B,
-             TSTEPS=TSTEPS,
-             lNx=lNx,
-             lNy=lNy,
-             rank=rank,
-             size=size,
-             Px=Px,
-             Py=Py,
-             pi=pi,
-             pj=pj,
-             noff=noff,
-             soff=soff,
-             woff=woff,
-             eoff=eoff,
-             nn=nn,
-             ns=ns,
-             nw=nw,
-             ne=ne)
+    mpi_func(
+        A=A,
+        B=B,
+        TSTEPS=TSTEPS,
+        lNx=lNx,
+        lNy=lNy,
+        rank=rank,
+        size=size,
+        Px=Px,
+        Py=Py,
+        pi=pi,
+        pj=pj,
+        noff=noff,
+        soff=soff,
+        woff=woff,
+        eoff=eoff,
+        nn=nn,
+        ns=ns,
+        nw=nw,
+        ne=ne,
+    )
 
     comm.Barrier()
 
-    stmt = ("mpi_func(A=A, B=B, TSTEPS=TSTEPS, lNx=lNx, lNy=lNy, rank=rank, size=size, "
-            "Px=Px, Py=Py, pi=pi, pj=pj, "
-            "noff=noff, soff=soff, woff=woff, eoff=eoff, "
-            "nn=nn, ns=ns, nw=nw, ne=ne)")
+    stmt = (
+        "mpi_func(A=A, B=B, TSTEPS=TSTEPS, lNx=lNx, lNy=lNy, rank=rank, size=size, "
+        "Px=Px, Py=Py, pi=pi, pj=pj, "
+        "noff=noff, soff=soff, woff=woff, eoff=eoff, "
+        "nn=nn, ns=ns, nw=nw, ne=ne)"
+    )
     setup = "A, B = setup_func(rank); comm.Barrier()"
     repeat = 10
 
@@ -226,6 +237,6 @@ if __name__ == "__main__":
         shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, lNx=lNx, lNy=lNy, Px=Px, Py=Py)
 
         print("=======Validation=======")
-        assert (np.allclose(A, refA))
-        assert (np.allclose(B, refB))
+        assert np.allclose(A, refA)
+        assert np.allclose(B, refB)
         print("OK")

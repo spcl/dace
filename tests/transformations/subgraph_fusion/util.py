@@ -9,10 +9,9 @@ from dace.transformation.dataflow import ReduceExpansion
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 
-def expand_reduce(sdfg: dace.SDFG,
-                  graph: dace.SDFGState,
-                  subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-                  **kwargs):
+def expand_reduce(
+    sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs
+):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):
@@ -23,17 +22,17 @@ def expand_reduce(sdfg: dace.SDFG,
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
                 rexp = ReduceExpansion()
-                rexp.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
-                                 0)
+                rexp.setup_match(
+                    sdfg, sdfg.cfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)}, 0
+                )
                 if not rexp.can_be_applied(graph, 0, sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}:"
-                          "can_be_applied() failed.")
+                    print(f"WARNING: Cannot expand reduce node {node}:can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
         trafo_reduce = ReduceExpansion()
         trafo_reduce.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {}, 0)
-        for (property, val) in kwargs.items():
+        for property, val in kwargs.items():
             setattr(trafo_reduce, property, val)
 
         for reduce_node in reduce_nodes:
@@ -44,10 +43,9 @@ def expand_reduce(sdfg: dace.SDFG,
                 sg._subgraph_nodes.update({trafo_reduce._reduce: None, trafo_reduce._outer_entry: None})
 
 
-def expand_maps(sdfg: dace.SDFG,
-                graph: dace.SDFGState,
-                subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-                **kwargs):
+def expand_maps(
+    sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs
+):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):
@@ -55,7 +53,7 @@ def expand_maps(sdfg: dace.SDFG,
 
     trafo_expansion = MultiExpansion()
     trafo_expansion.setup_match(subgraph[0])
-    for (property, val) in kwargs.items():
+    for property, val in kwargs.items():
         setattr(trafo_expansion, property, val)
 
     for sg in subgraph:
@@ -71,7 +69,7 @@ def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView,
 
     map_fusion = SubgraphFusion()
     map_fusion.setup_match(subgraph[0])
-    for (property, val) in kwargs.items():
+    for property, val in kwargs.items():
         setattr(map_fusion, property, val)
 
     for sg in subgraph:

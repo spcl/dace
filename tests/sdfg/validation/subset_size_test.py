@@ -9,8 +9,7 @@ import numpy as np
 
 
 def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGState]:
-    """Generates an SDFG that performs a copy that has a zero size.
-    """
+    """Generates an SDFG that performs a copy that has a zero size."""
     sdfg = dace.SDFG("zero_size_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
@@ -57,8 +56,7 @@ def test_an_to_an_memlet_with_zero_size():
 
 
 def test_an_to_an_memlet_with_negative_size():
-    """Tests if an AccessNode to AccessNode connection leads to an invalid SDFG.
-    """
+    """Tests if an AccessNode to AccessNode connection leads to an invalid SDFG."""
     sdfg = dace.SDFG("an_to_an_memlet_with_negative_size")
     state = sdfg.add_state(is_start_block=True)
 
@@ -77,9 +75,10 @@ def test_an_to_an_memlet_with_negative_size():
     )
 
     with pytest.raises(
-            expected_exception=dace.sdfg.InvalidSDFGEdgeError,
-            match=re.escape(
-                f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]'),
+        expected_exception=dace.sdfg.InvalidSDFGEdgeError,
+        match=re.escape(
+            f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]'
+        ),
     ):
         sdfg.validate()
 

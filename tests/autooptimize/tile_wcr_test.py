@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests write-conflict resolution tiling """
+"""Tests write-conflict resolution tiling"""
+
 import dace
 from dace.transformation.auto import auto_optimize as aopt
 import numpy as np

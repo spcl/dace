@@ -9,7 +9,7 @@ N = dace.symbol('N')
 def plus_1(X_in: dace.float32[N], num: dace.int32[1], X_out: dace.float32[N]):
 
     @dace.map
-    def p1(i: _[0:num[0]]):
+    def p1(i: _[0 : num[0]]):
         x_in << X_in[i]
         x_out >> X_out[i]
 
@@ -24,8 +24,8 @@ def test():
 
     plus_1(X_in=X, num=num, X_out=Y, N=10)
 
-    diff = np.linalg.norm((X[0:num[0]] + 1) - Y[0:num[0]])
-    if any(abs(y - 0.0) > 1e-5 for y in Y[num[0]:]) or diff > 1e-5:
+    diff = np.linalg.norm((X[0 : num[0]] + 1) - Y[0 : num[0]])
+    if any(abs(y - 0.0) > 1e-5 for y in Y[num[0] :]) or diff > 1e-5:
         print('Y =', Y)
         raise AssertionError
 

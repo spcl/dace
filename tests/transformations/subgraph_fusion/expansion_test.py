@@ -8,8 +8,9 @@ N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 
 
 @dace.program
-def expansion1(A: dace.float64[M, N, O], B: dace.float64[M, N, O], C: dace.float64[M, N, O], out1: dace.float64[M, N,
-                                                                                                                O]):
+def expansion1(
+    A: dace.float64[M, N, O], B: dace.float64[M, N, O], C: dace.float64[M, N, O], out1: dace.float64[M, N, O]
+):
 
     tmp1 = np.ndarray([M, N, O], dtype=dace.float64)
     tmp2 = np.ndarray([M, N, O], dtype=dace.float64)
@@ -68,7 +69,7 @@ def test_expansion2():
         'out2': np.ndarray((60, 70), dtype=np.float64),
         'N': 50,
         'M': 60,
-        'O': 70
+        'O': 70,
     }
 
     run(sdfg, graph, kwargs)
@@ -97,7 +98,7 @@ def test_expansion1():
         'out1': np.ndarray((60, 50, 70), dtype=np.float64),
         'N': 50,
         'M': 60,
-        'O': 70
+        'O': 70,
     }
     run(sdfg, graph, kwargs)
     out1 = kwargs['out1'].copy()

@@ -10,32 +10,34 @@ from dace.transformation.optimizer import Optimizer
 
 
 class TransformationTester(Optimizer):
-    """ An SDFG optimizer that consecutively applies available transformations
-        up to a fixed depth. """
+    """An SDFG optimizer that consecutively applies available transformations
+    up to a fixed depth."""
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 depth=1,
-                 validate=True,
-                 generate_code=True,
-                 compile=False,
-                 print_exception=True,
-                 halt_on_exception=False):
-        """ Creates a new Transformation tester, which brute-forces applying the
-            available transformations up to a certain level.
+    def __init__(
+        self,
+        sdfg: SDFG,
+        depth=1,
+        validate=True,
+        generate_code=True,
+        compile=False,
+        print_exception=True,
+        halt_on_exception=False,
+    ):
+        """Creates a new Transformation tester, which brute-forces applying the
+        available transformations up to a certain level.
 
-            :param sdfg: The SDFG to transform.
-            :param depth: The number of levels to run transformations. For
-                          instance, depth=1 means to only run immediate
-                          transformations, whereas depth=2 would run
-                          transformations resulting from those transformations.
-            :param validate: If True, the SDFG is validated after applying.
-            :param generate_code: If True, the SDFG will generate code after
-                                  transformation.
-            :param compile: If True, the SDFG will be compiled after applying.
-            :param print_exception: If True, prints exception when it is raised.
-            :param halt_on_exception: If True, stops when a transformation
-                                      raises an exception.
+        :param sdfg: The SDFG to transform.
+        :param depth: The number of levels to run transformations. For
+                      instance, depth=1 means to only run immediate
+                      transformations, whereas depth=2 would run
+                      transformations resulting from those transformations.
+        :param validate: If True, the SDFG is validated after applying.
+        :param generate_code: If True, the SDFG will generate code after
+                              transformation.
+        :param compile: If True, the SDFG will be compiled after applying.
+        :param print_exception: If True, prints exception when it is raised.
+        :param halt_on_exception: If True, stops when a transformation
+                                  raises an exception.
         """
         super().__init__(sdfg)
         self.depth = depth
@@ -115,8 +117,9 @@ class TransformationTester(Optimizer):
         self._optimize_recursive(self.sdfg, 0)
 
         if self.failed_tests > 0:
-            raise RuntimeError('%d / %d transformations passed' %
-                               (self.passed_tests, self.passed_tests + self.failed_tests))
+            raise RuntimeError(
+                '%d / %d transformations passed' % (self.passed_tests, self.passed_tests + self.failed_tests)
+            )
 
         return self.sdfg
 

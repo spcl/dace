@@ -59,7 +59,8 @@ def test_boolean_literal_comparison_roundtrip():
 
     reloaded = dace.SDFG.from_json(sdfg.to_json())
     cond = next(
-        str(e.data.assignments['cond']) for e in reloaded.all_interstate_edges() if 'cond' in e.data.assignments)
+        str(e.data.assignments['cond']) for e in reloaded.all_interstate_edges() if 'cond' in e.data.assignments
+    )
     assert 'b' in cond, f'boolean guard dropped on serialization round-trip: {cond!r}'
 
 

@@ -104,8 +104,11 @@ class TransientReuse(ppl.Pass):
                     if n is not m and n.data in transients and m.data in transients:
                         if n.data == m.data:
                             transients.remove(n.data)
-                        if (sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data]) and n in ancestors[m]
-                                and successors[n].issubset(ancestors[m])):
+                        if (
+                            sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
+                            and n in ancestors[m]
+                            and successors[n].issubset(ancestors[m])
+                        ):
                             mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
@@ -123,14 +126,14 @@ class TransientReuse(ppl.Pass):
 
                     temp = True
                     for j in range(len(buckets[i])):
-                        temp = (temp and n in mappings[buckets[i][j]])
+                        temp = temp and n in mappings[buckets[i][j]]
                     if temp:
                         buckets[i].append(n)
                         break
 
                     temp2 = True
                     for j in range(len(buckets[i])):
-                        temp2 = (temp2 and buckets[i][j] in mappings[n])
+                        temp2 = temp2 and buckets[i][j] in mappings[n]
                     if temp2:
                         buckets[i].insert(0, n)
                         break
@@ -149,7 +152,7 @@ class TransientReuse(ppl.Pass):
                     mapping.add((buckets[i][0], buckets[i][j]))
 
             # For each mapping redirect edges and rename memlets in the state
-            for (new, old) in sorted(list(mapping)):
+            for new, old in sorted(list(mapping)):
                 result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:

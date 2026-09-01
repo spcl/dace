@@ -30,8 +30,12 @@ class PyTorchConvBackward(BackwardImplementation):
         return len(X_desc.shape) == 4
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         X_desc = butils.forward_in_desc_with_name(forward_node, context, "X")
@@ -43,23 +47,21 @@ class PyTorchConvBackward(BackwardImplementation):
         elif str(T) == 'double':
             pytorch_dtype = 'kDouble'
         else:
-            raise ValueError(f"PyTorch backward conv expansion supports only float and double tensors, got {str(T)}. "
-                             f"Supported types: float, double")
+            raise ValueError(
+                f"PyTorch backward conv expansion supports only float and double tensors, got {str(T)}. "
+                f"Supported types: float, double"
+            )
 
         # setup gradient arrays
         result = BackwardResult.empty()
         required_grads = set(required_gradients)
         for r in sorted(required_grads):
-            result.required_grad_names[r] = butils.add_backward_desc_for_connector(nsdfg,
-                                                                                   forward_node,
-                                                                                   context,
-                                                                                   r,
-                                                                                   input=True)
-        result.given_grad_names["Y"] = butils.add_backward_desc_for_connector(nsdfg,
-                                                                              forward_node,
-                                                                              context,
-                                                                              "Y",
-                                                                              input=False)
+            result.required_grad_names[r] = butils.add_backward_desc_for_connector(
+                nsdfg, forward_node, context, r, input=True
+            )
+        result.given_grad_names["Y"] = butils.add_backward_desc_for_connector(
+            nsdfg, forward_node, context, "Y", input=False
+        )
 
         # setup non-gradient arrays
         required_forward_inputs = ["W", "X"]
@@ -70,9 +72,12 @@ class PyTorchConvBackward(BackwardImplementation):
 
         # setup state
         nstate = nsdfg.add_state()
-        unique_id = "{}_{}_{}_{}_bwd".format(clean_onnx_name(forward_node.name), context.forward_sdfg.sdfg_id,
-                                             context.forward_sdfg.node_id(context.forward_state),
-                                             context.forward_state.node_id(forward_node))
+        unique_id = "{}_{}_{}_{}_bwd".format(
+            clean_onnx_name(forward_node.name),
+            context.forward_sdfg.sdfg_id,
+            context.forward_sdfg.node_id(context.forward_state),
+            context.forward_state.node_id(forward_node),
+        )
 
         init_code = ""
         finalize_code = ""
@@ -102,18 +107,25 @@ class PyTorchConvBackward(BackwardImplementation):
             at::thnn_conv_depthwise2d_backward_out(dx, dw, dy, x, w, kernel_shape, conv_strides, padding, dilation);
         """
 
-        tasklet = nstate.add_tasklet(name=unique_id,
-                                     inputs=tasklet_inputs,
-                                     outputs=tasklet_outputs,
-                                     code=tasklet_code,
-                                     language=dace.dtypes.Language.CPP,
-                                     code_global=code_global,
-                                     code_init=init_code,
-                                     code_exit=finalize_code)
+        tasklet = nstate.add_tasklet(
+            name=unique_id,
+            inputs=tasklet_inputs,
+            outputs=tasklet_outputs,
+            code=tasklet_code,
+            language=dace.dtypes.Language.CPP,
+            code_global=code_global,
+            code_init=init_code,
+            code_exit=finalize_code,
+        )
         tasklet.environments = {dace.libraries.torch.environments.PyTorch.full_class_path()}
 
-        nstate.add_edge(nstate.add_read(result.given_grad_names["Y"]), None, tasklet, f"_dY",
-                        nsdfg.make_array_memlet((result.given_grad_names["Y"])))
+        nstate.add_edge(
+            nstate.add_read(result.given_grad_names["Y"]),
+            None,
+            tasklet,
+            f"_dY",
+            nsdfg.make_array_memlet((result.given_grad_names["Y"])),
+        )
         for name in sorted(required_forward_inputs):
             nstate.add_edge(nstate.add_read(name), None, tasklet, f"_{name}", nsdfg.make_array_memlet(name))
 
@@ -123,10 +135,11 @@ class PyTorchConvBackward(BackwardImplementation):
 
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                      sorted(inputs),
-                                                      sorted(outputs),
-                                                      symbol_mapping=butils.backward_symbol_mapping(
-                                                          nsdfg, context.backward_state))
+        node = context.backward_state.add_nested_sdfg(
+            nsdfg,
+            sorted(inputs),
+            sorted(outputs),
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state),
+        )
 
         return node, result

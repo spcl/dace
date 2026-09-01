@@ -46,8 +46,9 @@ class ReferenceToView(ppl.Pass):
             return None
 
         # Filter out multi-source references and tasklet-set references
-        candidates = set(k for k, v in reference_sources.items()
-                         if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode))
+        candidates = set(
+            k for k, v in reference_sources.items() if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode)
+        )
 
         refsets = self.find_refsets(candidates, access_states)
 
@@ -69,8 +70,9 @@ class ReferenceToView(ppl.Pass):
     def report(self, pass_retval: Set[str]) -> str:
         return f'Converted {len(pass_retval)} references to views: {pass_retval}.'
 
-    def find_refsets(self, candidates: Set[str],
-                     access_states: Dict[str, Set[SDFGState]]) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
+    def find_refsets(
+        self, candidates: Set[str], access_states: Dict[str, Set[SDFGState]]
+    ) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
         """
         Returns a dictionary of reference name to a list of tuples of (state, access node)
         where the reference is set via a memlet.
@@ -191,8 +193,13 @@ class ReferenceToView(ppl.Pass):
                     if state.degree(n) == 0:
                         state.remove_node(n)
 
-    def reconnect_views(self, sdfg: SDFG, candidates: Set[str], access_states: Dict[str, Set[SDFGState]],
-                        reference_sources: Dict[str, Set[Memlet]]):
+    def reconnect_views(
+        self,
+        sdfg: SDFG,
+        candidates: Set[str],
+        access_states: Dict[str, Set[SDFGState]],
+        reference_sources: Dict[str, Set[Memlet]],
+    ):
         all_states_to_consider: Set[SDFGState] = set()
         for cand in candidates:
             all_states_to_consider.update(access_states[cand])

@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation selection for ``FillLibraryNode``."""
+
 from typing import TYPE_CHECKING
 
 import dace
-from dace.libraries.standard.helper import (CPU_RESIDENT_STORAGES, is_in_parallel_scope, is_parallel_cpu_transfer_size)
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, is_in_parallel_scope, is_parallel_cpu_transfer_size
 from dace.libraries.standard.nodes.fill.common import byte_pattern
 from dace.sdfg.scope import is_devicelevel_gpu
 
@@ -33,8 +34,9 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
             return 'tasklet'
         return 'pure'
 
-    if out_subset.num_elements_exact() == 1 and (out.storage in CPU_RESIDENT_STORAGES
-                                                 or out.storage == dace.dtypes.StorageType.Register):
+    if out_subset.num_elements_exact() == 1 and (
+        out.storage in CPU_RESIDENT_STORAGES or out.storage == dace.dtypes.StorageType.Register
+    ):
         return 'tasklet'
 
     if not out_subset.is_contiguous_subset(out):
@@ -49,8 +51,9 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
             return 'CUDA'
         # Contiguous CPU/Default/Register destination with a dynamic <=32-bit value.
         allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
-        if out.storage in allowed and not (is_parallel_cpu_transfer_size(out_subset.num_elements())
-                                           and not is_in_parallel_scope(node, parent_state)):
+        if out.storage in allowed and not (
+            is_parallel_cpu_transfer_size(out_subset.num_elements()) and not is_in_parallel_scope(node, parent_state)
+        ):
             return 'CPU'
         return 'pure'
 
@@ -64,7 +67,10 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
     # count is assumed big. Inside a parallel map the element map is sequentialized anyway, so the
     # single call wins there at any size.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
-    if (out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements())
-            and not is_in_parallel_scope(node, parent_state)):
+    if (
+        out.storage in allowed
+        and is_parallel_cpu_transfer_size(out_subset.num_elements())
+        and not is_in_parallel_scope(node, parent_state)
+    ):
         return 'pure'
     return 'CPU'

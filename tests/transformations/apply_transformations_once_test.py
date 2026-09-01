@@ -34,8 +34,9 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
         sdfg: dace.SDFG,
     ) -> None:
         my_tasklet: dace_nodes.Tasklet = self.tasklet
-        my_tasklet.code = dace_properties.CodeBlock(my_tasklet.code.as_string.replace('1.0', '10.0'),
-                                                    language=my_tasklet.code.language)
+        my_tasklet.code = dace_properties.CodeBlock(
+            my_tasklet.code.as_string.replace('1.0', '10.0'), language=my_tasklet.code.language
+        )
 
 
 def sdfg_with_two_simple_maps():
@@ -98,9 +99,9 @@ def test_apply_transformations_once():
 
 def test_apply_transformations_once_no_order_by_transformation():
     sdfg = sdfg_with_two_simple_maps()
-    count = sdfg.apply_transformations_once_everywhere(DummyTransformation,
-                                                       validate=True,
-                                                       order_by_transformation=False)
+    count = sdfg.apply_transformations_once_everywhere(
+        DummyTransformation, validate=True, order_by_transformation=False
+    )
     assert count == 2
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace_nodes.Tasklet):

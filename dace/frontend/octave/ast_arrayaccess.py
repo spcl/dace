@@ -5,7 +5,6 @@ from .ast_node import AST_Node
 
 
 class AST_ArrayAccess(AST_Node):
-
     def __init__(self, context, arrayname, accdims):
         AST_Node.__init__(self, context)
         self.arrayname = arrayname
@@ -31,13 +30,14 @@ class AST_ArrayAccess(AST_Node):
         # The basetype of an array access is the same as the basetype as the
         # array that is acccessed.
         vardef = self.search_vardef_in_scope(self.arrayname.get_name())
-        return (vardef.get_basetype())
+        return vardef.get_basetype()
 
     def get_dims(self):
         from .ast_matrix import AST_Matrix
         from .ast_loop import AST_ForLoop
         from .ast_values import AST_Constant, AST_Ident
         from .ast_range import AST_RangeExpression
+
         # array indexing has many forms/cases in matlab, here we implement
         # the semantics we are sure about
         dims = []
@@ -64,8 +64,9 @@ class AST_ArrayAccess(AST_Node):
                 elif isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError("No definition found for " + acc.get_name() +
-                                         " which is used in Array Access: " + str(self))
+                        raise ValueError(
+                            "No definition found for " + acc.get_name() + " which is used in Array Access: " + str(self)
+                        )
                     if isinstance(vardef, AST_ForLoop) and acc.get_name() == vardef.var.get_name():
                         d = vardef.initializer.get_dims()[:-1]
                         if d != [1]:
@@ -104,6 +105,7 @@ class AST_ArrayAccess(AST_Node):
 
     def is_data_dependent_access(self):
         from .ast_values import AST_Constant
+
         res = False
         for a in self.accdims:
             if not isinstance(a, AST_Constant):
@@ -113,6 +115,7 @@ class AST_ArrayAccess(AST_Node):
         from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
         from .ast_range import AST_RangeExpression
+
         # add a new variable to hold the result of this expression
         dims = self.get_dims()
         basetype = self.get_basetype()
@@ -171,8 +174,9 @@ class AST_ArrayAccess(AST_Node):
                 aname = a.get_name_in_sdfg(sdfg)
                 men.add_in_connector(aname)
                 datanode = a.get_datanode(sdfg, state)
-                s.add_edge(datanode, None, men, aname,
-                           dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg)))
+                s.add_edge(
+                    datanode, None, men, aname, dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg))
+                )
             tasklet = s.add_tasklet('ident', {'in'}, {'out'}, 'in=out;', dace.Language.CPP)
             s.add_edge(men, 'OUT_1', tasklet, 'in', dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
             s.add_edge(tasklet, 'out', mex, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))

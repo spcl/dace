@@ -34,6 +34,7 @@ def make_sdfg(dtype):
 
 def _test_mpi(info, sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -72,6 +73,7 @@ def dace_bcast(A: dace.float32[N]):
 @pytest.mark.mpi
 def test_dace_bcast():
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -91,7 +93,7 @@ def test_dace_bcast():
 
     mpi_sdfg(A=A, N=length)
 
-    assert (np.allclose(A, np.full([length], np.pi, dtype=np.float32)))
+    assert np.allclose(A, np.full([length], np.pi, dtype=np.float32))
 
 
 ###############################################################################

@@ -23,7 +23,7 @@ def _make_test_sdfg() -> dace.SDFG:
     for name in "abc":
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -143,8 +143,9 @@ def test_production_folder_mode():
     version_file.unlink()
     assert not version_file.exists()
 
-    with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'``{build_folder}`` does not appear to be a valid old-style build folder.')):
+    with pytest.raises(
+        NotADirectoryError, match=re.escape(f'``{build_folder}`` does not appear to be a valid old-style build folder.')
+    ):
         sdfg_compiler.get_folder_mode(build_folder)
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
@@ -295,8 +296,9 @@ def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
         (build_folder / sub_folder).mkdir()
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
-    with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'The old-style folder ``{build_folder}`` is inconsistent.')):
+    with pytest.raises(
+        NotADirectoryError, match=re.escape(f'The old-style folder ``{build_folder}`` is inconsistent.')
+    ):
         sdfg_compiler.get_folder_mode(build_folder)
 
     for folder_mode in ["development", "production"]:

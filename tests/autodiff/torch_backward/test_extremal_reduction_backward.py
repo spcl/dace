@@ -22,8 +22,9 @@ def run_max_reduction_test(dace_func, torch_func, inputs, rtol=1e-5, atol=1e-5):
 
     for k, v in torch_results.items():
         v = v.detach().numpy()
-        assert np.allclose(sdfg_results[k], v, rtol=rtol, atol=atol), \
+        assert np.allclose(sdfg_results[k], v, rtol=rtol, atol=atol), (
             f"Gradient mismatch for '{k}':\n  DaCe:    {sdfg_results[k]}\n  PyTorch: {v}"
+        )
 
 
 @pytest.mark.autodiff

@@ -8,14 +8,14 @@ import numpy as np
 
 
 def get_data_file(url, directory_name=None) -> str:
-    """ Get a data file from ``url``, cache it locally and return the local file path to it.
+    """Get a data file from ``url``, cache it locally and return the local file path to it.
 
-        :param url: the url to download from.
-        :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :return: the path of the downloaded file.
+    :param url: the url to download from.
+    :param directory_name: an optional relative directory path where the file will be downloaded to.
+    :return: the path of the downloaded file.
     """
 
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
+    data_directory = pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data'
 
     if directory_name is not None:
         data_directory /= directory_name

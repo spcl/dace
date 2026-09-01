@@ -36,7 +36,7 @@ def unique_name(name: str) -> str:
     maximal_length = 200
     unique_sufix = str(uuid.uuid1()).replace("-", "_")
     if len(name) > (maximal_length - len(unique_sufix)):
-        name = name[:(maximal_length - len(unique_sufix) - 1)]
+        name = name[: (maximal_length - len(unique_sufix) - 1)]
     return f"{name}_{unique_sufix}"
 
 
@@ -80,7 +80,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
         for name in "ABC":
             sdfg.add_array(
                 name=name,
-                shape=(10, ),
+                shape=(10,),
                 dtype=dace.float64,
                 transient=False,
             )
@@ -112,7 +112,7 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     for name in anames_s10 + anames_s20 + anames_s30:
         outer_sdfg.add_array(
             name=name,
-            shape=(sizes[name], ),
+            shape=(sizes[name],),
             dtype=dace.float64,
             transient=name.startswith("T"),
         )
@@ -164,7 +164,9 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     return outer_sdfg, state, nsdfg_node_1, nsdfg_node_2
 
 
-def _perform_chain_reduction_inlining(which: int, ) -> None:
+def _perform_chain_reduction_inlining(
+    which: int,
+) -> None:
     from dace.transformation.interstate import InlineMultistateSDFG
 
     def count_writes(sdfg):
@@ -272,19 +274,22 @@ def test_empty_memlets():
     tasklet2 = nstate2.add_tasklet('tasklet2', code='tmp=a;a_res=a+1', inputs={'a'}, outputs={'a_res'})
     nsdfg2.add_array('field_a', shape=[1], dtype=float)
     nstate2.add_edge(nstate2.add_read('field_a'), None, tasklet2, 'a', dace.Memlet.simple('field_a', subset_str='0'))
-    nstate2.add_edge(tasklet2, 'a_res', nstate2.add_write('field_a'), None, dace.Memlet.simple('field_a',
-                                                                                               subset_str='0'))
+    nstate2.add_edge(
+        tasklet2, 'a_res', nstate2.add_write('field_a'), None, dace.Memlet.simple('field_a', subset_str='0')
+    )
 
     nsdfg1_node = state.add_nested_sdfg(nsdfg1, {'field_a'}, {'field_b'})
     nsdfg2_node = state.add_nested_sdfg(nsdfg2, {'field_a'}, {'field_a'})
 
     a_read = state.add_read('field_a')
     state.add_edge(a_read, None, nsdfg1_node, 'field_a', dace.Memlet.simple('field_a', subset_str='0'))
-    state.add_edge(nsdfg1_node, 'field_b', state.add_write('field_b'), None,
-                   dace.Memlet.simple('field_b', subset_str='0'))
+    state.add_edge(
+        nsdfg1_node, 'field_b', state.add_write('field_b'), None, dace.Memlet.simple('field_b', subset_str='0')
+    )
     state.add_edge(a_read, None, nsdfg2_node, 'field_a', dace.Memlet.simple('field_a', subset_str='0'))
-    state.add_edge(nsdfg2_node, 'field_a', state.add_write('field_a'), None,
-                   dace.Memlet.simple('field_a', subset_str='0'))
+    state.add_edge(
+        nsdfg2_node, 'field_a', state.add_write('field_a'), None, dace.Memlet.simple('field_a', subset_str='0')
+    )
     state.add_edge(nsdfg1_node, None, nsdfg2_node, None, dace.Memlet())
 
     sdfg.validate()
@@ -309,6 +314,7 @@ def test_multistate_inline():
     outerprog.f(expected)
 
     from dace.transformation.interstate import InlineMultistateSDFG
+
     sdfg.apply_transformations(InlineMultistateSDFG)
     assert sdfg.number_of_nodes() in (1, 2)
 
@@ -335,6 +341,7 @@ def test_multistate_inline_samename():
     outerprog.f(expected)
 
     from dace.transformation.interstate import InlineMultistateSDFG
+
     sdfg.apply_transformations(InlineMultistateSDFG)
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
@@ -383,6 +390,7 @@ def test_multistate_inline_outer_dependencies():
     outerprog.f(expected_a, expected_b)
 
     from dace.transformation.interstate import InlineMultistateSDFG
+
     sdfg.apply_transformations(InlineMultistateSDFG)
 
     sdfg(A, B)
@@ -426,6 +434,7 @@ def test_multistate_inline_concurrent_subgraphs():
     outerprog.f(expected_a, expected_b, expected_c)
 
     from dace.transformation.interstate import InlineMultistateSDFG
+
     applied = sdfg.apply_transformations(InlineMultistateSDFG)
     assert applied == 1
 
@@ -451,10 +460,15 @@ def test_inline_symexpr():
     nsdfg = dace.SDFG('inner')
     nsdfg.add_array('a', [20], dace.float64)
     nstate = nsdfg.add_state()
-    nstate.add_mapped_tasklet('doit', {'k': '0:20'}, {},
-                              '''if k < j:
-    o = 2.0''', {'o': dace.Memlet('a[k]', dynamic=True)},
-                              external_edges=True)
+    nstate.add_mapped_tasklet(
+        'doit',
+        {'k': '0:20'},
+        {},
+        '''if k < j:
+    o = 2.0''',
+        {'o': dace.Memlet('a[k]', dynamic=True)},
+        external_edges=True,
+    )
 
     sdfg = dace.SDFG('outer')
     sdfg.add_array('A', [20], dace.float64)
@@ -494,9 +508,9 @@ def test_inline_unsqueeze():
     sdfg(A, B)
     for i in range(3):
         if i == 1:
-            assert (np.array_equal(B[:, i], A[1, :]))
+            assert np.array_equal(B[:, i], A[1, :])
         else:
-            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
+            assert np.array_equal(B[:, i], np.zeros((5,), np.int32))
 
 
 def test_inline_unsqueeze2():
@@ -518,9 +532,9 @@ def test_inline_unsqueeze2():
     sdfg(A, B)
     for i in range(3):
         if i < 2:
-            assert (np.array_equal(B[:, 1 - i], A[i, :]))
+            assert np.array_equal(B[:, 1 - i], A[i, :])
         else:
-            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
+            assert np.array_equal(B[:, i], np.zeros((5,), np.int32))
 
 
 def test_inline_unsqueeze3():
@@ -532,7 +546,7 @@ def test_inline_unsqueeze3():
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         for i in range(2):
-            nested_squeezed(A[i, i:i + 2], B[i + 1:i + 3, 1 - i])
+            nested_squeezed(A[i, i : i + 2], B[i + 1 : i + 3, 1 - i])
 
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
@@ -542,9 +556,9 @@ def test_inline_unsqueeze3():
     sdfg(A, B)
     for i in range(3):
         if i < 2:
-            assert (np.array_equal(B[i + 1:i + 3, 1 - i], A[i, i:i + 2]))
+            assert np.array_equal(B[i + 1 : i + 3, 1 - i], A[i, i : i + 2])
         else:
-            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
+            assert np.array_equal(B[:, i], np.zeros((5,), np.int32))
 
 
 def test_inline_unsqueeze4():
@@ -556,7 +570,7 @@ def test_inline_unsqueeze4():
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         for i in range(2):
-            nested_squeezed(A[i, i:2 * i + 2], B[i + 1:2 * i + 3, 1 - i])
+            nested_squeezed(A[i, i : 2 * i + 2], B[i + 1 : 2 * i + 3, 1 - i])
 
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
@@ -569,16 +583,16 @@ def test_inline_unsqueeze4():
     os.environ['DACE_testing_serialization'] = last_value
     for i in range(3):
         if i < 2:
-            assert (np.array_equal(B[i + 1:2 * i + 3, 1 - i], A[i, i:2 * i + 2]))
+            assert np.array_equal(B[i + 1 : 2 * i + 3, 1 - i], A[i, i : 2 * i + 2])
         else:
-            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
+            assert np.array_equal(B[:, i], np.zeros((5,), np.int32))
 
 
 def test_inline_symbol_assignment():
 
     def nested(a, num):
         cat = num - 1
-        last_step = (cat == 0)
+        last_step = cat == 0
         if last_step is True:
             return a + 1
 
@@ -599,8 +613,13 @@ def test_regression_inline_subset():
     nstate = nsdfg.add_state()
     nsdfg.add_array("input", [96, 32], dace.float64)
     nsdfg.add_array("output", [32, 32], dace.float64)
-    nstate.add_edge(nstate.add_read("input"), None, nstate.add_write("output"), None,
-                    dace.Memlet("input[32:64, 0:32] -> [0:32, 0:32]"))
+    nstate.add_edge(
+        nstate.add_read("input"),
+        None,
+        nstate.add_write("output"),
+        None,
+        dace.Memlet("input[32:64, 0:32] -> [0:32, 0:32]"),
+    )
 
     @dace.program
     def test(A: dace.float64[96, 32]):
@@ -624,7 +643,7 @@ def test_inlining_view_input():
     def test(A: dace.float64[96, 32], B: dace.float64[42, 32]):
         O = np.zeros([96 * 2, 42], dace.float64)
         for i in dace.map[0:2]:
-            O[i * 96:(i + 1) * 96, :] = np.einsum("ij,kj->ik", A, B)
+            O[i * 96 : (i + 1) * 96, :] = np.einsum("ij,kj->ik", A, B)
         return O
 
     sdfg = test.to_sdfg()
@@ -680,16 +699,16 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         transient=False,
     )
 
-    inner_shapes = {"t": (inner_symbol_name, )}
+    inner_shapes = {"t": (inner_symbol_name,)}
 
     if outside_uses_symbol:
         # We need to do that to perform the inlining.
-        inner_shapes["b"] = (outer_symbol_name, )
+        inner_shapes["b"] = (outer_symbol_name,)
 
     for name in "abt":
         inner_sdfg.add_array(
             name,
-            shape=inner_shapes.get(name, (20, )),
+            shape=inner_shapes.get(name, (20,)),
             dtype=dace.float64,
             transient=(name == "t"),
         )
@@ -709,11 +728,15 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 
     if separate_write_back_state:
         inner_astate = inner_sdfg.add_state_after(inner_state)
-        inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
-                               dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+        inner_astate.add_nedge(
+            inner_astate.add_access("t"),
+            inner_astate.add_access("b"),
+            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"),
+        )
     else:
-        inner_state.add_nedge(t, inner_state.add_access("b"),
-                              dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+        inner_state.add_nedge(
+            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]")
+        )
 
     # Creating the outer SDFG.
     outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
@@ -725,14 +748,14 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         transient=True,
     )
 
-    shape_of_T = (20, )
+    shape_of_T = (20,)
     if outside_uses_symbol:
-        shape_of_T = (outer_symbol_name, )
+        shape_of_T = (outer_symbol_name,)
         outer_sdfg.add_symbol(shape_of_T[0], dace.int32)
 
     outer_sdfg.add_array(
         "A",
-        shape=(20, ),
+        shape=(20,),
         dtype=dace.float64,
         transient=False,
     )
@@ -746,7 +769,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 
     outer_sdfg.add_array(
         "B",
-        shape=(20, ),
+        shape=(20,),
         dtype=dace.float64,
         transient=False,
     )
@@ -844,18 +867,18 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
 
     inner_shapes = {
-        "t": (inner_symbol_name, ),
+        "t": (inner_symbol_name,),
     }
 
     if outside_and_inner_symbol_have_same_meaning:
-        inner_shapes["b"] = (inner_symbol_name, )
+        inner_shapes["b"] = (inner_symbol_name,)
     else:
-        inner_shapes["b"] = (outer_symbol_name, )  # We need that to ensure that we can inline the SDFG.
+        inner_shapes["b"] = (outer_symbol_name,)  # We need that to ensure that we can inline the SDFG.
 
     for name in "abt":
         inner_sdfg.add_array(
             name,
-            shape=inner_shapes.get(name, (20, )),
+            shape=inner_shapes.get(name, (20,)),
             dtype=dace.float64,
             transient=(name == "t"),
         )
@@ -875,26 +898,30 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
 
     if separate_write_back_state:
         inner_astate = inner_sdfg.add_state_after(inner_state)
-        inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
-                               dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+        inner_astate.add_nedge(
+            inner_astate.add_access("t"),
+            inner_astate.add_access("b"),
+            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"),
+        )
 
     else:
         # Because we are using `inner_symbol` here to denote the size that we copy, it does not
         #  show up in the signature of the inner SDFG. If we would describe the copy in terms of
         #  `outer_symbol` then that symbol would show up.
-        inner_state.add_nedge(t, inner_state.add_access("b"),
-                              dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+        inner_state.add_nedge(
+            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]")
+        )
 
     # Creating the outer SDFG.
     outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
     outer_state = outer_sdfg.add_state(is_start_block=True)
 
-    shape_of_T = (outer_symbol_name, )
+    shape_of_T = (outer_symbol_name,)
     outer_sdfg.add_symbol(outer_symbol_name, dace.int32)
 
     outer_sdfg.add_array(
         "A",
-        shape=(20, ),
+        shape=(20,),
         dtype=dace.float64,
         transient=False,
     )
@@ -908,7 +935,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
 
     outer_sdfg.add_array(
         "B",
-        shape=(20, ),
+        shape=(20,),
         dtype=dace.float64,
         transient=False,
     )
@@ -967,7 +994,8 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         outside_uses_symbol=False,
         outside_uses_different_symbol=False,
-        separate_write_back_state=separate_write_back_state)
+        separate_write_back_state=separate_write_back_state,
+    )
 
     assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
@@ -1033,8 +1061,9 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     csdfg = outer_sdfg.compile()
 
 
-def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state: bool,
-                                                                                  outside_uses_different_symbol: bool):
+def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(
+    separate_write_back_state: bool, outside_uses_different_symbol: bool
+):
     """Test the inlining of a nested SDFG with multiple state.
 
     The situation is very similar to `test_multistate_inline_no_symbols_on_the_outside()` but with
@@ -1047,7 +1076,8 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         outside_uses_symbol=True,
         outside_uses_different_symbol=outside_uses_different_symbol,
-        separate_write_back_state=separate_write_back_state)
+        separate_write_back_state=separate_write_back_state,
+    )
 
     assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
@@ -1067,8 +1097,9 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_scalar"}
     assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_scalar"}
     assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_scalar"}
-    assert inner_sdfg.symbols.keys() == ({inner_symbol_name, outer_symbol_name}
-                                         if outside_uses_different_symbol else {inner_symbol_name})
+    assert inner_sdfg.symbols.keys() == (
+        {inner_symbol_name, outer_symbol_name} if outside_uses_different_symbol else {inner_symbol_name}
+    )
     assert outer_sdfg.symbols.keys() == {outer_symbol_name}
 
     # Test if it is possible to compile the thing.
@@ -1128,13 +1159,15 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
 
 @pytest.mark.skip(reason="Because of issue#2072 this does not work.")
 def test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state():
-    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=True,
-                                                                                  outside_uses_different_symbol=False)
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(
+        separate_write_back_state=True, outside_uses_different_symbol=False
+    )
 
 
 def test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state():
-    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=False,
-                                                                                  outside_uses_different_symbol=False)
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(
+        separate_write_back_state=False, outside_uses_different_symbol=False
+    )
 
 
 @pytest.mark.parametrize("separate_write_back_state", [True, False])
@@ -1145,7 +1178,8 @@ def test_multistate_inlining_different_symbols_used(separate_write_back_state: b
     and inner SDFG use different symbols.
     """
     _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(
-        separate_write_back_state=separate_write_back_state, outside_uses_different_symbol=True)
+        separate_write_back_state=separate_write_back_state, outside_uses_different_symbol=True
+    )
 
 
 def _perform_test_multistate_inline_with_symbol_mapping(
@@ -1166,7 +1200,7 @@ def _perform_test_multistate_inline_with_symbol_mapping(
 
     assert outer_sdfg.arrays.keys() == {"A", "B", "T"}
     assert str(outer_sdfg.arrays["T"].shape[0]) == outer_symbol_name
-    assert all(arr.shape == (20, ) for aname, arr in outer_sdfg.arrays.items() if aname != "T")
+    assert all(arr.shape == (20,) for aname, arr in outer_sdfg.arrays.items() if aname != "T")
 
     assert inner_sdfg.arrays.keys() == {"a", "b", "t"}
     assert str(inner_sdfg.arrays["t"].shape[0]) == inner_symbol_name
@@ -1229,20 +1263,26 @@ def _perform_test_multistate_inline_with_symbol_mapping(
         assert len([ac.data for ac in ac_nodes if ac.data == "T"]) == 2
 
     assert outer_sdfg.arrays.keys() == {"A", "B", "t", "T"}
-    assert all((not arr.transient) and arr.shape == (20, ) for aname, arr in outer_sdfg.arrays.items() if aname in "AB")
+    assert all((not arr.transient) and arr.shape == (20,) for aname, arr in outer_sdfg.arrays.items() if aname in "AB")
 
     if outside_and_inner_symbol_have_same_meaning:
         assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name}
         assert outer_sdfg.free_symbols == {outer_symbol_name}
         assert outer_sdfg.symbols.keys() == {outer_symbol_name}
 
-        assert all(arr.transient and str(arr.shape[0]) == outer_symbol_name for aname, arr in outer_sdfg.arrays.items()
-                   if aname in "Tt")
+        assert all(
+            arr.transient and str(arr.shape[0]) == outer_symbol_name
+            for aname, arr in outer_sdfg.arrays.items()
+            if aname in "Tt"
+        )
 
     else:
         expected_shapes = {"T": outer_symbol_name, "t": inner_symbol_name}
-        assert all(arr.transient and str(arr.shape[0]) == expected_shapes[aname]
-                   for aname, arr in outer_sdfg.arrays.items() if aname in "Tt")
+        assert all(
+            arr.transient and str(arr.shape[0]) == expected_shapes[aname]
+            for aname, arr in outer_sdfg.arrays.items()
+            if aname in "Tt"
+        )
 
         # Because the symbols are technically different, or allowed to be different, they are still
         #  in the SDFG and are needed.
@@ -1258,8 +1298,9 @@ def _perform_test_multistate_inline_with_symbol_mapping(
 
 @pytest.mark.parametrize("separate_write_back_state", [True, False])
 @pytest.mark.parametrize("outside_and_inner_symbol_have_same_meaning", [True, False])
-def test_multistate_inline_with_symbol_mapping(separate_write_back_state: bool,
-                                               outside_and_inner_symbol_have_same_meaning: bool):
+def test_multistate_inline_with_symbol_mapping(
+    separate_write_back_state: bool, outside_and_inner_symbol_have_same_meaning: bool
+):
 
     _perform_test_multistate_inline_with_symbol_mapping(
         separate_write_back_state=separate_write_back_state,
@@ -1273,7 +1314,8 @@ def test_singlestate_inline_with_symbol_mapping(outside_and_inner_symbol_have_sa
     _perform_test_multistate_inline_with_symbol_mapping(
         separate_write_back_state=False,
         outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning,
-        use_InlineSDFG_transformation=True)
+        use_InlineSDFG_transformation=True,
+    )
 
 
 def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.ConditionalBlock:
@@ -1291,7 +1333,7 @@ def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.Condi
             nested_if_region = _make_nested_if_region(sdfg, level)
             branch.add_node(nested_if_region)
     else:
-        for (branch, src) in (then_body, "A"), (else_body, "B"):
+        for branch, src in (then_body, "A"), (else_body, "B"):
             branch_state = branch.add_state()
             src_desc = sdfg.arrays[src]
             assert len(src_desc.shape) == 1
@@ -1348,6 +1390,7 @@ def test_multistate_inline_nested_control_flow_blocks():
     expected = np.copy(C)
 
     from dace.transformation.interstate import InlineMultistateSDFG
+
     napplied = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
     assert napplied == NLEV - 1
 
@@ -1364,25 +1407,29 @@ def test_inline_write_write_conflict():
 
     state = sdfg.add_state("test_state", is_start_block=True)
     access = state.add_access("A")
-    state.add_mapped_tasklet("set_A_to_5",
-                             map_ranges={"__i": "0:10"},
-                             inputs={},
-                             code="__out = 5",
-                             outputs={"__out": dace.Memlet("A[__i]")},
-                             output_nodes={"A": access},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "set_A_to_5",
+        map_ranges={"__i": "0:10"},
+        inputs={},
+        code="__out = 5",
+        outputs={"__out": dace.Memlet("A[__i]")},
+        output_nodes={"A": access},
+        external_edges=True,
+    )
 
     n_sdfg = dace.SDFG("nested")
     n_sdfg.add_array("A", [10], dace.int32)
     n_state = n_sdfg.add_state("nested_state", is_start_block=True)
     n_access = n_state.add_access("A")
-    n_state.add_mapped_tasklet("set_A_to_7",
-                               map_ranges={"__i": "2:5"},
-                               inputs={},
-                               code="__out = 7",
-                               outputs={"__out": dace.Memlet("A[__i]")},
-                               output_nodes={"A": n_access},
-                               external_edges=True)
+    n_state.add_mapped_tasklet(
+        "set_A_to_7",
+        map_ranges={"__i": "2:5"},
+        inputs={},
+        code="__out = 7",
+        outputs={"__out": dace.Memlet("A[__i]")},
+        output_nodes={"A": n_access},
+        external_edges=True,
+    )
 
     n_tasklet_2 = n_state.add_tasklet("plus_one", {"a"}, {"a1"}, "a1 = a + 1")
     n_access_2 = n_state.add_access("A")
@@ -1410,13 +1457,15 @@ def test_inline_nested_accessnode():
 
     state = sdfg.add_state("test_state", is_start_block=True)
     access = state.add_access("A")
-    state.add_mapped_tasklet("set_A_to_5",
-                             map_ranges={"__i": "0:10"},
-                             inputs={},
-                             code="__out = 5",
-                             outputs={"__out": dace.Memlet("A[__i]")},
-                             output_nodes={"A": access},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "set_A_to_5",
+        map_ranges={"__i": "0:10"},
+        inputs={},
+        code="__out = 5",
+        outputs={"__out": dace.Memlet("A[__i]")},
+        output_nodes={"A": access},
+        external_edges=True,
+    )
 
     n_sdfg = dace.SDFG("nested")
     n_sdfg.add_array("A", [10], dace.int32)
@@ -1479,12 +1528,14 @@ if __name__ == "__main__":
 
     for separate_write_back_state in [True, False]:
         for outside_and_inner_symbol_have_same_meaning in [True, False]:
-            test_multistate_inline_with_symbol_mapping(separate_write_back_state=separate_write_back_state,
-                                                       outside_and_inner_symbol_have_same_meaning=True)
+            test_multistate_inline_with_symbol_mapping(
+                separate_write_back_state=separate_write_back_state, outside_and_inner_symbol_have_same_meaning=True
+            )
 
     for outside_and_inner_symbol_have_same_meaning in [True, False]:
         test_singlestate_inline_with_symbol_mapping(
-            outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning)
+            outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning
+        )
 
     test_inline_write_write_conflict()
     test_inline_nested_accessnode()

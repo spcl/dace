@@ -9,14 +9,22 @@ def _gen_sdfg() -> dace.SDFG:
     nameA, arrA = sdfg.add_array('A', [2], dace.float32)
     nameB, arrB = sdfg.add_array('B', [2], dace.float32)
 
-    tasklet1 = state.add_tasklet('tasklet1', {}, {},
-                                 'printf("Hello World Before Copy\\n");',
-                                 language=dace.Language.CPP,
-                                 code_global="#include <stdio.h>")
-    tasklet2 = state.add_tasklet('tasklet2', {}, {},
-                                 'printf("Hello World After Copy\\n");',
-                                 language=dace.Language.CPP,
-                                 code_global="#include <stdio.h>")
+    tasklet1 = state.add_tasklet(
+        'tasklet1',
+        {},
+        {},
+        'printf("Hello World Before Copy\\n");',
+        language=dace.Language.CPP,
+        code_global="#include <stdio.h>",
+    )
+    tasklet2 = state.add_tasklet(
+        'tasklet2',
+        {},
+        {},
+        'printf("Hello World After Copy\\n");',
+        language=dace.Language.CPP,
+        code_global="#include <stdio.h>",
+    )
 
     anA = state.add_access(nameA)
     anB = state.add_access(nameB)

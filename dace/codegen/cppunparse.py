@@ -109,7 +109,6 @@ def interleave(inter, f, seq, **kwargs):
 
 
 class LocalScheme(object):
-
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError('Abstract class')
 
@@ -121,7 +120,6 @@ class LocalScheme(object):
 
 
 class CPPLocals(LocalScheme):
-
     def __init__(self):
         # Maps local name to a 3-tuple of line number, scope (measured in indentation) and type
         self.locals = {}
@@ -133,7 +131,7 @@ class CPPLocals(LocalScheme):
         self.locals[local_name] = (lineno, depth, dtype)
 
     def get_name_type_associations(self):
-        #returns a dictionary containing "local_name" -> type associations
+        # returns a dictionary containing "local_name" -> type associations
         locals_dict = {}
         for local_name, (lineno, depth, dtype) in self.locals.items():
             locals_dict[local_name] = dtype
@@ -153,19 +151,21 @@ class CPPLocals(LocalScheme):
 class CPPUnparser:
     """Methods in this class recursively traverse an AST and
     output C++ source code for the abstract syntax; original formatting
-    is disregarded. """
+    is disregarded."""
 
-    def __init__(self,
-                 tree,
-                 depth,
-                 locals,
-                 file=sys.stdout,
-                 indent_output=True,
-                 expr_semicolon=True,
-                 indent_offset=0,
-                 type_inference=False,
-                 defined_symbols=None,
-                 language=dace.dtypes.Language.CPP):
+    def __init__(
+        self,
+        tree,
+        depth,
+        locals,
+        file=sys.stdout,
+        indent_output=True,
+        expr_semicolon=True,
+        indent_offset=0,
+        type_inference=False,
+        defined_symbols=None,
+        language=dace.dtypes.Language.CPP,
+    ):
 
         self.f = file
         self.future_imports = []
@@ -299,9 +299,11 @@ class CPPUnparser:
                 else:
                     target = target.elts[0]
 
-            if target and not isinstance(target, (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
-                    target.id, self._indent):
-
+            if (
+                target
+                and not isinstance(target, (ast.Subscript, ast.Attribute))
+                and not self.locals.is_defined(target.id, self._indent)
+            ):
                 # if the target is already defined, do not redefine it
                 if self.defined_symbols is None or target.id not in self.defined_symbols:
                     # we should try to infer the type
@@ -328,7 +330,7 @@ class CPPUnparser:
 
         self.write(" = ")
         self.dispatch(t.value)
-        #self.dtype = inferred_type
+        # self.dtype = inferred_type
         self.write(';')
 
     def _AugAssign(self, t):
@@ -593,7 +595,7 @@ class CPPUnparser:
         if isinstance(t.target, ast.Tuple):
             self.write("auto ")
             if len(t.target.elts) == 1:
-                (elt, ) = t.target.elts
+                (elt,) = t.target.elts
                 self.locals.define(elt.id, t.lineno, self._indent + 1)
                 self.dispatch(elt)
             else:
@@ -632,7 +634,7 @@ class CPPUnparser:
         self.dispatch(t.body)
         self.leave()
         # collapse nested ifs into equivalent elifs.
-        while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
+        while t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If):
             t = t.orelse[0]
             self.fill("else if (")
             self.dispatch(t.test)
@@ -822,7 +824,7 @@ class CPPUnparser:
     ):
         self.write("std::make_tuple(")
         if len(t.elts) == 1:
-            (elt, ) = t.elts
+            (elt,) = t.elts
             self.dispatch(elt)
             self.write(",")
         else:
@@ -856,7 +858,7 @@ class CPPUnparser:
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
-        "BitAnd": "&"
+        "BitAnd": "&",
     }
     funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
 
@@ -963,7 +965,7 @@ class CPPUnparser:
         if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
             self.write(" ")
 
-        if (isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
+        if isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath'):
             self.write("::")
         else:
             self.write(".")
@@ -992,9 +994,12 @@ class CPPUnparser:
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()
                 self.dispatch(
-                    ast.Compare(left=t.args[0],
-                                ops=[op for _ in range(1, len(t.args))],
-                                comparators=[t.args[i] for i in range(1, len(t.args))]))
+                    ast.Compare(
+                        left=t.args[0],
+                        ops=[op for _ in range(1, len(t.args))],
+                        comparators=[t.args[i] for i in range(1, len(t.args))],
+                    )
+                )
                 return
             elif t.func.id in self.callbools:
                 op = self.callbools[t.func.id]()
@@ -1138,9 +1143,10 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif isinstance(code, sympy.Basic):
         from dace import symbolic
-        return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
-                          expr_semicolon,
-                          defined_symbols=defined_symbols)
+
+        return cppunparse(
+            ast.parse(symbolic.symstr(code, cpp_mode=True)), expr_semicolon, defined_symbols=defined_symbols
+        )
     elif isinstance(code, int):
         return str(code)
     elif code.__class__.__name__ == 'function':

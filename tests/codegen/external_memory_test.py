@@ -2,6 +2,7 @@
 """
 Tests external memory allocation.
 """
+
 import dace
 import numpy as np
 import pytest
@@ -117,16 +118,22 @@ def test_external_memory_detection_with_gpu_arrays():
         #  broken scan dropped.
         crafted = dace.SDFG(sdfg.name)
         crafted.add_array('gpu_scratch', [2], dace.float64, storage=gpu_storage, transient=True)
-        crafted.add_array('ws_heap', [2],
-                          dace.float64,
-                          storage=dace.StorageType.CPU_Heap,
-                          transient=True,
-                          lifetime=dace.AllocationLifetime.External)
-        crafted.add_array('ws_pinned', [2],
-                          dace.float64,
-                          storage=dace.StorageType.CPU_Pinned,
-                          transient=True,
-                          lifetime=dace.AllocationLifetime.External)
+        crafted.add_array(
+            'ws_heap',
+            [2],
+            dace.float64,
+            storage=dace.StorageType.CPU_Heap,
+            transient=True,
+            lifetime=dace.AllocationLifetime.External,
+        )
+        crafted.add_array(
+            'ws_pinned',
+            [2],
+            dace.float64,
+            storage=dace.StorageType.CPU_Pinned,
+            transient=True,
+            lifetime=dace.AllocationLifetime.External,
+        )
         crafted.add_state()
         # A separate DLL handle over the same binary keeps the probes'
         #  unloading independent (dlopen reference-counts the library).

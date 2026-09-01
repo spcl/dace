@@ -25,10 +25,9 @@ def make_sdfg(dtype):
 
     state.add_memlet_path(inbuf, reduce_node, dst_conn="_inbuffer", memlet=Memlet.simple(inbuf, "0:n", num_accesses=n))
     state.add_memlet_path(root, reduce_node, dst_conn="_root", memlet=Memlet.simple(root, "0:1", num_accesses=1))
-    state.add_memlet_path(reduce_node,
-                          outbuf,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(outbuf, "0:n", num_accesses=n))
+    state.add_memlet_path(
+        reduce_node, outbuf, src_conn="_outbuffer", memlet=Memlet.simple(outbuf, "0:n", num_accesses=n)
+    )
 
     return sdfg
 
@@ -36,12 +35,16 @@ def make_sdfg(dtype):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
-    pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
+        pytest.param("MPI", dace.float64, marks=pytest.mark.mpi),
+    ],
+)
 def test_mpi(implementation, dtype):
     from mpi4py import MPI as MPI4PY
+
     np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()

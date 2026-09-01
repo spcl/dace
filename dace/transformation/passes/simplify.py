@@ -64,28 +64,30 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
     CATEGORY: str = 'Simplification'
 
-    validate = properties.Property(dtype=bool,
-                                   default=False,
-                                   desc='Whether to validate the SDFG at the end of the pipeline.')
+    validate = properties.Property(
+        dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.'
+    )
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
     skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
-    no_inline_function_call_regions = properties.Property(dtype=bool,
-                                                          default=False,
-                                                          desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool,
-                                                  default=False,
-                                                  desc='Whether to prevent inlining named control flow regions.')
+    no_inline_function_call_regions = properties.Property(
+        dtype=bool, default=False, desc='Whether to prevent inlining function call regions.'
+    )
+    no_inline_named_regions = properties.Property(
+        dtype=bool, default=False, desc='Whether to prevent inlining named control flow regions.'
+    )
 
-    def __init__(self,
-                 validate: bool = False,
-                 validate_all: bool = False,
-                 skip: Optional[Set[str]] = None,
-                 verbose: bool = False,
-                 no_inline_function_call_regions: bool = False,
-                 no_inline_named_regions: bool = False,
-                 pass_options: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        validate: bool = False,
+        validate_all: bool = False,
+        skip: Optional[Set[str]] = None,
+        verbose: bool = False,
+        no_inline_function_call_regions: bool = False,
+        no_inline_named_regions: bool = False,
+        pass_options: Optional[Dict[str, Any]] = None,
+    ):
         if skip:
             passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
         else:
@@ -118,14 +120,19 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
             if not p.__explicit_cf_compatible__:
-                warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
-                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
-                              'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                              'please annotate it with the class decorator ' +
-                              '`@dace.transformation.explicit_cf_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                              'for more information.')
+                warnings.warn(
+                    p.__class__.__name__
+                    + ' is not being applied due to incompatibility with '
+                    + 'experimental control flow blocks. If the SDFG does not contain experimental blocks, '
+                    + 'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to '
+                    + 'True. If '
+                    + p.__class__.__name__
+                    + ' is compatible with experimental blocks, '
+                    + 'please annotate it with the class decorator '
+                    + '`@dace.transformation.explicit_cf_compatible`. see '
+                    + '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` '
+                    + 'for more information.'
+                )
                 return None
 
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value

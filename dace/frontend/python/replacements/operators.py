@@ -2,11 +2,18 @@
 """
 Contains operator replacements (e.g., NumPy Mathematical Functions) for supported objects.
 """
+
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import StringLiteral
-from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_together, cast_str, np_result_type,
-                                                     representative_num, sym_type)
+from dace.frontend.python.replacements.utils import (
+    ProgramVisitor,
+    broadcast_together,
+    cast_str,
+    np_result_type,
+    representative_num,
+    sym_type,
+)
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 from numbers import Number
@@ -21,7 +28,7 @@ numpy_version = np.lib.NumpyVersion(np.__version__)
 
 
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
-    """ Implements a general element-wise array unary operator. """
+    """Implements a general element-wise array unary operator."""
     arr1 = sdfg.arrays[op1]
 
     restype, cast = result_type([arr1], opname)
@@ -35,13 +42,14 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
         opcode = 'not'
 
     name, _ = pv.add_temp_transient(arr1.shape, restype, arr1.storage)
-    state.add_mapped_tasklet("_%s_" % opname, {
-        '__i%d' % i: '0:%s' % s
-        for i, s in enumerate(arr1.shape)
-    }, {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
-                             '__out = %s __in1' % opcode,
-                             {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "_%s_" % opname,
+        {'__i%d' % i: '0:%s' % s for i, s in enumerate(arr1.shape)},
+        {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
+        '__out = %s __in1' % opcode,
+        {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
+        external_edges=True,
+    )
     return name
 
 
@@ -107,14 +115,28 @@ def _is_op_bitwise(op: str):
 
 def _is_op_boolean(op: str):
     if op in {
-            'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'Is', 'NotIs', 'Xor', 'FpBoolean', 'SignBit'
+        'And',
+        'Or',
+        'Not',
+        'Eq',
+        'NotEq',
+        'Lt',
+        'LtE',
+        'Gt',
+        'GtE',
+        'Is',
+        'NotIs',
+        'Xor',
+        'FpBoolean',
+        'SignBit',
     }:
         return True
     return False
 
 
-def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
-                operator: str = None) -> Tuple[Union[List[dtypes.typeclass], dtypes.typeclass, str], ...]:
+def result_type(
+    arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]], operator: str = None
+) -> Tuple[Union[List[dtypes.typeclass], dtypes.typeclass, str], ...]:
 
     datatypes = []
     dtypes_for_result = []
@@ -162,27 +184,30 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     casting = [None] * len(arguments)
 
     if len(arguments) == 1:  # Unary operators
-
         if not operator:
             restype = datatypes[0]
         elif operator == 'USub' and coarse_types[0] == 0:
             restype = eval('dtypes.int{}'.format(8 * datatypes[0].bytes))
         elif operator == 'Abs' and coarse_types[0] == 3:
             restype = eval('dtypes.float{}'.format(4 * datatypes[0].bytes))
-        elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
-              and coarse_types[0] == 3):
+        elif (
+            operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
+            and coarse_types[0] == 3
+        ):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
         elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
             restype = dtypes.float64
             casting[0] = cast_str(restype)
-        elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean',
-                           'Spacing', 'Modf') and coarse_types[0] < 2):
+        elif (
+            operator
+            in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean', 'Spacing', 'Modf')
+            and coarse_types[0] < 2
+        ):
             restype = dtypes.float64
             casting[0] = cast_str(restype)
         elif operator in ('Frexp'):
             if coarse_types[0] == 3:
-                raise TypeError("ufunc '{}' not supported for complex "
-                                "input".format(operator))
+                raise TypeError("ufunc '{}' not supported for complex input".format(operator))
             restype = [None, dtypes.int32]
             if coarse_types[0] < 2:
                 restype[0] = dtypes.float64
@@ -199,7 +224,6 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             restype = datatypes[0]
 
     elif len(arguments) == 2:  # Binary operators
-
         type1 = coarse_types[0]
         type2 = coarse_types[1]
         dtype1 = datatypes[0]
@@ -209,7 +233,6 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
         right_cast = None
 
         if _is_op_arithmetic(operator):
-
             # Float/True division between integers
             if operator == 'Div' and max(type1, type2) < 2:
                 # NOTE: Leaving this here in case we implement a C/C++ flag
@@ -241,7 +264,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 else:
                     restype = eval('dtypes.int{}'.format(8 * max_bytes))
             # Power with base integer and exponent signed integer
-            elif (operator == 'Pow' and max(type1, type2) < 2 and dtype2 in signed_types):
+            elif operator == 'Pow' and max(type1, type2) < 2 and dtype2 in signed_types:
                 restype = dtypes.float64
             elif operator == 'FloatPow':
                 # Float power with integers or floats
@@ -250,9 +273,9 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 # Float power with complex numbers
                 else:
                     restype = dtypes.complex128
-            elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) == 3):
+            elif operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) == 3:
                 raise TypeError("ufunc '{}' not supported for complex input".format(operator))
-            elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) < 2):
+            elif operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) < 2:
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
             else:
@@ -267,7 +290,6 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 right_cast = cast_str(restype)
 
         elif _is_op_bitwise(operator):
-
             type1 = coarse_types[0]
             type2 = coarse_types[1]
             dtype1 = datatypes[0]
@@ -275,8 +297,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
             # Only integers may be arguments of bitwise and shifting operations
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: '{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -288,8 +309,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator in ('Gcd', 'Lcm'):
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: '{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -298,8 +318,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('CopySign', 'NextAfter'):
             if max(type1, type2) > 2:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: '{}' and '{}'".format(operator, dtype1, dtype2))
             if max(type1, type2) < 2:
                 restype = dtypes.float64
             else:
@@ -311,8 +330,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('Ldexp'):
             if max(type1, type2) > 2 or type2 > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: '{}' and '{}'".format(operator, dtype1, dtype2))
             if type1 < 2:
                 restype = dtypes.float64
                 left_cast = cast_str(restype)
@@ -321,8 +339,11 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             if dtype2 != dtypes.int32:
                 right_cast = cast_str(dtypes.int32)
                 if not np.can_cast(dtype2.type, np.int32):
-                    warnings.warn("Second input to {} is of type {}, which "
-                                  "cannot be safely cast to {}".format(operator, dtype2, dtypes.int32))
+                    warnings.warn(
+                        "Second input to {} is of type {}, which cannot be safely cast to {}".format(
+                            operator, dtype2, dtypes.int32
+                        )
+                    )
 
         else:  # Other binary operators
             restype = np_result_type(dtypes_for_result)
@@ -351,8 +372,15 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     return restype, casting
 
 
-def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                       operator: str, opcode: str):
+def _array_array_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Both operands are Arrays (or Data in general)
     """
@@ -389,8 +417,12 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, left_arr.storage)
 
     if list(out_shape) == [1]:
-        tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            {'__in1', '__in2'},
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+        )
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
         n3 = state.add_write(out_operand)
@@ -398,20 +430,27 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
         state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
     else:
-        state.add_mapped_tasklet("_%s_" % operator,
-                                 all_idx_dict, {
-                                     '__in1': Memlet.simple(left_operand, left_idx),
-                                     '__in2': Memlet.simple(right_operand, right_idx)
-                                 },
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
-                                 {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            {'__in1': Memlet.simple(left_operand, left_idx), '__in2': Memlet.simple(right_operand, right_idx)},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True,
+        )
 
     return out_operand
 
 
-def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                       operator: str, opcode: str):
+def _array_const_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Operands are an Array and a Constant
     """
@@ -457,8 +496,12 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
         else:
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
-        tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            inp_conn,
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+        )
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_arr))
@@ -470,18 +513,27 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
             inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
         else:
             inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
-        state.add_mapped_tasklet("_%s_" % operator,
-                                 all_idx_dict,
-                                 inp_memlets,
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
-                                 {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            inp_memlets,
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True,
+        )
 
     return out_operand
 
 
-def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                     operator: str, opcode: str):
+def _array_sym_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Operands are an Array and a Symbol
     """
@@ -527,8 +579,12 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
         else:
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
-        tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            inp_conn,
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+        )
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_arr))
@@ -540,18 +596,27 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
             inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
         else:
             inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
-        state.add_mapped_tasklet("_%s_" % operator,
-                                 all_idx_dict,
-                                 inp_memlets,
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
-                                 {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            inp_memlets,
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True,
+        )
 
     return out_operand
 
 
-def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                         operator: str, opcode: str):
+def _scalar_scalar_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Both operands are Scalars
     """
@@ -575,14 +640,16 @@ def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, 
         tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
 
     out_operand = visitor.get_target_name()
-    out_operand, out_scal = sdfg.add_scalar(out_operand,
-                                            restype,
-                                            transient=True,
-                                            storage=left_scal.storage,
-                                            find_new_name=True)
+    out_operand, out_scal = sdfg.add_scalar(
+        out_operand, restype, transient=True, storage=left_scal.storage, find_new_name=True
+    )
 
-    tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        {'__in1', '__in2'},
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+    )
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
     n3 = state.add_write(out_operand)
@@ -593,8 +660,15 @@ def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, 
     return out_operand
 
 
-def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                        operator: str, opcode: str):
+def _scalar_const_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Operands are a Scalar and a Constant
     """
@@ -630,8 +704,12 @@ def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, l
     else:
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
-    tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        inp_conn,
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+    )
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_scal))
@@ -642,8 +720,15 @@ def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, l
     return out_operand
 
 
-def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                      operator: str, opcode: str):
+def _scalar_sym_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Operands are a Scalar and a Symbol
     """
@@ -683,8 +768,12 @@ def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, lef
     else:
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
-    tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        inp_conn,
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+    )
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_scal))
@@ -712,8 +801,15 @@ _pyop2symtype = {
 }
 
 
-def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
-                       operator: str, opcode: str):
+def _const_const_binop(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    left_operand: str,
+    right_operand: str,
+    operator: str,
+    opcode: str,
+):
     """
     Both operands are Constants or Symbols
     """
@@ -909,10 +1005,30 @@ for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'), ('Invert', '~')
 
 # Define all standard Python binary operators
 # NOTE: ('MatMult', '@') is defined separately
-for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'), ('FloorDiv', '//'), ('Mod', '%'),
-                   ('Pow', '**'), ('LShift', '<<'), ('RShift', '>>'), ('BitOr', '|'), ('BitXor', '^'), ('BitAnd', '&'),
-                   ('And', 'and'), ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='), ('Lt', '<'), ('LtE', '<='), ('Gt', '>'),
-                   ('GtE', '>='), ('Is', 'is'), ('IsNot', 'is not')]:
+for op, opcode in [
+    ('Add', '+'),
+    ('Sub', '-'),
+    ('Mult', '*'),
+    ('Div', '/'),
+    ('FloorDiv', '//'),
+    ('Mod', '%'),
+    ('Pow', '**'),
+    ('LShift', '<<'),
+    ('RShift', '>>'),
+    ('BitOr', '|'),
+    ('BitXor', '^'),
+    ('BitAnd', '&'),
+    ('And', 'and'),
+    ('Or', 'or'),
+    ('Eq', '=='),
+    ('NotEq', '!='),
+    ('Lt', '<'),
+    ('LtE', '<='),
+    ('Gt', '>'),
+    ('GtE', '>='),
+    ('Is', 'is'),
+    ('IsNot', 'is not'),
+]:
     _makebinop(op, opcode)
 
 # Define all boolean operators
@@ -922,7 +1038,7 @@ _boolop_to_method = {
     'Lt': '__lt__',
     'LtE': '__le__',
     'Gt': '__gt__',
-    'GtE': '__ge__'
+    'GtE': '__ge__',
 }
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)

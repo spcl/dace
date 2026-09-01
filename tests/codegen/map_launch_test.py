@@ -24,7 +24,7 @@ def _make_sdfg(
     for name in ["i0", "o0"]:
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )

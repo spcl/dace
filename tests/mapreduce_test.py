@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
+from dace.transformation.dataflow import MapReduceFusion, MapFusionVertical, MapWCRFusion
 
 W = dace.symbol('W')
 H = dace.symbol('H')

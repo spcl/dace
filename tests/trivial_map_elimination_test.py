@@ -40,16 +40,12 @@ def trivial_map_init_sdfg():
     state.add_memlet_path(map_entry_outer, map_entry_inner, memlet=dace.Memlet())
     state.add_memlet_path(map_entry_inner, tasklet, memlet=dace.Memlet())
 
-    state.add_memlet_path(tasklet,
-                          map_exit_inner,
-                          memlet=dace.Memlet.simple('B', 'j, i'),
-                          src_conn='b',
-                          dst_conn='IN_B')
-    state.add_memlet_path(map_exit_inner,
-                          map_exit_outer,
-                          memlet=dace.Memlet.simple('B', 'j, 0'),
-                          src_conn='OUT_B',
-                          dst_conn='IN_B')
+    state.add_memlet_path(
+        tasklet, map_exit_inner, memlet=dace.Memlet.simple('B', 'j, i'), src_conn='b', dst_conn='IN_B'
+    )
+    state.add_memlet_path(
+        map_exit_inner, map_exit_outer, memlet=dace.Memlet.simple('B', 'j, 0'), src_conn='OUT_B', dst_conn='IN_B'
+    )
     state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'), src_conn='OUT_B')
 
     sdfg.validate()
@@ -103,28 +99,20 @@ def trivial_map_pseudo_init_sdfg():
 
     # Edges
     state.add_memlet_path(map_entry_outer, map_entry_inner, memlet=dace.Memlet())
-    state.add_memlet_path(read,
-                          map_entry_outer,
-                          map_entry_inner,
-                          memlet=dace.Memlet.simple('A', '0:5, 0'),
-                          dst_conn='IN_A')
+    state.add_memlet_path(
+        read, map_entry_outer, map_entry_inner, memlet=dace.Memlet.simple('A', '0:5, 0'), dst_conn='IN_A'
+    )
     state.add_memlet_path(map_entry_inner, tasklet, memlet=dace.Memlet())
-    state.add_memlet_path(map_entry_inner,
-                          tasklet,
-                          memlet=dace.Memlet.simple('A', 'j, 0'),
-                          src_conn='OUT_A',
-                          dst_conn='a')
+    state.add_memlet_path(
+        map_entry_inner, tasklet, memlet=dace.Memlet.simple('A', 'j, 0'), src_conn='OUT_A', dst_conn='a'
+    )
 
-    state.add_memlet_path(tasklet,
-                          map_exit_inner,
-                          memlet=dace.Memlet.simple('B', 'j, i'),
-                          src_conn='b',
-                          dst_conn='IN_B')
-    state.add_memlet_path(map_exit_inner,
-                          map_exit_outer,
-                          memlet=dace.Memlet.simple('B', 'j, 0'),
-                          src_conn='OUT_B',
-                          dst_conn='IN_B')
+    state.add_memlet_path(
+        tasklet, map_exit_inner, memlet=dace.Memlet.simple('B', 'j, i'), src_conn='b', dst_conn='IN_B'
+    )
+    state.add_memlet_path(
+        map_exit_inner, map_exit_outer, memlet=dace.Memlet.simple('B', 'j, 0'), src_conn='OUT_B', dst_conn='IN_B'
+    )
     state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'), src_conn='OUT_B')
 
     sdfg.validate()
@@ -167,7 +155,6 @@ class TrivialMapEliminationTest(unittest.TestCase):
 
 
 class TrivialMapInitEliminationTest(unittest.TestCase):
-
     def test_can_be_applied(self):
         graph = trivial_map_init_sdfg()
 

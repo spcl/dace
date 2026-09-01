@@ -30,8 +30,9 @@ def mapfission_sdfg():
     ime3, imx3 = state.add_map('inner', dict(j='0:2'))
     t3 = state.add_tasklet('three', {'a'}, {'b'}, 'b = a[0] * 3')
     scalar = state.add_tasklet('scalar', {}, {'out'}, 'out = 5.0')
-    t4 = state.add_tasklet('four', {'ione', 'itwo', 'ithree', 'sc'}, {'out'},
-                           'out = ione + itwo[0] * itwo[1] + ithree + sc')
+    t4 = state.add_tasklet(
+        'four', {'ione', 'itwo', 'ithree', 'sc'}, {'out'}, 'out = ione + itwo[0] * itwo[1] + ithree + sc'
+    )
     wnode = state.add_write('B')
 
     # Edges
@@ -87,7 +88,7 @@ def test_nested_sdfg():
 
 
 def test_nested_transient():
-    """ Test nested SDFGs with transients. """
+    """Test nested SDFGs with transients."""
 
     # Inner SDFG
     nsdfg = dace.SDFG('nested')
@@ -300,7 +301,7 @@ def test_mapfission_with_symbols():
     B = np.ndarray((2, 10), dtype=np.int32)
     sdfg(A=A, B=B, M=2, N=10)
 
-    ref = np.full((10, ), fill_value=2, dtype=np.int32)
+    ref = np.full((10,), fill_value=2, dtype=np.int32)
 
     assert np.array_equal(A[0], ref)
     assert np.array_equal(B[0], ref)
@@ -316,14 +317,14 @@ def test_two_edges_through_map():
     N = dace.symbol('N')
 
     sdfg = dace.SDFG('two_edges_through_map')
-    sdfg.add_array('A', (N, ), dace.int32)
-    sdfg.add_array('B', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('B', (N,), dace.int32)
 
     state = sdfg.add_state('parent', is_start_block=True)
     me, mx = state.add_map('parent_map', {'i': '0:N'})
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nsdfg.add_array('inner_A', (N,), dace.int32)
     nsdfg.add_scalar('inner_B', dace.int32)
 
     nstate = nsdfg.add_state('child', is_start_block=True)
@@ -344,10 +345,10 @@ def test_two_edges_through_map():
     assert num == 1
 
     A = np.arange(10, dtype=np.int32)
-    B = np.ndarray((10, ), dtype=np.int32)
+    B = np.ndarray((10,), dtype=np.int32)
     sdfg(A=A, B=B, N=10)
 
-    ref = np.full((10, ), fill_value=9, dtype=np.int32)
+    ref = np.full((10,), fill_value=9, dtype=np.int32)
 
     assert np.array_equal(B, ref)
 
@@ -365,13 +366,13 @@ def test_if_scope():
     ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
 
     sdfg = map_with_if.to_sdfg()
-    val0 = np.ndarray((10, ), dtype=np.int32)
+    val0 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val0)
     assert np.array_equal(val0, ref)
 
     sdfg.apply_transformations_repeated(MapFission)
 
-    val1 = np.ndarray((10, ), dtype=np.int32)
+    val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1)
     assert np.array_equal(val1, ref)
 
@@ -390,13 +391,13 @@ def test_if_scope_2():
     ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
 
     sdfg = map_with_if_2.to_sdfg()
-    val0 = np.ndarray((10, ), dtype=np.int32)
+    val0 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val0)
     assert np.array_equal(val0, ref)
 
     sdfg.apply_transformations_repeated(MapFission)
 
-    val1 = np.ndarray((10, ), dtype=np.int32)
+    val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1)
     assert np.array_equal(val1, ref)
 
@@ -413,13 +414,13 @@ def test_array_copy_outside_scope():
     """
 
     sdfg = dace.SDFG('array_copy_outside_scope')
-    iname, _ = sdfg.add_array('inp', (10, ), dtype=dace.int32)
-    oname, _ = sdfg.add_array('out', (10, ), dtype=dace.int32)
+    iname, _ = sdfg.add_array('inp', (10,), dtype=dace.int32)
+    oname, _ = sdfg.add_array('out', (10,), dtype=dace.int32)
 
     nsdfg = dace.SDFG('nested_sdfg')
-    niname, nidesc = nsdfg.add_array('ninp', (1, ), dtype=dace.int32)
+    niname, nidesc = nsdfg.add_array('ninp', (1,), dtype=dace.int32)
     ntname, ntdesc = nsdfg.add_scalar('ntmp', dtype=dace.int32, transient=True)
-    noname, nodesc = nsdfg.add_array('nout', (1, ), dtype=dace.int32)
+    noname, nodesc = nsdfg.add_array('nout', (1,), dtype=dace.int32)
 
     nstate = nsdfg.add_state('nmain')
     ninode = nstate.add_access(niname)
@@ -443,7 +444,7 @@ def test_array_copy_outside_scope():
 
     # Issue no. 2 will be caught by code-generation due to `i` existing in a memlet outside the Map's scope.
     A = np.arange(10, dtype=np.int32)
-    B = np.empty((10, ), dtype=np.int32)
+    B = np.empty((10,), dtype=np.int32)
     sdfg(inp=A, out=B)
     assert np.array_equal(A + 1, B)
 
@@ -455,31 +456,29 @@ def test_single_data_multiple_connectors():
     outer_sdfg.add_array('B', (2, 10), dtype=dace.int32)
 
     inner_sdfg = dace.SDFG('inner')
-    inner_sdfg.add_array('A0', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('A1', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('B0', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('B1', (10, ), dtype=dace.int32)
+    inner_sdfg.add_array('A0', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('A1', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('B0', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('B1', (10,), dtype=dace.int32)
 
     inner_state = inner_sdfg.add_state('inner_state', is_start_block=True)
 
-    inner_state.add_mapped_tasklet(name='plus',
-                                   map_ranges={'j': '0:10'},
-                                   inputs={
-                                       '__a0': dace.Memlet(data='A0', subset='j'),
-                                       '__a1': dace.Memlet(data='A1', subset='j')
-                                   },
-                                   outputs={'__b0': dace.Memlet(data='B0', subset='j')},
-                                   code='__b0 = __a0 + __a1',
-                                   external_edges=True)
-    inner_state.add_mapped_tasklet(name='minus',
-                                   map_ranges={'j': '0:10'},
-                                   inputs={
-                                       '__a0': dace.Memlet(data='A0', subset='j'),
-                                       '__a1': dace.Memlet(data='A1', subset='j')
-                                   },
-                                   outputs={'__b1': dace.Memlet(data='B1', subset='j')},
-                                   code='__b1 = __a0 - __a1',
-                                   external_edges=True)
+    inner_state.add_mapped_tasklet(
+        name='plus',
+        map_ranges={'j': '0:10'},
+        inputs={'__a0': dace.Memlet(data='A0', subset='j'), '__a1': dace.Memlet(data='A1', subset='j')},
+        outputs={'__b0': dace.Memlet(data='B0', subset='j')},
+        code='__b0 = __a0 + __a1',
+        external_edges=True,
+    )
+    inner_state.add_mapped_tasklet(
+        name='minus',
+        map_ranges={'j': '0:10'},
+        inputs={'__a0': dace.Memlet(data='A0', subset='j'), '__a1': dace.Memlet(data='A1', subset='j')},
+        outputs={'__b1': dace.Memlet(data='B1', subset='j')},
+        code='__b1 = __a0 - __a1',
+        external_edges=True,
+    )
 
     outer_state = outer_sdfg.add_state('outer_state', is_start_block=True)
 
@@ -524,43 +523,41 @@ def test_dependent_symbol():
     inner_sdfg.add_symbol('first', dace.int32)
     inner_sdfg.add_symbol('last', dace.int32)
 
-    inner_sdfg.add_array('A0', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('A1', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('B0', (10, ), dtype=dace.int32)
-    inner_sdfg.add_array('B1', (10, ), dtype=dace.int32)
+    inner_sdfg.add_array('A0', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('A1', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('B0', (10,), dtype=dace.int32)
+    inner_sdfg.add_array('B1', (10,), dtype=dace.int32)
 
     inner_state = inner_sdfg.add_state('inner_state', is_start_block=True)
 
-    inner_state.add_mapped_tasklet(name='plus',
-                                   map_ranges={'j': 'first:last'},
-                                   inputs={
-                                       '__a0': dace.Memlet(data='A0', subset='j'),
-                                       '__a1': dace.Memlet(data='A1', subset='j')
-                                   },
-                                   outputs={'__b0': dace.Memlet(data='B0', subset='j')},
-                                   code='__b0 = __a0 + __a1',
-                                   external_edges=True)
+    inner_state.add_mapped_tasklet(
+        name='plus',
+        map_ranges={'j': 'first:last'},
+        inputs={'__a0': dace.Memlet(data='A0', subset='j'), '__a1': dace.Memlet(data='A1', subset='j')},
+        outputs={'__b0': dace.Memlet(data='B0', subset='j')},
+        code='__b0 = __a0 + __a1',
+        external_edges=True,
+    )
 
     inner_sdfg2 = dace.SDFG('inner2')
 
     inner_sdfg2.add_symbol('first', dace.int32)
     inner_sdfg2.add_symbol('last', dace.int32)
 
-    inner_sdfg2.add_array('A0', (10, ), dtype=dace.int32)
-    inner_sdfg2.add_array('A1', (10, ), dtype=dace.int32)
-    inner_sdfg2.add_array('B1', (10, ), dtype=dace.int32)
+    inner_sdfg2.add_array('A0', (10,), dtype=dace.int32)
+    inner_sdfg2.add_array('A1', (10,), dtype=dace.int32)
+    inner_sdfg2.add_array('B1', (10,), dtype=dace.int32)
 
     inner_state2 = inner_sdfg2.add_state('inner_state2', is_start_block=True)
 
-    inner_state2.add_mapped_tasklet(name='minus',
-                                    map_ranges={'j': 'first:last'},
-                                    inputs={
-                                        '__a0': dace.Memlet(data='A0', subset='j'),
-                                        '__a1': dace.Memlet(data='A1', subset='j')
-                                    },
-                                    outputs={'__b1': dace.Memlet(data='B1', subset='j')},
-                                    code='__b1 = __a0 - __a1',
-                                    external_edges=True)
+    inner_state2.add_mapped_tasklet(
+        name='minus',
+        map_ranges={'j': 'first:last'},
+        inputs={'__a0': dace.Memlet(data='A0', subset='j'), '__a1': dace.Memlet(data='A1', subset='j')},
+        outputs={'__b1': dace.Memlet(data='B1', subset='j')},
+        code='__b1 = __a0 - __a1',
+        external_edges=True,
+    )
 
     nsdfg = inner_state.add_nested_sdfg(inner_sdfg2, {'A0', 'A1'}, {'B1'})
     a0 = inner_state.add_access('A0')
@@ -577,11 +574,12 @@ def test_dependent_symbol():
     b = outer_state.add_access('B')
 
     me, mx = outer_state.add_map('map', {'i': '0:2'})
-    inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, {'A0', 'A1'}, {'B0', 'B1'},
-                                                  symbol_mapping={
-                                                      'first': 'max(0, i - fidx)',
-                                                      'last': 'min(10, i + lidx)'
-                                                  })
+    inner_sdfg_node = outer_state.add_nested_sdfg(
+        inner_sdfg,
+        {'A0', 'A1'},
+        {'B0', 'B1'},
+        symbol_mapping={'first': 'max(0, i - fidx)', 'last': 'min(10, i + lidx)'},
+    )
 
     outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='0, 0:10'), dst_conn='A0')
     outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='1, 0:10'), dst_conn='A1')
@@ -611,7 +609,7 @@ def strided_two_ops(A: dace.float64[10], B: dace.float64[10]):
 
 
 def test_strided_fission_step2():
-    """ MapFission on a map with step=2 and a scalar border transient. """
+    """MapFission on a map with step=2 and a scalar border transient."""
     A = np.arange(10, dtype=np.float64)
     B_ref = np.zeros(10, dtype=np.float64)
     B_test = np.zeros(10, dtype=np.float64)
@@ -635,7 +633,7 @@ def strided_offset_ops(A: dace.float64[30], B: dace.float64[30]):
 
 
 def test_strided_fission_offset_and_step():
-    """ MapFission on a map with offset=10 and step=3. """
+    """MapFission on a map with offset=10 and step=3."""
     A = np.arange(30, dtype=np.float64)
     B_ref = np.zeros(30, dtype=np.float64)
     B_test = np.zeros(30, dtype=np.float64)
@@ -663,7 +661,7 @@ def symbolic_strided(A: dace.float64[_N], B: dace.float64[_N]):
 
 
 def test_symbolic_strided_fission():
-    """ MapFission on a symbolic strided map. """
+    """MapFission on a symbolic strided map."""
     sdfg = symbolic_strided.to_sdfg()
     assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
 
@@ -687,7 +685,7 @@ def trivial_1d(A: dace.float64[16], B: dace.float64[16]):
 
 
 def test_trivial_1d_step1():
-    """ MapFission on a simple 1D map with step=1. """
+    """MapFission on a simple 1D map with step=1."""
     A = np.arange(16, dtype=np.float64)
     B_ref = np.zeros(16, dtype=np.float64)
     B_test = np.zeros(16, dtype=np.float64)
@@ -709,7 +707,7 @@ def trivial_3d(A: dace.float64[4, 5, 6], B: dace.float64[4, 5, 6]):
 
 
 def test_trivial_3d_step1():
-    """ MapFission on a 3D map with step=1. """
+    """MapFission on a 3D map with step=1."""
     A = np.arange(4 * 5 * 6, dtype=np.float64).reshape(4, 5, 6).copy()
     B_ref = np.zeros((4, 5, 6), dtype=np.float64)
     B_test = np.zeros((4, 5, 6), dtype=np.float64)
@@ -731,7 +729,7 @@ def map_with_data_cond(A: dace.float64[10]):
 
 
 def test_map_with_if_nested_sdfg():
-    """ MapFission must refuse maps whose body's interstate assignments depend on the map iterator. """
+    """MapFission must refuse maps whose body's interstate assignments depend on the map iterator."""
     # The number of applications depends on whether auto-opt is enabled.
     # We only check numerical correctness.
     sdfg = map_with_data_cond.to_sdfg()
@@ -787,10 +785,23 @@ def _control_flow_in_scope(x: dace.float64[N, M], y: dace.float64[N, M]):
 
 
 @dace.program
-def _five_set_five_cpy(s0: dace.float64[K], s1: dace.float64[K], s2: dace.float64[K], s3: dace.float64[K],
-                       s4: dace.float64[K], a0: dace.float64[K], a1: dace.float64[K], a2: dace.float64[K],
-                       a3: dace.float64[K], a4: dace.float64[K], c0: dace.float64[K], c1: dace.float64[K],
-                       c2: dace.float64[K], c3: dace.float64[K], c4: dace.float64[K]):
+def _five_set_five_cpy(
+    s0: dace.float64[K],
+    s1: dace.float64[K],
+    s2: dace.float64[K],
+    s3: dace.float64[K],
+    s4: dace.float64[K],
+    a0: dace.float64[K],
+    a1: dace.float64[K],
+    a2: dace.float64[K],
+    a3: dace.float64[K],
+    a4: dace.float64[K],
+    c0: dace.float64[K],
+    c1: dace.float64[K],
+    c2: dace.float64[K],
+    c3: dace.float64[K],
+    c4: dace.float64[K],
+):
     for i in dace.map[0:K]:
         s0[i] = 0.0
         s1[i] = 1.0
@@ -805,8 +816,15 @@ def _five_set_five_cpy(s0: dace.float64[K], s1: dace.float64[K], s2: dace.float6
 
 
 @dace.program
-def _three_set_two_cpy(s0: dace.float64[K], s1: dace.float64[K], s2: dace.float64[K], a0: dace.float64[K],
-                       a1: dace.float64[K], c0: dace.float64[K], c1: dace.float64[K]):
+def _three_set_two_cpy(
+    s0: dace.float64[K],
+    s1: dace.float64[K],
+    s2: dace.float64[K],
+    a0: dace.float64[K],
+    a1: dace.float64[K],
+    c0: dace.float64[K],
+    c1: dace.float64[K],
+):
     for i in dace.map[0:K]:
         s0[i] = 0.0
         s1[i] = 1.0
@@ -837,8 +855,12 @@ def _fission_maps(sdfg):
     :param sdfg: The SDFG to scan.
     :returns: One pair per outermost map entry.
     """
-    return [(st, n) for st in sdfg.all_states() for n in st.nodes()
-            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
+    return [
+        (st, n)
+        for st in sdfg.all_states()
+        for n in st.nodes()
+        if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
+    ]
 
 
 def _assert_no_spurious_connectors(sdfg, n_set, n_cpy):
@@ -946,9 +968,12 @@ def test_mapfission_refuses_conditional_component_stays_valid():
             if not isinstance(me, nodes.MapEntry):
                 continue
             has_cond = any(
-                isinstance(e.dst, nodes.NestedSDFG) and any(
-                    type(b).__name__ == 'ConditionalBlock' for b in e.dst.sdfg.all_control_flow_regions(recursive=True))
-                for e in st.out_edges(me))
+                isinstance(e.dst, nodes.NestedSDFG)
+                and any(
+                    type(b).__name__ == 'ConditionalBlock' for b in e.dst.sdfg.all_control_flow_regions(recursive=True)
+                )
+                for e in st.out_edges(me)
+            )
             if has_cond:
                 assert MapFission.can_be_applied_to(sdfg, map_entry=me) is False
 

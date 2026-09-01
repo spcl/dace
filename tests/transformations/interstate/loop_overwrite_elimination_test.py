@@ -321,7 +321,7 @@ def test_overwrite_elimination_tmp2():
 
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
-        tmp = dace.ndarray(shape=(2, ), dtype=dace.float32)
+        tmp = dace.ndarray(shape=(2,), dtype=dace.float32)
         for i in range(10):
             tmp[1] = B[i]
             A[0] = tmp[0]

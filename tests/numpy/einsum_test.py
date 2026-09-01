@@ -46,8 +46,13 @@ def test_batch_matmul():
 def test_opteinsum_sym():
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
         return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
@@ -62,8 +67,13 @@ def test_opteinsum():
     N = 10
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
         return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
@@ -101,6 +111,7 @@ def test_einsum_libnode():
 
 def test_lift_einsum():
     from dace.transformation.dataflow import LiftEinsum
+
     N = dace.symbol('N')
     M = dace.symbol('M')
     K = dace.symbol('K')
@@ -130,7 +141,7 @@ def test_lift_einsum_mttkrp():
 
     @dace.program
     def tester(A, B, C, D):
-        for i, j, k, a in dace.map[0:A.shape[0], 0:A.shape[1], 0:A.shape[2], 0:B.shape[1]]:
+        for i, j, k, a in dace.map[0 : A.shape[0], 0 : A.shape[1], 0 : A.shape[2], 0 : B.shape[1]]:
             with dace.tasklet:
                 x << A[i, j, k]
                 y << B[j, a]
@@ -203,7 +214,7 @@ def test_lift_einsum_reduce_partial():
     # Specialize to ensure Reduce node is there
     sdfg.expand_library_nodes(recursive=False)
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (1, )
+    assert tuple(rnode.axes) == (1,)
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->ik', A))
@@ -216,7 +227,7 @@ def test_lift_einsum_outerproduct():
     @dace.program
     def tester(A, B):
         C = np.ndarray([B.shape[0], A.shape[0]], A.dtype)
-        for i, j in dace.map[0:A.shape[0], 0:B.shape[0]]:
+        for i, j in dace.map[0 : A.shape[0], 0 : B.shape[0]]:
             with dace.tasklet:
                 a << A[i]
                 b << B[j]
@@ -244,7 +255,7 @@ def test_lift_einsum_beta():
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]
@@ -278,7 +289,7 @@ def test_lift_einsum_alpha_beta(symbolic_alpha):
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]

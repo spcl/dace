@@ -48,8 +48,11 @@ def test_nested():
         Z.backward()
         return dict(gradient_Y=Y.grad)
 
-    return (SDFGBackwardRunner(sdfg, "__return",
-                               simplify=False), torch_func, dict(Y=np.random.rand(3, 3).astype(np.float32)))
+    return (
+        SDFGBackwardRunner(sdfg, "__return", simplify=False),
+        torch_func,
+        dict(Y=np.random.rand(3, 3).astype(np.float32)),
+    )
 
 
 @dace.program
@@ -75,8 +78,11 @@ def test_nested_forwarding():
         Z.backward()
         return dict(gradient_Y=Y.grad)
 
-    return (SDFGBackwardRunner(sdfg, "__return",
-                               simplify=False), torch_func, dict(Y=np.random.rand(3, 3).astype(np.float32)))
+    return (
+        SDFGBackwardRunner(sdfg, "__return", simplify=False),
+        torch_func,
+        dict(Y=np.random.rand(3, 3).astype(np.float32)),
+    )
 
 
 @dace.program
@@ -112,8 +118,11 @@ def test_triple_nested_forwarding():
         Z.backward()
         return dict(gradient_Y=Y.grad)
 
-    return (SDFGBackwardRunner(sdfg, "__return",
-                               simplify=False), torch_func, dict(Y=np.random.rand(3, 3).astype(np.float32)))
+    return (
+        SDFGBackwardRunner(sdfg, "__return", simplify=False),
+        torch_func,
+        dict(Y=np.random.rand(3, 3).astype(np.float32)),
+    )
 
 
 @pytest.mark.autodiff
@@ -124,8 +133,9 @@ def test_view_forwarding():
     donnx.default_implementation = "pure"
 
     @dace.program
-    def add_reshape_grad_test_nested(inp1: dace.float64[9], bias: dace.float64[3], target_shape: dace.int64[2],
-                                     result: dace.float64):
+    def add_reshape_grad_test_nested(
+        inp1: dace.float64[9], bias: dace.float64[3], target_shape: dace.int64[2], result: dace.float64
+    ):
         reshaped = dace.define_local([3, 3], dace.float64)
         added = inp1 + 1
         donnx.ONNXReshape(data=added, shape=target_shape, reshaped=reshaped)
@@ -163,8 +173,11 @@ def test_view_forwarding():
         S.backward()
         return dict(gradient_inp1=inp1.grad, gradient_bias=bias.grad)
 
-    return (SDFGBackwardRunner(outer_sdfg, "__return", simplify=False), torch_func,
-            dict(inp1=np.random.rand(9).astype(np.float64), bias=np.random.rand(3).astype(np.float64)))
+    return (
+        SDFGBackwardRunner(outer_sdfg, "__return", simplify=False),
+        torch_func,
+        dict(inp1=np.random.rand(9).astype(np.float64), bias=np.random.rand(3).astype(np.float64)),
+    )
 
 
 if __name__ == "__main__":

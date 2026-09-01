@@ -70,11 +70,13 @@ class CompiledSDFGProfiler:
                     leave=self.tqdm_leave,
                 )
             except ImportError:
-                warnings.warn('Cannot show profiling progress, missing optional dependency '
-                              'tqdm...\n\tTo see a live progress bar please install tqdm '
-                              '(`pip install tqdm`)\n\tTo disable this feature (and this '
-                              'warning) set `profiling_status` to false in the dace config '
-                              '(~/.dace.conf).')
+                warnings.warn(
+                    'Cannot show profiling progress, missing optional dependency '
+                    'tqdm...\n\tTo see a live progress bar please install tqdm '
+                    '(`pip install tqdm`)\n\tTo disable this feature (and this '
+                    'warning) set `profiling_status` to false in the dace config '
+                    '(~/.dace.conf).'
+                )
                 print('\nProfiling...')
         else:
             print('\nProfiling...')
@@ -98,10 +100,19 @@ class CompiledSDFGProfiler:
         if not self.report.sdfg_hash:
             self.report.sdfg_hash = compiled_sdfg.sdfg.hash_sdfg()
         pid = os.getpid()
-        self.report.events.extend([
-            report.DurationEvent(f'Python call to {compiled_sdfg.sdfg.name}', 'Timer', (0, -1, -1), times[i],
-                                 (times[i + 1] - times[i]) * 1e6, pid) for i in range(self.repetitions)
-        ])
+        self.report.events.extend(
+            [
+                report.DurationEvent(
+                    f'Python call to {compiled_sdfg.sdfg.name}',
+                    'Timer',
+                    (0, -1, -1),
+                    times[i],
+                    (times[i + 1] - times[i]) * 1e6,
+                    pid,
+                )
+                for i in range(self.repetitions)
+            ]
+        )
         self.report.durations[(0, -1, -1)][f'Python call to {compiled_sdfg.sdfg.name}'][-1].extend(diffs)
 
         # Print profiling results
@@ -128,13 +139,13 @@ class CompiledSDFGProfiler:
 
 
 def detect_reduction_type(wcr_str, openmp=False):
-    """ Inspects a lambda function and tries to determine if it's one of the
-        built-in reductions that frameworks such as MPI can provide.
+    """Inspects a lambda function and tries to determine if it's one of the
+    built-in reductions that frameworks such as MPI can provide.
 
-        :param wcr_str: A Python string representation of the lambda function.
-        :param openmp: Detect additional OpenMP reduction types.
-        :return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
-                 if not detected, or None if no reduction is found.
+    :param wcr_str: A Python string representation of the lambda function.
+    :param openmp: Detect additional OpenMP reduction types.
+    :return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
+             if not detected, or None if no reduction is found.
     """
     if wcr_str == '' or wcr_str is None:
         return None
@@ -152,11 +163,13 @@ def detect_reduction_type(wcr_str, openmp=False):
         result = None
 
     # Check resulting value
-    if result == sympy.Max(a, b) or (isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name)
-                                     and wcr_ast.func.id == 'max'):
+    if result == sympy.Max(a, b) or (
+        isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name) and wcr_ast.func.id == 'max'
+    ):
         return dtypes.ReductionType.Max
-    elif result == sympy.Min(a, b) or (isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name)
-                                       and wcr_ast.func.id == 'min'):
+    elif result == sympy.Min(a, b) or (
+        isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name) and wcr_ast.func.id == 'min'
+    ):
         return dtypes.ReductionType.Min
     elif result == a + b:
         return dtypes.ReductionType.Sum
@@ -172,7 +185,7 @@ def detect_reduction_type(wcr_str, openmp=False):
         return dtypes.ReductionType.Logical_And
     elif isinstance(wcr_ast, ast.BoolOp) and isinstance(wcr_ast.op, ast.Or):
         return dtypes.ReductionType.Logical_Or
-    elif (isinstance(wcr_ast, ast.Compare) and isinstance(wcr_ast.ops[0], ast.NotEq)):
+    elif isinstance(wcr_ast, ast.Compare) and isinstance(wcr_ast.ops[0], ast.NotEq):
         return dtypes.ReductionType.Logical_Xor
     elif result == b:
         return dtypes.ReductionType.Exchange
@@ -186,12 +199,12 @@ def detect_reduction_type(wcr_str, openmp=False):
 
 
 def is_op_commutative(wcr_str):
-    """ Inspects a custom lambda function and tries to determine whether
-        it is symbolically commutative (disregarding data type).
+    """Inspects a custom lambda function and tries to determine whether
+    it is symbolically commutative (disregarding data type).
 
-        :param wcr_str: A string in Python representing a lambda function.
-        :return: True if commutative, False if not, None if cannot be
-                 determined.
+    :param wcr_str: A string in Python representing a lambda function.
+    :return: True if commutative, False if not, None if cannot be
+             determined.
     """
     if wcr_str == '' or wcr_str is None:
         return None
@@ -212,12 +225,12 @@ def is_op_commutative(wcr_str):
 
 
 def is_op_associative(wcr_str):
-    """ Inspects a custom lambda function and tries to determine whether
-        it is symbolically associative (disregarding data type).
+    """Inspects a custom lambda function and tries to determine whether
+    it is symbolically associative (disregarding data type).
 
-        :param wcr_str: A string in Python representing a lambda function.
-        :return: True if associative, False if not, None if cannot be
-                 determined.
+    :param wcr_str: A string in Python representing a lambda function.
+    :return: True if associative, False if not, None if cannot be
+             determined.
     """
     if wcr_str == '' or wcr_str is None:
         return None
@@ -239,29 +252,29 @@ def is_op_associative(wcr_str):
 
 
 def reduce(op, in_array, out_array=None, axis=None, identity=None):
-    """ Reduces an array according to a binary operation `op`, starting with initial value
-        `identity`, over the given axis (or axes if axis is a list), to `out_array`.
+    """Reduces an array according to a binary operation `op`, starting with initial value
+    `identity`, over the given axis (or axes if axis is a list), to `out_array`.
 
-        Requires `out_array` with `len(axis)` dimensions less than `in_array`, or a scalar if `axis` is None.
+    Requires `out_array` with `len(axis)` dimensions less than `in_array`, or a scalar if `axis` is None.
 
-        :param op: binary operation to use for reduction.
-        :param in_array: array to reduce.
-        :param out_array: output array to write the result to. If `None`, a new array will be returned.
-        :param axis: the axis or axes to reduce over. If `None`, all axes will be reduced.
-        :param identity: intial value for the reduction. If `None`, uses value stored in output.
-        :return: `None` if out_array is given, or the newly created `out_array` if `out_array` is `None`.
+    :param op: binary operation to use for reduction.
+    :param in_array: array to reduce.
+    :param out_array: output array to write the result to. If `None`, a new array will be returned.
+    :param axis: the axis or axes to reduce over. If `None`, all axes will be reduced.
+    :param identity: intial value for the reduction. If `None`, uses value stored in output.
+    :return: `None` if out_array is given, or the newly created `out_array` if `out_array` is `None`.
     """
     # The function is empty because it is parsed in the Python frontend
     return None
 
 
 def elementwise(func, in_array, out_array=None):
-    """ Applies a function to each element of the array
+    """Applies a function to each element of the array
 
-        :param in_array: array to apply to.
-        :param out_array: output array to write the result to. If `None`, a new array will be returned
-        :param func: lambda function to apply to each element.
-        :return: new array with the lambda applied to each element
+    :param in_array: array to apply to.
+    :param out_array: output array to write the result to. If `None`, a new array will be returned
+    :param func: lambda function to apply to each element.
+    :return: new array with the lambda applied to each element
     """
     # The function is empty because it is parsed in the Python frontend
     return None

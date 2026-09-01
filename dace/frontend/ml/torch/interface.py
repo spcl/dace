@@ -13,18 +13,20 @@ from dace.dtypes import paramdec
 
 
 @paramdec
-def module(moduleclass,
-           dummy_inputs: Optional[Tuple] = None,
-           cuda: Optional[bool] = None,
-           training: bool = False,
-           backward=False,
-           inputs_to_skip: Optional[List[str]] = None,
-           onnx_simplify: bool = True,
-           simplify: bool = True,
-           auto_optimize: bool = True,
-           sdfg_name: Optional[str] = None,
-           compile_torch_extension: bool = True,
-           debug_transients: bool = False):
+def module(
+    moduleclass,
+    dummy_inputs: Optional[Tuple] = None,
+    cuda: Optional[bool] = None,
+    training: bool = False,
+    backward=False,
+    inputs_to_skip: Optional[List[str]] = None,
+    onnx_simplify: bool = True,
+    simplify: bool = True,
+    auto_optimize: bool = True,
+    sdfg_name: Optional[str] = None,
+    compile_torch_extension: bool = True,
+    debug_transients: bool = False,
+):
     """
     Decorator to apply on a definition of a ``torch.nn.Module`` to convert it
     to a data-centric module upon construction.
@@ -73,17 +75,19 @@ def module(moduleclass,
         except ImportError:
             raise ImportError("DaceModule requires PyTorch. Install with: pip install torch")
 
-        return DaceModule(moduleclass(*args, **kwargs),
-                          dummy_inputs=dummy_inputs,
-                          cuda=cuda,
-                          training=training,
-                          backward=backward,
-                          inputs_to_skip=inputs_to_skip,
-                          onnx_simplify=onnx_simplify,
-                          simplify=simplify,
-                          auto_optimize=auto_optimize,
-                          sdfg_name=sdfg_name,
-                          compile_torch_extension=compile_torch_extension,
-                          debug_transients=debug_transients)
+        return DaceModule(
+            moduleclass(*args, **kwargs),
+            dummy_inputs=dummy_inputs,
+            cuda=cuda,
+            training=training,
+            backward=backward,
+            inputs_to_skip=inputs_to_skip,
+            onnx_simplify=onnx_simplify,
+            simplify=simplify,
+            auto_optimize=auto_optimize,
+            sdfg_name=sdfg_name,
+            compile_torch_extension=compile_torch_extension,
+            debug_transients=debug_transients,
+        )
 
     return _create

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests lambda functions. """
+"""Tests lambda functions."""
+
 import dace
 import numpy as np
 import pytest

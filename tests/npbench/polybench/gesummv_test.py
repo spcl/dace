@@ -26,7 +26,7 @@ def initialize(N, datatype=np.float64):
     beta = datatype(1.2)
     A = np.fromfunction(lambda i, j: ((i * j + 1) % N) / N, (N, N), dtype=datatype)
     B = np.fromfunction(lambda i, j: ((i * j + 2) % N) / N, (N, N), dtype=datatype)
-    x = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
+    x = np.fromfunction(lambda i: (i % N) / N, (N,), dtype=datatype)
 
     return alpha, beta, A, B, x
 
@@ -66,12 +66,13 @@ def run_gesummv_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N],
-                        x: dc.float64[N]):
+    def autodiff_kernel(
+        alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N], x: dc.float64[N]
+    ):
         C = gesummv_kernel(alpha, beta, A, B, x)
         return np.sum(C)
 
@@ -106,7 +107,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

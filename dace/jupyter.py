@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Jupyter Notebook support for DaCe. """
+"""Jupyter Notebook support for DaCe."""
 
 import os
 import urllib.request
@@ -55,6 +55,7 @@ def preamble():
 
 def enable():
     from IPython.display import display, HTML
+
     display(HTML(preamble()))
 
 

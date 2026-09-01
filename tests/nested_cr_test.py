@@ -16,7 +16,7 @@ sdfg = dace.SDFG('nested_cr_test')
 state = sdfg.add_state('a')
 
 # Nodes
-sdfg.add_array('B', (1, ), dace.int32)
+sdfg.add_array('B', (1,), dace.int32)
 B = state.add_write('B')
 n = state.add_nested_sdfg(nsdfg, set(), {'nout'})
 state.add_edge(n, 'nout', B, None, Memlet.simple('B', '0', wcr_str='lambda a, b: a*b'))

@@ -29,8 +29,9 @@ def mapfission_sdfg():
     ime3, imx3 = state.add_map('inner', dict(j='0:2'))
     t3 = state.add_tasklet('three', {'a'}, {'b'}, 'b = a[0] * 3')
     scalar = state.add_tasklet('scalar', {}, {'out'}, 'out = 5.0')
-    t4 = state.add_tasklet('four', {'ione', 'itwo', 'ithree', 'sc'}, {'out'},
-                           'out = ione + itwo[0] * itwo[1] + ithree + sc')
+    t4 = state.add_tasklet(
+        'four', {'ione', 'itwo', 'ithree', 'sc'}, {'out'}, 'out = ione + itwo[0] * itwo[1] + ithree + sc'
+    )
     wnode = state.add_write('B')
 
     # Edges
@@ -92,7 +93,7 @@ def test_offsets_array():
     del csdfg
     print(np.linalg.norm(A_cpy))
     print(np.linalg.norm(expected))
-    assert (np.allclose(A_cpy, expected))
+    assert np.allclose(A_cpy, expected)
 
     subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
     sf = SubgraphFusion()
@@ -102,7 +103,7 @@ def test_offsets_array():
     A_cpy = A.copy()
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
-    assert (np.allclose(A_cpy, expected))
+    assert np.allclose(A_cpy, expected)
 
 
 if __name__ == '__main__':

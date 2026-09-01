@@ -2,6 +2,7 @@
 """
 Contains replacements for the Discrete Fourier Transform numpy package (numpy.fft)
 """
+
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
@@ -21,15 +22,18 @@ def _real_to_complex(real_type: dtypes.typeclass):
         return real_type
 
 
-def _fft_core(pv: 'ProgramVisitor',
-              sdfg: SDFG,
-              state: SDFGState,
-              a: str,
-              n: Optional[symbolic.SymbolicType] = None,
-              axis=-1,
-              norm: StringLiteral = StringLiteral('backward'),
-              is_inverse: bool = False):
+def _fft_core(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    n: Optional[symbolic.SymbolicType] = None,
+    axis=-1,
+    norm: StringLiteral = StringLiteral('backward'),
+    is_inverse: bool = False,
+):
     from dace.libraries.fft.nodes import FFT, IFFT  # Avoid import loops
+
     if axis != 0 and axis != -1:
         raise NotImplementedError('Only one dimensional arrays are supported at the moment')
     if not isinstance(a, str) or a not in sdfg.arrays:
@@ -70,22 +74,26 @@ def _fft_core(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.fft.fft')
-def _fft(pv: 'ProgramVisitor',
-         sdfg: SDFG,
-         state: SDFGState,
-         a: str,
-         n: Optional[symbolic.SymbolicType] = None,
-         axis=-1,
-         norm: StringLiteral = StringLiteral('backward')):
+def _fft(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    n: Optional[symbolic.SymbolicType] = None,
+    axis=-1,
+    norm: StringLiteral = StringLiteral('backward'),
+):
     return _fft_core(pv, sdfg, state, a, n, axis, norm, False)
 
 
 @oprepo.replaces('numpy.fft.ifft')
-def _ifft(pv: 'ProgramVisitor',
-          sdfg: SDFG,
-          state: SDFGState,
-          a,
-          n=None,
-          axis=-1,
-          norm: StringLiteral = StringLiteral('backward')):
+def _ifft(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    a,
+    n=None,
+    axis=-1,
+    norm: StringLiteral = StringLiteral('backward'),
+):
     return _fft_core(pv, sdfg, state, a, n, axis, norm, True)

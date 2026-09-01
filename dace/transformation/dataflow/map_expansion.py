@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the map-expansion transformation. """
+"""Contains classes that implement the map-expansion transformation."""
 
 from dace.sdfg.utils import consolidate_edges
 from typing import List
@@ -15,29 +15,32 @@ from dace.sdfg.propagation import propagate_memlets_scope
 
 @make_properties
 class MapExpansion(pm.SingleStateTransformation):
-    """ Implements the map-expansion pattern.
+    """Implements the map-expansion pattern.
 
-        Map-expansion takes an N-dimensional map and expands it.
-        It will generate the k nested unidimensional map and a (N-k)-dimensional inner most map.
-        If k is not specified all maps are expanded.
+    Map-expansion takes an N-dimensional map and expands it.
+    It will generate the k nested unidimensional map and a (N-k)-dimensional inner most map.
+    If k is not specified all maps are expanded.
 
-        New edges abide by the following rules:
-          1. If there are no edges coming from the outside, use empty memlets
-          2. Edges with IN_* connectors replicate along the maps
-          3. Edges for dynamic map ranges replicate until reaching range(s)
+    New edges abide by the following rules:
+      1. If there are no edges coming from the outside, use empty memlets
+      2. Edges with IN_* connectors replicate along the maps
+      3. Edges for dynamic map ranges replicate until reaching range(s)
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    inner_schedule = EnumProperty(desc="Schedule for inner maps",
-                                  dtype=dtypes.ScheduleType,
-                                  default=dtypes.ScheduleType.Sequential,
-                                  allow_none=True)
-    expansion_limit = Property(desc="How many unidimensional maps will be created, known as k. "
-                               "If None, the default no limit is in place.",
-                               dtype=int,
-                               allow_none=True,
-                               default=None)
+    inner_schedule = EnumProperty(
+        desc="Schedule for inner maps",
+        dtype=dtypes.ScheduleType,
+        default=dtypes.ScheduleType.Sequential,
+        allow_none=True,
+    )
+    expansion_limit = Property(
+        desc="How many unidimensional maps will be created, known as k. If None, the default no limit is in place.",
+        dtype=int,
+        allow_none=True,
+        default=None,
+    )
 
     @classmethod
     def expressions(cls):
@@ -63,10 +66,15 @@ class MapExpansion(pm.SingleStateTransformation):
         inner_schedule = self.inner_schedule or current_map.schedule
         if full_expand:
             new_maps = [
-                nodes.Map(current_map.label + '_' + str(param), [param],
-                          subsets.Range([param_range]),
-                          schedule=inner_schedule if dim != 0 else current_map.schedule) for dim, param, param_range in
-                zip(range(len(current_map.params)), current_map.params, current_map.range)
+                nodes.Map(
+                    current_map.label + '_' + str(param),
+                    [param],
+                    subsets.Range([param_range]),
+                    schedule=inner_schedule if dim != 0 else current_map.schedule,
+                )
+                for dim, param, param_range in zip(
+                    range(len(current_map.params)), current_map.params, current_map.range
+                )
             ]
             for i, new_map in enumerate(new_maps):
                 new_map.range.tile_sizes[0] = current_map.range.tile_sizes[i]
@@ -81,9 +89,13 @@ class MapExpansion(pm.SingleStateTransformation):
                 dim_range = current_map.range.ranges[dim]
                 dim_tile = current_map.range.tile_sizes[dim]
                 new_maps.append(
-                    nodes.Map(current_map.label + '_' + str(dim_param), [dim_param],
-                              subsets.Range([dim_range]),
-                              schedule=inner_schedule if dim != 0 else current_map.schedule))
+                    nodes.Map(
+                        current_map.label + '_' + str(dim_param),
+                        [dim_param],
+                        subsets.Range([dim_range]),
+                        schedule=inner_schedule if dim != 0 else current_map.schedule,
+                    )
+                )
                 new_maps[-1].range.tile_sizes[0] = dim_tile
 
             # Multidimensional maps
@@ -95,7 +107,9 @@ class MapExpansion(pm.SingleStateTransformation):
                     current_map.label,  # The original name
                     mdim_params,
                     mdim_ranges,
-                    schedule=inner_schedule))
+                    schedule=inner_schedule,
+                )
+            )
             new_maps[-1].range.tile_sizes = mdim_tiles
         return new_maps
 
@@ -131,8 +145,9 @@ class MapExpansion(pm.SingleStateTransformation):
             graph.add_edge(entries[-1], edge.src_conn, edge.dst, edge.dst_conn, memlet=copy.deepcopy(edge.data))
             graph.remove_edge(edge)
 
-        if graph.in_degree(map_entry) == 0 or all(e.dst_conn is None or not e.dst_conn.startswith("IN_")
-                                                  for e in graph.in_edges(map_entry)):
+        if graph.in_degree(map_entry) == 0 or all(
+            e.dst_conn is None or not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry)
+        ):
             graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
         else:
             for edge in graph.in_edges(map_entry):
@@ -144,11 +159,9 @@ class MapExpansion(pm.SingleStateTransformation):
                 in_conn = edge.dst_conn
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:
-                    graph.add_memlet_path(map_entry,
-                                          *entries,
-                                          memlet=copy.deepcopy(edge.data),
-                                          src_conn=out_conn,
-                                          dst_conn=in_conn)
+                    graph.add_memlet_path(
+                        map_entry, *entries, memlet=copy.deepcopy(edge.data), src_conn=out_conn, dst_conn=in_conn
+                    )
 
         # Modify dynamic map ranges
         dynamic_edges = dace.sdfg.dynamic_map_inputs(graph, map_entry)
@@ -162,23 +175,19 @@ class MapExpansion(pm.SingleStateTransformation):
             for mapnode in [map_entry] + entries:
                 path.append(mapnode)
                 if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
-                    graph.add_memlet_path(edge.src,
-                                          *path,
-                                          memlet=edge.data,
-                                          src_conn=edge.src_conn,
-                                          dst_conn=edge.dst_conn)
+                    graph.add_memlet_path(
+                        edge.src, *path, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+                    )
 
         # Create new map exits
         for edge in graph.in_edges(map_exit):
             graph.remove_edge(edge)
-            graph.add_memlet_path(edge.src,
-                                  *exits[::-1],
-                                  map_exit,
-                                  memlet=edge.data,
-                                  src_conn=edge.src_conn,
-                                  dst_conn=edge.dst_conn)
+            graph.add_memlet_path(
+                edge.src, *exits[::-1], map_exit, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+            )
 
         from dace.sdfg.scope import ScopeTree
+
         scope = None
         queue: List[ScopeTree] = graph.scope_leaves()
         while len(queue) > 0:

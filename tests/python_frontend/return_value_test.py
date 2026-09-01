@@ -16,7 +16,7 @@ def test_return_scalar():
     # add the return value annotation to the program, i.e. `-> dace.int32`, you would
     # get a validation error.
     assert isinstance(res, np.ndarray)
-    assert res.shape == (1, )
+    assert res.shape == (1,)
     assert res.dtype == np.int64
 
 
@@ -37,7 +37,7 @@ def test_return_scalar_in_nested_function():
     # add the return value annotation to the program, i.e. `-> dace.int32`, you would
     # get a validation error.
     assert isinstance(res, np.ndarray)
-    assert res.shape == (1, )
+    assert res.shape == (1,)
     assert res.dtype == np.int32
 
 
@@ -95,7 +95,7 @@ def test_return_tuple_1_element():
 
     @dace.program
     def return_one_element_tuple(a: dace.float64[20]):
-        return (a + 3.5, )
+        return (a + 3.5,)
 
     a = np.random.rand(20)
     ref = a + 3.5

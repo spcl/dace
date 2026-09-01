@@ -18,6 +18,7 @@ class LiftEinsum(xf.SingleStateTransformation):
     Detects a tensor operation that can be represented by an Einstein-notation sum (einsum, e.g., matrix
     multiplication) and replaces the pattern with an ``Einsum`` library node.
     """
+
     EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
 
     map_entry = xf.PatternNode(nodes.MapEntry)
@@ -139,7 +140,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # letter_to_range: Dict[str, subsets.Range] = {}
         einsum_inputs = []
         einsum_output = ''
-        for e in (in_edges + [out_edge]):
+        for e in in_edges + [out_edge]:
             # Create parameter mapping
             ind = [str(rb) for rb, _, _ in e.data.subset.ndrange()]
             expr = ''

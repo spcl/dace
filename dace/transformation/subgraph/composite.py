@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement a composite
-    Subgraph Fusion - Stencil Tiling Transformation
+"""This module contains classes that implement a composite
+Subgraph Fusion - Stencil Tiling Transformation
 """
 
 from dace.sdfg.state import SDFGState, StateSubgraphView
@@ -21,9 +21,9 @@ import warnings
 @make_properties
 @transformation.explicit_cf_compatible
 class CompositeFusion(transformation.SubgraphTransformation):
-    """ MultiExpansion + SubgraphFusion in one Transformation
-        Additional StencilTiling is also possible as a canonicalizing
-        transformation before fusion.
+    """MultiExpansion + SubgraphFusion in one Transformation
+    Additional StencilTiling is also possible as a canonicalizing
+    transformation before fusion.
     """
 
     debug = Property(desc="Debug mode", dtype=bool, default=False)
@@ -32,18 +32,18 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     allow_tiling = Property(desc="Allow StencilTiling (after MultiExpansion)", dtype=bool, default=False)
 
-    transient_allocation = EnumProperty(desc="Storage Location to push transients to that are "
-                                        "fully contained within the subgraph.",
-                                        dtype=dtypes.StorageType,
-                                        default=dtypes.StorageType.Default)
+    transient_allocation = EnumProperty(
+        desc="Storage Location to push transients to that are fully contained within the subgraph.",
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.Default,
+    )
 
-    schedule_innermaps = Property(desc="Schedule of inner fused maps",
-                                  dtype=dtypes.ScheduleType,
-                                  default=None,
-                                  allow_none=True)
+    schedule_innermaps = Property(
+        desc="Schedule of inner fused maps", dtype=dtypes.ScheduleType, default=None, allow_none=True
+    )
 
     stencil_unroll_loops = Property(desc="Unroll inner stencil loops if they have size > 1", dtype=bool, default=False)
-    stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Stencil tile stride")
+    stencil_strides = ShapeProperty(dtype=tuple, default=(1,), desc="Stencil tile stride")
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
 
@@ -76,8 +76,8 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.cfg_id = par_graph_copy.cfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
-                #expansion = MultiExpansion()
-                #expansion.setup_match(subgraph_copy)
+                # expansion = MultiExpansion()
+                # expansion.setup_match(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
                 subgraph_fusion = SubgraphFusion()

@@ -5,6 +5,7 @@ ML-related data descriptors.
 This module contains data descriptors that are specific to machine learning workflows,
 such as ParameterArray for automatic differentiation.
 """
+
 import copy
 
 from dace import properties
@@ -17,6 +18,7 @@ class ParameterArray(Array):
     """
     An array for which a gradient can be computed.
     """
+
     # since this can be None, this is not a DataProperty
     gradient = properties.Property(dtype=str, desc="The corresponding gradient buffer", default=None, allow_none=True)
 

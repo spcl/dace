@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the NVIDIA cuTENSOR backend."""
+
 import dace.library
 
 
@@ -39,6 +40,9 @@ class cuTensor:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get();
 // cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""
+        )

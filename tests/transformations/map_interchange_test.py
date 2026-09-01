@@ -57,14 +57,19 @@ def test_map_interchange_with_dynamic_map_inputs():
     size_D_vals = dace.symbol('size_D_vals')
 
     @dace.program
-    def sched_sddmm0compute(A_vals: dace.float64[size_A_vals], B2_crd: dace.int32[size_B2_crd],
-                            B2_pos: dace.int32[size_B2_pos], B_vals: dace.float64[size_B_vals],
-                            C_vals: dace.float64[size_C_vals], D_vals: dace.float64[size_D_vals]):
+    def sched_sddmm0compute(
+        A_vals: dace.float64[size_A_vals],
+        B2_crd: dace.int32[size_B2_crd],
+        B2_pos: dace.int32[size_B2_pos],
+        B_vals: dace.float64[size_B_vals],
+        C_vals: dace.float64[size_C_vals],
+        D_vals: dace.float64[size_D_vals],
+    ):
 
         for i in dace.map[0:C1_dimension:1]:
             for j in dace.map[0:D1_dimension:1]:
                 jC = i * C2_dimension + j
-                for kB in dace.map[B2_pos[i]:B2_pos[(i + 1)]:1]:
+                for kB in dace.map[B2_pos[i] : B2_pos[(i + 1)] : 1]:
                     k = B2_crd[kB]
                     kD = j * D2_dimension + k
                     A_vals[kB] = A_vals[kB] + (B_vals[kB] * C_vals[jC]) * D_vals[kD]

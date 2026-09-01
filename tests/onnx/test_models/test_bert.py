@@ -8,8 +8,9 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import os
 
 import onnx
@@ -26,14 +27,14 @@ from tests.utils import torch_tensors_close
 
 
 def get_data_file(url, directory_name=None) -> str:
-    """ Get a data file from ``url``, cache it locally and return the local file path to it.
+    """Get a data file from ``url``, cache it locally and return the local file path to it.
 
-        :param url: the url to download from.
-        :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :return: the path of the downloaded file.
+    :param url: the url to download from.
+    :param directory_name: an optional relative directory path where the file will be downloaded to.
+    :return: the path of the downloaded file.
     """
 
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
+    data_directory = pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data'
 
     if directory_name is not None:
         data_directory /= directory_name
@@ -72,11 +73,13 @@ def test_bert_full():
 
     model = onnx.load(bert_path)
     # infer shapes
-    model, _ = onnxsim.simplify(model,
-                                skip_fuse_bn=True,
-                                input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                  token_type_ids=segments_tensors.shape,
-                                                  attention_mask=attention_mask.shape))
+    model, _ = onnxsim.simplify(
+        model,
+        skip_fuse_bn=True,
+        input_shapes=dict(
+            input_ids=tokens_tensor.shape, token_type_ids=segments_tensors.shape, attention_mask=attention_mask.shape
+        ),
+    )
 
     dace_model = donnx.ONNXModel("test_bert_full", model, auto_merge=True)
 

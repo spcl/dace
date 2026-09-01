@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests deepcopying (nested) SDFGs. """
+"""Tests deepcopying (nested) SDFGs."""
+
 import copy
 import dace
 

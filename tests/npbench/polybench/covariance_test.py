@@ -46,7 +46,7 @@ def covariance_jax_kernel(jnp, float_n, data):
 
 def ground_truth(M, N, float_n, data):
 
-    mean = np.empty((M, ), dtype=data.dtype)
+    mean = np.empty((M,), dtype=data.dtype)
     for j in range(M):
         mean[j] = 0.0
         for i in range(N):
@@ -116,7 +116,7 @@ def run_covariance_autodiff():
 
     # Initialize gradient computation data
     gradient_data = np.zeros_like(data)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -131,7 +131,7 @@ def run_covariance_autodiff():
 
     # Numerically validate vs JAX
     jax_kernel = lambda float_n, data: covariance_jax_kernel(jnp, float_n, data)
-    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0,))
     jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
@@ -159,7 +159,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

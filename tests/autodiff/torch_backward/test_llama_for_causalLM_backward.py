@@ -2,8 +2,9 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
@@ -12,7 +13,6 @@ from tests.utils import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):
-
     def __init__(self, model):
         super().__init__()
         self.model = model

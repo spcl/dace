@@ -30,12 +30,9 @@ def test_tiling_vectorization():
 
         sdfg = multiply.to_sdfg()
         sdfg.simplify()
-        sdfg.apply_transformations([StripMining, Vectorization],
-                                   options=[{
-                                       'tile_size': str(vector_len)
-                                   }, {
-                                       'vector_len': vector_len
-                                   }])
+        sdfg.apply_transformations(
+            [StripMining, Vectorization], options=[{'tile_size': str(vector_len)}, {'vector_len': vector_len}]
+        )
         sdfg(X=X, Y=Y, Z=Z, N=size)
 
         assert np.allclose(Z, X * Y)

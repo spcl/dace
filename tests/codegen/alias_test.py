@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests aliasing analysis. """
+"""Tests aliasing analysis."""
+
 import pytest
 import dace
 
-AliasedArray = dace.data.Array(dace.float64, (20, ), may_alias=True)
+AliasedArray = dace.data.Array(dace.float64, (20,), may_alias=True)
 
 
 @pytest.mark.parametrize('may_alias', (False, True))

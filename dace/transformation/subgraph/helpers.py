@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Subgraph Transformation Helper API """
+"""Subgraph Transformation Helper API"""
+
 from dace import subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
@@ -12,8 +13,8 @@ from typing import List, Dict
 
 
 def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
-    """ Finds a maximal set of ranges that can be found
-        in every instance of the ranges in the given list
+    """Finds a maximal set of ranges that can be found
+    in every instance of the ranges in the given list
     """
     if len(ranges) == 0:
         return None
@@ -34,24 +35,24 @@ def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
 
 
 def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dict[nodes.Map, List]:
-    """ Provided a list of maps and their common base ranges
-        (found via common_map_base_ranges()),
-        for each map greedily assign each loop to an index so that
-        a base range has the same index in every loop.
-        If a loop range of a certain map does not correspond to
-        a common base range, no index is assigned (=-1)
+    """Provided a list of maps and their common base ranges
+    (found via common_map_base_ranges()),
+    for each map greedily assign each loop to an index so that
+    a base range has the same index in every loop.
+    If a loop range of a certain map does not correspond to
+    a common base range, no index is assigned (=-1)
 
 
-        :param maps:            List of maps
-        :param common_ranges: Common ranges extracted via
-                                common_map_base_ranges()
-        :param offset: If true, offsets each range to 0
-                       before checking
-        :return: Dict that maps each map to a vector with
-                 the same length as number of map loops.
-                 The vector contains, in order, an index
-                 for each map loop that maps it to a
-                 common base range or '-1' if it does not.
+    :param maps:            List of maps
+    :param common_ranges: Common ranges extracted via
+                            common_map_base_ranges()
+    :param offset: If true, offsets each range to 0
+                   before checking
+    :return: Dict that maps each map to a vector with
+             the same length as number of map loops.
+             The vector contains, in order, an index
+             for each map loop that maps it to a
+             common base range or '-1' if it does not.
     """
     result = {m: None for m in maps}
     outer_ranges_dict = dict(enumerate(common_ranges))
@@ -104,9 +105,9 @@ def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
             toplevel_candidates.add(scope)
 
     if len(toplevel_candidates) != 1:
-        raise TypeError("There are several locally top-level nodes. "
-                        "Please check your subgraph and see to it "
-                        "being connected.")
+        raise TypeError(
+            "There are several locally top-level nodes. Please check your subgraph and see to it being connected."
+        )
     else:
         return toplevel_candidates.pop()
 
@@ -137,9 +138,9 @@ def outermost_scope_from_maps(graph, maps, scope_dict=None):
             toplevel_candidates.add(scope)
 
     if len(toplevel_candidates) != 1:
-        raise TypeError("There are several locally top-level nodes. "
-                        "Please check your subgraph and see to it "
-                        "being connected.")
+        raise TypeError(
+            "There are several locally top-level nodes. Please check your subgraph and see to it being connected."
+        )
     else:
         return toplevel_candidates.pop()
 
@@ -184,8 +185,9 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     node_set = set()
     for map_entry in map_entries:
         node_set |= set(scope_children[map_entry])
-        node_set |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry))
-                        if isinstance(e.dst, nodes.AccessNode))
+        node_set |= set(
+            e.dst for e in graph.out_edges(graph.exit_node(map_entry)) if isinstance(e.dst, nodes.AccessNode)
+        )
         node_set |= set(e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode))
 
         node_set.add(map_entry)

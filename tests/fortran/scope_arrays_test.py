@@ -44,5 +44,4 @@ def test_fortran_frontend_parent():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_parent()
