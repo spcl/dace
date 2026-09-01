@@ -91,16 +91,10 @@ jobs:
         # TEMPORARY [WIP] diagnostics for the grid-[2,1] pgemm red; remove with the pgemm instrumentation.
         uv run python -c "import dace, sys; print('dace', dace.__file__, dace.__version__, sys.version)"
         dpkg -l | grep -Ei 'scalapack|lapack|blas|openmpi|libc6 |^ii  gcc' || true
-        echo '===== ENV as mpirun hands it over ====='
-        mpirun -n 2 --oversubscribe uv run python -c "import os; print(sorted((k, v) for k, v in os.environ.items() if 'THREAD' in k or 'MPI4PY' in k))" || true
-        echo '===== VARIANT D1: full collection + MPI4PY_RC_INITIALIZE=1 ====='
-        MPI4PY_RC_INITIALIZE=1 mpirun -x MPI4PY_RC_INITIALIZE -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" || true
-        echo '===== VARIANT D2: full collection + OMP_NUM_THREADS=4 ====='
-        OMP_NUM_THREADS=4 mpirun -x OMP_NUM_THREADS -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" || true
-        echo '===== VARIANT S1: single file + OMP_NUM_THREADS=8 ====='
-        OMP_NUM_THREADS=8 mpirun -x OMP_NUM_THREADS -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" tests/library/pblas/pgemm_test.py || true
-        echo '===== VARIANT S3: single file + MPI4PY_RC_INITIALIZE=0 ====='
-        MPI4PY_RC_INITIALIZE=0 mpirun -x MPI4PY_RC_INITIALIZE -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" tests/library/pblas/pgemm_test.py || true
+        echo '===== VARIANT F1: full collection (expect FAIL) ====='
+        mpirun -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" || true
+        echo '===== VARIANT F2: single file (expect PASS) ====='
+        mpirun -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line --timeout_method thread --timeout=300 -m "scalapack" tests/library/pblas/pgemm_test.py || true
         echo '===== VARIANTS DONE ====='
         for i in {1..4}
         do

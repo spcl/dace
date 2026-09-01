@@ -134,10 +134,36 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                     _a_ldesc[0], _a_ldesc[1], _a_ldesc[2], _a_ldesc[3], _a_ldesc[4], _a_ldesc[5], _a_ldesc[6], _a_ldesc[7], _a_ldesc[8],
                     _b_ldesc[0], _b_ldesc[1], _b_ldesc[2], _b_ldesc[3], _b_ldesc[4], _b_ldesc[5], _b_ldesc[6], _b_ldesc[7], _b_ldesc[8]);
                 {{
-                    Dl_info dbg_dl;
-                    if (dladdr((void *)p{lapack_dtype_str}gemm_, &dbg_dl) && dbg_dl.dli_fname)
-                        std::fprintf(stderr, "[PGEMM-DBG] rank=%d p{lapack_dtype_str}gemm_ from %s\\n",
-                                     __state->__scalapack_rank, dbg_dl.dli_fname);
+                    static const char *dbg_syms[] = {{"p{lapack_dtype_str}gemm_", "dgemm_", "Cblacs_gridinit",
+                                                     "Cblacs_pinfo", "numroc_", "descinit_", "MPI_Init",
+                                                     "blacs_gridinit_", "pdgemm", "openblas_get_config"}};
+                    for (unsigned dbg_j = 0; dbg_j < sizeof(dbg_syms) / sizeof(dbg_syms[0]); ++dbg_j) {{
+                        void *dbg_p = dlsym(RTLD_DEFAULT, dbg_syms[dbg_j]);
+                        Dl_info dbg_dl;
+                        const char *dbg_from = "(unresolved)";
+                        if (dbg_p && dladdr(dbg_p, &dbg_dl) && dbg_dl.dli_fname) dbg_from = dbg_dl.dli_fname;
+                        std::fprintf(stderr, "[PGEMM-DBG] rank=%d sym %s -> %s\\n",
+                                     __state->__scalapack_rank, dbg_syms[dbg_j], dbg_from);
+                    }}
+                    if (__state->__scalapack_rank == 0) {{
+                        std::FILE *dbg_maps = std::fopen("/proc/self/maps", "r");
+                        if (dbg_maps) {{
+                            char dbg_line[512], dbg_prev[512];
+                            dbg_prev[0] = 0;
+                            while (std::fgets(dbg_line, sizeof(dbg_line), dbg_maps)) {{
+                                char *dbg_path = std::strrchr(dbg_line, ' ');
+                                if (!dbg_path) continue;
+                                ++dbg_path;
+                                char *dbg_nl = std::strchr(dbg_path, '\\n');
+                                if (dbg_nl) *dbg_nl = 0;
+                                if (dbg_path[0] != '/' || !std::strstr(dbg_path, ".so")) continue;
+                                if (std::strcmp(dbg_path, dbg_prev) == 0) continue;
+                                std::snprintf(dbg_prev, sizeof(dbg_prev), "%s", dbg_path);
+                                std::fprintf(stderr, "[PGEMM-DBG] lib %s\\n", dbg_path);
+                            }}
+                            std::fclose(dbg_maps);
+                        }}
+                    }}
                 }}
                 std::fprintf(stderr,
                     "[PGEMM-DBG] rank=%d a[0..3]=%a,%a,%a,%a b[0..3]=%a,%a,%a,%a ptr(a=%p b=%p c=%p)\\n",
