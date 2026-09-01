@@ -1207,6 +1207,113 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
     return False
 
 
+def reduce_integrated_nsdfg_connector(nsdfg: SDFG,
+                                      connector: str,
+                                      reduced_desc: data.Data,
+                                      offset: Optional[Union[Subset, List[symbolic.SymbolicType]]] = None,
+                                      squeezed_dims: Optional[List[int]] = None,
+                                      is_scalar: bool = False) -> None:
+    """
+    Mirrors the reduction of an outer container onto an integrated nested SDFG connector.
+
+    Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector's data
+    descriptor is identical to the outer container it is connected to. A transformation that replaces
+    that container with a smaller one -- a per-iteration buffer, a compressed intermediate -- therefore
+    has to repeat the reduction inside the nested SDFG, or the two descriptors disagree and every memlet
+    within still addresses the original, larger container.
+
+    :param nsdfg: The nested SDFG whose connector should be reduced.
+    :param connector: The name of the container inside the nested SDFG.
+    :param reduced_desc: The descriptor of the already-reduced outer container.
+    :param offset: The offset that the reduction introduced, if any.
+    :param squeezed_dims: The dimensions that the reduction removed, if any.
+    :param is_scalar: True if the reduced container holds a single element.
+    :note: This operation is performed in-place on the nested SDFG.
+    """
+    squeezed_dims = squeezed_dims or []
+
+    for state in nsdfg.all_states():
+        for edge in state.edges():
+            if edge.data.data == connector:
+                if is_scalar:
+                    edge.data.subset = subsets.Range.from_string('0')
+                elif edge.data.subset is not None:
+                    if offset is not None:
+                        edge.data.subset.offset(offset, True)
+                    edge.data.subset.pop(squeezed_dims)
+            elif (edge.data.other_subset is not None and offset is not None and not is_scalar
+                  and any(isinstance(n, nodes.AccessNode) and n.data == connector for n in (edge.src, edge.dst))):
+                # The container is the other end of a copy, so it is the other subset that addresses
+                # it and therefore the one that moves.
+                edge.data.other_subset.offset(offset, True)
+                edge.data.other_subset.pop(squeezed_dims)
+
+        # A view of the container walks the parent's memory, so its strides have to follow the reduced
+        # container's. Ranks that no longer match are left to the caller, which knows whether the
+        # mismatch is expected.
+        for node in state.data_nodes():
+            desc = node.desc(nsdfg)
+            if not isinstance(desc, data.View):
+                continue
+            viewed = utils.get_view_node(state, node)
+            if viewed is None or viewed.data != connector:
+                continue
+            if len(desc.shape) == len(reduced_desc.shape):
+                desc.set_shape(new_shape=tuple(desc.shape), strides=tuple(reduced_desc.strides))
+
+    # Meta code -- an interstate-edge condition or assignment, a loop or branch condition -- reads
+    # the container without ever going through a memlet on an edge, so those accesses have to be
+    # moved as well or they keep addressing the container's original coordinate system.
+    _reduce_meta_accesses(nsdfg, connector, offset, squeezed_dims, is_scalar)
+
+    new_desc = copy.deepcopy(reduced_desc)
+    new_desc.transient = False
+    nsdfg.arrays[connector] = new_desc
+
+
+def _reduce_meta_accesses(nsdfg: SDFG, connector: str, offset: Optional[Union[Subset, List[symbolic.SymbolicType]]],
+                          squeezed_dims: List[int], is_scalar: bool) -> None:
+    """
+    Moves the meta-code accesses of a container into a reduced coordinate system.
+
+    :param nsdfg: The SDFG whose meta code should be rewritten.
+    :param connector: The name of the container being reduced.
+    :param offset: The offset that the reduction introduced, if any.
+    :param squeezed_dims: The dimensions that the reduction removed.
+    :param is_scalar: True if the reduced container holds a single element.
+    :note: This function operates in-place.
+    """
+    # Avoid import loops
+    from dace.frontend.python import astutils
+    from dace.sdfg.memlet_utils import MemletReplacer
+
+    def process(memlet):
+        new_memlet = copy.deepcopy(memlet)
+        if is_scalar:
+            new_memlet.subset = subsets.Range.from_string('0')
+        elif new_memlet.subset is not None:
+            if offset is not None:
+                new_memlet.subset.offset(offset, True)
+            new_memlet.subset.pop(squeezed_dims)
+        return new_memlet
+
+    replacer = MemletReplacer(nsdfg.arrays, process, {connector})
+
+    for edge in nsdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            for stmt in edge.data.condition.code:
+                replacer.visit(stmt)
+        for name, assignment in list(edge.data.assignments.items()):
+            edge.data.assignments[name] = astutils.unparse(replacer.visit(ast.parse(assignment)))
+
+    for region in nsdfg.all_control_flow_regions():
+        for code in region.get_meta_codeblocks():
+            if code.code is None or isinstance(code.code, str):
+                continue
+            for stmt in code.code:
+                replacer.visit(stmt)
+
+
 def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
     """
     Finds the set of largest contiguous subsets in a list of subsets.

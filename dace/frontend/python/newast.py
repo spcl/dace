@@ -24,7 +24,8 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
 from dace.sdfg import nodes, dealias
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, align_memlet
+from dace.sdfg.propagation import (propagate_memlet, propagate_memlets_map_scope, propagate_memlets_nested_sdfg,
+                                   propagate_subset, propagate_states, align_memlet)
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -2387,6 +2388,16 @@ class ProgramVisitor(ExtNodeVisitor):
         # After parsing and connecting the nested SDFG, ensure the data descriptors match the outer SDFG
         if isinstance(internal_node, nodes.NestedSDFG):
             dealias.integrate_nested_sdfg(internal_node.sdfg)
+
+            # The connectors now span the whole outer containers (see the nested SDFG contract in
+            # ``dace.sdfg.dealias.integrate_nested_sdfg``), so the memlets that were placed on the outer
+            # edges above no longer state which part of the container is actually accessed. Propagating
+            # out of the nested SDFG recovers that precision; consumers such as SubgraphFusion rely on
+            # the exact subsets rather than on the bounding box the connector shape would give.
+            if isinstance(entry_node, nodes.MapEntry):
+                propagate_memlets_map_scope(self.sdfg, state, entry_node)
+            else:
+                propagate_memlets_nested_sdfg(self.sdfg, state, internal_node)
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """

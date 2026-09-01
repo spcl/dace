@@ -12,10 +12,10 @@ from dace.properties import EnumProperty, ListProperty, make_properties, Propert
 from dace.sdfg.propagation import _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.sdfg.utils import consolidate_edges_scope
-from dace.transformation.helpers import find_contiguous_subsets
+from dace.transformation.helpers import find_contiguous_subsets, reduce_integrated_nsdfg_connector
 
 from copy import deepcopy as dcpy
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import warnings
 
 from collections import defaultdict
@@ -538,7 +538,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             graph.remove_edge(edge)
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
+    def adjust_arrays_nsdfg(self,
+                            sdfg: dace.sdfg.SDFG,
+                            nsdfg: nodes.NestedSDFG,
+                            name: str,
+                            nname: str,
+                            memlet: Memlet,
+                            min_offset: Optional[List[symbolic.SymbolicType]] = None):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs
         adjacent to its corresponding access nodes, applied during post-processing
@@ -550,6 +556,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :param nname: Name of the array in the nested SDFG
         :param memlet: Memlet adjacent to the nested SDFG that leads to the
                        access node with the corresponding data name
+        :param min_offset: The offset by which the outer container was compressed, if it was.
         """
         # check whether array needs to change
         if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
@@ -573,10 +580,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 nsdfg.data(nname).strides = tuple(strides)
                 nsdfg.data(nname).total_size = total_size
 
-        else:
-            if isinstance(nsdfg.data(nname), data.Array):
-                nsdfg.data(nname).strides = sdfg.data(name).strides
-                nsdfg.data(nname).total_size = sdfg.data(name).total_size
+        elif isinstance(nsdfg.data(nname), data.Array):
+            inner_desc = nsdfg.data(nname)
+            outer_desc = sdfg.data(name)
+            if not isinstance(inner_desc, data.View) and tuple(inner_desc.shape) != tuple(outer_desc.shape):
+                # Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) the
+                # connector's descriptor is identical to the outer container, so compressing the outer
+                # intermediate has to be repeated verbatim inside: only fixing up the strides would
+                # leave the shapes disagreeing and the inner memlets addressing the uncompressed array.
+                reduce_integrated_nsdfg_connector(nsdfg, nname, outer_desc, offset=min_offset)
+            else:
+                inner_desc.strides = outer_desc.strides
+                inner_desc.total_size = outer_desc.total_size
 
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
@@ -586,9 +601,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for e in chain(ngraph.out_edges(nnode), ngraph.in_edges(nnode)):
                         for te in ngraph.memlet_tree(e):
                             if isinstance(te.dst, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data)
+                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data, min_offset)
                             if isinstance(te.src, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data)
+                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data, min_offset)
 
     @staticmethod
     def determine_compressible_nodes(sdfg: dace.sdfg.SDFG,
@@ -1096,7 +1111,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if isinstance(iedge.src, nodes.NestedSDFG):
                         nsdfg = iedge.src.sdfg
                         nested_data_name = edge.src_conn
-                        self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data)
+                        self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data, min_offset)
 
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
@@ -1108,7 +1123,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if isinstance(edge.dst, nodes.NestedSDFG):
                             nsdfg = edge.dst.sdfg
                             nested_data_name = edge.dst_conn
-                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data)
+                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data, min_offset)
 
                 # if in_edges has several entries:
                 # put other_subset into out_edges for correctness
@@ -1273,6 +1288,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                               onode,
                                               memlet=Memlet(data=dname, subset=in_subset),
                                               src_conn=None)
+
+                # The data now lives in a transient covering only the union of the incoming subsets.
+                # Nested SDFG connectors are identical to the container they are connected to (see the
+                # contract in ``dace.sdfg.dealias.integrate_nested_sdfg``), so they have to follow it into
+                # the smaller container instead of keeping the descriptor of the original one.
+                for e in graph.edges():
+                    if e.data.data != new_name:
+                        continue
+                    for node, conn in ((e.src, e.src_conn), (e.dst, e.dst_conn)):
+                        if isinstance(node, nodes.NestedSDFG) and conn in node.sdfg.arrays:
+                            self.adjust_arrays_nsdfg(sdfg, node.sdfg, new_name, conn, e.data, in_subset)
 
         for e in edges_to_remove:
             graph.remove_edge(e)

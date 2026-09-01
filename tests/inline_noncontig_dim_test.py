@@ -10,16 +10,17 @@ sdfg.add_array('B', [2, 3, 4], dace.float32)
 A = state.add_read('A')
 B = state.add_write('B')
 
-# Construct nested SDFG
+# Construct nested SDFG. The connectors are the ``[0:2, j, 0:4]`` slab of the outer arrays, which is
+# non-contiguous in the outer memory: integration below turns them into views with strides (12, 1).
 nsdfg = dace.SDFG('noncontig_internal')
-nsdfg.add_array('aA', [2, 3, 4], dace.float32)
-nsdfg.add_array('bB', [2, 3, 4], dace.float32)
+nsdfg.add_array('aA', [2, 4], dace.float32)
+nsdfg.add_array('bB', [2, 4], dace.float32)
 s = nsdfg.add_state()
 s.add_mapped_tasklet('dostuff',
                      dict(i='0:2', k='0:4'),
-                     dict(a=dace.Memlet.simple('aA', 'i, 0, k')),
+                     dict(a=dace.Memlet.simple('aA', 'i, k')),
                      'b = a * 5',
-                     dict(b=dace.Memlet.simple('bB', 'i, 0, k')),
+                     dict(b=dace.Memlet.simple('bB', 'i, k')),
                      external_edges=True)
 ########################
 
@@ -28,6 +29,9 @@ map_entry, map_exit = state.add_map('elements', dict(j='0:3'))
 nsdfg_node = state.add_nested_sdfg(nsdfg, {'aA'}, {'bB'})
 state.add_memlet_path(A, map_entry, nsdfg_node, dst_conn='aA', memlet=dace.Memlet.simple('A', '0:2, j, 0:4'))
 state.add_memlet_path(nsdfg_node, map_exit, B, src_conn='bB', memlet=dace.Memlet.simple('B', '0:2, j, 0:4'))
+
+# Integration can only run once the node is wired up, so it has to be requested explicitly here.
+nsdfg_node.integrate_into_parent()
 
 
 def test():

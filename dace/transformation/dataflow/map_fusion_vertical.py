@@ -5,8 +5,9 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
-from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation, utils as sdutil
+from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.transformation.helpers import reduce_integrated_nsdfg_connector
 from dace.sdfg.type_inference import infer_expr_type
 from ordered_set import OrderedSet
 
@@ -1854,57 +1855,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # There is no reason for us to allow it.
         return False
 
-    def _reduce_integrated_inner_container(
-        self,
-        nsdfg: nodes.NestedSDFG,
-        reduced_intermediate_desc: data.Data,
-        inner_data: str,
-        offset: subsets.Subset,
-        squeezed_dims: List[int],
-        is_scalar: bool,
-    ) -> None:
-        """Mirrors the reduction of the intermediate onto an integrated inner container.
-
-        Under the nested SDFG contract the connector's descriptor is identical to the outer
-        container, so reducing the outer one has to be repeated verbatim on the inner one: the
-        descriptor is replaced and every memlet inside that addresses the container is moved into
-        the reduced coordinate system, the same way the outer edges are.
-
-        :param nsdfg: The nested SDFG node whose container should be reduced.
-        :param reduced_intermediate_desc: The descriptor of the reduced intermediate.
-        :param inner_data: The name of the container inside the nested SDFG.
-        :param offset: The offset that the reduction introduced.
-        :param squeezed_dims: The dimensions that the reduction removed.
-        :param is_scalar: True if the reduced intermediate is a scalar.
-        """
-        inner_sdfg: dace.SDFG = nsdfg.sdfg
-
-        for inner_state in inner_sdfg.all_states():
-            for inner_edge in inner_state.edges():
-                if inner_edge.data.data != inner_data:
-                    continue
-                if is_scalar:
-                    inner_edge.data.subset = "0"
-                elif inner_edge.data.subset is not None:
-                    inner_edge.data.subset.offset(offset, negative=True)
-                    inner_edge.data.subset.pop(squeezed_dims)
-
-            # A view of the container walks the parent's memory, so its strides have to follow the
-            # reduced container's. `_check_if_nested_sdfg_can_be_handled()` made sure the ranks match.
-            for inner_node in inner_state.data_nodes():
-                desc = inner_node.desc(inner_sdfg)
-                if not isinstance(desc, data.View):
-                    continue
-                viewed = sdutil.get_view_node(inner_state, inner_node)
-                if viewed is None or viewed.data != inner_data:
-                    continue
-                if len(desc.shape) == len(reduced_intermediate_desc.shape):
-                    desc.set_shape(new_shape=tuple(desc.shape), strides=tuple(reduced_intermediate_desc.strides))
-
-        new_desc = copy.deepcopy(reduced_intermediate_desc)
-        new_desc.transient = False
-        inner_sdfg.arrays[inner_data] = new_desc
-
     def _updated_inner_strides_of_nested_sdfg(
         self,
         nsdfg: nodes.NestedSDFG,
@@ -1923,10 +1873,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # The nested SDFG contract makes the inner descriptor identical to the outer container, so
         # the reduction is mirrored rather than only the strides being remapped.
         if old_intermediate_desc is not None and inner_desc.is_equivalent(old_intermediate_desc):
-            self._reduce_integrated_inner_container(
-                nsdfg=nsdfg,
-                reduced_intermediate_desc=reduced_intermediate_desc,
-                inner_data=inner_data,
+            reduce_integrated_nsdfg_connector(
+                nsdfg=inner_sdfg,
+                connector=inner_data,
+                reduced_desc=reduced_intermediate_desc,
                 offset=offset,
                 squeezed_dims=squeezed_dims or [],
                 is_scalar=is_scalar,

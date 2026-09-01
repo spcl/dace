@@ -1518,6 +1518,15 @@ class RedundantReadSlice(pm.SingleStateTransformation):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
                                 return False
+                            # Under the nested SDFG contract (see
+                            # ``dace.sdfg.dealias.integrate_nested_sdfg``) an integrated connector's
+                            # descriptor is identical to the container it is connected to, and the
+                            # memlets inside address that container's coordinate system. Removing the
+                            # view moves the connector onto the viewed array without moving those
+                            # memlets with it, so it is only safe when the connector already matches
+                            # the viewed array as well.
+                            if ndesc.is_equivalent(out_desc) and not ndesc.is_equivalent(in_desc):
+                                return False
 
         return True
 
@@ -1798,6 +1807,15 @@ class RemoveSliceView(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays:
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+                            # Under the nested SDFG contract (see
+                            # ``dace.sdfg.dealias.integrate_nested_sdfg``) an integrated connector's
+                            # descriptor is identical to the container it is connected to, and the
+                            # memlets inside address that container's coordinate system. Folding the
+                            # view moves the connector onto the viewed container without moving those
+                            # memlets with it, so it is only safe when the connector already matches
+                            # the viewed container as well.
+                            if ndesc.is_equivalent(desc) and not ndesc.is_equivalent(viewed.desc(sdfg)):
                                 return False
 
         ########################################################
