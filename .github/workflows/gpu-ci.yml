@@ -13,6 +13,9 @@ env:
   CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  UV_NO_EDITABLE: 1 # don't install dace in editable mode
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -26,27 +29,26 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
     - name: Install dependencies
       run: |
         rm -f ~/.dace.conf
-        rm -rf .dacecache tests/.dacecache
-        python -m venv ~/.venv      # create venv so we can use pip
-        source ~/.venv/bin/activate # activate venv
-        python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage
-        pip install mpi4py
+        rm -rf .dacecache* tests/.dacecache*
+        export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
+        echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
+        uv sync --group testing --extra ml,mpi,gpu
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
-        MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        pip install cupy
-        pip install cutensor-cu12
-        pip uninstall -y dace
-        pip install -e ".[testing,ml]"
+        MPI4PY_RC_INITIALIZE=0 uv run python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
     - name: Test dependencies
       run: |
-        source ~/.venv/bin/activate # activate venv
         nvidia-smi
 
     - name: Run pytest GPU
@@ -60,7 +62,6 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export PATH=$PATH:/usr/local/cuda/bin
-        pip install pytest-mpi
         mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
 
     - name: Run extra GPU tests
@@ -75,7 +76,9 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        coverage combine . */; coverage report; coverage xml
+        coverage combine . */
+        coverage report
+        coverage xml
         reachable=0
         ping -W 2 -c 1 codecov.io || reachable=$?
         if [ $reachable -eq 0 ]; then
