@@ -638,6 +638,11 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
         # Handle name collisions (in arrays, state labels, symbols)
         _remove_name_collisions(sdfg)
 
+        # Fold the views that stand between a nested SDFG and the container it is really
+        # connected to, so that dealiasing sees the container itself.
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            dealias.fold_views_at_nested_sdfgs(nsdfg)
+
         # Ensure no arrays alias in SDFG tree
         dealias.dealias_sdfg_recursive(sdfg)
 

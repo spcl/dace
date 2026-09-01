@@ -4,7 +4,7 @@ This module contains functions for ensuring SDFGs and nested SDFGs share the sam
 """
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
-from dace.sdfg import nodes as nd
+from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
@@ -38,6 +38,86 @@ def names_in_subtree(sdfg: SDFG) -> Set[str]:
         for region in nsdfg.all_control_flow_regions():
             names.update(map(str, region.new_symbols({}).keys()))
     return names
+
+
+def fold_views_at_nested_sdfgs(sdfg: SDFG) -> None:
+    """
+    Rewires nested SDFG edges that reach their data through a view so they address the container.
+
+    A nested SDFG connected to a view of a container is, through that view, connected to the
+    container. Dealiasing exists to leave a single naming system behind, so the chain of views is
+    walked to the container that backs it and the accessed subsets are composed along the way; the
+    view nodes that nothing else uses afterwards are dropped. Without this the views survive as
+    nodes of their own, and every consumer downstream has to know how to look through them.
+
+    :param sdfg: The SDFG to operate on.
+    :note: This function operates in-place, and only on edges adjacent to a nested SDFG node.
+    """
+    for state in sdfg.states():
+        candidates = []
+        for node in state.nodes():
+            if not isinstance(node, nd.NestedSDFG):
+                continue
+            for edge in state.all_edges(node):
+                far = edge.src if edge.dst is node else edge.dst
+                if isinstance(far, nd.AccessNode) and isinstance(far.desc(sdfg), data.View):
+                    candidates.append((edge, far, edge.dst is node))
+
+        touched = set()
+        for edge, view_node, into_nested in candidates:
+            # Compose the whole of what the view covers, not the part this edge happens to
+            # access. The edge memlet states the window the connector stands for; the memlets
+            # inside are narrowed against it afterwards, and composing the access here as well
+            # would count it twice.
+            window = Memlet.from_array(view_node.data, view_node.desc(sdfg))
+            composed, backing = _compose_through_views(state, view_node, window)
+            if backing is None:
+                continue
+            if into_nested:
+                state.add_edge(backing, edge.src_conn, edge.dst, edge.dst_conn, composed)
+            else:
+                state.add_edge(edge.src, edge.src_conn, backing, edge.dst_conn, composed)
+            state.remove_edge(edge)
+            touched.add(view_node)
+
+        # A view kept alive only by the edge that was just rewired is now dead, along with the
+        # ``views`` edge binding it.
+        for view_node in touched:
+            while (view_node is not None and view_node in state.nodes() and state.degree(view_node) == 1):
+                binding = state.all_edges(view_node)[0]
+                nxt = binding.src if binding.dst is view_node else binding.dst
+                state.remove_node(view_node)
+                view_node = nxt if (isinstance(nxt, nd.AccessNode) and isinstance(nxt.desc(sdfg), data.View)) else None
+
+
+def _compose_through_views(state, node, memlet: Memlet):
+    """
+    Expresses a memlet addressing a view in the coordinates of the container backing the chain.
+
+    :param state: The state the view nodes live in.
+    :param node: The view access node the memlet is attached to.
+    :param memlet: The memlet, in ``node``'s coordinates.
+    :return: The composed memlet and the access node of the backing container, or
+             ``(memlet, None)`` if the chain cannot be composed.
+    """
+    result = copy.deepcopy(memlet)
+    backing = None
+    seen = set()
+    while (isinstance(node, nd.AccessNode) and isinstance(node.desc(state.sdfg), data.View) and id(node) not in seen):
+        seen.add(id(node))
+        view_edge = sdutil.get_view_edge(state, node)
+        viewed = sdutil.get_view_node(state, node)
+        if view_edge is None or viewed is None:
+            break
+        try:
+            composed = unsqueeze_memlet(result, view_edge.data)
+        except (ValueError, NotImplementedError):
+            break
+        composed.data = viewed.data
+        result = composed
+        backing = viewed
+        node = viewed
+    return (result, backing) if backing is not None else (memlet, None)
 
 
 def dealias_sdfg_recursive(sdfg: SDFG):
@@ -118,8 +198,12 @@ def dealias_sdfg(sdfg: SDFG):
         for edge in parent_state.edges_by_connector(parent_node, name):
             parent_name = edge.data.data
             assert parent_name in parent_sdfg.arrays
-            if name != parent_name:
-                replacements[name] = parent_name
+            # The names coinciding does not mean there is nothing to do: a connector can carry
+            # the container's name while still describing a narrower window of it, in which case
+            # the memlets inside are in the window's coordinates and still have to be unsqueezed.
+            if name != parent_name or not parent_sdfg.arrays[parent_name].is_equivalent(sdfg.arrays[name]):
+                if name != parent_name:
+                    replacements[name] = parent_name
                 parent_edges[name] = edge
                 to_unsqueeze.add(parent_name)
                 if parent_name in inv_replacements:
@@ -174,14 +258,25 @@ def dealias_sdfg(sdfg: SDFG):
                     # destination subset
                     if isinstance(src, nd.AccessNode) and src.data in child_names:
                         src_data = src.data
-                        new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                        try:
+                            new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                        except (ValueError, NotImplementedError):
+                            # The access has no expression in the parent's coordinates -- a reshape,
+                            # say. Leaving it names the same data through the container it already
+                            # refers to, which is sound if less direct.
+                            src_data = None
+                            new_src_memlet = None
                     else:
                         src_data = None
                         new_src_memlet = None
                         # We need to take directionality of the memlet into account
                     if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                         dst_data = dst.data
-                        new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                        try:
+                            new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                        except (ValueError, NotImplementedError):
+                            dst_data = None
+                            new_dst_memlet = None
                     else:
                         dst_data = None
                         new_dst_memlet = None
