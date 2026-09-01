@@ -356,13 +356,8 @@ class PureConv2D(ONNXForward):
         """
 
         # Create tasklet inputs and outputs
-        tasklet_inputs = {
-            "__X": dace.pointer(X.dtype),
-            "__W": dace.pointer(W.dtype),
-        }
-        tasklet_outputs = {
-            "__Y": dace.pointer(Y.dtype),
-        }
+        tasklet_inputs = {"__X": dace.pointer(X.dtype), "__W": dace.pointer(W.dtype)}
+        tasklet_outputs = {"__Y": dace.pointer(Y.dtype)}
 
         if B is not None:
             tasklet_inputs["__B"] = dace.pointer(B.dtype)

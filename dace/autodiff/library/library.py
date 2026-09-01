@@ -121,9 +121,7 @@ class BackwardPass(nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {
-        "differentiate": ExpandBackwardPass,
-    }
+    implementations = {"differentiate": ExpandBackwardPass}
     default_implementation = "differentiate"
 
     given_gradients = properties.DictProperty(

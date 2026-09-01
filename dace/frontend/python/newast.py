@@ -1717,10 +1717,7 @@ class ProgramVisitor(ExtNodeVisitor):
             global_vars=local_vars,
             constants=self.sdfg.constants,
             scope_arrays={**self.scope_arrays, **self.sdfg.arrays},
-            scope_vars={
-                **self.scope_vars,
-                **self.variables,
-            },
+            scope_vars={**self.scope_vars, **self.variables},
             map_symbols=map_symbols,
             annotated_types=self.annotated_types,
             closure=self.closure,
@@ -3285,11 +3282,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_mapped_tasklet(
                         state.label,
                         map_range,
-                        {
-                            '__in1': in1_memlet,
-                            '__in2': in2_memlet,
-                            **input_memlets,
-                        },
+                        {'__in1': in1_memlet, '__in2': in2_memlet, **input_memlets},
                         tasklet_code,
                         {'__out': out_memlet},
                         external_edges=True,

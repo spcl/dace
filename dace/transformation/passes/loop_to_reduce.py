@@ -41,14 +41,8 @@ _BINOP_TO_WCR: Dict[type, str] = {
     ast.BitOr: "lambda a, b: a | b",
     ast.BitXor: "lambda a, b: a ^ b",
 }
-_BOOLOP_TO_WCR: Dict[type, str] = {
-    ast.Or: "lambda a, b: a | b",
-    ast.And: "lambda a, b: a & b",
-}
-_CALL_TO_WCR: Dict[str, str] = {
-    "max": "lambda a, b: max(a, b)",
-    "min": "lambda a, b: min(a, b)",
-}
+_BOOLOP_TO_WCR: Dict[type, str] = {ast.Or: "lambda a, b: a | b", ast.And: "lambda a, b: a & b"}
+_CALL_TO_WCR: Dict[str, str] = {"max": "lambda a, b: max(a, b)", "min": "lambda a, b: min(a, b)"}
 # For a guard `lhs <cmp> rhs` where the assignment inside writes `sym = arr[i]`,
 # the reduction is max iff the condition fires when arr is larger than sym.
 _CMP_GT = (ast.Gt, ast.GtE)
@@ -254,11 +248,7 @@ def _extract_any_pattern(
         else:
             ranges.append((a, a, 1))
     return _Reduction(
-        wcr=wcr,
-        accum=target,
-        accum_subset=subsets.Range([(0, 0, 1)]),
-        array=array,
-        array_subset=subsets.Range(ranges),
+        wcr=wcr, accum=target, accum_subset=subsets.Range([(0, 0, 1)]), array=array, array_subset=subsets.Range(ranges)
     )
 
 

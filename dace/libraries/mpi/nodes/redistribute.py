@@ -86,9 +86,7 @@ class ExpandRedistribute(ExpandTransformation):
 @library.node
 class Redistribute(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandRedistribute,
-    }
+    implementations = {"MPI": ExpandRedistribute}
     default_implementation = "MPI"
 
     redistr = properties.DataProperty(default='tmp')

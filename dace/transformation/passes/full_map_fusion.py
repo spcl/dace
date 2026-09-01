@@ -22,9 +22,7 @@ class FullMapFusion(ppl.Pass):
 
     # Settings
     only_toplevel_maps = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only perform fusing if the Maps are in the top level.",
+        dtype=bool, default=False, desc="Only perform fusing if the Maps are in the top level."
     )
     only_inner_maps = properties.Property(
         dtype=bool,
@@ -33,15 +31,11 @@ class FullMapFusion(ppl.Pass):
     )
 
     strict_dataflow = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="If `True` then the transformation will ensure a more stricter data flow.",
+        dtype=bool, default=True, desc="If `True` then the transformation will ensure a more stricter data flow."
     )
 
     assume_always_shared = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="If `True` then all intermediates will be classified as shared.",
+        dtype=bool, default=False, desc="If `True` then all intermediates will be classified as shared."
     )
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
@@ -77,15 +71,11 @@ class FullMapFusion(ppl.Pass):
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only consolidate if this does not lead to an extension of the subset.",
+        dtype=bool, default=False, desc="Only consolidate if this does not lead to an extension of the subset."
     )
 
     validate = properties.Property(
-        dtype=bool,
-        default=True,
-        desc='If True, validates the SDFG after all transformations have been applied.',
+        dtype=bool, default=True, desc='If True, validates the SDFG after all transformations have been applied.'
     )
     validate_all = properties.Property(
         dtype=bool, default=False, desc='If True, validates the SDFG after each transformation applies.'
@@ -215,10 +205,7 @@ class FullMapFusion(ppl.Pass):
             )
 
         pazz = pmp.PatternMatchAndApplyRepeated(
-            fusion_transforms,
-            permissive=False,
-            validate=False,
-            validate_all=self.validate_all,
+            fusion_transforms, permissive=False, validate=False, validate_all=self.validate_all
         )
         result = pazz.apply_pass(sdfg, pipeline_results)
 

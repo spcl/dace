@@ -987,13 +987,7 @@ class SubgraphTransformation(TransformationBase):
         :param verify: Check that ``can_be_applied`` returns True before applying.
         :param options: A set of parameters to use for applying the transformation.
         """
-        return cls._can_be_applied_and_apply(
-            verify=verify,
-            apply=True,
-            sdfg=sdfg,
-            *where,
-            **options,
-        )
+        return cls._can_be_applied_and_apply(verify=verify, apply=True, sdfg=sdfg, *where, **options)
 
     @classmethod
     def can_be_applied_to(cls, sdfg: SDFG, *where: Union[nd.Node, SDFGState, gr.SubgraphView], **options: Any) -> bool:
@@ -1022,13 +1016,7 @@ class SubgraphTransformation(TransformationBase):
         :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
         :param options: A set of parameters to use for applying the transformation.
         """
-        return cls._can_be_applied_and_apply(
-            verify=True,
-            apply=False,
-            sdfg=sdfg,
-            *where,
-            **options,
-        )
+        return cls._can_be_applied_and_apply(verify=True, apply=False, sdfg=sdfg, *where, **options)
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)

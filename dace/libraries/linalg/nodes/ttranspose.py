@@ -206,11 +206,7 @@ class ExpandCuTensor(ExpandTransformation):
 class TensorTranspose(nodes.LibraryNode):
     """Implements out-of-place tensor transpositions."""
 
-    implementations = {
-        "pure": ExpandPure,
-        "HPTT": ExpandHPTT,
-        "cuTENSOR": ExpandCuTensor,
-    }
+    implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT, "cuTENSOR": ExpandCuTensor}
     default_implementation = 'pure'
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")

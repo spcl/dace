@@ -955,11 +955,7 @@ class InternalFortranAst:
         line = get_line(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Section_Subscript_List_Node)
-        return ast_internal_classes.Call_Expr_Node(
-            name=name,
-            args=args.list,
-            line=line,
-        )
+        return ast_internal_classes.Call_Expr_Node(name=name, args=args.list, line=line)
 
     def loop_control(self, node: FASTNode):
         children = self.create_children(node)

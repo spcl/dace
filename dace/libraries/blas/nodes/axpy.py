@@ -84,9 +84,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {
-        "pure": ExpandAxpyVectorized,
-    }
+    implementations = {"pure": ExpandAxpyVectorized}
     default_implementation = None
 
     # Object fields

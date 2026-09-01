@@ -162,10 +162,7 @@ class SplitTasklets(ppl.Pass):
                 lhs_vars, rhs_vars = _get_vars(ssa_statement)
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
-                    name=f"{tasklet.name}_split_{i}",
-                    inputs=set(rhs_vars),
-                    outputs=set(lhs_vars),
-                    code=ssa_statement,
+                    name=f"{tasklet.name}_split_{i}", inputs=set(rhs_vars), outputs=set(lhs_vars), code=ssa_statement
                 )
                 for rhs_var in rhs_vars:
                     t.add_in_connector(rhs_var)
@@ -266,10 +263,7 @@ class SplitTasklets(ppl.Pass):
                     array_name = f"{out_conn}{self.tmp_access_identifier}{split_access_counter}"
                     if array_name not in state.sdfg.arrays:
                         state.sdfg.add_scalar(
-                            name=array_name,
-                            dtype=input_type,
-                            storage=dace.dtypes.StorageType.Register,
-                            transient=True,
+                            name=array_name, dtype=input_type, storage=dace.dtypes.StorageType.Register, transient=True
                         )
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)

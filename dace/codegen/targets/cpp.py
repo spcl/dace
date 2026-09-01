@@ -443,16 +443,7 @@ def _is_c_contiguous(shape, strides):
     return tuple(strides) == computed_strides
 
 
-def ndcopy_to_strided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
-):
+def ndcopy_to_strided_copy(copy_shape, src_shape, src_strides, dst_shape, dst_strides, subset, src_subset, dst_subset):
     """Detects situations where an N-dimensional copy can be degenerated into
     a (faster) 1D copy or 2D strided copy. Returns new copy
     dimensions and offsets to emulate the requested copy.
@@ -878,12 +869,7 @@ def unparse_tasklet(
 
     # Not [], "" or None
     if node.code_global and node.code_global.code:
-        function_stream.write(
-            codeblock_to_cpp(node.code_global),
-            cfg,
-            state_id,
-            node,
-        )
+        function_stream.write(codeblock_to_cpp(node.code_global), cfg, state_id, node)
         function_stream.write("\n", cfg, state_id, node)
 
     # add node state_fields to the statestruct
@@ -907,10 +893,7 @@ def unparse_tasklet(
                 )
             else:
                 callsite_stream.write(
-                    '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
-                    cfg,
-                    state_id,
-                    node,
+                    '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(), cfg, state_id, node
                 )
 
         if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
@@ -1212,21 +1195,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         else:
                             target = ptrname
                         newnode = ast.Name(
-                            id="%s.push(%s);"
-                            % (
-                                target,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            )
+                            id="%s.push(%s);" % (target, cppunparse.cppunparse(value, expr_semicolon=False))
                         )
                     else:
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
                             newnode = ast.Name(
-                                id="%s = %s;"
-                                % (
-                                    ptrname,
-                                    cppunparse.cppunparse(value, expr_semicolon=False),
-                                )
+                                id="%s = %s;" % (ptrname, cppunparse.cppunparse(value, expr_semicolon=False))
                             )
                         elif isinstance(desc, data.View):
                             newnode = ast.Name(

@@ -54,11 +54,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.Snitch_Multicore, self)
         # Snitch_TCDM -> Register
 
-        snitch_storage = [
-            dace.StorageType.Snitch_TCDM,
-            dace.StorageType.Snitch_L2,
-            dace.StorageType.Snitch_SSR,
-        ]
+        snitch_storage = [dace.StorageType.Snitch_TCDM, dace.StorageType.Snitch_L2, dace.StorageType.Snitch_SSR]
         snitch_or_cpu_storage = [
             *snitch_storage,
             dace.StorageType.Register,

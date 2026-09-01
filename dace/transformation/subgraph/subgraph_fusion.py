@@ -71,10 +71,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         default=True,
     )
 
-    keep_global = ListProperty(
-        str,
-        desc="A list of array names to treat as non-transients and not compress",
-    )
+    keep_global = ListProperty(str, desc="A list of array names to treat as non-transients and not compress")
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         """

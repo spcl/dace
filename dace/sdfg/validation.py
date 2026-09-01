@@ -557,29 +557,18 @@ def validate_state(
             try:
                 state.exit_node(node)
             except StopIteration:
-                raise InvalidSDFGNodeError(
-                    "Entry node does not have matching exit node",
-                    sdfg,
-                    state_id,
-                    nid,
-                )
+                raise InvalidSDFGNodeError("Entry node does not have matching exit node", sdfg, state_id, nid)
 
         if isinstance(node, (nd.EntryNode, nd.ExitNode)):
             for iconn in node.in_connectors:
                 if iconn is not None and iconn.startswith("IN_") and ("OUT_" + iconn[3:]) not in node.out_connectors:
                     raise InvalidSDFGNodeError(
-                        "No match for input connector %s in output connectors" % iconn,
-                        sdfg,
-                        state_id,
-                        nid,
+                        "No match for input connector %s in output connectors" % iconn, sdfg, state_id, nid
                     )
             for oconn in node.out_connectors:
                 if oconn is not None and oconn.startswith("OUT_") and ("IN_" + oconn[4:]) not in node.in_connectors:
                     raise InvalidSDFGNodeError(
-                        "No match for output connector %s in input connectors" % oconn,
-                        sdfg,
-                        state_id,
-                        nid,
+                        "No match for output connector %s in input connectors" % oconn, sdfg, state_id, nid
                     )
 
         # Node-specific tests
@@ -587,10 +576,7 @@ def validate_state(
         if isinstance(node, nd.AccessNode):
             if node.data not in sdfg.arrays:
                 raise InvalidSDFGNodeError(
-                    "Access node must point to a valid array name in the SDFG",
-                    sdfg,
-                    state_id,
-                    nid,
+                    "Access node must point to a valid array name in the SDFG", sdfg, state_id, nid
                 )
             arr = sdfg.arrays[node.data]
 
@@ -663,12 +649,7 @@ def validate_state(
         if isinstance(node, nd.ConsumeEntry) and "IN_stream" not in node.in_connectors:
             raise InvalidSDFGNodeError("Consume entry node must have an input stream", sdfg, state_id, nid)
         if isinstance(node, nd.ConsumeEntry) and "OUT_stream" not in node.out_connectors:
-            raise InvalidSDFGNodeError(
-                "Consume entry node must have an internal stream",
-                sdfg,
-                state_id,
-                nid,
-            )
+            raise InvalidSDFGNodeError("Consume entry node must have an internal stream", sdfg, state_id, nid)
 
         # Connector tests
         ########################################
@@ -860,10 +841,7 @@ def validate_state(
             and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))
         ):
             raise InvalidSDFGEdgeError(
-                "Memlet data does not match source or destination data nodes",
-                sdfg,
-                state_id,
-                eid,
+                "Memlet data does not match source or destination data nodes", sdfg, state_id, eid
             )
 
         # Check accessibility of scalar memlet data in tasklets and dynamic map ranges
@@ -1171,10 +1149,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     def __str__(self):
         if self.edge_id is not None:
             e = self.sdfg.edges()[self.edge_id]
-            edgestr = ' (at edge %s -> %s)' % (
-                str(e.src),
-                str(e.dst),
-            )
+            edgestr = ' (at edge %s -> %s)' % (str(e.src), str(e.dst))
             locinfo_src = self._getlineinfo(e.src)
             locinfo_dst = self._getlineinfo(e.dst)
         else:
@@ -1265,13 +1240,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 
         if self.edge_id is not None:
             e = state.edges()[self.edge_id]
-            edgestr = ", edge %s (%s:%s -> %s:%s)" % (
-                str(e.data),
-                str(e.src),
-                e.src_conn,
-                str(e.dst),
-                e.dst_conn,
-            )
+            edgestr = ", edge %s (%s:%s -> %s:%s)" % (str(e.data), str(e.src), e.src_conn, str(e.dst), e.dst_conn)
             locinfo = self._getlineinfo(e.data)
         else:
             edgestr = ''

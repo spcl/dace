@@ -190,9 +190,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         sdfg=sdfg,
                         node_a=edge.src,
                         node_b=edge.dst,
-                        options={
-                            "array": intermediate_access_node.data,
-                        },
+                        options={"array": intermediate_access_node.data},
                         save=False,
                     )
             else:

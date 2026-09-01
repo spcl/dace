@@ -29,9 +29,7 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
+            type=dace.dtype_to_typeclass(dtype).to_string(), real=cast_value.real, imag=cast_value.imag
         )
     else:
         return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
@@ -130,9 +128,7 @@ class ExpandGemmPure(ExpandTransformation):
             init_state.add_mapped_tasklet(
                 "gemm_init",
                 {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N])},
-                {
-                    "__c": dace.Memlet.simple("_c", memlet_idx),
-                },
+                {"__c": dace.Memlet.simple("_c", memlet_idx)},
                 add_program,
                 {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                 external_edges=True,
@@ -205,11 +201,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         ).format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
         return tasklet
 
@@ -366,11 +358,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
         code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
 
         # If buffers are not on the GPU, copy them

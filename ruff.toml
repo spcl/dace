@@ -8,3 +8,6 @@ select = ["F401"]
 
 [format]
 quote-style = "preserve"
+skip-magic-trailing-comma = true
+indent-style = "space"
+line-ending = "auto"

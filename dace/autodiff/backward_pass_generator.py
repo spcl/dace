@@ -730,9 +730,7 @@ class BackwardPassGenerator:
                 indices,
                 {},
                 f"__out = 0",
-                {
-                    "__out": tasklet_memlet,
-                },
+                {"__out": tasklet_memlet},
                 schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
                 external_edges=True,
             )

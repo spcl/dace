@@ -173,10 +173,7 @@ class Data:
         return self.dtype.ctype
 
     def strides_from_layout(
-        self,
-        *dimensions: int,
-        alignment: symbolic.SymbolicType = 1,
-        only_first_aligned: bool = False,
+        self, *dimensions: int, alignment: symbolic.SymbolicType = 1, only_first_aligned: bool = False
     ) -> Tuple[Tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
         """
         Returns the absolute strides and total size of this data descriptor,
@@ -706,13 +703,7 @@ class Array(Data):
         self._packed_c_strides = self._get_packed_c_strides()
         self._packed_fortran_strides = self._get_packed_fortran_strides()
 
-    def set_shape(
-        self,
-        new_shape,
-        strides=None,
-        total_size=None,
-        offset=None,
-    ):
+    def set_shape(self, new_shape, strides=None, total_size=None, offset=None):
         """
         Updates the shape of an array.
         """

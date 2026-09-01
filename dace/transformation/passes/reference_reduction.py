@@ -140,11 +140,7 @@ class ReferenceToView(ppl.Pass):
 
         return result
 
-    def remove_refsets(
-        self,
-        candidates: Set[str],
-        all_refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]],
-    ):
+    def remove_refsets(self, candidates: Set[str], all_refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]):
         for ref, refsets in all_refsets.items():
             if ref not in candidates:
                 continue

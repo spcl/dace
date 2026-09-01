@@ -679,7 +679,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
         body_if = ast_internal_classes.Execution_Part_Node(
             execution=[
-                self._result_loop_update(node),
+                self._result_loop_update(node)
                 # TODO: we should make the `break` generation conditional based on the architecture
                 # For parallel maps, we should have no breaks
                 # For sequential loop, we want a break to be faster
@@ -1310,9 +1310,7 @@ class FortranIntrinsics:
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
         func_name = node.string
-        replacements = {
-            "SIGN": "__dace_sign",
-        }
+        replacements = {"SIGN": "__dace_sign"}
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
@@ -1332,9 +1330,7 @@ class FortranIntrinsics:
         self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line
     ):
 
-        func_types = {
-            "__dace_sign": "DOUBLE",
-        }
+        func_types = {"__dace_sign": "DOUBLE"}
         if name.name in func_types:
             # FIXME: this will be progressively removed
             call_type = func_types[name.name]

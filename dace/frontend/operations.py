@@ -29,11 +29,7 @@ class CompiledSDFGProfiler:
     times: List[Tuple['SDFG', List[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
 
     def __init__(
-        self,
-        repetitions: int = 0,
-        warmup: int = 0,
-        tqdm_leave: bool = True,
-        print_results: bool = True,
+        self, repetitions: int = 0, warmup: int = 0, tqdm_leave: bool = True, print_results: bool = True
     ) -> None:
         # Avoid import loop
         from dace.codegen.instrumentation import report

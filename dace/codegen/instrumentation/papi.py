@@ -217,10 +217,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);'''
         # Mark a section start (this is not really a section in itself (it
         # would be a section with 1 entry))
         local_stream.write(
-            self.perf_section_start_string(node_id, copy_size, copy_size),
-            cfg,
-            state_id,
-            [src_node, dst_node],
+            self.perf_section_start_string(node_id, copy_size, copy_size), cfg, state_id, [src_node, dst_node]
         )
         local_stream.write(
             '''
@@ -229,10 +226,7 @@ auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(
     __perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size},
     dace::perf::ValueSetType::Copy);
 __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
-                pcs=self.perf_counter_string(),
-                nodeid=node_id,
-                unique_id=unique_cpy_id,
-                size=copy_size,
+                pcs=self.perf_counter_string(), nodeid=node_id, unique_id=unique_cpy_id, size=copy_size
             ),
             cfg,
             state_id,
@@ -273,10 +267,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
         if isinstance(node, nodes.Tasklet):
             inner_stream.write(
-                "dace::perf::%s __perf_%s;\n" % (self.perf_counter_string(), node.label),
-                cfg,
-                state_id,
-                node,
+                "dace::perf::%s __perf_%s;\n" % (self.perf_counter_string(), node.label), cfg, state_id, node
             )
             inner_stream.write(
                 'auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, '
@@ -300,10 +291,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 if not PAPIInstrumentation.has_surrounding_perfcounters(node, state):
                     inner_stream.write(
-                        "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label, node.label),
-                        cfg,
-                        state_id,
-                        node,
+                        "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label, node.label), cfg, state_id, node
                     )
 
                 # Add bytes moved
@@ -381,23 +369,13 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
         if self.should_instrument_entry(node):
             # Mark the SuperSection start (if possible)
-            result.write(
-                self.perf_get_supersection_start_string(node, state, unified_id),
-                cfg,
-                state_id,
-                node,
-            )
+            result.write(self.perf_get_supersection_start_string(node, state, unified_id), cfg, state_id, node)
 
             # Mark the section start with zeros (due to dynamic accesses)
             result.write(self.perf_section_start_string(unified_id, "0", "0"), cfg, state_id, node)
 
             # Generate a thread affinity locker
-            result.write(
-                "dace::perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id,
-                cfg,
-                state_id,
-                node,
-            )
+            result.write("dace::perf::ThreadLockProvider __perf_tlp_%d;\n" % unified_id, cfg, state_id, node)
 
         # Inner part
         result = inner_stream

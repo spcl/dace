@@ -45,9 +45,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
 @dace.library.node
 class Alltoall(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandAlltoallMPI,
-    }
+    implementations = {"MPI": ExpandAlltoallMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

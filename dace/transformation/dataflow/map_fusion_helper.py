@@ -9,9 +9,7 @@ from dace.transformation import helpers
 
 
 def find_parameter_remapping(
-    first_map: nodes.Map,
-    second_map: nodes.Map,
-    simplify_ranges: bool = False,
+    first_map: nodes.Map, second_map: nodes.Map, simplify_ranges: bool = False
 ) -> Optional[Dict[str, str]]:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -134,9 +132,7 @@ def rename_map_parameters(
     """
     # Compute the replacement dict.
     repl_dict: Dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
-        first_map=first_map,
-        second_map=second_map,
-        simplify_ranges=simplify_ranges,
+        first_map=first_map, second_map=second_map, simplify_ranges=simplify_ranges
     )
 
     if repl_dict is None:
@@ -146,10 +142,7 @@ def rename_map_parameters(
 
     second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
     # Why is this thing in symbolic and not in replace?
-    symbolic.safe_replace(
-        mapping=repl_dict,
-        replace_callback=second_map_scope.replace_dict,
-    )
+    symbolic.safe_replace(mapping=repl_dict, replace_callback=second_map_scope.replace_dict)
 
     # For some odd reason the replace function does not modify the range and
     #  parameter of the map, so we will do it the hard way.
@@ -348,11 +341,7 @@ def relocate_nodes(
     assert len(from_node.out_connectors) == 0
 
 
-def is_node_reachable_from(
-    graph: dace.SDFGState,
-    begin: nodes.Node,
-    end: nodes.Node,
-) -> bool:
+def is_node_reachable_from(graph: dace.SDFGState, begin: nodes.Node, end: nodes.Node) -> bool:
     """Test if the node `end` can be reached from `begin`.
 
     Essentially the function starts a DFS at `begin`. If an edge is found that lead
@@ -382,11 +371,7 @@ def is_node_reachable_from(
     return False
 
 
-def is_parallel(
-    graph: dace.SDFGState,
-    node1: nodes.Node,
-    node2: nodes.Node,
-) -> bool:
+def is_parallel(graph: dace.SDFGState, node1: nodes.Node, node2: nodes.Node) -> bool:
     """Tests if `node1` and `node2` are parallel in the data flow graph.
 
     The function considers two nodes parallel in the data flow graph, if `node2`

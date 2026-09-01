@@ -123,10 +123,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
 
         return (volume == -1), wcr
 
-    def _clean_memlet(
-        self,
-        node: ast.AST,
-    ) -> Tuple[ast.AST, bool, Optional[ast.Lambda]]:
+    def _clean_memlet(self, node: ast.AST) -> Tuple[ast.AST, bool, Optional[ast.Lambda]]:
         result = node
         dynamic = False
         wcr = None

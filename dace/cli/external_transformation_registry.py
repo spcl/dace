@@ -215,9 +215,7 @@ class TransformationRepoManager:
             return False
 
         # Add to registry
-        registry[name] = {
-            'url': url,
-        }
+        registry[name] = {'url': url}
 
         self._save_registry(registry)
         print(f"Successfully added repository '{name}'")

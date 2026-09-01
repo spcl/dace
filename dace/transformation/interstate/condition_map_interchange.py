@@ -86,10 +86,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
                 nsdfg = state.add_nested_sdfg(
-                    sd.SDFG("map_body", parent=state),
-                    inputs=inputs,
-                    outputs=outputs,
-                    symbol_mapping=sym_mapping,
+                    sd.SDFG("map_body", parent=state), inputs=inputs, outputs=outputs, symbol_mapping=sym_mapping
                 )
                 for sym, dt in state.sdfg.symbols.items():
                     if sym not in nsdfg.sdfg.symbols:
@@ -139,25 +136,13 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
                         desc.shape = edge.data.subset.size()
                         nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        edge.src,
-                        edge.src_conn,
-                        nsdfg,
-                        edge.data.data,
-                        copy.deepcopy(edge.data),
-                    )
+                    state.add_edge(edge.src, edge.src_conn, nsdfg, edge.data.data, copy.deepcopy(edge.data))
                 for edge in state.in_edges(state.exit_node(node)):
                     if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
                         desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
                         desc.shape = edge.data.subset.size()
                         nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        nsdfg,
-                        edge.data.data,
-                        edge.dst,
-                        edge.dst_conn,
-                        copy.deepcopy(edge.data),
-                    )
+                    state.add_edge(nsdfg, edge.data.data, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
 
                 state.remove_nodes_from(body)
 
@@ -177,11 +162,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     new_cond_branch.add_node(new_b)
                     copy_mapping[b] = new_b
                 for edge in nsdfg.sdfg.edges():
-                    new_cond_branch.add_edge(
-                        copy_mapping[edge.src],
-                        copy_mapping[edge.dst],
-                        copy.deepcopy(edge.data),
-                    )
+                    new_cond_branch.add_edge(copy_mapping[edge.src], copy_mapping[edge.dst], copy.deepcopy(edge.data))
 
                 new_cond_block = ConditionalBlock()
                 new_cond_block.add_branch(branch_cond, new_cond_branch)
@@ -201,18 +182,10 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         node.add_in_connector(f"IN_{conn_name}")
                         node.add_out_connector(f"OUT_{conn_name}")
                         state.add_edge(
-                            sym_access,
-                            None,
-                            node,
-                            f"IN_{conn_name}",
-                            Memlet.from_array(sym, state.sdfg.arrays[sym]),
+                            sym_access, None, node, f"IN_{conn_name}", Memlet.from_array(sym, state.sdfg.arrays[sym])
                         )
                         state.add_edge(
-                            node,
-                            f"OUT_{conn_name}",
-                            nsdfg,
-                            sym,
-                            Memlet.from_array(sym, state.sdfg.arrays[sym]),
+                            node, f"OUT_{conn_name}", nsdfg, sym, Memlet.from_array(sym, state.sdfg.arrays[sym])
                         )
 
                     else:
@@ -230,11 +203,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
             copy_mapping[state] = new_state
 
         for edge in branch.edges():
-            graph.add_edge(
-                copy_mapping[edge.src],
-                copy_mapping[edge.dst],
-                copy.deepcopy(edge.data),
-            )
+            graph.add_edge(copy_mapping[edge.src], copy_mapping[edge.dst], copy.deepcopy(edge.data))
 
         graph.add_edge(src_state, copy_mapping[branch.start_block], InterstateEdge())
         for sink in branch.sink_nodes():

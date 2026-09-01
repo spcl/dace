@@ -90,12 +90,7 @@ def _connect_recomputation_nsdfg(
 
     # Add the array descriptor and AccessNode to the forward state
     original_desc = target_an.desc(forward_state)
-    backward_state.sdfg.add_array(
-        name=new_recomp_node_name,
-        shape=shape,
-        dtype=original_desc.dtype,
-        transient=True,
-    )
+    backward_state.sdfg.add_array(name=new_recomp_node_name, shape=shape, dtype=original_desc.dtype, transient=True)
     new_recomp_node = backward_state.add_access(new_recomp_node_name)
     new_recomp_node.setzero = True
 

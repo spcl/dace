@@ -528,12 +528,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if sdfg.arrays[nodedesc.sink].storage in threadlocal_stores or nodedesc.storage in threadlocal_stores:
                     threadlocal = "Threadlocal"
                 ctype = 'dace::ArrayStreamView%s<%s>' % (threadlocal, arrnode.dtype.ctype)
-                declaration_stream.write(
-                    "%s %s (%s);\n" % (ctype, name, array_expr),
-                    cfg,
-                    state_id,
-                    node,
-                )
+                declaration_stream.write("%s %s (%s);\n" % (ctype, name, array_expr), cfg, state_id, node)
                 define_var(name, DefinedType.Stream, ctype)
                 return
 
@@ -610,10 +605,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
-                cfg,
-                state_id,
-                node,
+                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)), cfg, state_id, node
             )
             define_var(name, DefinedType.Pointer, ctypedef)
             return
@@ -1042,9 +1034,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         """
                         dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
                         {copy_args});""".format(
-                            copy_tmpl=copy_tmpl,
-                            shape_tmpl=shape_tmpl,
-                            copy_args=", ".join(copy_args),
+                            copy_tmpl=copy_tmpl, shape_tmpl=shape_tmpl, copy_args=", ".join(copy_args)
                         ),
                         cfg,
                         state_id,
@@ -1070,9 +1060,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         """
                         dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
                         {copy_args});""".format(
-                            copy_tmpl=copy_tmpl,
-                            shape_tmpl=shape_tmpl,
-                            copy_args=", ".join(copy_args),
+                            copy_tmpl=copy_tmpl, shape_tmpl=shape_tmpl, copy_args=", ".join(copy_args)
                         ),
                         cfg,
                         state_id,
@@ -1180,12 +1168,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         edge.src_conn,
                     )
 
-                result.write(
-                    "%s = %s;" % (shared_data_name, edge.src_conn),
-                    cfg,
-                    state_id,
-                    [edge.src, edge.dst],
-                )
+                result.write("%s = %s;" % (shared_data_name, edge.src_conn), cfg, state_id, [edge.src, edge.dst])
                 continue
 
             # If the memlet is not pointing to a data node (e.g. tasklet), then
@@ -1266,17 +1249,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
-                    dispatcher.dispatch_copy(
-                        node,
-                        dst_node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        result,
-                    )
+                    dispatcher.dispatch_copy(node, dst_node, edge, sdfg, cfg, dfg, state_id, function_stream, result)
 
     def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype, codegen=None):
         """
@@ -1590,15 +1563,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 else:
                     self._dispatcher.dispatch_copy(
-                        src_node,
-                        node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        inner_stream,
+                        src_node, node, edge, sdfg, cfg, dfg, state_id, function_stream, inner_stream
                     )
 
                 # Also define variables in the C++ unparser scope
@@ -1709,15 +1674,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Process outgoing memlets
         codegen.process_out_memlets(
-            sdfg,
-            cfg,
-            state_id,
-            node,
-            dfg,
-            self._dispatcher,
-            inner_stream,
-            True,
-            function_stream,
+            sdfg, cfg, state_id, node, dfg, self._dispatcher, inner_stream, True, function_stream
         )
 
         # Instrumentation: Post-tasklet
@@ -2446,29 +2403,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 # (copies are generated at the inner scope, where both arrays exist)
                 if scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]:
                     self._dispatcher.dispatch_copy(
-                        src_node,
-                        node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        callsite_stream,
+                        src_node, node, edge, sdfg, cfg, dfg, state_id, function_stream, callsite_stream
                     )
 
         # Process outgoing memlets (array-to-array write should be emitted
         # from the first leading edge out of the array)
         self.process_out_memlets(
-            sdfg,
-            cfg,
-            state_id,
-            node,
-            dfg,
-            self._dispatcher,
-            callsite_stream,
-            False,
-            function_stream,
+            sdfg, cfg, state_id, node, dfg, self._dispatcher, callsite_stream, False, function_stream
         )
 
         # Instrumentation: Post-node

@@ -63,9 +63,7 @@ class ExpandIrecvMPI(ExpandTransformation):
 @dace.library.node
 class Irecv(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandIrecvMPI,
-    }
+    implementations = {"MPI": ExpandIrecvMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

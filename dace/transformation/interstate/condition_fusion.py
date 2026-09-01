@@ -20,10 +20,7 @@ class ConditionFusion(xf.MultiStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [
-            sdutil.node_path_graph(cls.cblck1, cls.cblck2),
-            sdutil.node_path_graph(cls.cblck1),
-        ]
+        return [sdutil.node_path_graph(cls.cblck1, cls.cblck2), sdutil.node_path_graph(cls.cblck1)]
 
     def annotates_memlets(self) -> bool:
         return True
@@ -159,17 +156,11 @@ class ConditionFusion(xf.MultiStateTransformation):
                     new_node = old_new_mapping[node]
                     if node is cfg.start_block:
                         cblck1.branches[off][1].add_edge(
-                            cblck1.branches[off][1].sink_nodes()[0],
-                            new_node,
-                            copy.deepcopy(cblck_edge.data),
+                            cblck1.branches[off][1].sink_nodes()[0], new_node, copy.deepcopy(cblck_edge.data)
                         )
 
                     for edge in cfg.in_edges(node):
-                        cblck1.branches[off][1].add_edge(
-                            old_new_mapping[edge.src],
-                            new_node,
-                            copy.deepcopy(edge.data),
-                        )
+                        cblck1.branches[off][1].add_edge(old_new_mapping[edge.src], new_node, copy.deepcopy(edge.data))
 
         # Remove cblck2
         for e in outer_cfg.out_edges(cblck2):

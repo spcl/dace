@@ -1414,32 +1414,20 @@ def analyze_sdfg(
         v_d = symeval(v_d, symbols)
         w_d_map[k] = (v_w, v_d)
 
-    for (
-        k,
-        v,
-    ) in w_d_map.items():
+    for k, v in w_d_map.items():
         w_d_map[k] = (
             (v[0].subs(static_symbol_mapping).subs(equality_subs[1])),
             (v[1].subs(static_symbol_mapping).subs(equality_subs[1])),
         )
 
     if analyze_tasklet == get_tasklet_work_depth:
-        for (
-            k,
-            v,
-        ) in w_d_map.items():
+        for k, v in w_d_map.items():
             w_d_map[k] = ((simplify(v[0])), (simplify(v[1])))
     elif analyze_tasklet == get_tasklet_work:
-        for (
-            k,
-            v,
-        ) in w_d_map.items():
+        for k, v in w_d_map.items():
             w_d_map[k] = simplify(v[0])
     elif analyze_tasklet == get_tasklet_avg_par:
-        for (
-            k,
-            v,
-        ) in w_d_map.items():
+        for k, v in w_d_map.items():
             w_d_map[k] = simplify(v[0] / v[1]) if (v[1]) != 0 else 0  # work / depth = avg par
 
     result_whole_sdfg = w_d_map[get_uuid(sdfg)]

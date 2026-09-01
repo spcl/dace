@@ -1052,18 +1052,9 @@ class LoopUnroller(ast.NodeTransformer):
         4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
     """
 
-    STATELESS_GENERATORS = [
-        enumerate,
-        zip,
-        reversed,
-        dict.values,
-        dict.keys,
-        dict.items,
-    ]
+    STATELESS_GENERATORS = [enumerate, zip, reversed, dict.values, dict.keys, dict.items]
 
-    THRESHOLD_GENERATORS = [
-        range,
-    ]
+    THRESHOLD_GENERATORS = [range]
 
     def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
         super().__init__()

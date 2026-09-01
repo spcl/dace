@@ -19,8 +19,7 @@ class CopyToMap(xf.SingleStateTransformation):
     a = xf.PatternNode(nodes.AccessNode)
     b = xf.PatternNode(nodes.AccessNode)
     ignore_strides = properties.Property(
-        default=False,
-        desc='Ignore the stride of the data container; Defaults to `False`.',
+        default=False, desc='Ignore the stride of the data container; Defaults to `False`.'
     )
 
     @classmethod
@@ -49,9 +48,4 @@ class CopyToMap(xf.SingleStateTransformation):
             if mutils.can_memlet_be_turned_into_a_map(
                 edge=a_b_edge, state=state, sdfg=sdfg, ignore_strides=self.ignore_strides
             ):
-                _ = mutils.memlet_to_map(
-                    edge=a_b_edge,
-                    state=state,
-                    sdfg=sdfg,
-                    ignore_strides=self.ignore_strides,
-                )
+                _ = mutils.memlet_to_map(edge=a_b_edge, state=state, sdfg=sdfg, ignore_strides=self.ignore_strides)

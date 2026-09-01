@@ -74,10 +74,7 @@ class ExpandGetriMKL(ExpandTransformation):
 @dace.library.node
 class Getri(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandGetriOpenBLAS,
-        "MKL": ExpandGetriMKL,
-    }
+    implementations = {"OpenBLAS": ExpandGetriOpenBLAS, "MKL": ExpandGetriMKL}
     default_implementation = None
 
     # Object fields

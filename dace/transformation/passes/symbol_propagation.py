@@ -3,13 +3,7 @@
 import ast
 import itertools
 from dataclasses import dataclass
-from dace.sdfg.state import (
-    AbstractControlFlowRegion,
-    ControlFlowBlock,
-    ControlFlowRegion,
-    ConditionalBlock,
-    LoopRegion,
-)
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, Set, Optional

@@ -1026,10 +1026,7 @@ def _make_border_memlets(connectors, as_lists: bool = False):
     :return: A dictionary of the form ``{'in': {...}, 'out': {...}}`` with
              initialized connector entries.
     """
-    border_memlets = {
-        'in': {},
-        'out': {},
-    }
+    border_memlets = {'in': {}, 'out': {}}
     for direction in border_memlets:
         for connector in connectors[direction]:
             border_memlets[direction][connector] = [] if as_lists else None
@@ -1260,13 +1257,7 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
     for direction in border_memlets:
         for connector in border_memlets[direction]:
             propagated = _propagate_border_memlet_candidates(
-                candidates,
-                arrays,
-                direction,
-                connector,
-                params=params,
-                rng=rng,
-                scale_by_range=False,
+                candidates, arrays, direction, connector, params=params, rng=rng, scale_by_range=False
             )
             if propagated is None:
                 continue
@@ -1304,12 +1295,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
     # get propagated in the SDFG.
-    border_memlets = _make_border_memlets(
-        {
-            'in': nsdfg_node.in_connectors,
-            'out': nsdfg_node.out_connectors,
-        }
-    )
+    border_memlets = _make_border_memlets({'in': nsdfg_node.in_connectors, 'out': nsdfg_node.out_connectors})
 
     sdfg = nsdfg_node.sdfg
     outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
@@ -1542,11 +1528,7 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
     contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
     assert len(contained_leaf_scopes) > 0
-    propagate_memlets_scope(
-        sdfg,
-        state,
-        contained_leaf_scopes,
-    )
+    propagate_memlets_scope(sdfg, state, contained_leaf_scopes)
 
 
 def _propagate_node(dfg_state, node):

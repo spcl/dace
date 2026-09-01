@@ -16,12 +16,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def profile(
-    repetitions: int = 100,
-    warmup: int = 0,
-    tqdm_leave: bool = True,
-    print_results: bool = True,
-):
+def profile(repetitions: int = 100, warmup: int = 0, tqdm_leave: bool = True, print_results: bool = True):
     """
     Context manager that enables profiling of each called DaCe program. If repetitions is greater than 1, the
     program is run multiple times and the average execution time is reported.

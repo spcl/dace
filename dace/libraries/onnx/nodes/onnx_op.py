@@ -83,11 +83,7 @@ class ONNXOp(nd.LibraryNode):
 
         return [conn_to_edge[name] for name in parameters]
 
-    def iter_edges(
-        self,
-        state: SDFGState,
-        ignore_unknown=False,
-    ) -> Iterator[Tuple[MultiConnectorEdge, bool]]:
+    def iter_edges(self, state: SDFGState, ignore_unknown=False) -> Iterator[Tuple[MultiConnectorEdge, bool]]:
         """Returns an iterator over tuples of an edge and a boolean that indicates whether that edge is an input,
         ordered by the order required by the schema.
         This method assumes that this node has been validated.

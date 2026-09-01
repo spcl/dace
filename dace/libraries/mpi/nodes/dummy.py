@@ -34,9 +34,7 @@ class Dummy(MPINode):
     """
 
     # Global properties
-    implementations = {
-        "MPI": ExpandDummyMPI,
-    }
+    implementations = {"MPI": ExpandDummyMPI}
     default_implementation = "MPI"
 
     fields = dace.properties.ListProperty(default=[], element_type=str)

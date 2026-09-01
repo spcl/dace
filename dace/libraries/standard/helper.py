@@ -12,18 +12,9 @@ from dace.sdfg.scope import is_in_scope
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
 # Register is intentionally in neither set: resolves by scope (GPU register vs. host stack slot).
-GPU_RESIDENT_STORAGES = frozenset(
-    {
-        dtypes.StorageType.GPU_Global,
-        dtypes.StorageType.GPU_Shared,
-    }
-)
+GPU_RESIDENT_STORAGES = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
 CPU_RESIDENT_STORAGES = frozenset(
-    {
-        dtypes.StorageType.CPU_Heap,
-        dtypes.StorageType.CPU_Pinned,
-        dtypes.StorageType.CPU_ThreadLocal,
-    }
+    {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal}
 )
 
 

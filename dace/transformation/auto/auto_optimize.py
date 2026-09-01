@@ -56,10 +56,7 @@ def greedy_fuse(
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # Apply MapFusionVertical for the more trivial cases
-            full_map_fusion_pass = FullMapFusion(
-                strict_dataflow=True,
-                validate_all=validate_all,
-            )
+            full_map_fusion_pass = FullMapFusion(strict_dataflow=True, validate_all=validate_all)
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
 

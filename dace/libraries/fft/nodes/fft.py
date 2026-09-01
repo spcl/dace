@@ -132,9 +132,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
         direction = 'CUFFT_INVERSE'
         tasklet_prefix = 'i'
 
-    fields = [
-        f'cufftHandle {plan_name};',
-    ]
+    fields = [f'cufftHandle {plan_name};']
     plan_name = f'__state->{plan_name}'
 
     init_code += f'''
@@ -199,10 +197,5 @@ def _get_input_and_output(state: SDFGState, node: nodes.LibraryNode):
 
 
 def _types_to_cufft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass):
-    typedict = {
-        dtypes.float32: 'R',
-        dtypes.float64: 'D',
-        dtypes.complex64: 'C',
-        dtypes.complex128: 'Z',
-    }
+    typedict = {dtypes.float32: 'R', dtypes.float64: 'D', dtypes.complex64: 'C', dtypes.complex128: 'Z'}
     return f'CUFFT_{typedict[indtype]}2{typedict[outdtype]}'

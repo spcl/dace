@@ -524,10 +524,7 @@ class InterstateEdge(object):
         return result
 
     def to_json(self, parent=None):
-        return {
-            'type': type(self).__name__,
-            'attributes': dace.serialize.all_properties_to_json(self),
-        }
+        return {'type': type(self).__name__, 'attributes': dace.serialize.all_properties_to_json(self)}
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -2190,13 +2187,7 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Scalar(
-            dtype,
-            storage=storage,
-            transient=transient,
-            lifetime=lifetime,
-            debuginfo=debuginfo,
-        )
+        desc = dt.Scalar(dtype, storage=storage, transient=transient, lifetime=lifetime, debuginfo=debuginfo)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 

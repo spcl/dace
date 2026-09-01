@@ -140,12 +140,7 @@ class Property(Generic[T]):
 
                 _default = self.to_json(self.default)
 
-                mdict = {
-                    "metatype": typestr,
-                    "desc": self.desc,
-                    "category": self.category,
-                    "default": _default,
-                }
+                mdict = {"metatype": typestr, "desc": self.desc, "category": self.category, "default": _default}
                 if self.indirected:
                     mdict['indirected'] = True
                 return mdict

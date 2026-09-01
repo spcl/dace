@@ -36,9 +36,7 @@ class ExpandAllgatherMPI(ExpandTransformation):
 @dace.library.node
 class Allgather(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandAllgatherMPI,
-    }
+    implementations = {"MPI": ExpandAllgatherMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

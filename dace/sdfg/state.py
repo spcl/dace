@@ -2022,15 +2022,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if isinstance(output_nodes, (list, set)):
             output_nodes = {output_node.data: output_node for output_node in output_nodes}
 
-        tasklet = nd.Tasklet(
-            name,
-            tinputs,
-            toutputs,
-            code,
-            language=language,
-            location=location,
-            debuginfo=debuginfo,
-        )
+        tasklet = nd.Tasklet(name, tinputs, toutputs, code, language=language, location=location, debuginfo=debuginfo)
         map = nd.Map(map_name, *_make_iterators(map_ranges), schedule=schedule, unroll=unroll_map, debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
@@ -2216,19 +2208,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Add internal edge
         if isinstance(scope_node, nd.EntryNode):
             iedge = self.add_edge(
-                scope_node,
-                "OUT_" + scope_connector,
-                internal_node,
-                internal_connector,
-                internal_memlet,
+                scope_node, "OUT_" + scope_connector, internal_node, internal_connector, internal_memlet
             )
         else:
             iedge = self.add_edge(
-                internal_node,
-                internal_connector,
-                scope_node,
-                "IN_" + scope_connector,
-                internal_memlet,
+                internal_node, internal_connector, scope_node, "IN_" + scope_connector, internal_memlet
             )
 
         # Add external edge
@@ -2238,19 +2222,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         if isinstance(scope_node, nd.EntryNode):
             eedge = self.add_edge(
-                external_node,
-                external_connector,
-                scope_node,
-                "IN_" + scope_connector,
-                external_memlet,
+                external_node, external_connector, scope_node, "IN_" + scope_connector, external_memlet
             )
         else:
             eedge = self.add_edge(
-                scope_node,
-                "OUT_" + scope_connector,
-                external_node,
-                external_connector,
-                external_memlet,
+                scope_node, "OUT_" + scope_connector, external_node, external_connector, external_memlet
             )
 
         # Try to initialize memlets
@@ -2500,17 +2476,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Workaround to allow this legacy API
         if name in self.sdfg._arrays:
             del self.sdfg._arrays[name]
-        self.sdfg.add_stream(
-            name,
-            dtype,
-            buffer_size,
-            shape,
-            storage,
-            transient,
-            offset,
-            lifetime,
-            debuginfo,
-        )
+        self.sdfg.add_stream(name, dtype, buffer_size, shape, storage, transient, offset, lifetime, debuginfo)
         return self.add_access(name, debuginfo)
 
     def add_scalar(

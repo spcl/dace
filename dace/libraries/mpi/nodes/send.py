@@ -52,9 +52,7 @@ class ExpandSendMPI(ExpandTransformation):
 @dace.library.node
 class Send(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandSendMPI,
-    }
+    implementations = {"MPI": ExpandSendMPI}
     default_implementation = "MPI"
 
     # Object fields

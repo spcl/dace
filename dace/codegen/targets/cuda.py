@@ -196,9 +196,7 @@ class CUDACodeGen(TargetCodeGenerator):
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
 
-        sdfg.apply_transformations_once_everywhere(
-            AddThreadBlockMap,
-        )
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
 
         new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
 
@@ -260,12 +258,7 @@ class CUDACodeGen(TargetCodeGenerator):
                         )
 
                     try:
-                        memlet_utils.memlet_to_map(
-                            edge=e,
-                            state=state,
-                            sdfg=nsdfg,
-                            ignore_strides=True,
-                        )
+                        memlet_utils.memlet_to_map(edge=e, state=state, sdfg=nsdfg, ignore_strides=True)
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
@@ -3074,9 +3067,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                             condition += ' && '
                         if has_dtbmap:
                             condition += '{mapIdx} < int_ceil({max}, {bs}) * {bs}'.format(
-                                mapIdx=v,
-                                max=_topy(maxel + 1),
-                                bs=_topy(block_dims[i]),
+                                mapIdx=v, max=_topy(maxel + 1), bs=_topy(block_dims[i])
                             )
                         else:
                             condition += '%s < %s' % (v, _topy(maxel + 1))
@@ -3092,11 +3083,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                         varname, expr = declarations.pop(0)
                         callsite_stream.write(
                             'for (int {varname} = {expr}; {cond}; {varname} += {stride}) {{'.format(
-                                varname=varname,
-                                expr=expr,
-                                cond=condition,
-                                stride=stride,
-                                pers=is_persistent,
+                                varname=varname, expr=expr, cond=condition, stride=stride, pers=is_persistent
                             ),
                             cfg,
                             state_id,
@@ -3106,13 +3093,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                         # will only be entered once
                         varname, expr = declarations.pop(0)
                         callsite_stream.write(
-                            'int {varname} = {expr};\n{{'.format(
-                                varname=varname,
-                                expr=expr,
-                            ),
-                            cfg,
-                            state_id,
-                            node,
+                            'int {varname} = {expr};\n{{'.format(varname=varname, expr=expr), cfg, state_id, node
                         )
 
                 # Emit internal array allocation here for GPU_ThreadBlock (deallocation handled at MapExit)
@@ -3277,9 +3258,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
             for subdfg in subgraphs:
                 components = dace.sdfg.utils.separate_maps(
-                    cfg.state(state_id),
-                    subdfg,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+                    cfg.state(state_id), subdfg, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
                 )
 
                 for c in components:

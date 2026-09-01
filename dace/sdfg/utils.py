@@ -181,12 +181,7 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
                 stack.pop()
 
 
-def _find_nodes_impl(
-    node_to_start: Node,
-    state: SDFGState,
-    forward: bool,
-    seen: Optional[Set[Node]],
-) -> Set[Node]:
+def _find_nodes_impl(node_to_start: Node, state: SDFGState, forward: bool, seen: Optional[Set[Node]]) -> Set[Node]:
     to_scan: List[Node] = [node_to_start]
     scanned_nodes: Set[Node] = set() if seen is None else seen
     if forward:
@@ -608,10 +603,7 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
-def canonicalize_memlet_trees_of_scope_node(
-    state: SDFGState,
-    scope_node: Union[nd.EntryNode, nd.ExitNode],
-) -> int:
+def canonicalize_memlet_trees_of_scope_node(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """Canonicalize the Memlet trees of a single scope nodes.
 
     The function will modify all Memlets that are adjacent to `scope_node` such that
@@ -702,10 +694,7 @@ def canonicalize_memlet_trees_of_scope_node(
     return modified_memlet
 
 
-def canonicalize_memlet_trees_for_map(
-    state: SDFGState,
-    map_node: Union[nd.EntryNode, nd.ExitNode],
-) -> int:
+def canonicalize_memlet_trees_for_map(state: SDFGState, map_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """Canonicalize the Memlets of an entire Map scope.
 
     This function is similar to `canonicalize_memlet_trees_of_scope_node()`, but it acts
@@ -728,10 +717,7 @@ def canonicalize_memlet_trees_for_map(
     return ret
 
 
-def canonicalize_memlet_trees(
-    sdfg: 'dace.SDFG',
-    starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
-) -> int:
+def canonicalize_memlet_trees(sdfg: 'dace.SDFG', starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None) -> int:
     """Canonicalize the Memlet trees of all scopes in the SDFG.
 
     This function runs `canonicalize_memlet_trees_of_scope_node()` on all scopes
@@ -920,11 +906,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
             state.remove_node(root_node)
 
 
-def consolidate_edges(
-    sdfg: SDFG,
-    starting_scope=None,
-    propagate: bool = True,
-) -> int:
+def consolidate_edges(sdfg: SDFG, starting_scope=None, propagate: bool = True) -> int:
     """
     Union scope-entering memlets relating to the same data node in all states.
     This effectively reduces the number of connectors and allows more
@@ -1649,9 +1631,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         parent_state_id = parent_state.block_id
 
         if multistate:
-            candidate = {
-                InlineMultistateSDFG.nested_sdfg: nsdfg_node,
-            }
+            candidate = {InlineMultistateSDFG.nested_sdfg: nsdfg_node}
             inliner = InlineMultistateSDFG()
             inliner.setup_match(
                 sdfg=parent_sdfg,
@@ -1666,9 +1646,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                 counter += 1
                 continue
 
-        candidate = {
-            InlineSDFG.nested_sdfg: nsdfg_node,
-        }
+        candidate = {InlineSDFG.nested_sdfg: nsdfg_node}
         inliner = InlineSDFG()
         inliner.setup_match(
             sdfg=parent_sdfg,
@@ -1816,10 +1794,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
 
 
 def _tswds_state(
-    sdfg: SDFG,
-    state: SDFGState,
-    symbols: Dict[str, dtypes.typeclass],
-    recursive: bool,
+    sdfg: SDFG, state: SDFGState, symbols: Dict[str, dtypes.typeclass], recursive: bool
 ) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
     """
     Helper function for ``traverse_sdfg_with_defined_symbols``.

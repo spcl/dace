@@ -82,15 +82,10 @@ GPU_SCHEDULES = [
 ]
 
 # A subset of CPU schedule types
-CPU_SCHEDULES = [
-    ScheduleType.CPU_Multicore,
-    ScheduleType.CPU_Persistent,
-]
+CPU_SCHEDULES = [ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]
 
 # A subset of on-GPU storage types
-GPU_STORAGES = [
-    StorageType.GPU_Shared,
-]
+GPU_STORAGES = [StorageType.GPU_Shared]
 
 
 class ReductionType(Enum):
@@ -812,10 +807,7 @@ class struct(typeclass):
     def emit_definition(self):
         return """struct {name} {{
 {typ}
-}};""".format(
-            name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
-        )
+}};""".format(name=self.name, typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]))
 
 
 class pyobject(opaque):
@@ -1341,12 +1333,7 @@ CTYPE_TO_TYPECLASS = {
     if nptype is not None and (numpy.issubdtype(nptype, numpy.integer) or numpy.issubdtype(nptype, numpy.floating))
 }
 
-TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
-    float32: 'f',
-    uint32: 'U',
-    int64: 'LL',
-    uint64: 'ULL',
-}
+TYPECLASS_TO_CPP_LITERAL_SUFFIX = {float32: 'f', uint32: 'U', int64: 'LL', uint64: 'ULL'}
 
 TYPECLASS_STRINGS = [
     "int",
@@ -1403,12 +1390,7 @@ def cpp_typed_literal(value, dtype):
 # Allowed types
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
-_ALLOWED_MODULES = {
-    "builtins": "",
-    "dace": "dace::",
-    "math": "dace::math::",
-    "cmath": "dace::cmath::",
-}
+_ALLOWED_MODULES = {"builtins": "", "dace": "dace::", "math": "dace::math::", "cmath": "dace::cmath::"}
 
 
 def ismodule(var):

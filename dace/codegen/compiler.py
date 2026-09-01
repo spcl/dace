@@ -34,11 +34,7 @@ T = TypeVar('T')
 
 
 def generate_program_folder(
-    sdfg,
-    code_objects: List[CodeObject],
-    out_path: str,
-    config=None,
-    folder_mode: Optional[str] = None,
+    sdfg, code_objects: List[CodeObject], out_path: str, config=None, folder_mode: Optional[str] = None
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -416,10 +412,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
 
 
 def configure_and_compile(
-    program_folder,
-    program_name=None,
-    output_stream=None,
-    folder_mode: Optional[str] = None,
+    program_folder, program_name=None, output_stream=None, folder_mode: Optional[str] = None
 ) -> pathlib.Path:
     """
     Configures and compiles a DaCe program in the specified folder into a shared library file.
@@ -600,9 +593,7 @@ def configure_and_compile(
 
 
 def get_program_handle(
-    library_path: Union[pathlib.Path, str],
-    sdfg: 'dace.SDFG',
-    stub_library_path: Union[pathlib.Path, str, None] = None,
+    library_path: Union[pathlib.Path, str], sdfg: 'dace.SDFG', stub_library_path: Union[pathlib.Path, str, None] = None
 ) -> csd.CompiledSDFG:
     """Construct a  ``CompiledSDFG`` form a precompiled library directly.
 
@@ -743,10 +734,7 @@ def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.P
     return sdfg_lib_path.parent / ('libdacestub_' + lib_name[3:])
 
 
-def load_precompiled_sdfg(
-    folder: Union[pathlib.Path, str],
-    sdfg: Optional['dace.SDFG'] = None,
-) -> csd.CompiledSDFG:
+def load_precompiled_sdfg(folder: Union[pathlib.Path, str], sdfg: Optional['dace.SDFG'] = None) -> csd.CompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``

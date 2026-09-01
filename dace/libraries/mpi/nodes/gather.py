@@ -38,9 +38,7 @@ class ExpandGatherMPI(ExpandTransformation):
 @library.node
 class Gather(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandGatherMPI,
-    }
+    implementations = {"MPI": ExpandGatherMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
@@ -128,9 +126,7 @@ class ExpandBlockGatherMPI(ExpandTransformation):
 @library.node
 class BlockGather(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandBlockGatherMPI,
-    }
+    implementations = {"MPI": ExpandBlockGatherMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

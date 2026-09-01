@@ -63,9 +63,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
     # Settings
     only_toplevel_maps = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only perform fusing if the Maps are in the top level.",
+        dtype=bool, default=False, desc="Only perform fusing if the Maps are in the top level."
     )
     only_inner_maps = properties.Property(
         dtype=bool,
@@ -84,9 +82,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only consolidate if this does not lead to an extension of the subset.",
+        dtype=bool, default=False, desc="Only consolidate if this does not lead to an extension of the subset."
     )
 
     def __init__(
@@ -117,11 +113,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         return [map_fusion_parallel_match]
 
     def can_be_applied(
-        self,
-        graph: Union[dace.SDFGState, SDFG],
-        expr_index: int,
-        sdfg: dace.SDFG,
-        permissive: bool = False,
+        self, graph: Union[dace.SDFGState, SDFG], expr_index: int, sdfg: dace.SDFG, permissive: bool = False
     ) -> bool:
         # NOTE: The after this point it is not legal to access the matched nodes
         first_map_entry: nodes.MapEntry = self.first_parallel_map_entry
@@ -162,11 +154,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
         return True
 
-    def apply(
-        self,
-        graph: Union[dace.SDFGState, dace.SDFG],
-        sdfg: dace.SDFG,
-    ) -> None:
+    def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
         # NOTE: The after this point it is not legal to access the matched nodes
         first_map_entry: nodes.MapEntry = self.first_parallel_map_entry
         second_map_entry: nodes.MapEntry = self.second_parallel_map_entry
@@ -209,10 +197,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
         # Now we relocate all connectors from the second to the first Map and remove
         #  the respective node of the second Map.
-        for to_node, from_node in [
-            (first_map_entry, second_map_entry),
-            (first_map_exit, second_map_exit),
-        ]:
+        for to_node, from_node in [(first_map_entry, second_map_entry), (first_map_exit, second_map_exit)]:
             mfhelper.relocate_nodes(
                 from_node=from_node,
                 to_node=to_node,

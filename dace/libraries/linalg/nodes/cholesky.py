@@ -125,15 +125,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, *args, **kwargs):
-        super().__init__(
-            name,
-            *args,
-            inputs={"_a"},
-            outputs={
-                "_b",
-            },
-            **kwargs,
-        )
+        super().__init__(name, *args, inputs={"_a"}, outputs={"_b"}, **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):
@@ -156,10 +148,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         sqdims2 = squeezed2.squeeze()
 
-        (
-            desc_ain,
-            desc_aout,
-        ) = None, None
+        (desc_ain, desc_aout) = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_a":
                 desc_ain = sdfg.arrays[e.data.data]

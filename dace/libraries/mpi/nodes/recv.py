@@ -46,9 +46,7 @@ class ExpandRecvMPI(ExpandTransformation):
 @dace.library.node
 class Recv(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandRecvMPI,
-    }
+    implementations = {"MPI": ExpandRecvMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

@@ -47,10 +47,7 @@ class MapFission(transformation.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [
-            sdutil.node_path_graph(cls.map_entry),
-            sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg),
-        ]
+        return [sdutil.node_path_graph(cls.map_entry), sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg)]
 
     @staticmethod
     def _components(subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:

@@ -27,9 +27,7 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
+            type=dace.dtype_to_typeclass(dtype).to_string(), real=cast_value.real, imag=cast_value.imag
         )
     else:
         return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
@@ -316,11 +314,7 @@ class ExpandCSRMVMKL(ExpandTransformation):
         """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
         return tasklet
 
@@ -451,11 +445,7 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
 
         code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
 
         # If buffers are not on the GPU, copy them

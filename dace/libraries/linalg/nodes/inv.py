@@ -222,10 +222,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         dims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout = (
-            None,
-            None,
-        )
+        desc_ain, desc_aout = (None, None)
         for e in state.in_edges(self):
             if e.dst_conn == "_ain":
                 desc_ain = sdfg.arrays[e.data.data]

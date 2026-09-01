@@ -35,10 +35,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
-        choices = [
-            None,
-            (64, 8, 1),
-        ]
+        choices = [None, (64, 8, 1)]
 
         return choices
 

@@ -89,11 +89,7 @@ class ContinueToCondition(ppl.Pass):
             cfg.add_node(new_node)
 
             for edge in outer_cfg.in_edges(node):
-                cfg.add_edge(
-                    old_new_mapping[edge.src],
-                    new_node,
-                    copy.deepcopy(edge.data),
-                )
+                cfg.add_edge(old_new_mapping[edge.src], new_node, copy.deepcopy(edge.data))
             to_remove.append(node)
 
         for node in to_remove:

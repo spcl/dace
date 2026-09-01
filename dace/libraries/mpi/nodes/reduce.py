@@ -52,9 +52,7 @@ class ExpandReduceMPI(ExpandTransformation):
 @dace.library.node
 class Reduce(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandReduceMPI,
-    }
+    implementations = {"MPI": ExpandReduceMPI}
     default_implementation = "MPI"
 
     op = dace.properties.Property(dtype=str, default='MPI_SUM')

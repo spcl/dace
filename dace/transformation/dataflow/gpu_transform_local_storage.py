@@ -61,10 +61,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [
-            sdutil.node_path_graph(cls.map_entry),
-            sdutil.node_path_graph(cls.reduce),
-        ]
+        return [sdutil.node_path_graph(cls.map_entry), sdutil.node_path_graph(cls.reduce)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if expr_index == 0:
@@ -184,10 +181,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     if node.map.schedule == dtypes.ScheduleType.Default:
                         node.map.schedule = dtypes.ScheduleType.Sequential
 
-        gpu_storage_types = [
-            dtypes.StorageType.GPU_Global,
-            dtypes.StorageType.GPU_Shared,
-        ]
+        gpu_storage_types = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
 
         #######################################################
         # Add GPU copies of CPU arrays (i.e., not already on GPU)
@@ -419,11 +413,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                     step = r[2]
                                     newsubset[ind] = (begin, end, step)
                                 else:
-                                    newsubset[ind] = (
-                                        r - offset[ind],
-                                        r - offset[ind],
-                                        1,
-                                    )
+                                    newsubset[ind] = (r - offset[ind], r - offset[ind], 1)
                             memlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
                         memlet.data = node.data
 
@@ -497,11 +487,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                     step = r[2]
                                     newsubset[ind] = (begin, end, step)
                                 else:
-                                    newsubset[ind] = (
-                                        r - offset[ind],
-                                        r - offset[ind],
-                                        1,
-                                    )
+                                    newsubset[ind] = (r - offset[ind], r - offset[ind], 1)
                             memlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
                         memlet.data = node.data
 

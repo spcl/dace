@@ -38,18 +38,9 @@ _cmpops = {
     # "In":"in", "NotIn":"not in"
 }
 
-_funcops = {
-    "FloorDiv": (" /", "dace::math::ifloor"),
-    "MatMult": (",", "dace::gemm"),
-}
+_funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
 
-_py2c_reserved = {
-    "True": "true",
-    "False": "false",
-    "None": "nullptr",
-    "inf": "INFINITY",
-    "nan": "NAN",
-}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),

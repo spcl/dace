@@ -27,10 +27,7 @@ import networkx as nx
 import time
 import sys
 
-NODE_TO_SCOPE_TYPE = {
-    dace.nodes.MapEntry: tn.MapScope,
-    dace.nodes.ConsumeEntry: tn.ConsumeScope,
-}
+NODE_TO_SCOPE_TYPE = {dace.nodes.MapEntry: tn.MapScope, dace.nodes.ConsumeEntry: tn.ConsumeScope}
 
 
 def _dealias_sdfg(sdfg: SDFG) -> None:

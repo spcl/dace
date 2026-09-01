@@ -236,9 +236,7 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
     vector(dtype, w1).
     """
 
-    implementations = {
-        "pure": ExpandGearbox,
-    }
+    implementations = {"pure": ExpandGearbox}
     default_implementation = "pure"
 
     # Properties

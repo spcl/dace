@@ -42,11 +42,7 @@ class GPUPersistentKernel(SubgraphTransformation):
        the same state outside the subgraph)
     """
 
-    validate = Property(
-        desc="Validate the sdfg and the nested sdfg",
-        dtype=bool,
-        default=False,
-    )
+    validate = Property(desc="Validate the sdfg and the nested sdfg", dtype=bool, default=False)
 
     include_in_assignment = Property(
         desc="Wether to include global variable assignments of the edge going "
@@ -275,11 +271,7 @@ class GPUPersistentKernel(SubgraphTransformation):
             schedule=ScheduleType.GPU_Persistent,
         )
 
-        nested_sdfg = launch_state.add_nested_sdfg(
-            kernel_sdfg,
-            kernel_args_read,
-            kernel_args_write,
-        )
+        nested_sdfg = launch_state.add_nested_sdfg(kernel_sdfg, kernel_args_read, kernel_args_write)
 
         # If no inputs or outputs were given, connect with an empty memlet
         if not kernel_args_read:
@@ -324,12 +316,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     def is_gpu_state(sdfg: SDFG, state: SDFGState) -> bool:
 
         # Valid storrage types
-        gpu_accessible = [
-            StorageType.GPU_Global,
-            StorageType.GPU_Shared,
-            StorageType.CPU_Pinned,
-            StorageType.Register,
-        ]
+        gpu_accessible = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned, StorageType.Register]
 
         for node in state.data_nodes():
             if (

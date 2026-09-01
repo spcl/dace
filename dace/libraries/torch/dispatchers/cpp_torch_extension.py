@@ -592,9 +592,7 @@ def register_and_compile_torch_extension(
     for state in module.sdfg.nodes():
         state.nosync = True
 
-    environments = {
-        PyTorch.full_class_path(),
-    }
+    environments = {PyTorch.full_class_path()}
     if module.backward:
         compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
         compiled_sdfgs = [compiled, compiled_bwd] if compiled_bwd is not None else [compiled]

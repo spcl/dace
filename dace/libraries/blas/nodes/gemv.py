@@ -101,10 +101,7 @@ class ExpandGemvPure(ExpandTransformation):
             state.add_mapped_tasklet(
                 "_Add_",
                 {"__i": "0:{}".format(N)},
-                {
-                    "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
-                    "__tmp": dace.Memlet(f"{mul_out}[__i]"),
-                },
+                {"__y_in": dace.Memlet(f"_y[{memlet_idx}]"), "__tmp": dace.Memlet(f"{mul_out}[__i]")},
                 add_program,
                 {"__y_out": dace.Memlet("_y[__i]")},
                 external_edges=True,

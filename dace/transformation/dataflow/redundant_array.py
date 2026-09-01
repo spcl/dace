@@ -120,10 +120,7 @@ def _validate_subsets(
     return src_subset, dst_subset
 
 
-def find_dims_to_pop(
-    a_size: Sequence[symbolic.SymbolicType],
-    b_size: Sequence[symbolic.SymbolicType],
-) -> List[int]:
+def find_dims_to_pop(a_size: Sequence[symbolic.SymbolicType], b_size: Sequence[symbolic.SymbolicType]) -> List[int]:
     """
     Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
@@ -169,8 +166,7 @@ def find_dims_to_pop(
 
 
 def find_dims_to_pop2(
-    a_size: Sequence[symbolic.SymbolicType],
-    b_size: Sequence[symbolic.SymbolicType],
+    a_size: Sequence[symbolic.SymbolicType], b_size: Sequence[symbolic.SymbolicType]
 ) -> Optional[List[int]]:
     """
     Determine how the first subset has to be squeezed to get to the dimension of the second subset.
@@ -614,11 +610,7 @@ class RedundantArray(pm.SingleStateTransformation):
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
 
-    def _is_reshaping_memlet(
-        self,
-        graph: SDFGState,
-        edge: graph.MultiConnectorEdge,
-    ) -> bool:
+    def _is_reshaping_memlet(self, graph: SDFGState, edge: graph.MultiConnectorEdge) -> bool:
         """Test if Memlet between `input_node` and `output_node` is reshaping.
 
         A "reshaping Memlet" is a Memlet that changes the shape of a data container,

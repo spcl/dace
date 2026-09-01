@@ -1013,12 +1013,7 @@ class UnderapproximateWrites(ppl.Pass):
         if mapped_iteration_variables:
             self.iteration_variables[nsdfg.sdfg] = mapped_iteration_variables
 
-    def _underapproximate_writes_nested_sdfg(
-        self,
-        parent_sdfg: SDFG,
-        parent_state: SDFGState,
-        nsdfg_node: NestedSDFG,
-    ):
+    def _underapproximate_writes_nested_sdfg(self, parent_sdfg: SDFG, parent_state: SDFGState, nsdfg_node: NestedSDFG):
         """
         Propagate writes out of a nested sdfg. Only considers memlets in states that are
         executed unconditionally. The results are stored in the global approximation_dict

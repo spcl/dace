@@ -746,11 +746,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         # Add epsilon to variance
         epsilon_name, _ = nsdfg.add_scalar("epsilon", X_desc.dtype, transient=True)
         epsilon_tasklet = nstate.add_tasklet(
-            "make_epsilon",
-            {},
-            {"out"},
-            f"out = {epsilon};",
-            language=dace.Language.CPP,
+            "make_epsilon", {}, {"out"}, f"out = {epsilon};", language=dace.Language.CPP
         )
         epsilon_write = nstate.add_write(epsilon_name)
         nstate.add_edge(epsilon_tasklet, "out", epsilon_write, None, dace.Memlet(f"{epsilon_name}[0]"))

@@ -38,9 +38,7 @@ class ExpandScatterMPI(ExpandTransformation):
 @library.node
 class Scatter(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandScatterMPI,
-    }
+    implementations = {"MPI": ExpandScatterMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
@@ -124,9 +122,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
 @library.node
 class BlockScatter(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandBlockScatterMPI,
-    }
+    implementations = {"MPI": ExpandBlockScatterMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

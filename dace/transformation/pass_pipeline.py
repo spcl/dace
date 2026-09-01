@@ -365,9 +365,7 @@ class ScopePass(Pass):
     CATEGORY: str = 'Helper'
 
     def apply_pass(
-        self,
-        sdfg: SDFG,
-        pipeline_results: Dict[str, Any],
+        self, sdfg: SDFG, pipeline_results: Dict[str, Any]
     ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
         """
         Applies the pass to the scopes of the given SDFG by calling ``apply`` on each scope entry node.

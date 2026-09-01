@@ -140,10 +140,7 @@ class StreamingMemory(xf.SingleStateTransformation):
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
-        return [
-            sdutil.node_path_graph(cls.access, cls.entry),
-            sdutil.node_path_graph(cls.exit, cls.access),
-        ]
+        return [sdutil.node_path_graph(cls.access, cls.entry), sdutil.node_path_graph(cls.exit, cls.access)]
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         access = self.access
@@ -589,12 +586,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                                 )
 
                 maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule))
-            tasklet = state.add_tasklet(
-                f'{opname}_{mapname}',
-                {m[1] for m in rmemlets},
-                {m[1] for m in wmemlets},
-                code,
-            )
+            tasklet = state.add_tasklet(f'{opname}_{mapname}', {m[1] for m in rmemlets}, {m[1] for m in wmemlets}, code)
             for node, cname, memlet in rmemlets:
                 state.add_memlet_path(node, *(me for me, _ in maps), tasklet, dst_conn=cname, memlet=memlet)
             for node, cname, memlet in wmemlets:

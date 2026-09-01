@@ -572,12 +572,7 @@ with open(r"{temp_path}", "wb") as f:
         if result.returncode != 0:
             raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
 
-    def fast_call(
-        self,
-        callargs: Sequence[Any],
-        initargs: Sequence[Any],
-        do_gpu_check: bool = False,
-    ) -> None:
+    def fast_call(self, callargs: Sequence[Any], initargs: Sequence[Any], do_gpu_check: bool = False) -> None:
         """
         Calls the underlying binary functions directly and bypassing argument sanitation.
 

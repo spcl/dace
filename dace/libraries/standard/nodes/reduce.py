@@ -418,10 +418,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
     environments = [CUDA]
 
-    _SPECIAL_RTYPES = {
-        dtypes.ReductionType.Min_Location: 'ArgMin',
-        dtypes.ReductionType.Max_Location: 'ArgMax',
-    }
+    _SPECIAL_RTYPES = {dtypes.ReductionType.Min_Location: 'ArgMin', dtypes.ReductionType.Max_Location: 'ArgMax'}
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
@@ -685,10 +682,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
     environments = [CUDA]
 
-    _SPECIAL_RTYPES = {
-        dtypes.ReductionType.Min_Location: 'ArgMin',
-        dtypes.ReductionType.Max_Location: 'ArgMax',
-    }
+    _SPECIAL_RTYPES = {dtypes.ReductionType.Min_Location: 'ArgMin', dtypes.ReductionType.Max_Location: 'ArgMax'}
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):

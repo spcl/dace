@@ -24,9 +24,7 @@ except ImportError:
 
 dace.library.register_library(__name__, "autodiff")
 
-__all__ = [
-    "library",
-]
+__all__ = ["library"]
 
 if TORCH_INTEGRATION_AVAILABLE:
     __all__.extend(["torch_integration", "torch_autodiff"])

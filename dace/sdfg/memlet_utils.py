@@ -270,10 +270,7 @@ class MemletDict(Dict[Memlet, T]):
 
 
 def memlet_to_map(
-    edge: MultiConnectorEdge,
-    state: SDFGState,
-    sdfg: SDFG,
-    ignore_strides: bool = True,
+    edge: MultiConnectorEdge, state: SDFGState, sdfg: SDFG, ignore_strides: bool = True
 ) -> Tuple[nodes.MapEntry, nodes.MapExit]:
     """Change a Memlet into a Map.
 
@@ -393,10 +390,7 @@ def memlet_to_map(
 
 
 def can_memlet_be_turned_into_a_map(
-    edge: MultiConnectorEdge,
-    state: SDFGState,
-    sdfg: SDFG,
-    ignore_strides: bool = True,
+    edge: MultiConnectorEdge, state: SDFGState, sdfg: SDFG, ignore_strides: bool = True
 ) -> bool:
     """Check if a Memlet can be turned into a Map.
 

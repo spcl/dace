@@ -84,10 +84,7 @@ class PureConcat(ONNXForward):
             inp_read = nstate.add_read(inp_name(inp_idx))
 
             tasklet = nstate.add_tasklet(
-                f'concat_{inp_idx}',
-                {'inp': inp_data_descs[inp_idx].dtype},
-                {'out': out_data_desc.dtype},
-                "out = inp",
+                f'concat_{inp_idx}', {'inp': inp_data_descs[inp_idx].dtype}, {'out': out_data_desc.dtype}, "out = inp"
             )
 
             map_entry, map_exit = nstate.add_map(
@@ -538,10 +535,7 @@ class PureShape(ONNXForward):
 
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
-        nsdfg.add_datadesc(
-            "data",
-            copy.deepcopy(data_desc),
-        )
+        nsdfg.add_datadesc("data", copy.deepcopy(data_desc))
         nsdfg.arrays["data"].transient = False
         nsdfg.add_array("shape", shape_val.shape, dtype=dace.int64)
         s = nstate.add_write("shape")
@@ -610,10 +604,7 @@ class PureGather(ONNXForward):
         tasklet, me, mx = nstate.add_mapped_tasklet(
             node.label + "_tasklet",
             map_ranges=map_ranges,
-            inputs={
-                "__data": dace.Memlet(data_memlet_str),
-                "idx": dace.Memlet(indices_idx_str),
-            },
+            inputs={"__data": dace.Memlet(data_memlet_str), "idx": dace.Memlet(indices_idx_str)},
             code=f"__output = __data[idx]",
             outputs={"__output": dace.Memlet(output_idx_str)},
             external_edges=True,

@@ -141,12 +141,7 @@ class Node(object):
         self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(
-        self,
-        connector_name: str,
-        dtype: Any = None,
-        force: bool = False,
-    ) -> bool:
+    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False) -> bool:
         """Adds a new output connector to the node. The operation will fail if
         a connector (either input or output) with the same name already
         exists in the node.
@@ -165,10 +160,7 @@ class Node(object):
         return True
 
     def _add_scope_connectors(
-        self,
-        connector_name: str,
-        dtype: Optional[dtypes.typeclass] = None,
-        force: bool = False,
+        self, connector_name: str, dtype: Optional[dtypes.typeclass] = None, force: bool = False
     ) -> None:
         """Adds input and output connector names to `self` in one step.
 
@@ -189,16 +181,8 @@ class Node(object):
             if out_connector_name in self.in_connectors or out_connector_name in self.out_connectors:
                 return False
         # We force unconditionally because we have performed the tests above.
-        self.add_in_connector(
-            connector_name=in_connector_name,
-            dtype=dtype,
-            force=True,
-        )
-        self.add_out_connector(
-            connector_name=out_connector_name,
-            dtype=dtype,
-            force=True,
-        )
+        self.add_in_connector(connector_name=in_connector_name, dtype=dtype, force=True)
+        self.add_out_connector(connector_name=out_connector_name, dtype=dtype, force=True)
         return True
 
     def remove_in_connector(self, connector_name: str):

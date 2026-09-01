@@ -177,11 +177,7 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
     try:
         # Use static method API
         model = SymbolicShapeInference.infer_shapes(
-            model,
-            int_max=2**31 - 1,
-            auto_merge=auto_merge,
-            guess_output_rank=False,
-            verbose=0,
+            model, int_max=2**31 - 1, auto_merge=auto_merge, guess_output_rank=False, verbose=0
         )
 
         # Check if shape inference completed successfully for all value_infos

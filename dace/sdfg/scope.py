@@ -258,12 +258,7 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', nod
     :param node: The node in question
     :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(
-        sdfg,
-        state,
-        node,
-        dtypes.GPU_SCHEDULES,
-    )
+    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
 
 
 def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:

@@ -37,31 +37,16 @@ class FNode(object):
 
 class Program_Node(FNode):
     _attributes = ()
-    _fields = (
-        "main_program",
-        "function_definitions",
-        "subroutine_definitions",
-        "modules",
-    )
+    _fields = ("main_program", "function_definitions", "subroutine_definitions", "modules")
 
 
 class BinOp_Node(FNode):
-    _attributes = (
-        'op',
-        'type',
-    )
-    _fields = (
-        'lval',
-        'rval',
-    )
+    _attributes = ('op', 'type')
+    _fields = ('lval', 'rval')
 
 
 class UnOp_Node(FNode):
-    _attributes = (
-        'op',
-        'postfix',
-        'type',
-    )
+    _attributes = ('op', 'postfix', 'type')
     _fields = ('lval',)
 
 
@@ -72,29 +57,17 @@ class Main_Program_Node(FNode):
 
 class Module_Node(FNode):
     _attributes = ('name',)
-    _fields = (
-        'specification_part',
-        'subroutine_definitions',
-        'function_definitions',
-    )
+    _fields = ('specification_part', 'subroutine_definitions', 'function_definitions')
 
 
 class Function_Subprogram_Node(FNode):
     _attributes = ('name', 'type', 'ret_name')
-    _fields = (
-        'args',
-        'specification_part',
-        'execution_part',
-    )
+    _fields = ('args', 'specification_part', 'execution_part')
 
 
 class Subroutine_Subprogram_Node(FNode):
     _attributes = ('name', 'type')
-    _fields = (
-        'args',
-        'specification_part',
-        'execution_part',
-    )
+    _fields = ('args', 'specification_part', 'execution_part')
 
 
 class Module_Stmt_Node(FNode):
@@ -146,18 +119,12 @@ class Statement_Node(FNode):
 
 
 class Array_Subscript_Node(FNode):
-    _attributes = (
-        'name',
-        'type',
-    )
+    _attributes = ('name', 'type')
     _fields = ('indices',)
 
 
 class Type_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-    )
+    _attributes = ('name', 'type')
     _fields = ()
 
 
@@ -182,44 +149,18 @@ class Allocate_Stmt_Node(FNode):
 
 
 class Symbol_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-    )
-    _fields = (
-        'sizes',
-        'typeref',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc')
+    _fields = ('sizes', 'typeref', 'init')
 
 
 class Symbol_Array_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-    )
-    _fields = (
-        'sizes',
-        'offsetstyperef',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc')
+    _fields = ('sizes', 'offsetstyperef', 'init')
 
 
 class Var_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-        'kind',
-    )
-    _fields = (
-        'sizes',
-        'offsets',
-        'typeref',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc', 'kind')
+    _fields = ('sizes', 'offsets', 'typeref', 'init')
 
 
 class Arg_List_Node(FNode):
@@ -275,10 +216,7 @@ class Char_Literal_Node(Literal):
 
 class Call_Expr_Node(FNode):
     _attributes = ('type', 'subroutine')
-    _fields = (
-        'name',
-        'args',
-    )
+    _fields = ('name', 'args')
 
 
 class Array_Constructor_Node(FNode):
@@ -297,31 +235,17 @@ class Section_Subscript_List_Node(FNode):
 
 class For_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'body',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'body', 'iter')
 
 
 class Map_Stmt_Node(For_Stmt_Node):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'body',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'body', 'iter')
 
 
 class If_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'cond',
-        'body',
-        'body_else',
-    )
+    _fields = ('cond', 'body', 'body_else')
 
 
 class Else_Separator_Node(FNode):
@@ -336,20 +260,12 @@ class Parenthesis_Expr_Node(FNode):
 
 class Nonlabel_Do_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'iter')
 
 
 class Loop_Control_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'iter')
 
 
 class Else_If_Stmt_Node(FNode):

@@ -171,11 +171,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                     and src_conn[:4] == 'OUT_'
                     and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
                 ):
-                    new_subset = calc_set_image(
-                        map_entry.map.params,
-                        map_entry.map.range,
-                        memlet.subset,
-                    )
+                    new_subset = calc_set_image(map_entry.map.params, map_entry.map.range, memlet.subset)
                     conn = src_conn[4:]
                     key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                     if key in new_in_edges.keys():
@@ -219,11 +215,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                     and dst_conn[:3] == 'IN_'
                     and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
                 ):
-                    new_subset = calc_set_image(
-                        map_entry.map.params,
-                        map_entry.map.range,
-                        memlet.subset,
-                    )
+                    new_subset = calc_set_image(map_entry.map.params, map_entry.map.range, memlet.subset)
                     conn = dst_conn[3:]
                     key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                     if key in new_out_edges.keys():

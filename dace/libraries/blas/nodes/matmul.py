@@ -270,9 +270,7 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     GEMV, and DOT."""
 
     # Global properties
-    implementations = {
-        "specialize": SpecializeMatMul,
-    }
+    implementations = {"specialize": SpecializeMatMul}
     default_implementation = "specialize"
 
     alpha = properties.Property(

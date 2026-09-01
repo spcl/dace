@@ -592,9 +592,7 @@ def nest_state_subgraph(
 
 
 def state_fission(
-    subgraph: graph.SubgraphView,
-    label: Optional[str] = None,
-    allow_isolated_nodes: bool = True,
+    subgraph: graph.SubgraphView, label: Optional[str] = None, allow_isolated_nodes: bool = True
 ) -> SDFGState:
     """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
@@ -796,9 +794,7 @@ def state_fission(
 
 
 def isolate_nested_sdfg(
-    state: SDFGState,
-    nsdfg_node: nodes.NestedSDFG,
-    test_if_applicable: bool = False,
+    state: SDFGState, nsdfg_node: nodes.NestedSDFG, test_if_applicable: bool = False
 ) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
     """Isolate the nested SDFG.
 
@@ -927,11 +923,7 @@ def isolate_nested_sdfg(
             if old_src in pre_nodes:
                 new_src = pre_old_to_new_map[old_src]
                 pre_state.add_edge(
-                    new_src,
-                    old_iedge.src_conn,
-                    new_dst,
-                    old_iedge.dst_conn,
-                    copy.deepcopy(old_iedge.data),
+                    new_src, old_iedge.src_conn, new_dst, old_iedge.dst_conn, copy.deepcopy(old_iedge.data)
                 )
 
     # Now we will populate the post state.
@@ -950,11 +942,7 @@ def isolate_nested_sdfg(
             if old_dst in post_nodes:
                 new_dst = post_old_to_new_map[old_dst]
                 post_state.add_edge(
-                    new_src,
-                    old_oedge.src_conn,
-                    new_dst,
-                    old_oedge.dst_conn,
-                    copy.deepcopy(old_oedge.data),
+                    new_src, old_oedge.src_conn, new_dst, old_oedge.dst_conn, copy.deepcopy(old_oedge.data)
                 )
 
     # Remove all nodes from the middle state that are not classified as middle nodes,
@@ -1978,11 +1966,7 @@ def modified_symbols_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Se
     return result
 
 
-def replace_sdfg_dtypes(
-    sdfg: SDFG,
-    from_type: typeclass,
-    to_type: typeclass,
-) -> int:
+def replace_sdfg_dtypes(sdfg: SDFG, from_type: typeclass, to_type: typeclass) -> int:
     """
     Iterate over an SDFG and replace all instances of simple data types
     like float64 with another data type.

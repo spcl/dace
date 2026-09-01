@@ -56,9 +56,7 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
 @dace.library.node
 class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {
-        "MKL": ExpandBlockCyclicScatterMKL,
-    }
+    implementations = {"MKL": ExpandBlockCyclicScatterMKL}
     default_implementation = "MKL"
 
     def __init__(self, name, *args, **kwargs):
@@ -148,9 +146,7 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
 @dace.library.node
 class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {
-        "MKL": ExpandBlockCyclicGatherMKL,
-    }
+    implementations = {"MKL": ExpandBlockCyclicGatherMKL}
     default_implementation = "MKL"
 
     def __init__(self, name, *args, **kwargs):

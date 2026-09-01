@@ -74,9 +74,7 @@ class ExpandIsendMPI(ExpandTransformation):
 @dace.library.node
 class Isend(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandIsendMPI,
-    }
+    implementations = {"MPI": ExpandIsendMPI}
     default_implementation = "MPI"
 
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")

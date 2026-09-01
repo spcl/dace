@@ -307,9 +307,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         conditional_block = ConditionalBlock(f"if_scope_{id(node)}")
         cf_region.add_node(conditional_block)
         _insert_and_split_assignments(
-            before_state,
-            conditional_block,
-            assignments=self._pending_interstate_assignments(),
+            before_state, conditional_block, assignments=self._pending_interstate_assignments()
         )
 
         if_body = ControlFlowRegion("if_body", sdfg=sdfg)
@@ -328,9 +326,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # add merge_state
         merge_state = _insert_and_split_assignments(
-            conditional_block,
-            label="merge_state",
-            assignments=self._pending_interstate_assignments(),
+            conditional_block, label="merge_state", assignments=self._pending_interstate_assignments()
         )
 
         # Check if there's an `ElseScope` following this node (in the parent's children).
@@ -409,9 +405,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
-            sdfg=inner_sdfg,
-            inputs=connectors["inputs"],
-            outputs=connectors["outputs"],
+            sdfg=inner_sdfg, inputs=connectors["inputs"], outputs=connectors["outputs"]
         )
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
@@ -845,11 +839,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # When creating a state boundary, include all inter-state assignments that precede it.
         pending = self._pending_interstate_assignments()
 
-        self._current_state = _create_state_boundary(
-            node,
-            self._current_state,
-            assignments=pending,
-        )
+        self._current_state = _create_state_boundary(node, self._current_state, assignments=pending)
 
     def _pending_interstate_assignments(self) -> dict[str, str]:
         """
@@ -1047,9 +1037,7 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 
 
 def _create_state_boundary(
-    boundary_node: tn.StateBoundaryNode,
-    state: SDFGState,
-    assignments: dict[str, str] | None = None,
+    boundary_node: tn.StateBoundaryNode, state: SDFGState, assignments: dict[str, str] | None = None
 ) -> SDFGState:
     """
     Creates a boundary between two states

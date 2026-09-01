@@ -249,12 +249,8 @@ class PureDropout(ONNXForward):
         """
 
         # Create tasklet inputs and outputs
-        tasklet_inputs = {
-            "__data": dace.pointer(data.dtype),
-        }
-        tasklet_outputs = {
-            "__output": dace.pointer(output.dtype),
-        }
+        tasklet_inputs = {"__data": dace.pointer(data.dtype)}
+        tasklet_outputs = {"__output": dace.pointer(output.dtype)}
 
         if has_ratio_input:
             tasklet_inputs["__ratio"] = ratio_desc.dtype

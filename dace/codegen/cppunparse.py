@@ -818,10 +818,7 @@ class CPPUnparser:
         # interleave(lambda: self.write(", "), write_pair, zip(t.keys, t.values))
         # self.write("}")
 
-    def _Tuple(
-        self,
-        t,
-    ):
+    def _Tuple(self, t):
         self.write("std::make_tuple(")
         if len(t.elts) == 1:
             (elt,) = t.elts
@@ -983,10 +980,7 @@ class CPPUnparser:
         "Ge": ast.GtE,
         "GtE": ast.GtE,
     }
-    callbools = {
-        "And": ast.And,
-        "Or": ast.Or,
-    }
+    callbools = {"And": ast.And, "Or": ast.Or}
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions

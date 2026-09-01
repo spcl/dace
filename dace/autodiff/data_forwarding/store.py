@@ -184,12 +184,7 @@ def _store_data(
             # We want to build the memlet as if this was not in a a loop
             nb_enclosing_loops = 0
 
-    forward_state.sdfg.add_array(
-        name=new_store_node_name,
-        shape=shape,
-        dtype=original_desc.dtype,
-        transient=True,
-    )
+    forward_state.sdfg.add_array(name=new_store_node_name, shape=shape, dtype=original_desc.dtype, transient=True)
     new_store_node = forward_state.add_access(new_store_node_name)
 
     # Connect the edge source and connector to the new access node

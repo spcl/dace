@@ -288,10 +288,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             # At this point we are leading to an access node again and can
             # traverse further up
 
-    def isolate_tasklet(
-        self,
-        state: SDFGState,
-    ) -> SDFGState:
+    def isolate_tasklet(self, state: SDFGState) -> SDFGState:
         tlet: nodes.Tasklet = self.tasklet
         newstate = state.parent_graph.add_state_after(state)
 

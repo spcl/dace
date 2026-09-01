@@ -19,11 +19,7 @@ class TransientReuse(ppl.Pass):
 
     CATEGORY: str = 'Memory Footprint Reduction'
 
-    verbose = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Print information about the memory reduction.",
-    )
+    verbose = properties.Property(dtype=bool, default=False, desc="Print information about the memory reduction.")
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes

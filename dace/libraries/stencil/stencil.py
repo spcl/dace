@@ -44,9 +44,7 @@ class Stencil(dace.library.LibraryNode):
     This will use iterators _i0 and _i2 for accessing b.
     """
 
-    implementations = {
-        "pure": ExpandStencilCPU,
-    }
+    implementations = {"pure": ExpandStencilCPU}
     default_implementation = "pure"
 
     code = dace.properties.CodeProperty(

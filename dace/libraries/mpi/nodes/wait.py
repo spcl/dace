@@ -38,9 +38,7 @@ class ExpandWaitMPI(ExpandTransformation):
 @dace.library.node
 class Wait(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandWaitMPI,
-    }
+    implementations = {"MPI": ExpandWaitMPI}
     default_implementation = "MPI"
 
     # Object fields
@@ -106,9 +104,7 @@ class ExpandWaitallMPI(ExpandTransformation):
 @dace.library.node
 class Waitall(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandWaitallMPI,
-    }
+    implementations = {"MPI": ExpandWaitallMPI}
     default_implementation = "MPI"
 
     # Object fields

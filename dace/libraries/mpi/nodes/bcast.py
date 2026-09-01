@@ -67,9 +67,7 @@ class ExpandBcastMPI(ExpandTransformation):
 @dace.library.node
 class Bcast(MPINode):
     # Global properties
-    implementations = {
-        "MPI": ExpandBcastMPI,
-    }
+    implementations = {"MPI": ExpandBcastMPI}
     default_implementation = "MPI"
 
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
