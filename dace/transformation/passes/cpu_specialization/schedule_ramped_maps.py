@@ -36,6 +36,8 @@ the FINAL map shapes, and it is a target decision, not a canonical one -- a GPU 
 """
 from typing import Any, Dict, List, Optional, Set
 
+import sympy
+
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
@@ -78,15 +80,66 @@ def nested_names_for(nsdfg: nodes.NestedSDFG, outer: Set[str]) -> Set[str]:
     return {inner for inner, outer_expr in nsdfg.symbol_mapping.items() if outer_names_in(outer_expr, outer)}
 
 
-def loop_trip_ramps(loop: LoopRegion, names: Set[str]) -> bool:
-    """``True`` iff this loop's trip count depends on ``names``.
+def clamp_branches(expr, depth: int = 4) -> List[Any]:
+    """Every expression obtainable by resolving each ``Min`` / ``Max`` to one of its arguments.
 
-    Start, end and stride are all read: ``for j in range(i, N)`` ramps through its START, and
-    ``for j in range(0, N - i)`` through its END.
+    ``depth`` bounds the expansion; nested clamps are shallow in practice and the cap only stops a
+    pathological blow-up. Each branch is simplified, which is what collapses ``c + 4095 - c``.
     """
-    return any(
-        outer_names_in(part, names) for part in (loop_analysis.get_init_assignment(loop),
-                                                 loop_analysis.get_loop_end(loop), loop_analysis.get_loop_stride(loop)))
+    out = [expr]
+    for _ in range(depth):
+        grown, changed = [], False
+        for candidate in out:
+            clamp = next(iter(candidate.atoms(sympy.Min, sympy.Max)), None)
+            if clamp is None:
+                grown.append(candidate)
+                continue
+            grown.extend(candidate.subs(clamp, arg) for arg in clamp.args)
+            changed = True
+        out = grown
+        if not changed:
+            break
+    return [symbolic.simplify(b) for b in out]
+
+
+def capped_by_a_constant(expr) -> bool:
+    """``True`` iff some branch of ``expr`` is a compile-time number, which caps the whole thing.
+
+    ``Min(a, b) <= a`` and ``<= b``, so a branch with no free symbols bounds the expression by a
+    constant however the clamp resolves. That is what separates two shapes which look identical
+    until the arithmetic is done:
+
+    * ``ChunkAntiDependence`` rewrites a flat loop into a chunk loop running
+      ``[c, Min(N - 2, c + 4095))``. Both bounds mention the chunk index, and so does the trip count
+      -- but its branches are ``N - 2 - c`` and ``4095``. Bounded by 4095: every chunk does the same
+      work, and there is no imbalance to schedule around. A TRANSLATION of a fixed window, not a ramp.
+    * ``s1232``'s interchanged inner extent is ``Min(LEN_2D - 1, int_floor(j, VLEN))``: branches
+      ``LEN_2D - 1`` and ``int_floor(j, VLEN)``, neither a number. The cap is SYMBOLIC, so the ramp
+      spans a symbolic range and the imbalance grows with the problem.
+
+    Reading the bounds instead of the trip count called seven flat anti-dependence kernels
+    triangular; demanding EVERY branch mention the parameter then threw away ``s1232``, which is
+    real and measured 2.0x. The constant cap is what actually distinguishes them.
+    """
+    return any(not branch.free_symbols for branch in clamp_branches(expr))
+
+
+def trip_ramps(trip, names: Set[str]) -> bool:
+    """``True`` iff ``trip`` grows with ``names`` and is not held under a compile-time constant."""
+    return outer_names_in(trip, names) and not capped_by_a_constant(trip)
+
+
+def loop_trip_ramps(loop: LoopRegion, names: Set[str]) -> bool:
+    """``True`` iff this loop's TRIP COUNT ramps -- the trip count, never the bounds."""
+    start_expr = loop_analysis.get_init_assignment(loop)
+    end_expr = loop_analysis.get_loop_end(loop)
+    if start_expr is None or end_expr is None:
+        return False
+    try:
+        trip = symbolic.simplify(symbolic.pystr_to_symbolic(end_expr) - symbolic.pystr_to_symbolic(start_expr))
+    except Exception:  # noqa: BLE001 -- an unreadable trip count proves nothing
+        return False
+    return trip_ramps(trip, names)
 
 
 def work_ramps_with_parameter(state: SDFGState, entry: nodes.MapEntry) -> bool:
@@ -105,8 +158,10 @@ def work_ramps_with_parameter(state: SDFGState, entry: nodes.MapEntry) -> bool:
     outer = set(entry.map.params)
     for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
         if isinstance(node, nodes.MapEntry):
-            if any(outer_names_in(part, outer) for rng in node.map.range.ndrange() for part in rng):
-                return True
+            for lo, hi, _step in node.map.range.ndrange():
+                extent = symbolic.simplify(symbolic.pystr_to_symbolic(hi) - symbolic.pystr_to_symbolic(lo))
+                if trip_ramps(extent, outer):
+                    return True
         elif isinstance(node, nodes.NestedSDFG):
             names = nested_names_for(node, outer)
             if not names:
