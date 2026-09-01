@@ -102,9 +102,11 @@ jobs:
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
-        # Single-threaded: the reference and the rendering are compared at machine precision, and a
-        # parallel reduction reorders floating-point accumulation run to run.
-        export OMP_NUM_THREADS=1
+        # Multithreaded on purpose: a numerical-accuracy comparison run on one thread grades a
+        # build nobody ships, and would miss a rendering that only diverges once its maps are
+        # split across threads. The reassociated reductions that costs are absorbed by the
+        # test's fp64 tolerance, not by pinning the thread count.
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         export DACE_compiler_cpu_implementation=experimental_readable
