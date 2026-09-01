@@ -113,6 +113,9 @@ class LoopToMap(xf.MultiStateTransformation):
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         for block in in_order_loop_blocks:
+            # ``read_symbols()`` below sees only interstate-edge reads, but a symbol read in the
+            # block's own dataflow (``b[im]``) is read before assignment too, hence loop-carried.
+            used_before_assignment |= ({str(s) for s in block.free_symbols} - symbols_that_may_be_used)
             for e in block.parent_graph.out_edges(block):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `blockorder_topological_sort`)
