@@ -704,6 +704,59 @@ def test_create_nested_map_scope() -> None:
     sdfg.validate()
 
 
+def test_read_after_write_nested_SDFG() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float32, [60], transient=True),
+            'B': data.Array(dace.float32, [60]),
+        },
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_A", "i", sbs.Range.from_string("0:60"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("fill", {}, {"out"}, "out = 42.42"), {}, {"out": dace.Memlet("A[i]")})
+                ],
+            ),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:2"))),
+                children=[
+                    tn.IfScope(
+                        condition=CodeBlock("B[0] < 0"),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 0"), {},
+                                           {"out": dace.Memlet("B[0]")})
+                        ],
+                    ),
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:10"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1.0"), {},
+                                           {"out": dace.Memlet("A[i*15+j*3]")})
+                        ],
+                    ),
+                    tn.MapScope(node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("10:20"))),
+                                children=[
+                                    tn.TaskletNode(nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
+                                                   {"read": dace.Memlet("A[k]")}, {"out": dace.Memlet("B[k]")})
+                                ])
+                ],
+            ),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(validate=True)
+
+    # Make sure we keep the initialization of A = 42.42
+    assert len(
+        list(
+            filter(lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
+                   [node for node, _ in sdfg.all_nodes_recursive()]))) == 1
+    # Ensure that A isn't transient in the nested SDFG
+    nested_sdfg = list(filter(lambda node: node.label == "nested_sdfg", sdfg.sdfg_list))[0]
+    assert not nested_sdfg.arrays["A"].transient
+
+
 def test_double_map_with_for_loop() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
