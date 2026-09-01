@@ -91,12 +91,17 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
 
             # Other cases (code->code)
             if src_data is None and dst_data is None:
-                if e.data.data in input_mapping:
-                    memlet = align_memlet(state, e, False)
-                    memlet.data = input_mapping[e.data.data].data
-                elif e.data.data in output_mapping:
-                    memlet = align_memlet(state, e, True)
-                    memlet.data = output_mapping[e.data.data].data
+                if e.data.data in input_mapping or e.data.data in output_mapping:
+                    mapping = input_mapping if e.data.data in input_mapping else output_mapping
+                    # ``align_memlet``'s ``dst`` argument picks which end of the edge the memlet
+                    # should describe. That is a property of where the container sits on this edge,
+                    # not of which connector list its name belongs to: an output connector of the
+                    # nested SDFG can be read inside, in which case it is this edge's source, and
+                    # aligning it to the destination swaps the two subsets.
+                    aligns_to_dst = not (isinstance(mpath[0].src, dace.nodes.AccessNode)
+                                         and mpath[0].src.data == e.data.data)
+                    memlet = align_memlet(state, e, aligns_to_dst)
+                    memlet.data = mapping[e.data.data].data
                 e.data = memlet
             else:
                 if src_memlet is not None:

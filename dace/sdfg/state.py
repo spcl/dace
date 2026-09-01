@@ -61,6 +61,25 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
     return None
 
 
+def _symbols_reassigned_within(sdfg: SDFG) -> Set[str]:
+    """
+    Collects the symbols that an SDFG assigns to somewhere inside itself.
+
+    These are the symbols whose value within the SDFG is governed by its own control flow --
+    interstate-edge assignments and the symbols that control flow regions define, such as loop
+    variables -- rather than by whatever a parent maps them to.
+
+    :param sdfg: The SDFG to inspect.
+    :return: The set of symbol names assigned within ``sdfg``.
+    """
+    result: Set[str] = set()
+    for edge in sdfg.all_interstate_edges():
+        result.update(edge.data.assignments.keys())
+    for region in sdfg.all_control_flow_regions():
+        result.update(region.new_symbols(sdfg.symbols).keys())
+    return result
+
+
 def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
@@ -1815,8 +1834,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             if symbol_mapping:
                 from dace.sdfg import dealias  # Avoid circular import
                 used = sdfg.free_symbols
-                applied_mapping = {k: v for k, v in symbol_mapping.items() if k in used}
-                retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in used}
+                # A symbol that the nested SDFG reassigns cannot be substituted by an expression:
+                # the replacement would rewrite the assignment's target as well, leaving an
+                # expression where a name has to be, and would also apply to the uses that the
+                # reassignment -- not the mapping -- governs. Such entries stay on the mapping.
+                reassigned = _symbols_reassigned_within(sdfg)
+                applied_mapping = {
+                    k: v
+                    for k, v in symbol_mapping.items()
+                    if k in used and not (k in reassigned and not dtypes.validate_name(str(v)))
+                }
+                retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in applied_mapping}
 
                 if applied_mapping:
                     dealias.remove_symbol_aliases(sdfg, applied_mapping)
