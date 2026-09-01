@@ -17,6 +17,7 @@ Three loop shapes are recognised (``identity=None`` on the emitted
 Accumulator forms accepted: a ``Scalar``, a length-1 ``Array``, a single
 loop-invariant slice of a multi-element ``Array`` (``C[k]``).
 """
+
 import ast
 import copy as _copy
 from typing import Dict, NamedTuple, Optional
@@ -40,14 +41,8 @@ _BINOP_TO_WCR: Dict[type, str] = {
     ast.BitOr: "lambda a, b: a | b",
     ast.BitXor: "lambda a, b: a ^ b",
 }
-_BOOLOP_TO_WCR: Dict[type, str] = {
-    ast.Or: "lambda a, b: a | b",
-    ast.And: "lambda a, b: a & b",
-}
-_CALL_TO_WCR: Dict[str, str] = {
-    "max": "lambda a, b: max(a, b)",
-    "min": "lambda a, b: min(a, b)",
-}
+_BOOLOP_TO_WCR: Dict[type, str] = {ast.Or: "lambda a, b: a | b", ast.And: "lambda a, b: a & b"}
+_CALL_TO_WCR: Dict[str, str] = {"max": "lambda a, b: max(a, b)", "min": "lambda a, b: min(a, b)"}
 # For a guard `lhs <cmp> rhs` where the assignment inside writes `sym = arr[i]`,
 # the reduction is max iff the condition fires when arr is larger than sym.
 _CMP_GT = (ast.Gt, ast.GtE)
@@ -159,7 +154,7 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
         return isinstance(n, ast.Name) and n.id == target
 
     def _is_array(n):
-        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == array)
+        return isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == array
 
     left, right = tree.left, tree.comparators[0]
     if _is_target(left) and _is_array(right):
@@ -173,8 +168,9 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start,
-                         end) -> Optional["_Reduction"]:
+def _extract_any_pattern(
+    cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end
+) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-interstate-edge "any"/"all".
 
     Body = ``ConditionalBlock`` with one branch, guard ``arr[<subs>] <cmp> C``
@@ -203,7 +199,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     left, right = tree.left, tree.comparators[0]
 
     def _is_subscript_on_array(n):
-        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id in sdfg.arrays)
+        return isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id in sdfg.arrays
 
     def _is_int_const(n):
         return isinstance(n, ast.Constant) and isinstance(n.value, int)
@@ -252,11 +248,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
         else:
             ranges.append((a, a, 1))
     return _Reduction(
-        wcr=wcr,
-        accum=target,
-        accum_subset=subsets.Range([(0, 0, 1)]),
-        array=array,
-        array_subset=subsets.Range(ranges),
+        wcr=wcr, accum=target, accum_subset=subsets.Range([(0, 0, 1)]), array=array, array_subset=subsets.Range(ranges)
     )
 
 
@@ -301,7 +293,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             wcr = _BINOP_TO_WCR.get(type(rhs.op))
         elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
             wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
-        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
+        elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
             wcr = _CALL_TO_WCR.get(rhs.func.id)
         else:
             wcr = None
@@ -338,8 +330,12 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 return None
             if desc.transient and len(state.in_edges(src)) == 1 and len(state.out_edges(src)) == 1:
                 pred = state.in_edges(src)[0]
-                if (not isinstance(pred.src, nodes.AccessNode) or pred.data is None or pred.data.subset is None
-                        or _one_elem(e.data.subset) != _one_elem(pred.data.subset)):
+                if (
+                    not isinstance(pred.src, nodes.AccessNode)
+                    or pred.data is None
+                    or pred.data.subset is None
+                    or _one_elem(e.data.subset) != _one_elem(pred.data.subset)
+                ):
                     return None
                 resolved.append((pred.src.data, _copy.deepcopy(pred.data.subset)))
             else:
@@ -352,8 +348,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif _one_elem(sub) == 1 and ((name == accum and sub == write_subset) or
-                                          (name != accum and _scalar_equiv(sdfg, name, accum))):
+            elif _one_elem(sub) == 1 and (
+                (name == accum and sub == write_subset) or (name != accum and _scalar_equiv(sdfg, name, accum))
+            ):
                 accum_ok = True
         if not accum_ok or array is None or array == accum:
             return None
@@ -384,13 +381,13 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         edges = body.edges()
         if len(edges) != 1:
             return None
-        (edge, ) = edges
+        (edge,) = edges
         if {edge.src, edge.dst} != {s1, s2}:
             return None
         assignments = edge.data.assignments or {}
         if len(assignments) != 1:
             return None
-        ((target, expr_str), ) = assignments.items()
+        ((target, expr_str),) = assignments.items()
         # Interstate-edge assignment targets are always DaCe symbols.
         if target not in sdfg.symbols:
             return None
@@ -467,6 +464,7 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     descriptor we write to it directly; if it's a symbol we synthesize a
     transient scalar, seed it from the symbol, and assign back on exit."""
     import dace
+
     root = parent
     while not isinstance(root, SDFG):
         root = root.parent_graph
@@ -481,16 +479,20 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
         entry = red_state
         dest_name, dest_subset = info.accum, info.accum_subset
     else:
-        tmp_name, _ = root.add_scalar(f"_red_tmp_{info.accum}",
-                                      dtype=root.symbols[info.accum],
-                                      transient=True,
-                                      find_new_name=True)
+        tmp_name, _ = root.add_scalar(
+            f"_red_tmp_{info.accum}", dtype=root.symbols[info.accum], transient=True, find_new_name=True
+        )
         init_state = parent.add_state(loop.label + "_init", is_start_block=was_start)
         red_state = parent.add_state(loop.label + "_reduce")
         parent.add_edge(init_state, red_state, dace.InterstateEdge())
         seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
-        init_state.add_edge(seed, "_out", init_state.add_write(tmp_name), None,
-                            mm.Memlet(data=tmp_name, subset=subsets.Range([(0, 0, 1)])))
+        init_state.add_edge(
+            seed,
+            "_out",
+            init_state.add_write(tmp_name),
+            None,
+            mm.Memlet(data=tmp_name, subset=subsets.Range([(0, 0, 1)])),
+        )
         entry = init_state
         dest_name = tmp_name
         dest_subset = subsets.Range([(0, 0, 1)])

@@ -29,8 +29,15 @@ def softmax(x: dc.float32[N1, N2]):
 
 # 3-layer MLP
 @dc.program
-def mlp_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.float32[S0], w2: dc.float32[S0, S1],
-               b2: dc.float32[S1], w3: dc.float32[S1, S2], b3: dc.float32[S2]):
+def mlp_kernel(
+    input: dc.float32[N, C_in],
+    w1: dc.float32[C_in, S0],
+    b1: dc.float32[S0],
+    w2: dc.float32[S0, S1],
+    b2: dc.float32[S1],
+    w3: dc.float32[S1, S2],
+    b3: dc.float32[S2],
+):
     x1 = relu(input @ w1 + b1)
     x2 = relu(x1 @ w2 + b2)
     x3 = softmax(x2 @ w3 + b3)  # Softmax call can be omitted if necessary
@@ -39,6 +46,7 @@ def mlp_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.floa
 
 def initialize(C_in, N, S0, S1, S2):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     mlp_sizes = [S0, S1, S2]  # [300, 100, 10]
@@ -46,11 +54,11 @@ def initialize(C_in, N, S0, S1, S2):
     input = rng.random((N, C_in), dtype=np.float32)
     # Weights
     w1 = rng.random((C_in, mlp_sizes[0]), dtype=np.float32)
-    b1 = rng.random((mlp_sizes[0], ), dtype=np.float32)
+    b1 = rng.random((mlp_sizes[0],), dtype=np.float32)
     w2 = rng.random((mlp_sizes[0], mlp_sizes[1]), dtype=np.float32)
-    b2 = rng.random((mlp_sizes[1], ), dtype=np.float32)
+    b2 = rng.random((mlp_sizes[1],), dtype=np.float32)
     w3 = rng.random((mlp_sizes[1], mlp_sizes[2]), dtype=np.float32)
-    b3 = rng.random((mlp_sizes[2], ), dtype=np.float32)
+    b3 = rng.random((mlp_sizes[2],), dtype=np.float32)
 
     return input, w1, b1, w2, b2, w3, b3
 
@@ -126,12 +134,19 @@ def run_mlp_autodiff():
 
     # Initialize gradient computation data
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.float32[S0],
-                        w2: dc.float32[S0, S1], b2: dc.float32[S1], w3: dc.float32[S1, S2], b3: dc.float32[S2]):
+    def autodiff_kernel(
+        input: dc.float32[N, C_in],
+        w1: dc.float32[C_in, S0],
+        b1: dc.float32[S0],
+        w2: dc.float32[S0, S1],
+        b2: dc.float32[S1],
+        w3: dc.float32[S1, S2],
+        b3: dc.float32[S2],
+    ):
         x1 = relu(input @ w1 + b1)
         x2 = relu(x1 @ w2 + b2)
         x3 = softmax(x2 @ w3 + b3)
@@ -141,20 +156,22 @@ def run_mlp_autodiff():
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
-    sdfg(input,
-         w1,
-         b1,
-         w2,
-         b2,
-         w3,
-         b3,
-         N=N,
-         S0=S0,
-         S1=S1,
-         S2=S2,
-         C_in=C_in,
-         gradient_input=gradient_input,
-         gradient___return=gradient___return)
+    sdfg(
+        input,
+        w1,
+        b1,
+        w2,
+        b2,
+        w3,
+        b3,
+        N=N,
+        S0=S0,
+        S1=S1,
+        S2=S2,
+        C_in=C_in,
+        gradient_input=gradient_input,
+        gradient___return=gradient___return,
+    )
 
     # Numerically validate vs JAX
     jax_kernel = lambda input, w1, b1, w2, b2, w3, b3: mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3)
@@ -179,7 +196,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

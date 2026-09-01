@@ -26,6 +26,7 @@ class UnsupportedScopeException(Exception):
 @dataclass
 class ScheduleTreeNode:
     """Base class for nodes in the schedule tree."""
+
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0) -> str:
@@ -70,6 +71,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
 
     Each scope holds a list of children and a reference to the parent.
     """
+
     children: list[ScheduleTreeNode]
 
     def __init__(self, *, children: list[ScheduleTreeNode], parent: Optional['ScheduleTreeScope'] = None) -> None:
@@ -100,11 +102,20 @@ class ScheduleTreeScope(ScheduleTreeNode):
         for child in self.children:
             yield from child.preorder_traversal()
 
-    def _gather_memlets_in_scope(self, inputs: bool, root: Optional['ScheduleTreeRoot'], keep_locals: bool,
-                                 propagate: dict[str,
-                                                 subsets.Range], disallow_propagation: set[str], **kwargs) -> MemletSet:
-        gather = (lambda n, root: n.input_memlets(root, **kwargs)) if inputs else (
-            lambda n, root: n.output_memlets(root, **kwargs))
+    def _gather_memlets_in_scope(
+        self,
+        inputs: bool,
+        root: Optional['ScheduleTreeRoot'],
+        keep_locals: bool,
+        propagate: dict[str, subsets.Range],
+        disallow_propagation: set[str],
+        **kwargs,
+    ) -> MemletSet:
+        gather = (
+            (lambda n, root: n.input_memlets(root, **kwargs))
+            if inputs
+            else (lambda n, root: n.output_memlets(root, **kwargs))
+        )
 
         # Fast path, no propagation necessary
         if keep_locals:
@@ -155,12 +166,15 @@ class ScheduleTreeScope(ScheduleTreeNode):
                     if memlet in previously_written:
                         continue
                     result.add(
-                        propagate_subset([memlet],
-                                         root.containers[memlet.data],
-                                         propagate_keys,
-                                         propagate_values,
-                                         undefined_variables=current_locals,
-                                         use_dst=not inputs))
+                        propagate_subset(
+                            [memlet],
+                            root.containers[memlet.data],
+                            propagate_keys,
+                            propagate_values,
+                            undefined_variables=current_locals,
+                            use_dst=not inputs,
+                        )
+                    )
 
             if inputs:
                 # register writes to keep track of read-after-write
@@ -169,12 +183,14 @@ class ScheduleTreeScope(ScheduleTreeNode):
 
         return result
 
-    def input_memlets(self,
-                      root: Optional['ScheduleTreeRoot'] = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: Optional['ScheduleTreeRoot'] = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         """
         Returns a union of the set of inputs for this scope. Propagates the memlets used in the scope if ``keep_locals``
         is set to False.
@@ -192,15 +208,18 @@ class ScheduleTreeScope(ScheduleTreeNode):
                                      as additional locals.
         :return: A set of memlets representing the inputs of this scope.
         """
-        return self._gather_memlets_in_scope(True, root, keep_locals, propagate or {}, disallow_propagation or set(),
-                                             **kwargs)
+        return self._gather_memlets_in_scope(
+            True, root, keep_locals, propagate or {}, disallow_propagation or set(), **kwargs
+        )
 
-    def output_memlets(self,
-                       root: Optional['ScheduleTreeRoot'] = None,
-                       keep_locals: bool = False,
-                       propagate: dict[str, subsets.Range] | None = None,
-                       disallow_propagation: set[str] | None = None,
-                       **kwargs) -> MemletSet:
+    def output_memlets(
+        self,
+        root: Optional['ScheduleTreeRoot'] = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         """
         Returns a union of the set of outputs for this scope. Propagates the memlets used in the scope if
         ``keep_locals`` is set to False.
@@ -218,8 +237,9 @@ class ScheduleTreeScope(ScheduleTreeNode):
                                      as additional locals.
         :return: A set of memlets representing the inputs of this scope.
         """
-        return self._gather_memlets_in_scope(False, root, keep_locals, propagate or {}, disallow_propagation or set(),
-                                             **kwargs)
+        return self._gather_memlets_in_scope(
+            False, root, keep_locals, propagate or {}, disallow_propagation or set(), **kwargs
+        )
 
 
 @dataclass
@@ -231,6 +251,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     Each schedule tree has only one `ScheduleTreeRoot`. The `ScheduleTreeRoot` is the only `ScheduleTreeScope`
     without a parent (because it is the root node of the tree).
     """
+
     name: str
     containers: dict[str, data.Data]
     symbols: Mapping[str, dtypes.typeclass | symbolic.symbol]
@@ -258,12 +279,14 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
         self.arg_names = arg_names if arg_names is not None else list()
 
-    def as_sdfg(self,
-                validate: bool = True,
-                simplify: bool = True,
-                validate_all: bool = False,
-                skip: set[str] | None = None,
-                verbose: bool = False) -> SDFG:
+    def as_sdfg(
+        self,
+        validate: bool = True,
+        simplify: bool = True,
+        validate_all: bool = False,
+        skip: set[str] | None = None,
+        verbose: bool = False,
+    ) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
 
@@ -278,6 +301,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         :return: SDFG version of this schedule tree.
         """
         from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
+
         sdfg = t2s.from_schedule_tree(self)
 
         if validate:
@@ -295,7 +319,6 @@ class ScheduleTreeRoot(ScheduleTreeScope):
 
 @dataclass
 class ControlFlowScope(ScheduleTreeScope):
-
     def __init__(self, *, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None) -> None:
         super().__init__(children=children, parent=parent)
 
@@ -305,12 +328,14 @@ class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
     state: SDFGState | None = None
 
-    def __init__(self,
-                 *,
-                 node: nodes.EntryNode,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None,
-                 state: SDFGState | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        node: nodes.EntryNode,
+        children: list[ScheduleTreeNode],
+        parent: ScheduleTreeScope | None = None,
+        state: SDFGState | None = None,
+    ) -> None:
         super().__init__(children=children, parent=parent)
 
         self.node = node
@@ -367,6 +392,7 @@ class AssignNode(ScheduleTreeNode):
     """
     Represents a symbol assignment that is not part of a structured control flow block.
     """
+
     name: str
     value: CodeBlock
     edge: InterstateEdge
@@ -387,13 +413,12 @@ class LoopScope(ControlFlowScope):
     """
     General loop scope (representing a loop region).
     """
+
     loop: LoopRegion
 
-    def __init__(self,
-                 *,
-                 loop: LoopRegion,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, loop: LoopRegion, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(children=children, parent=parent)
 
         self.loop = loop
@@ -426,11 +451,9 @@ class LoopScope(ControlFlowScope):
 class ForScope(LoopScope):
     """Specialized LoopScope for for-loops."""
 
-    def __init__(self,
-                 *,
-                 loop: LoopRegion,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, loop: LoopRegion, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(loop=loop, children=children, parent=parent)
 
     def as_string(self, indent: int = 0) -> str:
@@ -440,12 +463,14 @@ class ForScope(LoopScope):
         result = indent * INDENTATION + f"for {init_statement}; {condition}; {update_statement}:\n"
         return result + super().as_string(indent)
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -461,12 +486,14 @@ class ForScope(LoopScope):
         result.update(super().input_memlets(root, propagate=propagate, **kwargs))
         return result
 
-    def output_memlets(self,
-                       root: ScheduleTreeRoot | None = None,
-                       keep_locals: bool = False,
-                       propagate: dict[str, subsets.Range] | None = None,
-                       disallow_propagation: set[str] | None = None,
-                       **kwargs) -> MemletSet:
+    def output_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
 
         # If loop range is well-formed, use it in propagation
         range = _loop_range(self.loop)
@@ -482,11 +509,9 @@ class ForScope(LoopScope):
 class WhileScope(LoopScope):
     """Specialized LoopScope for while-loops."""
 
-    def __init__(self,
-                 *,
-                 loop: LoopRegion,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, loop: LoopRegion, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(loop=loop, children=children, parent=parent)
 
     def as_string(self, indent: int = 0) -> str:
@@ -494,12 +519,14 @@ class WhileScope(LoopScope):
         result = indent * INDENTATION + f'while {condition}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -512,11 +539,9 @@ class WhileScope(LoopScope):
 class DoWhileScope(LoopScope):
     """Specialized LoopScope for do-while-loops"""
 
-    def __init__(self,
-                 *,
-                 loop: LoopRegion,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, loop: LoopRegion, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(loop=loop, children=children, parent=parent)
 
     def as_string(self, indent: int = 0) -> str:
@@ -524,12 +549,14 @@ class DoWhileScope(LoopScope):
         footer = indent * INDENTATION + f'while {self.loop.loop_condition.as_string}'
         return header + super().as_string(indent) + '\n' + footer
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         root = root if root is not None else self.get_root()
 
         result = MemletSet()
@@ -543,13 +570,12 @@ class IfScope(ControlFlowScope):
     """
     If branch scope.
     """
+
     condition: CodeBlock
 
-    def __init__(self,
-                 *,
-                 condition: CodeBlock,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, condition: CodeBlock, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(children=children, parent=parent)
 
         self.condition = condition
@@ -558,12 +584,14 @@ class IfScope(ControlFlowScope):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
@@ -577,11 +605,9 @@ class StateIfScope(IfScope):
     A special class of an if scope in general blocks for if statements that are part of a state transition.
     """
 
-    def __init__(self,
-                 *,
-                 condition: CodeBlock,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, condition: CodeBlock, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(condition=condition, children=children, parent=parent)
 
     def as_string(self, indent: int = 0):
@@ -626,13 +652,12 @@ class ElifScope(ControlFlowScope):
     """
     Else-if branch scope.
     """
+
     condition: CodeBlock
 
-    def __init__(self,
-                 *,
-                 condition: CodeBlock,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None) -> None:
+    def __init__(
+        self, *, condition: CodeBlock, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None
+    ) -> None:
         super().__init__(children=children, parent=parent)
 
         self.condition = condition
@@ -641,12 +666,14 @@ class ElifScope(ControlFlowScope):
         result = indent * INDENTATION + f'elif {self.condition.as_string}:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
         root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers, include_scalars=True))
@@ -673,14 +700,17 @@ class MapScope(DataflowScope):
     """
     Map scope.
     """
+
     node: nodes.MapEntry
 
-    def __init__(self,
-                 *,
-                 node: nodes.MapEntry,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None,
-                 state: SDFGState | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        node: nodes.MapEntry,
+        children: list[ScheduleTreeNode],
+        parent: ScheduleTreeScope | None = None,
+        state: SDFGState | None = None,
+    ) -> None:
         super().__init__(node=node, state=state, children=children, parent=parent)
 
     def as_string(self, indent: int = 0):
@@ -688,31 +718,29 @@ class MapScope(DataflowScope):
         result = indent * INDENTATION + f'map {", ".join(self.node.map.params)} in [{rangestr}]:\n'
         return result + super().as_string(indent)
 
-    def input_memlets(self,
-                      root: ScheduleTreeRoot | None = None,
-                      keep_locals: bool = False,
-                      propagate: dict[str, subsets.Range] | None = None,
-                      disallow_propagation: set[str] | None = None,
-                      **kwargs) -> MemletSet:
-        return super().input_memlets(root,
-                                     propagate={
-                                         k: v
-                                         for k, v in zip(self.node.map.params, self.node.map.range)
-                                     },
-                                     **kwargs)
+    def input_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
+        return super().input_memlets(
+            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
+        )
 
-    def output_memlets(self,
-                       root: ScheduleTreeRoot | None = None,
-                       keep_locals: bool = False,
-                       propagate: dict[str, subsets.Range] | None = None,
-                       disallow_propagation: set[str] | None = None,
-                       **kwargs) -> MemletSet:
-        return super().output_memlets(root,
-                                      propagate={
-                                          k: v
-                                          for k, v in zip(self.node.map.params, self.node.map.range)
-                                      },
-                                      **kwargs)
+    def output_memlets(
+        self,
+        root: ScheduleTreeRoot | None = None,
+        keep_locals: bool = False,
+        propagate: dict[str, subsets.Range] | None = None,
+        disallow_propagation: set[str] | None = None,
+        **kwargs,
+    ) -> MemletSet:
+        return super().output_memlets(
+            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
+        )
 
 
 @dataclass
@@ -720,20 +748,25 @@ class ConsumeScope(DataflowScope):
     """
     Consume scope.
     """
+
     node: nodes.ConsumeEntry
 
-    def __init__(self,
-                 *,
-                 node: nodes.ConsumeEntry,
-                 children: list[ScheduleTreeNode],
-                 parent: ScheduleTreeScope | None = None,
-                 state: SDFGState | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        node: nodes.ConsumeEntry,
+        children: list[ScheduleTreeNode],
+        parent: ScheduleTreeScope | None = None,
+        state: SDFGState | None = None,
+    ) -> None:
         super().__init__(node=node, state=state, children=children, parent=parent)
 
     def as_string(self, indent: int = 0):
         node: nodes.ConsumeEntry = self.node
         cond = 'stream not empty' if node.consume.condition is None else node.consume.condition.as_string
-        result = indent * INDENTATION + f'consume (PE {node.consume.pe_index} out of {node.consume.num_pes}) while {cond}:\n'
+        result = (
+            indent * INDENTATION + f'consume (PE {node.consume.pe_index} out of {node.consume.num_pes}) while {cond}:\n'
+        )
         return result + super().as_string(indent)
 
 
@@ -774,8 +807,11 @@ class LibraryCall(ScheduleTreeNode):
             out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
         libname = type(self.node).__name__
         # Get the properties of the library node without its superclasses
-        own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
-                                   if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
+        own_properties = ', '.join(
+            f'{k}={getattr(self.node, k)}'
+            for k, v in self.node.__properties__.items()
+            if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode}
+        )
         return indent * INDENTATION + f'{out_memlets} = library {libname}[{own_properties}]({in_memlets})'
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
@@ -822,6 +858,7 @@ class DynScopeCopyNode(ScheduleTreeNode):
     """
     A special case of a copy node that is used in dynamic scope inputs (e.g., dynamic map ranges).
     """
+
     target: str
     memlet: Memlet
 
@@ -887,6 +924,7 @@ class RefSetNode(ScheduleTreeNode):
     """
     Reference set node. Sets a reference to a data container.
     """
+
     target: str
     memlet: Memlet
     src_desc: data.Data | nodes.CodeNode
@@ -910,6 +948,7 @@ class StateBoundaryNode(ScheduleTreeNode):
     A node that represents a state boundary (e.g., when a write-after-write is encountered). This node
     is used only during conversion from a schedule tree to an SDFG.
     """
+
     due_to_control_flow: bool = False
 
     def as_string(self, indent: int = 0):
@@ -924,7 +963,6 @@ class StateBoundaryNode(ScheduleTreeNode):
 
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
 class ScheduleNodeVisitor:
-
     def visit(self, node: ScheduleTreeNode | list[ScheduleTreeNode], **kwargs: Any):
         """Visit a node."""
         if isinstance(node, list):
@@ -944,7 +982,6 @@ class ScheduleNodeVisitor:
 
 
 class ScheduleNodeTransformer(ScheduleNodeVisitor):
-
     def visit(self, node: ScheduleTreeNode | list[ScheduleTreeNode], **kwargs: Any):
         if isinstance(node, list):
             result = []
@@ -1008,7 +1045,7 @@ def validate_children_and_parents_align(stree: ScheduleTreeScope, *, root: bool 
 
 
 def loop_variant(
-    loop: LoopRegion
+    loop: LoopRegion,
 ) -> Literal['for'] | Literal['while'] | Literal['do-while'] | Literal['do-for-uncond-increment'] | Literal['do-for']:
     if loop.update_statement and loop.init_statement and loop.loop_variable:
         if loop.inverted:

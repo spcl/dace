@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Sample that shows dynamic ranges in maps by iterating over a jagged array. """
+"""Sample that shows dynamic ranges in maps by iterating over a jagged array."""
+
 import dace
 import numpy as np
 
@@ -47,11 +48,9 @@ state.add_edge(lenT, None, ime, 'end', dace.Memlet('len_ind'))
 
 # Create tasklet and other memlets
 task = state.add_tasklet('add1', {'a'}, {'b'}, 'b = a + 10*(i+1)')
-state.add_memlet_path(read_joff,
-                      me,
-                      indt,
-                      memlet=dace.Memlet(data='JaggedOffsets', subset='0:num_arrays+1'),
-                      dst_conn='offs')
+state.add_memlet_path(
+    read_joff, me, indt, memlet=dace.Memlet(data='JaggedOffsets', subset='0:num_arrays+1'), dst_conn='offs'
+)
 state.add_memlet_path(read_jarr, me, ime, task, memlet=dace.Memlet(data='JaggedArray', subset='j'), dst_conn='a')
 state.add_edge(indt, 'off', offT, None, dace.Memlet(data='off_ind', subset='0'))
 state.add_edge(indt, 'len', lenT, None, dace.Memlet(data='len_ind', subset='0'))
@@ -77,13 +76,13 @@ if __name__ == '__main__':
     ref = jagged.copy()
 
     for i in range(arrs):
-        print(jagged[offs[i]:offs[i + 1]])
-        ref[offs[i]:offs[i + 1]] += 10 * (i + 1)
+        print(jagged[offs[i] : offs[i + 1]])
+        ref[offs[i] : offs[i + 1]] += 10 * (i + 1)
 
     sdfg(JaggedArray=jagged, JaggedOffsets=offs, L=length, num_arrays=arrs)
 
     for i in range(arrs):
-        print(jagged[offs[i]:offs[i + 1]])
+        print(jagged[offs[i] : offs[i + 1]])
 
     diff = np.linalg.norm(ref - jagged)
     print('Difference:', diff)

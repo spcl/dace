@@ -1,14 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Implementation selection for ``CopyLibraryNode``.
-"""
+"""Implementation selection for ``CopyLibraryNode``."""
+
 from typing import Optional, TYPE_CHECKING
 
 import dace
 from dace import dtypes, symbolic
-from dace.libraries.standard.helper import (CPU_RESIDENT_STORAGES, collapse_shape_and_strides, is_in_parallel_scope,
-                                            is_parallel_cpu_transfer_size)
+from dace.libraries.standard.helper import (
+    CPU_RESIDENT_STORAGES,
+    collapse_shape_and_strides,
+    is_in_parallel_scope,
+    is_parallel_cpu_transfer_size,
+)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
-from dace.libraries.standard.nodes.copy.common import (cuda2d_pitch_params, _both_packed_same_layout, _is_cross_cpu_gpu)
+from dace.libraries.standard.nodes.copy.common import cuda2d_pitch_params, _both_packed_same_layout, _is_cross_cpu_gpu
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -22,18 +26,21 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     :param parent_state: state containing ``node``.
     :returns: a concrete implementation name from ``CopyLibraryNode.implementations``.
     """
-    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
-                                                                        parent_state,
-                                                                        allow_cross_storage=True)
+    inp_name, inp, in_subset, out_name, out, out_subset = node.validate(
+        parent_state.sdfg, parent_state, allow_cross_storage=True
+    )
 
     # A 0-D map crashes memlet propagation, so single-element copies use Tasklet/MemcpyCUDA1D.
-    single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
+    single_elt = in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1
 
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
     # TODO: replace dace::CopyND with a vectorized 128-bit collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
-        thread_level = (inp.storage == dtypes.StorageType.Register or out.storage == dtypes.StorageType.Register
-                        or is_in_scope(parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]))
+        thread_level = (
+            inp.storage == dtypes.StorageType.Register
+            or out.storage == dtypes.StorageType.Register
+            or is_in_scope(parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock])
+        )
         if thread_level:
             return 'Tasklet' if single_elt else 'MappedTasklet'
         return 'SharedMemoryCollective'
@@ -48,8 +55,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
             return 'Tasklet'
         if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
             return 'MemcpyCUDA1D'
-        both_gpu_global = (inp.storage == dtypes.StorageType.GPU_Global
-                           and out.storage == dtypes.StorageType.GPU_Global)
+        both_gpu_global = inp.storage == dtypes.StorageType.GPU_Global and out.storage == dtypes.StorageType.GPU_Global
         if both_gpu_global:
             return 'MemcpyCUDA1D'
         return 'Tasklet'
@@ -63,18 +69,28 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # applies where the copy runs once: inside a parallel map the mapped form is sequentialized to
     # an element loop, which is strictly worse than the single call at any size.
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
-    same_shape = (len(inp.shape) == len(out.shape)
-                  and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
-    if ({inp.storage, out.storage} <= host_storages and same_shape and in_subset.is_contiguous_subset(inp)
-            and out_subset.is_contiguous_subset(out) and _both_packed_same_layout(inp, out)
-            and not (is_parallel_cpu_transfer_size(in_subset.num_elements())
-                     and not is_in_parallel_scope(node, parent_state))):
+    same_shape = len(inp.shape) == len(out.shape) and not any(
+        symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())
+    )
+    if (
+        {inp.storage, out.storage} <= host_storages
+        and same_shape
+        and in_subset.is_contiguous_subset(inp)
+        and out_subset.is_contiguous_subset(out)
+        and _both_packed_same_layout(inp, out)
+        and not (
+            is_parallel_cpu_transfer_size(in_subset.num_elements()) and not is_in_parallel_scope(node, parent_state)
+        )
+    ):
         return 'MemcpyCPU'
 
     gpu = dtypes.StorageType.GPU_Global
     allowed = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
-    impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed
-                               and out.storage in allowed) else None)
+    impl = (
+        'MemcpyCUDA1D'
+        if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed and out.storage in allowed)
+        else None
+    )
 
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state)
@@ -126,14 +142,18 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return 'MappedTasklet'
 
-    if (len(in_shape_collapsed) == len(out_shape_collapsed) and len(in_shape_collapsed) >= 1
-            and any(in_strides_collapsed[d] == 1 and out_strides_collapsed[d] == 1
-                    for d in range(len(in_shape_collapsed)))):
+    if (
+        len(in_shape_collapsed) == len(out_shape_collapsed)
+        and len(in_shape_collapsed) >= 1
+        and any(in_strides_collapsed[d] == 1 and out_strides_collapsed[d] == 1 for d in range(len(in_shape_collapsed)))
+    ):
         return 'MemcpyCUDANDStrided'
 
-    raise ValueError(f"CopyLibraryNode '{node.name}' has a strided cross-CPU/GPU copy pattern that "
-                     f"cannot be lowered to a single cudaMemcpy or cudaMemcpy2DAsync and has no "
-                     f"common stride-1 axis for chunked memcpy "
-                     f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
-                     f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "
-                     f"pick an explicit implementation manually.")
+    raise ValueError(
+        f"CopyLibraryNode '{node.name}' has a strided cross-CPU/GPU copy pattern that "
+        f"cannot be lowered to a single cudaMemcpy or cudaMemcpy2DAsync and has no "
+        f"common stride-1 axis for chunked memcpy "
+        f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
+        f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "
+        f"pick an explicit implementation manually."
+    )

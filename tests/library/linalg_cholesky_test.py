@@ -8,6 +8,7 @@ import pytest
 
 def generate_matrix(size, dtype):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     A = rng.random((size, size), dtype=dtype)
     return (0.5 * A @ A.T).copy()
@@ -35,14 +36,17 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     return sdfg
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_cholesky(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     if implementation == 'cuSolverDn':

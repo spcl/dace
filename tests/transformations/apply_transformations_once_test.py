@@ -19,23 +19,16 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
         return [dace.sdfg.utils.node_path_graph(cls.tasklet)]
 
     def can_be_applied(
-        self,
-        graph: Union[dace.SDFGState, dace.SDFG],
-        expr_index: int,
-        sdfg: dace.SDFG,
-        permissive: bool = False,
+        self, graph: Union[dace.SDFGState, dace.SDFG], expr_index: int, sdfg: dace.SDFG, permissive: bool = False
     ) -> bool:
         my_tasklet: dace_nodes.Tasklet = self.tasklet
         return "1.0" in my_tasklet.code.as_string
 
-    def apply(
-        self,
-        graph: Union[dace.SDFGState, dace.SDFG],
-        sdfg: dace.SDFG,
-    ) -> None:
+    def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
         my_tasklet: dace_nodes.Tasklet = self.tasklet
-        my_tasklet.code = dace_properties.CodeBlock(my_tasklet.code.as_string.replace('1.0', '10.0'),
-                                                    language=my_tasklet.code.language)
+        my_tasklet.code = dace_properties.CodeBlock(
+            my_tasklet.code.as_string.replace('1.0', '10.0'), language=my_tasklet.code.language
+        )
 
 
 def sdfg_with_two_simple_maps():
@@ -98,9 +91,9 @@ def test_apply_transformations_once():
 
 def test_apply_transformations_once_no_order_by_transformation():
     sdfg = sdfg_with_two_simple_maps()
-    count = sdfg.apply_transformations_once_everywhere(DummyTransformation,
-                                                       validate=True,
-                                                       order_by_transformation=False)
+    count = sdfg.apply_transformations_once_everywhere(
+        DummyTransformation, validate=True, order_by_transformation=False
+    )
     assert count == 2
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace_nodes.Tasklet):

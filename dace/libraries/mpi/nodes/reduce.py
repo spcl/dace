@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandReduceMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -40,21 +39,20 @@ class ExpandReduceMPI(ExpandTransformation):
         code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});"
         if in_place:
             code += "}"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Reduce(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandReduceMPI,
-    }
+    implementations = {"MPI": ExpandReduceMPI}
     default_implementation = "MPI"
 
     op = dace.properties.Property(dtype=str, default='MPI_SUM')

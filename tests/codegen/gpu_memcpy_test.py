@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests code generation for array copy on GPU target. """
+"""Tests code generation for array copy on GPU target."""
+
 import dace
 from dace.transformation.auto import auto_optimize
 from dace.sdfg import nodes as dace_nodes
@@ -24,7 +25,7 @@ def count_node(sdfg: dace.SDFG, node_type):
     return nb_nodes
 
 
-def _make_2d_gpu_copy_sdfg(c_order: bool, ) -> dace.SDFG:
+def _make_2d_gpu_copy_sdfg(c_order: bool) -> dace.SDFG:
     """The SDFG performs a copy from the input of the output, that is continuous.
 
     Essentially the function will generate am SDFG that performs the following
@@ -49,11 +50,7 @@ def _make_2d_gpu_copy_sdfg(c_order: bool, ) -> dace.SDFG:
             strides=((30, 1) if c_order else (1, 20)),
         )
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[1:6, 2:8] -> [2:7, 3:9]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[1:6, 2:8] -> [2:7, 3:9]"))
     sdfg.validate()
 
     return sdfg
@@ -62,8 +59,7 @@ def _make_2d_gpu_copy_sdfg(c_order: bool, ) -> dace.SDFG:
 @pytest.mark.gpu
 @pytest.mark.parametrize("c_order", [True, False])
 def test_2d_gpu_copy(c_order: bool):
-    """Check 2D strided copies are handled by the `Memcpy2D` family.
-    """
+    """Check 2D strided copies are handled by the `Memcpy2D` family."""
     sdfg = _make_2d_gpu_copy_sdfg(c_order=c_order)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -106,30 +102,19 @@ def test_2d_gpu_copy(c_order: bool):
     assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
 
 
-def _make_1d_gpu_copy(
-    src_row: bool,
-    dst_row: bool,
-) -> dace.SDFG:
+def _make_1d_gpu_copy(src_row: bool, dst_row: bool) -> dace.SDFG:
     sdfg = dace.SDFG(f'gpu_1d_copy_{"row" if src_row else "col"}_{"row" if src_row else "col"}_copy_sdfg')
     state = sdfg.add_state(is_start_block=True)
 
     for aname in 'AB':
         sdfg.add_array(
-            name=aname,
-            shape=(20, 20),
-            dtype=dace.float64,
-            storage=dace.StorageType.GPU_Global,
-            transient=False,
+            name=aname, shape=(20, 20), dtype=dace.float64, storage=dace.StorageType.GPU_Global, transient=False
         )
 
     src_subset = "1, 1:9" if src_row else "1:9, 2"
     dst_subset = "3, 0:8" if dst_row else "0:8, 4"
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet(f"A[{src_subset}] -> [{dst_subset}]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet(f"A[{src_subset}] -> [{dst_subset}]"))
     sdfg.validate()
     return sdfg
 
@@ -137,10 +122,7 @@ def _make_1d_gpu_copy(
 @pytest.mark.gpu
 @pytest.mark.parametrize("src_row", [True, False])
 @pytest.mark.parametrize("dst_row", [True, False])
-def test_1d_gpu_copy(
-    src_row: bool,
-    dst_row: bool,
-):
+def test_1d_gpu_copy(src_row: bool, dst_row: bool):
     sdfg = _make_1d_gpu_copy(src_row=src_row, dst_row=dst_row)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -183,9 +165,8 @@ def test_1d_gpu_copy(
     assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
 
 
-def _make_pseudo_1d_copy_sdfg(c_order: bool, ) -> dace.SDFG:
-    """An SDFG that performs a 2D copy that can be turned into a 1d copy.
-    """
+def _make_pseudo_1d_copy_sdfg(c_order: bool) -> dace.SDFG:
+    """An SDFG that performs a 2D copy that can be turned into a 1d copy."""
     sdfg = dace.SDFG(f'gpu_pseudo_1d_copy_{"corder" if c_order else "forder"}_sdfg')
     state = sdfg.add_state(is_start_block=True)
 
@@ -200,11 +181,7 @@ def _make_pseudo_1d_copy_sdfg(c_order: bool, ) -> dace.SDFG:
         )
 
     cpy_subset = "1:18, 0:30" if c_order else "0:20, 2:29"
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet(f"A[{cpy_subset}] -> [{cpy_subset}]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet(f"A[{cpy_subset}] -> [{cpy_subset}]"))
     sdfg.validate()
 
     return sdfg
@@ -271,14 +248,8 @@ def test_gpu_shared_to_global_1D():
     size_M = M
     size_N = 128
 
-    A = rng.random((
-        size_M,
-        size_N,
-    ))
-    B = rng.random((
-        size_N,
-        size_M,
-    ))
+    A = rng.random((size_M, size_N))
+    B = rng.random((size_N, size_M))
 
     ref = A.transpose()
 
@@ -309,14 +280,8 @@ def test_gpu_shared_to_global_1D_accumulate():
     size_M = M
     size_N = 128
 
-    A = rng.random((
-        size_M,
-        size_N,
-    ))
-    B = rng.random((
-        size_N,
-        size_M,
-    ))
+    A = rng.random((size_M, size_N))
+    B = rng.random((size_N, size_M))
 
     ref = A.transpose() + B
 
@@ -335,17 +300,9 @@ def test_gpu_1d_copy():
 
     for aname in 'AB':
         sdfg.add_array(
-            name=aname,
-            shape=(20, ),
-            dtype=dace.float64,
-            storage=dace.StorageType.GPU_Global,
-            transient=False,
+            name=aname, shape=(20,), dtype=dace.float64, storage=dace.StorageType.GPU_Global, transient=False
         )
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[2:13] -> [1:12]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[2:13] -> [1:12]"))
     sdfg.validate()
 
     csdfg = sdfg.compile()
@@ -357,10 +314,7 @@ def test_gpu_1d_copy():
     assert m is not None
 
     # Now run the sdfg.
-    ref = {
-        "A": cp.array(cp.random.rand(20), dtype=cp.float64),
-        "B": cp.array(cp.random.rand(20), dtype=cp.float64),
-    }
+    ref = {"A": cp.array(cp.random.rand(20), dtype=cp.float64), "B": cp.array(cp.random.rand(20), dtype=cp.float64)}
     res = {k: v.copy() for k, v in ref.items()}
 
     ref["B"][1:12] = ref["A"][2:13]
@@ -388,29 +342,15 @@ def test_gpu_strided_2D_copy():
     K = dace.symbol('K')
 
     # Create 3D array (IxJxK)
-    sdfg.add_array(
-        name="A",
-        shape=(I, J, K),
-        dtype=dace.float64,
-        storage=dace.StorageType.GPU_Global,
-        transient=False,
-    )
+    sdfg.add_array(name="A", shape=(I, J, K), dtype=dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
 
     # Create 2D array (IxJ)
-    sdfg.add_array(
-        name="B",
-        shape=(I, J),
-        dtype=dace.float64,
-        storage=dace.StorageType.GPU_Global,
-        transient=False,
-    )
+    sdfg.add_array(name="B", shape=(I, J), dtype=dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
 
     # Copy from A[0:I, 0:J, k] to B[0:I, 0:J] for some fixed k
     k = 5  # Example: copy from slice at k=5
     state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet(f"A[0:{I}, 0:{J}, {k}] -> [0:{I}, 0:{J}]"),
+        state.add_access("A"), state.add_access("B"), dace.Memlet(f"A[0:{I}, 0:{J}, {k}] -> [0:{I}, 0:{J}]")
     )
     sdfg.validate()
 

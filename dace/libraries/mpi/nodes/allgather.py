@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode
 
 @dace.library.expansion
 class ExpandAllgatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -28,21 +27,16 @@ class ExpandAllgatherMPI(ExpandTransformation):
                           _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str},
                           MPI_COMM_WORLD);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Allgather(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandAllgatherMPI,
-    }
+    implementations = {"MPI": ExpandAllgatherMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

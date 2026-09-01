@@ -77,33 +77,21 @@ def _make_sdfg():
 
     s_init.add_memlet_path(root_in, frontier_out, memlet=dace.Memlet.simple(root_in.data, '0', other_subset_str='0'))
 
-    tasklet = s_init.add_tasklet(
-        'set_count1',
-        {},
-        {'out'},
-        'out = 1',
-    )
+    tasklet = s_init.add_tasklet('set_count1', {}, {'out'}, 'out = 1')
 
     s_init.add_memlet_path(tasklet, count1_out, src_conn='out', memlet=dace.Memlet.simple(count1_out.data, '0'))
 
-    map_entry, map_exit = s_init.add_map(
-        'set_result_map',
-        dict(i='0:N'),
-    )
+    map_entry, map_exit = s_init.add_map('set_result_map', dict(i='0:N'))
 
     tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
 
-    s_init.add_memlet_path(root_in,
-                           map_entry,
-                           tasklet,
-                           dst_conn='root_idx',
-                           memlet=dace.Memlet.simple(root_in.data, '0'))
+    s_init.add_memlet_path(
+        root_in, map_entry, tasklet, dst_conn='root_idx', memlet=dace.Memlet.simple(root_in.data, '0')
+    )
 
-    s_init.add_memlet_path(tasklet,
-                           map_exit,
-                           result_out,
-                           src_conn='result_out',
-                           memlet=dace.Memlet.simple(result_out.data, 'i'))
+    s_init.add_memlet_path(
+        tasklet, map_exit, result_out, src_conn='result_out', memlet=dace.Memlet.simple(result_out.data, 'i')
+    )
 
     # -------------------------------------------------------------
 
@@ -159,17 +147,24 @@ def _make_sdfg():
 
 
 def init_scalar(state, node, value):
-    tasklet = state.add_tasklet('set_%s' % node.data, {}, {'out'}, '''
+    tasklet = state.add_tasklet(
+        'set_%s' % node.data,
+        {},
+        {'out'},
+        '''
 out = %d
-        ''' % value)
+        '''
+        % value,
+    )
 
     state.add_memlet_path(tasklet, node, src_conn='out', memlet=dace.Memlet.simple(node.data, '0'))
 
 
 # Here the state is duplicated so the memory doesn't have to be copied from one to another
 # array.
-def fill_update_state(state, front_in, front_in_count, front_out, front_out_count, s_frontier_io, temp_ids_io,
-                      temp_ide_io):
+def fill_update_state(
+    state, front_in, front_in_count, front_out, front_out_count, s_frontier_io, temp_ids_io, temp_ide_io
+):
     row_index_in = state.add_read('row_index')
     col_index_in = state.add_read('col_index')
     result_in = state.add_read('result')
@@ -179,98 +174,109 @@ def fill_update_state(state, front_in, front_in_count, front_out, front_out_coun
     # Map iterates over all nodes in frontier
     front_enter, front_exit = state.add_map('frontier_map', dict(x='0:count_val'))
 
-    state.add_memlet_path(front_in_count,
-                          front_enter,
-                          dst_conn='count_val',
-                          memlet=dace.Memlet.simple(front_in_count.data, '0'))
+    state.add_memlet_path(
+        front_in_count, front_enter, dst_conn='count_val', memlet=dace.Memlet.simple(front_in_count.data, '0')
+    )
 
     # Find number of neighbors of current node
-    t_find_range = state.add_tasklet('find_range', ['f_x', 'row'], ['index_start', 'index_end'], '''
+    t_find_range = state.add_tasklet(
+        'find_range',
+        ['f_x', 'row'],
+        ['index_start', 'index_end'],
+        '''
 index_start = row[f_x]
 index_end = row[f_x + 1]
-        ''')
+        ''',
+    )
 
     # iterate over all neighbors of current node
     neigh_enter, neigh_exit = state.add_map('neighbor_map', dict(i='map_start:map_end'))
 
-    state.add_memlet_path(t_find_range,
-                          temp_ids_io,
-                          src_conn='index_start',
-                          memlet=dace.Memlet.simple(temp_ids_io.data, '0'))
+    state.add_memlet_path(
+        t_find_range, temp_ids_io, src_conn='index_start', memlet=dace.Memlet.simple(temp_ids_io.data, '0')
+    )
 
-    state.add_memlet_path(t_find_range,
-                          temp_ide_io,
-                          src_conn='index_end',
-                          memlet=dace.Memlet.simple(temp_ide_io.data, '0'))
+    state.add_memlet_path(
+        t_find_range, temp_ide_io, src_conn='index_end', memlet=dace.Memlet.simple(temp_ide_io.data, '0')
+    )
 
-    state.add_memlet_path(temp_ids_io,
-                          neigh_enter,
-                          dst_conn='map_start',
-                          memlet=dace.Memlet.simple(temp_ids_io.data, '0'))
+    state.add_memlet_path(
+        temp_ids_io, neigh_enter, dst_conn='map_start', memlet=dace.Memlet.simple(temp_ids_io.data, '0')
+    )
 
-    state.add_memlet_path(temp_ide_io,
-                          neigh_enter,
-                          dst_conn='map_end',
-                          memlet=dace.Memlet.simple(temp_ide_io.data, '0'))
+    state.add_memlet_path(
+        temp_ide_io, neigh_enter, dst_conn='map_end', memlet=dace.Memlet.simple(temp_ide_io.data, '0')
+    )
 
-    state.add_memlet_path(row_index_in,
-                          front_enter,
-                          t_find_range,
-                          dst_conn='row',
-                          memlet=dace.Memlet.simple(row_index_in.data, '0:N', num_accesses=2))
+    state.add_memlet_path(
+        row_index_in,
+        front_enter,
+        t_find_range,
+        dst_conn='row',
+        memlet=dace.Memlet.simple(row_index_in.data, '0:N', num_accesses=2),
+    )
 
-    state.add_memlet_path(front_in,
-                          front_enter,
-                          t_find_range,
-                          dst_conn='f_x',
-                          memlet=dace.Memlet.simple(front_in.data, 'x'))
+    state.add_memlet_path(
+        front_in, front_enter, t_find_range, dst_conn='f_x', memlet=dace.Memlet.simple(front_in.data, 'x')
+    )
 
     # update tasklet (this is where the magic happens)
     t_add_neighbor = state.add_tasklet(
-        'add_neighbor', ['neighbor', 'res'], ['new_res', 'add_to_count', 'add_to_front'], '''
+        'add_neighbor',
+        ['neighbor', 'res'],
+        ['new_res', 'add_to_count', 'add_to_front'],
+        '''
 if res[neighbor] == -1:
   new_res[neighbor] = depth
   add_to_front = neighbor
   add_to_count = 1
-        ''')
+        ''',
+    )
 
-    state.add_memlet_path(col_index_in,
-                          front_enter,
-                          neigh_enter,
-                          t_add_neighbor,
-                          dst_conn='neighbor',
-                          memlet=dace.Memlet.simple(col_index_in.data, 'i'))
+    state.add_memlet_path(
+        col_index_in,
+        front_enter,
+        neigh_enter,
+        t_add_neighbor,
+        dst_conn='neighbor',
+        memlet=dace.Memlet.simple(col_index_in.data, 'i'),
+    )
 
-    state.add_memlet_path(result_in,
-                          front_enter,
-                          neigh_enter,
-                          t_add_neighbor,
-                          dst_conn='res',
-                          memlet=dace.Memlet.simple(result_in.data, '0:N', num_accesses=1))
+    state.add_memlet_path(
+        result_in,
+        front_enter,
+        neigh_enter,
+        t_add_neighbor,
+        dst_conn='res',
+        memlet=dace.Memlet.simple(result_in.data, '0:N', num_accesses=1),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          front_out_count,
-                          src_conn='add_to_count',
-                          memlet=dace.Memlet.simple(front_out_count.data,
-                                                    '0',
-                                                    num_accesses=-1,
-                                                    wcr_str='lambda a, b: a + b'))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        front_out_count,
+        src_conn='add_to_count',
+        memlet=dace.Memlet.simple(front_out_count.data, '0', num_accesses=-1, wcr_str='lambda a, b: a + b'),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          s_frontier_io,
-                          src_conn='add_to_front',
-                          memlet=dace.Memlet.simple(s_frontier_io.data, '0', num_accesses=-1))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        s_frontier_io,
+        src_conn='add_to_front',
+        memlet=dace.Memlet.simple(s_frontier_io.data, '0', num_accesses=-1),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          result_out,
-                          src_conn='new_res',
-                          memlet=dace.Memlet.simple(result_out.data, '0:N', num_accesses=-1))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        result_out,
+        src_conn='new_res',
+        memlet=dace.Memlet.simple(result_out.data, '0:N', num_accesses=-1),
+    )
 
     state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, '0'))
 

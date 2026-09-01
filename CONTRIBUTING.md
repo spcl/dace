@@ -38,14 +38,14 @@ def example_function(param_a: str, *args: Optional[SDFG]) -> bool:
     ...
 ```
 
-For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use the [yapf](https://github.com/google/yapf) file formatter.
+For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use the [ruff](https://github.com/astral-sh/ruff) file formatter.
 **Please run `pre-commit` before making your pull request ready for review.**
 
 ```bash
 pre-commit run --all-files
 ```
 
-Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `yapf` as part of the `dev` dependency group. For contributors, we recommend to run
+Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `ruff` as part of the `dev` dependency group. For contributors, we recommend to run
 
 ```bash
 uv sync

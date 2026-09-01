@@ -3,6 +3,7 @@
 Provides a transformation to add missing GPU_ThreadBlock maps to
 GPU_Device maps, along with helper functions.
 """
+
 import warnings
 
 import sympy
@@ -79,18 +80,22 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
     lastdim_limit = int(Config.get('compiler', 'cuda', 'block_size_lastdim_limit'))
 
     if (total_block_size > limit) == True:
-        raise ValueError(f'Block size for kernel "{kernel_map_label}" ({block_size}) '
-                         f'is larger than the possible number of threads per block ({limit}). '
-                         'The kernel will potentially not run, please reduce the thread-block size. '
-                         'To increase this limit, modify the `compiler.cuda.block_size_limit` '
-                         'configuration entry.')
+        raise ValueError(
+            f'Block size for kernel "{kernel_map_label}" ({block_size}) '
+            f'is larger than the possible number of threads per block ({limit}). '
+            'The kernel will potentially not run, please reduce the thread-block size. '
+            'To increase this limit, modify the `compiler.cuda.block_size_limit` '
+            'configuration entry.'
+        )
 
     if (block_size[-1] > lastdim_limit) == True:
-        raise ValueError(f'Last block size dimension for kernel "{kernel_map_label}" ({block_size}) '
-                         'is larger than the possible number of threads in the last block dimension '
-                         f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
-                         'thread-block size. To increase this limit, modify the '
-                         '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
+        raise ValueError(
+            f'Last block size dimension for kernel "{kernel_map_label}" ({block_size}) '
+            'is larger than the possible number of threads in the last block dimension '
+            f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
+            'thread-block size. To increase this limit, modify the '
+            '`compiler.cuda.block_size_lastdim_limit` configuration entry.'
+        )
 
 
 @make_properties
@@ -103,6 +108,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     and do not contain, other GPU-scheduled maps. Such special cases (e.g., dynamic parallelism
     or persistent kernels) are skipped and left to be handled by the `CUDACodeGen` backend.
     """
+
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     @classmethod
@@ -178,14 +184,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
             tile_sizes = reversed_block_size[-num_dims:]
 
         # Apply map tiling transformation
-        MapTiling.apply_to(sdfg=sdfg,
-                           options={
-                               "prefix": "b",
-                               "tile_sizes": tile_sizes,
-                               "tile_trivial": True,
-                               "skew": False
-                           },
-                           map_entry=kernel_map_entry)
+        MapTiling.apply_to(
+            sdfg=sdfg,
+            options={"prefix": "b", "tile_sizes": tile_sizes, "tile_trivial": True, "skew": False},
+            map_entry=kernel_map_entry,
+        )
 
         # After tiling: kernel_map_entry is now the thread block map, configure its schedule
         thread_block_map_entry = kernel_map_entry
@@ -236,7 +239,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {default_block_size_config}. '
                 'You can either specify the block size to use with the gpu_block_size property, '
                 'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
-                'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html'
+            )
 
             # 2) Reject unsupported 'max' setting
             if default_block_size_config == 'max':
@@ -259,9 +263,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 tail_product = product(default_block_size[active_grid_dims:])
                 block_size = default_block_size[:active_grid_dims] + [1] * (3 - active_grid_dims)
                 block_size[active_grid_dims - 1] *= tail_product
-                warnings.warn(f'Default block size has more dimensions ({active_block_dims}) than kernel dimensions '
-                              f'({active_grid_dims}) in map "{kernel_map_label}". Linearizing block '
-                              f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
+                warnings.warn(
+                    f'Default block size has more dimensions ({active_block_dims}) than kernel dimensions '
+                    f'({active_grid_dims}) in map "{kernel_map_label}". Linearizing block '
+                    f'size to {block_size}. Consider setting the ``gpu_block_size`` property.'
+                )
             else:
                 block_size = default_block_size
 

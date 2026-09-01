@@ -41,6 +41,7 @@ if raw_path is not None:
 def __getattr__(name):
     if name == 'ml':
         import importlib
+
         ml_module = importlib.import_module('.ml', package='dace')
         # Cache the module to avoid re-importing
         globals()['ml'] = ml_module
@@ -51,7 +52,6 @@ def __getattr__(name):
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
 class DaceModule(sys.modules[__name__].__class__):
-
     def __call__(self, *args, **kwargs):
         return function(*args, **kwargs)
 

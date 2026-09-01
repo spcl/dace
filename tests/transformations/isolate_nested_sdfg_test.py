@@ -31,18 +31,12 @@ def count_writes(sdfg: dace.SDFG):
 
 
 def _make_nested_sdfg_simple() -> dace.SDFG:
-    """Make a simple nested SDFG.
-    """
+    """Make a simple nested SDFG."""
     sdfg = dace.SDFG("nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     state.add_mapped_tasklet(
         "comp",
         map_ranges={"__i": "1:9"},
@@ -56,25 +50,16 @@ def _make_nested_sdfg_simple() -> dace.SDFG:
 
 
 def _make_nested_sdfg_adding() -> dace.SDFG:
-    """Make an SDFG that adds the inputs together.
-    """
+    """Make an SDFG that adds the inputs together."""
     sdfg = dace.SDFG("adding_nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "ABC":
-        sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     state.add_mapped_tasklet(
         "comp",
         map_ranges={"__i": "0:10"},
-        inputs={
-            "__in1": dace.Memlet("A[__i]"),
-            "__in2": dace.Memlet("B[__i]"),
-        },
+        inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("B[__i]")},
         code="__out = __in1 + __in2",
         outputs={"__out": dace.Memlet("C[__i]")},
         external_edges=True,
@@ -84,26 +69,15 @@ def _make_nested_sdfg_adding() -> dace.SDFG:
 
 
 def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates a nested SDFG that is already isolated.
-    """
+    """Creates a nested SDFG that is already isolated."""
     outer_sdfg = dace.SDFG("already_isolate_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        outer_sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        outer_sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
 
     inner_sdfg = _make_nested_sdfg_simple()
-    nsdfg = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A"},
-        outputs={"B"},
-        symbol_mapping={},
-    )
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
     state.add_edge(state.add_access("A"), None, nsdfg, "A", dace.Memlet("A[0:10]"))
     state.add_edge(nsdfg, "B", state.add_access("B"), None, dace.Memlet("B[0:10]"))
     outer_sdfg.validate()
@@ -112,18 +86,12 @@ def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dac
 
 
 def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that has a non empty pre set.
-    """
+    """Generates an SDFG that has a non empty pre set."""
     outer_sdfg = dace.SDFG("non_empty_pre_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
-        outer_sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        outer_sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     outer_sdfg.arrays["T"].transient = True
 
     A, B, T = (state.add_access(name) for name in "ABT")
@@ -140,12 +108,7 @@ def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     )
 
     inner_sdfg = _make_nested_sdfg_simple()
-    nsdfg = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A"},
-        outputs={"B"},
-        symbol_mapping={},
-    )
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
     state.add_edge(T, None, nsdfg, "A", dace.Memlet("T[0:10]"))
     state.add_edge(nsdfg, "B", B, None, dace.Memlet("B[0:10]"))
     outer_sdfg.validate()
@@ -158,12 +121,7 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABCT":
-        outer_sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        outer_sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     outer_sdfg.arrays["T"].transient = True
 
     A, B, C, T = (state.add_access(name) for name in "ABCT")
@@ -180,12 +138,7 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
     )
 
     inner_sdfg = _make_nested_sdfg_adding()
-    nsdfg = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A", "B"},
-        outputs={"C"},
-        symbol_mapping={},
-    )
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A", "B"}, outputs={"C"}, symbol_mapping={})
 
     state.add_edge(A, None, nsdfg, "A", dace.Memlet("A[0:10]"))
     state.add_edge(T, None, nsdfg, "B", dace.Memlet("T[0:10]"))
@@ -196,28 +149,17 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
 
 
 def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that will have an non empty post state and an empty pre state.
-    """
+    """Generates an SDFG that will have an non empty post state and an empty pre state."""
     outer_sdfg = dace.SDFG("non_empty_post_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
-        outer_sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        outer_sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     outer_sdfg.arrays["T"].transient = True
     A, B, T = (state.add_access(name) for name in "ABT")
 
     inner_sdfg = _make_nested_sdfg_simple()
-    nsdfg = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A"},
-        outputs={"B"},
-        symbol_mapping={},
-    )
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
     state.add_edge(A, None, nsdfg, "A", dace.Memlet("A[0:10]"))
     state.add_edge(nsdfg, "B", T, None, dace.Memlet("T[0:10]"))
 
@@ -241,21 +183,11 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABC":
-        outer_sdfg.add_array(
-            name=name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        outer_sdfg.add_array(name=name, shape=(10,), dtype=dace.float64, transient=False)
     A, B, C = (state.add_access(name) for name in "ABC")
 
     inner_sdfg = _make_nested_sdfg_simple()
-    nsdfg = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A"},
-        outputs={"B"},
-        symbol_mapping={},
-    )
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
     state.add_edge(A, None, nsdfg, "A", dace.Memlet("A[0:10]"))
     state.add_edge(nsdfg, "B", B, None, dace.Memlet("B[0:10]"))
 
@@ -275,8 +207,7 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
 
 
 def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates an SDFG that has a path around the nested SDFG.
-    """
+    """Creates an SDFG that has a path around the nested SDFG."""
     outer_sdfg = dace.SDFG("multi_path_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
@@ -285,10 +216,7 @@ def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
 
     for name in aname_small + aname_big:
         outer_sdfg.add_array(
-            name=name,
-            shape=((10, ) if name in aname_small else (20, )),
-            dtype=dace.float64,
-            transient=(len(name) != 1),
+            name=name, shape=((10,) if name in aname_small else (20,)), dtype=dace.float64, transient=(len(name) != 1)
         )
     A, T1, T2, T3, T4, B = (state.add_access(name) for name in aname_small + aname_big)
 
@@ -304,12 +232,7 @@ def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     )
 
     inner_sdfg = _make_nested_sdfg_adding()
-    nsdfg_node = state.add_nested_sdfg(
-        sdfg=inner_sdfg,
-        inputs={"A", "B"},
-        outputs={"C"},
-        symbol_mapping={},
-    )
+    nsdfg_node = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A", "B"}, outputs={"C"}, symbol_mapping={})
     state.add_edge(A, None, nsdfg_node, "A", dace.Memlet("A[0:10]"))
     state.add_edge(T1, None, nsdfg_node, "B", dace.Memlet("T1[0:10]"))
 

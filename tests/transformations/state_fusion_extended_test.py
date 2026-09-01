@@ -34,19 +34,11 @@ def test_extended_fusion():
     acc2_f = mid.add_write('F')
     acc2_tmp = mid.add_access('tmp')
 
-    t1 = strt.add_tasklet('t1', {'a', 'b'}, {
-        'c',
-    }, 'c = a + b')
-    t2 = strt.add_tasklet('t2', {}, {
-        'tmpa',
-    }, 'tmpa=4')
+    t1 = strt.add_tasklet('t1', {'a', 'b'}, {'c'}, 'c = a + b')
+    t2 = strt.add_tasklet('t2', {}, {'tmpa'}, 'tmpa=4')
 
-    t3 = mid.add_tasklet('t3', {'d', 'e'}, {
-        'f',
-    }, 'f = e + d')
-    t4 = mid.add_tasklet('t4', {}, {
-        'tmpa',
-    }, 'tmpa=7')
+    t3 = mid.add_tasklet('t3', {'d', 'e'}, {'f'}, 'f = e + d')
+    t4 = mid.add_tasklet('t4', {}, {'tmpa'}, 'tmpa=7')
 
     strt.add_edge(acc_a, None, t1, 'a', Memlet.simple('A', '1,1'))
     strt.add_edge(acc_b, None, t1, 'b', Memlet.simple('B', '1,1'))

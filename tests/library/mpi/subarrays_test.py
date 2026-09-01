@@ -18,6 +18,7 @@ def test_subarray_scatter():
         return lA
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -36,10 +37,10 @@ def test_subarray_scatter():
     if rank == 0:
         lA = func(A=A, P=even_size)
     else:
-        lA = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        lA = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
-        assert (np.array_equal(lA, lA_ref[rank // (even_size // 2), rank % (even_size // 2)]))
+        assert np.array_equal(lA, lA_ref[rank // (even_size // 2), rank % (even_size // 2)])
 
 
 @pytest.mark.mpi
@@ -52,11 +53,12 @@ def test_subarray_scatter_bcast():
         pgrid = dace.comm.Cart_create([2, P // 2])
         scatter_grid = dace.comm.Cart_sub(pgrid, [False, True], exact_grid=0)
         bcast_grid = dace.comm.Cart_sub(pgrid, [True, False])
-        lA = np.empty_like(A, shape=(16, ))
+        lA = np.empty_like(A, shape=(16,))
         subarray = dace.comm.BlockScatter(A, lA, scatter_grid, bcast_grid)
         return lA
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -75,12 +77,12 @@ def test_subarray_scatter_bcast():
     if rank == 0:
         lA = func(A=A, P=even_size)
     else:
-        lA = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        lA = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
         lbound = (rank % (even_size // 2)) * 16
         ubound = (rank % (even_size // 2) + 1) * 16
-        assert (np.array_equal(lA, A[lbound:ubound]))
+        assert np.array_equal(lA, A[lbound:ubound])
 
 
 @pytest.mark.mpi
@@ -96,6 +98,7 @@ def test_subarray_gather():
         return A
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -114,10 +117,10 @@ def test_subarray_gather():
     if rank < even_size:
         A = func(lA=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
-        A = func(lA=np.zeros((1, ), dtype=np.int32), P=even_size)
+        A = func(lA=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank == 0:
-        assert (np.array_equal(A, A_ref))
+        assert np.array_equal(A, A_ref)
 
 
 @pytest.mark.mpi
@@ -135,6 +138,7 @@ def test_subarray_gather_reduce():
         return A
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -154,10 +158,10 @@ def test_subarray_gather_reduce():
         ubound = (rank % (even_size // 2) + 1) * 16
         A = func(lA=A_ref[lbound:ubound].copy(), P=even_size)
     else:
-        A = func(lA=np.zeros((1, ), dtype=np.int32), P=even_size)
+        A = func(lA=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank == 0:
-        assert (np.array_equal(A, 2 * A_ref))
+        assert np.array_equal(A, 2 * A_ref)
 
 
 if __name__ == "__main__":

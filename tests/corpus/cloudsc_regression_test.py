@@ -5,6 +5,7 @@ CloudSC is the scaling case: thousands of blocks nested many levels deep, where 
 is superlinear in nesting depth shows up as minutes rather than seconds. ConstantPropagation is the
 dominant term in ``simplify`` on this input.
 """
+
 import statistics
 import time
 
@@ -42,8 +43,9 @@ def test_simplify_stays_within_its_time_budget():
 
     median = statistics.median(durations)
     reps = ', '.join('%.1f' % d for d in durations)
-    assert median < SIMPLIFY_BUDGET_SECONDS, (f'median simplify took {median:.1f}s, budget is '
-                                              f'{SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}')
+    assert median < SIMPLIFY_BUDGET_SECONDS, (
+        f'median simplify took {median:.1f}s, budget is {SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}'
+    )
 
 
 if __name__ == '__main__':

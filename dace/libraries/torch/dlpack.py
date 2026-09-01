@@ -17,6 +17,7 @@ from dace import data, dtypes
 
 class DLDeviceType(ctypes.c_int):
     """DLPack device type enumeration."""
+
     kDLCPU = 1
     kDLGPU = 2
     kDLCPUPinned = 3
@@ -30,6 +31,7 @@ class DLDeviceType(ctypes.c_int):
 
 class DLDataTypeCode(ctypes.c_uint8):
     """DLPack data type code enumeration."""
+
     kDLInt = 0
     kDLUInt = 1
     kDLFloat = 2
@@ -38,6 +40,7 @@ class DLDataTypeCode(ctypes.c_uint8):
 
 class DLDataType(ctypes.Structure):
     """DLPack data type structure."""
+
     _fields_ = [('type_code', DLDataTypeCode), ('bits', ctypes.c_uint8), ('lanes', ctypes.c_uint16)]
 
 
@@ -57,18 +60,27 @@ dace_to_dldtype_dict = {
 
 class DLContext(ctypes.Structure):
     """DLPack context structure for device information."""
+
     _fields_ = [('device_type', DLDeviceType), ('device_id', ctypes.c_int)]
 
 
 class DLTensor(ctypes.Structure):
     """DLPack tensor structure."""
-    _fields_ = [('data', ctypes.c_void_p), ('ctx', DLContext), ('ndim', ctypes.c_int), ('dtype', DLDataType),
-                ('shape', ctypes.POINTER(ctypes.c_int64)), ('strides', ctypes.POINTER(ctypes.c_int64)),
-                ('byte_offset', ctypes.c_uint64)]
+
+    _fields_ = [
+        ('data', ctypes.c_void_p),
+        ('ctx', DLContext),
+        ('ndim', ctypes.c_int),
+        ('dtype', DLDataType),
+        ('shape', ctypes.POINTER(ctypes.c_int64)),
+        ('strides', ctypes.POINTER(ctypes.c_int64)),
+        ('byte_offset', ctypes.c_uint64),
+    ]
 
 
 class DLManagedTensor(ctypes.Structure):
     """DLPack managed tensor structure."""
+
     pass
 
 
@@ -109,6 +121,7 @@ def dl_managed_tensor_deleter(_dl_managed_tensor_handle) -> None:
 
 class PyCapsule:
     """Python capsule interface for DLPack integration."""
+
     New = ctypes.pythonapi.PyCapsule_New
     New.restype = ctypes.py_object
     New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
@@ -119,7 +132,7 @@ class PyCapsule:
 
     GetContext = ctypes.pythonapi.PyCapsule_GetContext
     GetContext.restype = ctypes.c_void_p
-    GetContext.argtypes = (ctypes.py_object, )
+    GetContext.argtypes = (ctypes.py_object,)
 
     GetPointer = ctypes.pythonapi.PyCapsule_GetPointer
     GetPointer.restype = ctypes.c_void_p
@@ -165,13 +178,9 @@ def array_to_torch_tensor(ptr: ctypes.c_void_p, desc: data.Array) -> torch.Tenso
     for i, s in enumerate(desc.strides):
         strides[i] = s
 
-    dltensor = DLTensor(data=ptr,
-                        ctx=context,
-                        ndim=len(desc.shape),
-                        dtype=dtype,
-                        shape=shape,
-                        strides=strides,
-                        byte_offset=0)
+    dltensor = DLTensor(
+        data=ptr, ctx=context, ndim=len(desc.shape), dtype=dtype, shape=shape, strides=strides, byte_offset=0
+    )
 
     c_obj = DLManagedTensor()
     c_obj.dl_tensor = dltensor

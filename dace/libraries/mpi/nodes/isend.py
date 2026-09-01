@@ -5,13 +5,16 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, input_descriptor_name,
-                                           validate_integer_descriptor)
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    expanded_input_connectors,
+    input_descriptor_name,
+    validate_integer_descriptor,
+)
 
 
 @dace.library.expansion
 class ExpandIsendMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -51,12 +54,14 @@ class ExpandIsendMPI(ExpandTransformation):
             code += f"""// MPI_Type_free(&newtype);
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
         conn = tasklet.in_connectors
         conn = {c: (dtypes.int32 if c == '_dest' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -68,11 +73,8 @@ class ExpandIsendMPI(ExpandTransformation):
 
 @dace.library.node
 class Isend(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandIsendMPI,
-    }
+    implementations = {"MPI": ExpandIsendMPI}
     default_implementation = "MPI"
 
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")

@@ -52,11 +52,13 @@ def test_fuse_assignment_in_use():
     sdfg.add_edge(state2, state3, dace.InterstateEdge())
     sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(k=2)))
 
-    state3.add_edge(state3.add_tasklet('one', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
-                    dace.Memlet('A[0]'))
+    state3.add_edge(
+        state3.add_tasklet('one', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None, dace.Memlet('A[0]')
+    )
 
-    state4.add_edge(state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
-                    dace.Memlet('A[1]'))
+    state4.add_edge(
+        state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None, dace.Memlet('A[1]')
+    )
 
     try:
         StateFusion.apply_to(sdfg, first_state=state3, second_state=state4)
@@ -67,7 +69,7 @@ def test_fuse_assignment_in_use():
 
 # Connected components tests
 def test_two_to_one_cc_fusion():
-    """ Two states, first with two connected components, second with one. """
+    """Two states, first with two connected components, second with one."""
     sdfg = dace.SDFG('state_fusion_test')
     sdfg.add_array('A', [1], dace.int32)
     sdfg.add_array('B', [1], dace.int32)
@@ -93,7 +95,7 @@ def test_two_to_one_cc_fusion():
 
 
 def test_one_to_two_cc_fusion():
-    """ Two states, first with one connected component, second with two. """
+    """Two states, first with one connected component, second with two."""
     sdfg = dace.SDFG('state_fusion_test')
     sdfg.add_array('A', [1], dace.int32)
     sdfg.add_array('B', [1], dace.int32)
@@ -113,7 +115,7 @@ def test_one_to_two_cc_fusion():
 
 
 def test_two_cc_fusion_separate():
-    """ Two states, both with two connected components, fused separately. """
+    """Two states, both with two connected components, fused separately."""
     sdfg = dace.SDFG('state_fusion_test')
     sdfg.add_array('A', [1], dace.int32)
     sdfg.add_array('B', [1], dace.int32)
@@ -139,7 +141,7 @@ def test_two_cc_fusion_separate():
 
 
 def test_two_cc_fusion_together():
-    """ Two states, both with two connected components, fused to one CC. """
+    """Two states, both with two connected components, fused to one CC."""
     sdfg = dace.SDFG('state_fusion_test')
     sdfg.add_array('A', [1], dace.int32)
     sdfg.add_array('B', [1], dace.int32)
@@ -192,7 +194,7 @@ def test_write_write_no_overlap():
 
     @dace.program
     def state_fusion_test(A: dace.int32[N, N]):
-        A[0:N - 1, :] = 1
+        A[0 : N - 1, :] = 1
         A[N - 1, :] = 2
 
     sdfg = state_fusion_test.to_sdfg(simplify=False)
@@ -418,22 +420,12 @@ def test_check_paths():
     q_b0_w = block_0.add_write("q")
     qm_b0 = block_0.add_read("qm")
     qm_b0_w = block_0.add_write("qm")
-    tasklet_b0_on_q = block_0.add_tasklet(
-        "tasklet_b0_on_q",
-        {"p_qm"},
-        {"p_q_w"},
-        "p_q_w = p_qm",
-    )
+    tasklet_b0_on_q = block_0.add_tasklet("tasklet_b0_on_q", {"p_qm"}, {"p_q_w"}, "p_q_w = p_qm")
     block_0.add_edge(qm_b0, None, tasklet_b0_on_q, "p_qm", dace.Memlet("qm[0]"))
     block_0.add_edge(tasklet_b0_on_q, "p_q_w", q_b0_w, None, dace.Memlet("q[0]"))
 
     m1_b0_w = block_0.add_write("m1")
-    tasklet_b0_on_m1 = block_0.add_tasklet(
-        "tasklet_b0_on_m1_qm",
-        {"p_q"},
-        {"p_m1_w", "p_qm_w"},
-        "p_m1_w = p_q",
-    )
+    tasklet_b0_on_m1 = block_0.add_tasklet("tasklet_b0_on_m1_qm", {"p_q"}, {"p_m1_w", "p_qm_w"}, "p_m1_w = p_q")
     block_0.add_edge(q_b0_w, None, tasklet_b0_on_m1, "p_q", dace.Memlet("q[0]"))
     block_0.add_edge(tasklet_b0_on_m1, "p_m1_w", m1_b0_w, None, dace.Memlet("m1[0]"))
     block_0.add_edge(tasklet_b0_on_m1, "p_qm_w", qm_b0_w, None, dace.Memlet("qm[0]"))
@@ -442,47 +434,22 @@ def test_check_paths():
     precip_fall_b5 = block_5.add_read("precip_fall")
     qm_b5 = block_5.add_read("qm")
     q_b5_w = block_5.add_write("q")
-    tasklet_b5_on_q = block_5.add_tasklet(
-        "tasklet_b5_on_q",
-        {"p_precip_fall", "p_qm"},
-        {"p_q_w"},
-        "p_q_w = p_dp1 + 1",
-    )
-    block_5.add_edge(
-        precip_fall_b5,
-        None,
-        tasklet_b5_on_q,
-        "p_precip_fall",
-        dace.Memlet("precip_fall[0]"),
-    )
+    tasklet_b5_on_q = block_5.add_tasklet("tasklet_b5_on_q", {"p_precip_fall", "p_qm"}, {"p_q_w"}, "p_q_w = p_dp1 + 1")
+    block_5.add_edge(precip_fall_b5, None, tasklet_b5_on_q, "p_precip_fall", dace.Memlet("precip_fall[0]"))
     block_5.add_edge(qm_b5, None, tasklet_b5_on_q, "p_qm", dace.Memlet("qm[0]"))
     block_5.add_edge(tasklet_b5_on_q, "p_q_w", q_b5_w, None, dace.Memlet("q[0]"))
 
     m1_b5 = block_5.add_read("m1")
     m1_b5_w = block_5.add_write("m1")
-    tasklet_b5_on_m1 = block_5.add_tasklet(
-        "tasklet_b5_on_m1",
-        {"p_m1", "p_precip_fall"},
-        {"p_m1_w"},
-        "m1_w = p_m1 + 1",
-    )
+    tasklet_b5_on_m1 = block_5.add_tasklet("tasklet_b5_on_m1", {"p_m1", "p_precip_fall"}, {"p_m1_w"}, "m1_w = p_m1 + 1")
     block_5.add_edge(m1_b5, None, tasklet_b5_on_m1, "p_m1", dace.Memlet("m1[0]"))
-    block_5.add_edge(
-        precip_fall_b5,
-        None,
-        tasklet_b5_on_m1,
-        "p_precip_fall",
-        dace.Memlet("precip_fall[0]"),
-    )
+    block_5.add_edge(precip_fall_b5, None, tasklet_b5_on_m1, "p_precip_fall", dace.Memlet("precip_fall[0]"))
     block_5.add_edge(tasklet_b5_on_m1, "p_m1_w", m1_b5_w, None, dace.Memlet("m1[0]"))
 
     do_fuse = StateFusion()._check_paths(
         first_state=block_0,
         second_state=block_5,
-        match_nodes={
-            qm_b0_w: qm_b5,
-            m1_b0_w: m1_b5
-        },
+        match_nodes={qm_b0_w: qm_b5, m1_b0_w: m1_b5},
         nodes_first=[q_b0_w],
         nodes_second=[q_b5_w],
         second_input={precip_fall_b5, m1_b5, qm_b5},

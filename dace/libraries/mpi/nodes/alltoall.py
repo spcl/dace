@@ -8,7 +8,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandAlltoallMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -33,21 +32,20 @@ class ExpandAlltoallMPI(ExpandTransformation):
                         _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, \
                         {comm});
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Alltoall(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandAlltoallMPI,
-    }
+    implementations = {"MPI": ExpandAlltoallMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

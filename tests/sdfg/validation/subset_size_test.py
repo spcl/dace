@@ -9,24 +9,14 @@ import numpy as np
 
 
 def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGState]:
-    """Generates an SDFG that performs a copy that has a zero size.
-    """
+    """Generates an SDFG that performs a copy that has a zero size."""
     sdfg = dace.SDFG("zero_size_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        sdfg.add_array(
-            name=name,
-            shape=(20, 20),
-            dtype=dace.float64,
-            transient=True,
-        )
+        sdfg.add_array(name=name, shape=(20, 20), dtype=dace.float64, transient=True)
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[2:17, 2:2] -> [2:18, 3:3]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[2:17, 2:2] -> [2:18, 3:3]"))
 
     return sdfg, state
 
@@ -57,29 +47,20 @@ def test_an_to_an_memlet_with_zero_size():
 
 
 def test_an_to_an_memlet_with_negative_size():
-    """Tests if an AccessNode to AccessNode connection leads to an invalid SDFG.
-    """
+    """Tests if an AccessNode to AccessNode connection leads to an invalid SDFG."""
     sdfg = dace.SDFG("an_to_an_memlet_with_negative_size")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        sdfg.add_array(
-            name=name,
-            shape=(20, 20),
-            dtype=dace.float64,
-            transient=True,
-        )
+        sdfg.add_array(name=name, shape=(20, 20), dtype=dace.float64, transient=True)
 
-    state.add_nedge(
-        state.add_access("A"),
-        state.add_access("B"),
-        dace.Memlet("A[2:17, 13:2] -> [2:18, 14:3]"),
-    )
+    state.add_nedge(state.add_access("A"), state.add_access("B"), dace.Memlet("A[2:17, 13:2] -> [2:18, 14:3]"))
 
     with pytest.raises(
-            expected_exception=dace.sdfg.InvalidSDFGEdgeError,
-            match=re.escape(
-                f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]'),
+        expected_exception=dace.sdfg.InvalidSDFGEdgeError,
+        match=re.escape(
+            f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]'
+        ),
     ):
         sdfg.validate()
 

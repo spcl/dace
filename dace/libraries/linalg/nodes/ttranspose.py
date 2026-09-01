@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
+
 import dace
 import multiprocessing
 from dace import library, nodes, properties
@@ -12,7 +13,7 @@ import warnings
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """ Implements the pure expansion of TensorTranspose library node. """
+    """Implements the pure expansion of TensorTranspose library node."""
 
     environments = []
 
@@ -21,16 +22,12 @@ class ExpandPure(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array("_inp_tensor",
-                                    inp_tensor.shape,
-                                    inp_tensor.dtype,
-                                    inp_tensor.storage,
-                                    strides=inp_tensor.strides)
-        _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
-                                    out_tensor.dtype,
-                                    out_tensor.storage,
-                                    strides=out_tensor.strides)
+        _, inp_arr = sdfg.add_array(
+            "_inp_tensor", inp_tensor.shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides
+        )
+        _, out_arr = sdfg.add_array(
+            "_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides
+        )
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(inp_arr.shape))]
@@ -78,11 +75,9 @@ class ExpandHPTT(ExpandTransformation):
             {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
         return tasklet
 
@@ -114,8 +109,10 @@ class ExpandCuTensor(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
-                                      "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
+            raise NotImplementedError(
+                "cuTENSOR v2 cutensorPermute does not support beta != 0. "
+                "Use the 'pure' expansion or implement via cutensorElementwiseBinary."
+            )
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
@@ -199,23 +196,17 @@ class ExpandCuTensor(ExpandTransformation):
 }}
 """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):
-    """ Implements out-of-place tensor transpositions. """
+    """Implements out-of-place tensor transpositions."""
 
-    implementations = {
-        "pure": ExpandPure,
-        "HPTT": ExpandHPTT,
-        "cuTENSOR": ExpandCuTensor,
-    }
+    implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT, "cuTENSOR": ExpandCuTensor}
     default_implementation = 'pure'
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")

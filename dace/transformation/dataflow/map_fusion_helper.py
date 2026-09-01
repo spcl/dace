@@ -9,9 +9,7 @@ from dace.transformation import helpers
 
 
 def find_parameter_remapping(
-    first_map: nodes.Map,
-    second_map: nodes.Map,
-    simplify_ranges: bool = False,
+    first_map: nodes.Map, second_map: nodes.Map, simplify_ranges: bool = False
 ) -> Optional[Dict[str, str]]:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -56,12 +54,10 @@ def find_parameter_remapping(
         simp = lambda e: e  # noqa: E731 [lambda-assignment]
 
     first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(first_params, first_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(second_params, second_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter
@@ -136,9 +132,7 @@ def rename_map_parameters(
     """
     # Compute the replacement dict.
     repl_dict: Dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
-        first_map=first_map,
-        second_map=second_map,
-        simplify_ranges=simplify_ranges,
+        first_map=first_map, second_map=second_map, simplify_ranges=simplify_ranges
     )
 
     if repl_dict is None:
@@ -148,10 +142,7 @@ def rename_map_parameters(
 
     second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
     # Why is this thing in symbolic and not in replace?
-    symbolic.safe_replace(
-        mapping=repl_dict,
-        replace_callback=second_map_scope.replace_dict,
-    )
+    symbolic.safe_replace(mapping=repl_dict, replace_callback=second_map_scope.replace_dict)
 
     # For some odd reason the replace function does not modify the range and
     #  parameter of the map, so we will do it the hard way.
@@ -188,7 +179,7 @@ def get_new_conn_name(
 
     # If we have a MapExit or have a nested Map we never consolidate or if
     #  especially requested.
-    if (isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges):
+    if isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges:
         return to_node.next_connector(old_conn), False
 
     # Now look for an edge that already referees to the data of the edge.
@@ -223,10 +214,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
-    return ((edge_that_is_already_present.dst_conn[3:],
-             True) if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-            or edge_to_move_subset.covers(edge_that_is_already_present_subset) else
-            (to_node.next_connector(old_conn), False))
+    return (
+        (edge_that_is_already_present.dst_conn[3:], True)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        else (to_node.next_connector(old_conn), False)
+    )
 
 
 def relocate_nodes(
@@ -281,12 +274,15 @@ def relocate_nodes(
 
             # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                          f" to '{to_node}', but the symbol is already known there, but the"
-                                          " renaming is not implemented.")
+                raise NotImplementedError(
+                    f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                    f" to '{to_node}', but the symbol is already known there, but the"
+                    " renaming is not implemented."
+                )
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
+                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                )
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
@@ -345,11 +341,7 @@ def relocate_nodes(
     assert len(from_node.out_connectors) == 0
 
 
-def is_node_reachable_from(
-    graph: dace.SDFGState,
-    begin: nodes.Node,
-    end: nodes.Node,
-) -> bool:
+def is_node_reachable_from(graph: dace.SDFGState, begin: nodes.Node, end: nodes.Node) -> bool:
     """Test if the node `end` can be reached from `begin`.
 
     Essentially the function starts a DFS at `begin`. If an edge is found that lead
@@ -379,11 +371,7 @@ def is_node_reachable_from(
     return False
 
 
-def is_parallel(
-    graph: dace.SDFGState,
-    node1: nodes.Node,
-    node2: nodes.Node,
-) -> bool:
+def is_parallel(graph: dace.SDFGState, node1: nodes.Node, node2: nodes.Node) -> bool:
     """Tests if `node1` and `node2` are parallel in the data flow graph.
 
     The function considers two nodes parallel in the data flow graph, if `node2`
@@ -435,7 +423,8 @@ def can_topologically_be_fused(
     """
     if only_inner_maps and only_toplevel_maps:
         raise ValueError(
-            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance.")
+            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance."
+        )
 
     # Ensure that both have the same schedule
     if first_map_entry.map.schedule != second_map_entry.map.schedule:

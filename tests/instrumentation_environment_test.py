@@ -3,6 +3,7 @@
 append ran per SDFG from ``on_sdfg_begin``, grew without bound, and leaked into every later SDFG; an
 environment's flags/libs are a deduplicated set scoped to its users. Needs neither LIKWID nor PAPI
 installed, since CI has neither."""
+
 import ast
 import pathlib
 
@@ -48,9 +49,11 @@ def test_providers_do_not_mutate_global_compiler_config(relative):
     source = repo_root() / relative
     assert source.is_file(), f'{relative} not found; update PROVIDER_SOURCES'
     offenders = [t for t in config_append_targets(source) if t in FORBIDDEN_KEYS]
-    assert not offenders, (f'{relative} appends to global config {offenders}. Declare the flags on the provider\'s '
-                           'library environment instead -- a global append leaks into every later SDFG in the '
-                           'process and, from on_sdfg_begin, accumulates once per SDFG.')
+    assert not offenders, (
+        f'{relative} appends to global config {offenders}. Declare the flags on the provider\'s '
+        'library environment instead -- a global append leaks into every later SDFG in the '
+        'process and, from on_sdfg_begin, accumulates once per SDFG.'
+    )
 
 
 def test_likwid_environments_carry_their_defines():
@@ -91,8 +94,12 @@ def test_papi_vectorization_fragment_is_compiler_aware():
     holds with only one compiler installed."""
     fragment = pathlib.Path(__file__).resolve().parents[1] / 'dace' / 'codegen' / 'instrumentation'
     text = (fragment / 'papi_vectorization.cmake').read_text()
-    for compiler_id, flag in (('GNU', '-fopt-info-vec'), ('Clang', '-Rpass=loop-vectorize'), ('NVHPC', '-Minfo=vect'),
-                              ('IntelLLVM', '-qopt-report')):
+    for compiler_id, flag in (
+        ('GNU', '-fopt-info-vec'),
+        ('Clang', '-Rpass=loop-vectorize'),
+        ('NVHPC', '-Minfo=vect'),
+        ('IntelLLVM', '-qopt-report'),
+    ):
         assert compiler_id in text and flag in text, f'no {compiler_id} spelling in papi_vectorization.cmake'
     # Placed via add_compile_options so the build type's flags cannot override them.
     assert 'add_compile_options' in text
@@ -114,6 +121,7 @@ def test_compiler_args_survive_importing_the_providers():
     before = Config.get('compiler', 'cpu', 'args')
     import dace.codegen.instrumentation.likwid  # noqa: F401
     import dace.codegen.instrumentation.papi  # noqa: F401
+
     assert Config.get('compiler', 'cpu', 'args') == before
 
 

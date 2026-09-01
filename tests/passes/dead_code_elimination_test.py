@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Various tests for dead code elimination passes. """
+"""Various tests for dead code elimination passes."""
 
 import numpy as np
 import pytest
@@ -59,8 +59,9 @@ def test_dse_edge_condition_with_integer_as_boolean_regression():
     state_init = sdfg.add_state()
     state_middle = sdfg.add_state()
     state_end = sdfg.add_state()
-    sdfg.add_edge(state_init, state_end,
-                  dace.InterstateEdge(condition='(not ((N > 20) != 0))', assignments={'result': 'N'}))
+    sdfg.add_edge(
+        state_init, state_end, dace.InterstateEdge(condition='(not ((N > 20) != 0))', assignments={'result': 'N'})
+    )
     sdfg.add_edge(state_init, state_middle, dace.InterstateEdge(condition='((N > 20) != 0)'))
     sdfg.add_edge(state_middle, state_end, dace.InterstateEdge(assignments={'result': '20'}))
 
@@ -140,8 +141,7 @@ def test_dse_malformed_conditional_block():
     sdfg.add_edge(condition, merge_state, dace.InterstateEdge())
 
     with pytest.raises(
-            InvalidSDFGNodeError,
-            match="Conditional block detected, where else branch is not the last branch.",
+        InvalidSDFGNodeError, match="Conditional block detected, where else branch is not the last branch."
     ):
         DeadStateElimination().apply_pass(sdfg, {})
 
@@ -205,7 +205,7 @@ def test_dde_access_node_in_scope(second_tasklet):
 
 
 def test_dde_connectors():
-    """ Tests removal of connectors on tasklets and nested SDFGs. """
+    """Tests removal of connectors on tasklets and nested SDFGs."""
 
     @dace.program
     def dde_conntest(a: dace.float64[20], b: dace.float64[20]):
@@ -255,7 +255,7 @@ def test_dde_scope_reconnect():
 
 @pytest.mark.parametrize('libnode', (False, True))
 def test_dde_inout(libnode):
-    """ Tests nested SDFG with the same array as input and output. """
+    """Tests nested SDFG with the same array as input and output."""
     sdfg = dace.SDFG('dde_inout')
     sdfg.add_array('a', [20], dace.float64)
     sdfg.add_transient('b', [20], dace.float64)
@@ -303,13 +303,13 @@ def test_dde_inout_two_states():
     s1_write_computed = start_state.add_write("computed")
 
     # upstream tasklet that writes a transient (to be read in a separate state)
-    first_tasklet = start_state.add_tasklet("write", {"read_tmp"}, {"write_computed"},
-                                            "write_computed = read_tmp * 2 + 1")
+    first_tasklet = start_state.add_tasklet(
+        "write", {"read_tmp"}, {"write_computed"}, "write_computed = read_tmp * 2 + 1"
+    )
     start_state.add_memlet_path(s1_read_tmp, first_tasklet, dst_conn="read_tmp", memlet=dace.Memlet(data="tmp"))
-    start_state.add_memlet_path(first_tasklet,
-                                s1_write_computed,
-                                src_conn="write_computed",
-                                memlet=dace.Memlet(data="computed"))
+    start_state.add_memlet_path(
+        first_tasklet, s1_write_computed, src_conn="write_computed", memlet=dace.Memlet(data="computed")
+    )
 
     next_state = sdfg.add_state_after(start_state, "next_state")
     s2_write_computed = next_state.add_write("computed")
@@ -318,17 +318,18 @@ def test_dde_inout_two_states():
 
     # downstream tasklet that reads _and_ writes a transient
     second_tasklet = next_state.add_tasklet(
-        "read_write", {"read_computed"}, {"write_tmp", "write_computed"},
-        "write_computed = 2 * read_computed\nwrite_tmp = write_computed + read_computed")
-    next_state.add_memlet_path(s2_read_computed,
-                               second_tasklet,
-                               dst_conn="read_computed",
-                               memlet=dace.Memlet(data="computed"))
+        "read_write",
+        {"read_computed"},
+        {"write_tmp", "write_computed"},
+        "write_computed = 2 * read_computed\nwrite_tmp = write_computed + read_computed",
+    )
+    next_state.add_memlet_path(
+        s2_read_computed, second_tasklet, dst_conn="read_computed", memlet=dace.Memlet(data="computed")
+    )
     next_state.add_memlet_path(second_tasklet, s2_write_tmp, src_conn="write_tmp", memlet=dace.Memlet(data="tmp"))
-    next_state.add_memlet_path(second_tasklet,
-                               s2_write_computed,
-                               src_conn="write_computed",
-                               memlet=dace.Memlet(data="computed"))
+    next_state.add_memlet_path(
+        second_tasklet, s2_write_computed, src_conn="write_computed", memlet=dace.Memlet(data="computed")
+    )
 
     results = {}
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, results)
@@ -340,7 +341,8 @@ def test_dde_inout_two_states():
 
 
 def test_dce():
-    """ End-to-end test evaluating both dataflow and state elimination. """
+    """End-to-end test evaluating both dataflow and state elimination."""
+
     # Code should end up as b[:] = a + 2; b += 1
     @dace.program
     def dce_tester(a: dace.float64[20], b: dace.float64[20]):
@@ -362,8 +364,10 @@ def test_dce():
 
     # Check that arrays were removed
     assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
-    assert any('f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
-               for rstate in result[DeadDataflowElimination.__name__][0].values())
+    assert any(
+        'f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
+        for rstate in result[DeadDataflowElimination.__name__][0].values()
+    )
 
 
 def test_dce_callback():
@@ -420,9 +424,9 @@ def test_dce_add_type_hint_of_variable(dtype):
 
     sdfg = dace.SDFG("test")
     state = sdfg.add_state()
-    sdfg.add_array("out", dtype=dtype, shape=(10, ))
-    sdfg.add_array("cond", dtype=dace.bool, shape=(10, ))
-    sdfg.add_array("tmp", dtype=dtype, shape=(10, ), transient=True)
+    sdfg.add_array("out", dtype=dtype, shape=(10,))
+    sdfg.add_array("cond", dtype=dace.bool, shape=(10,))
+    sdfg.add_array("tmp", dtype=dtype, shape=(10,), transient=True)
     tasklet, *_ = state.add_mapped_tasklet(
         code=f"""
 if _cond:
@@ -432,10 +436,7 @@ else:
 _out = _tmp
         """,
         inputs={"_cond": dace.Memlet(subset="k", data="cond")},
-        outputs={
-            "_out": dace.Memlet(subset="k", data="out"),
-            "_tmp": dace.Memlet(subset="k", data="tmp"),
-        },
+        outputs={"_out": dace.Memlet(subset="k", data="out"), "_tmp": dace.Memlet(subset="k", data="tmp")},
         map_ranges={"k": "0:10"},
         name="test_tasklet",
         external_edges=True,
@@ -444,11 +445,11 @@ _out = _tmp
     assert tasklet.code.as_string.startswith("_tmp:")
 
     compiledsdfg = sdfg.compile()
-    cond = np.random.choice(a=[True, False], size=(10, ))
+    cond = np.random.choice(a=[True, False], size=(10,))
     if isinstance(dtype, dace.typeclass):
-        out = np.zeros((10, ), dtype=dtype.as_numpy_dtype())
+        out = np.zeros((10,), dtype=dtype.as_numpy_dtype())
     else:
-        out = np.zeros((10, ), dtype=dtype)
+        out = np.zeros((10,), dtype=dtype)
 
     compiledsdfg(cond=cond, out=out)
     assert np.all(out == np.where(cond, true_value, false_value))
@@ -458,12 +459,7 @@ def test_prune_single_branch_conditional_block():
     sdfg = dace.SDFG("conditional_sdfg")
 
     for name in "abc":
-        sdfg.add_array(
-            name,
-            shape=(10, ),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
     sdfg.arrays["b"].transient = True
 
     first_state = sdfg.add_state("first_state")
@@ -514,8 +510,9 @@ def test_dde_loop_condition():
 
     sdfg = loop_condition.to_sdfg(simplify=False)
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
-    count_f_nodes = sum(1 for a, _ in sdfg.all_nodes_recursive()
-                        if isinstance(a, dace.nodes.AccessNode) and a.data == 'f')
+    count_f_nodes = sum(
+        1 for a, _ in sdfg.all_nodes_recursive() if isinstance(a, dace.nodes.AccessNode) and a.data == 'f'
+    )
     assert count_f_nodes == 2
 
 

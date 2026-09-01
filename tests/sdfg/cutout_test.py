@@ -5,7 +5,7 @@ from dace.sdfg.analysis.cutout import SDFGCutout
 
 
 def test_cutout_onenode():
-    """ Tests cutout on a single node in a state. """
+    """Tests cutout on a single node in a state."""
 
     @dace.program
     def simple_matmul(A: dace.float64[20, 20], B: dace.float64[20, 20]):
@@ -25,7 +25,7 @@ def test_cutout_onenode():
 
 
 def test_cutout_multinode():
-    """ Tests cutout on multiple nodes in a state. """
+    """Tests cutout on multiple nodes in a state."""
 
     @dace.program
     def simple_matmul(A: dace.float64[20, 20], B: dace.float64[20, 20]):
@@ -42,11 +42,11 @@ def test_cutout_multinode():
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 7
     assert len(cut_sdfg.arrays) == 5
-    assert (not any(a.transient for a in cut_sdfg.arrays.values()))
+    assert not any(a.transient for a in cut_sdfg.arrays.values())
 
 
 def test_cutout_complex_case():
-    """ Tests cutout on a map with dynamic inputs and two tasklets, which would need two out of three input arrays. """
+    """Tests cutout on a map with dynamic inputs and two tasklets, which would need two out of three input arrays."""
     # Prepare graph
     sdfg = dace.SDFG('complex')
     sdfg.add_array('A', [20], dace.float64)
@@ -96,16 +96,11 @@ def test_cutout_implicit_array():
     nnz = dace.symbol("nnz")
 
     @dace.program
-    def spmm(
-        A_row: dace.int32[C + 1],
-        A_col: dace.int32[nnz],
-        A_val: dace.float32[nnz],
-        B: dace.float32[C, N],
-    ):
+    def spmm(A_row: dace.int32[C + 1], A_col: dace.int32[nnz], A_val: dace.float32[nnz], B: dace.float32[C, N]):
         out = dace.define_local((C, N), dtype=B.dtype)
 
         for i in dace.map[0:C]:
-            for j in dace.map[A_row[i]:A_row[i + 1]]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
                 for k in dace.map[0:N]:
                     b_col = B[:, k]
                     with dace.tasklet:
@@ -186,11 +181,11 @@ def test_cutout_alibi_nodes():
 
     ct = SDFGCutout.singlestate_cutout(state, t4)
 
-    assert ('__cutout_C' in ct.arrays)
-    assert ('tmp2' in ct.arrays)
-    assert ('tmp5' in ct.arrays)
-    assert ('tmp6' in ct.arrays)
-    assert ('C' not in ct.arrays)
+    assert '__cutout_C' in ct.arrays
+    assert 'tmp2' in ct.arrays
+    assert 'tmp5' in ct.arrays
+    assert 'tmp6' in ct.arrays
+    assert 'C' not in ct.arrays
 
 
 def test_multistate_cutout_simple_expand():
@@ -219,9 +214,9 @@ def test_multistate_cutout_simple_expand():
     ct: SDFGCutout = SDFGCutout.multistate_cutout(s6, s7)
     state_names = [s.name for s in ct.states()]
     assert len(state_names) == 3
-    assert ('s5' in state_names)
-    assert ('s6' in state_names)
-    assert ('s7' in state_names)
+    assert 's5' in state_names
+    assert 's6' in state_names
+    assert 's7' in state_names
 
 
 def test_multistate_cutout_complex_expand():
@@ -250,13 +245,13 @@ def test_multistate_cutout_complex_expand():
     ct: SDFGCutout = SDFGCutout.multistate_cutout(s4, s5, s6, s7)
     state_names = [s.name for s in ct.states()]
     assert len(state_names) == 7
-    assert ('s1' in state_names)
-    assert ('s2' in state_names)
-    assert ('s3' in state_names)
-    assert ('s4' in state_names)
-    assert ('s5' in state_names)
-    assert ('s6' in state_names)
-    assert ('s7' in state_names)
+    assert 's1' in state_names
+    assert 's2' in state_names
+    assert 's3' in state_names
+    assert 's4' in state_names
+    assert 's5' in state_names
+    assert 's6' in state_names
+    assert 's7' in state_names
 
 
 def test_input_output_configuration():
@@ -326,8 +321,9 @@ def test_minimum_cut_simple_no_further_input_config():
     state = sdfg.add_state('state')
     mi, mo = state.add_map('map', dict(i='0:N', j='0:N'))
     t1 = state.add_tasklet('t1', {'a', 'b'}, {'t'}, 't = a + b')
-    t2 = state.add_tasklet('t2', {'tin'}, {'t1', 't2', 't3', 't4'},
-                           't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1')
+    t2 = state.add_tasklet(
+        't2', {'tin'}, {'t1', 't2', 't3', 't4'}, 't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1'
+    )
     t3 = state.add_tasklet('t3', {'a', 'b'}, {'t'}, 't = a + b')
     t4 = state.add_tasklet('t4', {'a', 'b', 'c'}, {'t'}, 't = (a - b) * c')
     a_access = state.add_access('A')

@@ -43,6 +43,7 @@ class DFTExpansion(xf.ExpandTransformation):
     @staticmethod
     def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         from dace.libraries.fft.algorithms import dft  # Lazy import functions
+
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
@@ -59,6 +60,7 @@ class IDFTExpansion(xf.ExpandTransformation):
     @staticmethod
     def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         from dace.libraries.fft.algorithms import dft  # Lazy import functions
+
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
@@ -105,6 +107,7 @@ class cuFFTIFFTExpansion(xf.ExpandTransformation):
 
 def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_inverse: bool):
     from dace.codegen.targets import cpp  # Avoid import loops
+
     if len(indesc.shape) not in (1, 2, 3):
         raise ValueError('cuFFT only supports 1/2/3-dimensional FFT')
     if indesc.storage != dtypes.StorageType.GPU_Global:
@@ -129,9 +132,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
         direction = 'CUFFT_INVERSE'
         tasklet_prefix = 'i'
 
-    fields = [
-        f'cufftHandle {plan_name};',
-    ]
+    fields = [f'cufftHandle {plan_name};']
     plan_name = f'__state->{plan_name}'
 
     init_code += f'''
@@ -169,12 +170,16 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
     cufftXtExec({plan_name}, _inp, _out, {direction});
     '''
 
-    return nodes.Tasklet(f'cufft_{tasklet_prefix}fft', {'_inp'}, {'_out'},
-                         callsite_code,
-                         language=dtypes.Language.CPP,
-                         state_fields=fields,
-                         code_init=init_code,
-                         code_exit=exit_code)
+    return nodes.Tasklet(
+        f'cufft_{tasklet_prefix}fft',
+        {'_inp'},
+        {'_out'},
+        callsite_code,
+        language=dtypes.Language.CPP,
+        state_fields=fields,
+        code_init=init_code,
+        code_exit=exit_code,
+    )
 
 
 ##################################################################################################
@@ -192,10 +197,5 @@ def _get_input_and_output(state: SDFGState, node: nodes.LibraryNode):
 
 
 def _types_to_cufft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass):
-    typedict = {
-        dtypes.float32: 'R',
-        dtypes.float64: 'D',
-        dtypes.complex64: 'C',
-        dtypes.complex128: 'Z',
-    }
+    typedict = {dtypes.float32: 'R', dtypes.float64: 'D', dtypes.complex64: 'C', dtypes.complex128: 'Z'}
     return f'CUFFT_{typedict[indtype]}2{typedict[outdtype]}'

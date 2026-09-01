@@ -23,25 +23,20 @@ def test_onnx_return_scalars():
         name='axes',
         data_type=onnx.TensorProto.INT64,
         dims=[1],  # Single element array
-        vals=[0]  # Reduce along axis 0
+        vals=[0],  # Reduce along axis 0
     )
 
     # return value is a scalar
     Y = onnx.helper.make_tensor_value_info('Y', onnx.TensorProto.FLOAT, [])
 
-    node_def = onnx.helper.make_node(
-        'ReduceSum',
-        ['X', "axes"],
-        ['Y'],
-        keepdims=0,
-    )
+    node_def = onnx.helper.make_node('ReduceSum', ['X', "axes"], ['Y'], keepdims=0)
 
     graph_def = onnx.helper.make_graph(
         [node_def],
         'test-scalar-return',
         [X],  # inputs
         [Y],  # outputs
-        [axes_constant]  # initializers (constants)
+        [axes_constant],  # initializers (constants)
     )
 
     model_def = onnx.helper.make_model(graph_def, ir_version=10, opset_imports=[onnx.helper.make_opsetid('', 13)])

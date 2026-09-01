@@ -15,8 +15,9 @@ import json
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():
     typed_sym = symbolic.symbol('test_sym', dtype=dace.uint64, nonnegative=True)
-    expr = symbolic.SymExpr(typed_sym + symbolic.TypedConstant(np.int16(2)),
-                            typed_sym + symbolic.TypedConstant(np.int16(4)))
+    expr = symbolic.SymExpr(
+        typed_sym + symbolic.TypedConstant(np.int16(2)), typed_sym + symbolic.TypedConstant(np.int16(4))
+    )
 
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
@@ -39,8 +40,16 @@ def test_symbolic_serialization_roundtrip_preserves_metadata():
 
 def test_range_json_roundtrip_uses_symbolic_deserializer():
     sym = symbolic.symbol('N', dtype=dace.uint64, nonnegative=True)
-    rng = subsets.Range([(symbolic.TypedConstant(np.int16(2)), sym + symbolic.TypedConstant(np.int16(6)),
-                          symbolic.TypedConstant(np.int16(2)), symbolic.TypedConstant(np.uint8(4)))])
+    rng = subsets.Range(
+        [
+            (
+                symbolic.TypedConstant(np.int16(2)),
+                sym + symbolic.TypedConstant(np.int16(6)),
+                symbolic.TypedConstant(np.int16(2)),
+                symbolic.TypedConstant(np.uint8(4)),
+            )
+        ]
+    )
 
     restored = subsets.Range.from_json(rng.to_json(), {"version": dace.__version__})
     start, end, step = restored.ranges[0]
@@ -188,6 +197,7 @@ def test_typed_symbol_deserialization_does_not_strip_dtype():
 
     # Also verify the symbol object itself has the correct dtype
     from dace import int16
+
     syms = {s.name: s for s in restored.free_symbols}
     assert 'M' in syms and syms['M'].dtype == int16
 
@@ -245,12 +255,7 @@ def test_pystr_to_symbolic_simplifies_basic_when_requested():
 def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
     json_range = {
         'type': 'Range',
-        'ranges': [{
-            'start': '0',
-            'end': '-1 + symbol($N, dtype=dace.int16)',
-            'step': '1',
-            'tile': '1',
-        }],
+        'ranges': [{'start': '0', 'end': '-1 + symbol($N, dtype=dace.int16)', 'step': '1', 'tile': '1'}],
     }
 
     rng = subsets.Range.from_json(json_range, {"version": dace.__version__})
@@ -310,16 +315,22 @@ def test_dict_property_symbolic_type_json_roundtrip_supports_plain_names():
     assert restored == {'N': symbolic.symbol('N')}
 
 
-@pytest.mark.parametrize('expr', [
-    sympy.Add(symbolic.TypedConstant(np.int16(10)),
-              sympy.Mul(sympy.S.NegativeOne, symbolic.symbol('i'), evaluate=False),
-              evaluate=False),
-    sympy.Mul(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
-    sympy.Mul(symbolic.TypedConstant(np.int16(10)), sympy.Pow(symbolic.symbol('i'), -1, evaluate=False),
-              evaluate=False),
-    sympy.Pow(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
-    sympy.Mod(symbolic.symbol('i'), symbolic.TypedConstant(np.int16(3)), evaluate=False),
-])
+@pytest.mark.parametrize(
+    'expr',
+    [
+        sympy.Add(
+            symbolic.TypedConstant(np.int16(10)),
+            sympy.Mul(sympy.S.NegativeOne, symbolic.symbol('i'), evaluate=False),
+            evaluate=False,
+        ),
+        sympy.Mul(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
+        sympy.Mul(
+            symbolic.TypedConstant(np.int16(10)), sympy.Pow(symbolic.symbol('i'), -1, evaluate=False), evaluate=False
+        ),
+        sympy.Pow(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
+        sympy.Mod(symbolic.symbol('i'), symbolic.TypedConstant(np.int16(3)), evaluate=False),
+    ],
+)
 def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
@@ -361,7 +372,8 @@ def test_untyped_literals_keep_plain_sympy_form():
         ('int(5)', 'int'),  # int32 cast-wrapper form
         ('float(5)', 'float'),  # float32
         ('int64_t(5)', 'int64_t'),  # explicit-suffix dtype as a ctype cast
-    ])
+    ],
+)
 def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     """``double(5)``/``int(5)`` (the C++ printer's cast fallback) must round-trip
     into a TypedConstant."""
@@ -371,12 +383,7 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
 
 
 @pytest.mark.parametrize('op', ['Min', 'Max'])
-@pytest.mark.parametrize('literal', [
-    '5.0',
-    '5.0f64',
-    '5f32',
-    '7f64',
-])
+@pytest.mark.parametrize('literal', ['5.0', '5.0f64', '5f32', '7f64'])
 def test_minmax_with_float_literal_roundtrip(op, literal):
     serialized = f'{op}({literal}, $N)'
     restored = symbolic.deserialize_symbolic(serialized)
@@ -390,35 +397,41 @@ def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
     assert first == second
 
 
-@pytest.mark.parametrize('serialized', [
-    '5i16',
-    '7i64',
-    '5f32',
-    '5.0f64',
-    '(3.0 + 4.0j)c128',
-    '(3.0 - 4.0j)c128',
-    '(-3.0 + 4.0j)c128',
-    '(3.0 + 4.0j)c64',
-    '(4.0j)c128',
-    '(-4.0j)c128',
-    '(4.0j)c64',
-    '(-4.0j)c64',
-])
+@pytest.mark.parametrize(
+    'serialized',
+    [
+        '5i16',
+        '7i64',
+        '5f32',
+        '5.0f64',
+        '(3.0 + 4.0j)c128',
+        '(3.0 - 4.0j)c128',
+        '(-3.0 + 4.0j)c128',
+        '(3.0 + 4.0j)c64',
+        '(4.0j)c128',
+        '(-4.0j)c128',
+        '(4.0j)c64',
+        '(-4.0j)c64',
+    ],
+)
 def test_typed_constant_canonical_form_roundtrips(serialized):
     restored = symbolic.deserialize_symbolic(serialized)
     assert isinstance(restored, symbolic.TypedConstant)
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-@pytest.mark.parametrize('input_form,canonical', [
-    ('4j', '(4.0j)c128'),
-    ('-4j', '(-4.0j)c128'),
-    ('(0.0 + 4.0j)c128', '(4.0j)c128'),
-    ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
-    ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
-    ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
-    ('dace.complex128(complex(3.0, -4.0))', '(3.0 - 4.0j)c128'),
-])
+@pytest.mark.parametrize(
+    'input_form,canonical',
+    [
+        ('4j', '(4.0j)c128'),
+        ('-4j', '(-4.0j)c128'),
+        ('(0.0 + 4.0j)c128', '(4.0j)c128'),
+        ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
+        ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
+        ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
+        ('dace.complex128(complex(3.0, -4.0))', '(3.0 - 4.0j)c128'),
+    ],
+)
 def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonical):
     first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(input_form))
     assert first == canonical
@@ -435,8 +448,15 @@ def test_serialization_symbol_dtypes_isolation_multi_thread():
     failures = []
     lock = threading.Lock()
 
-    def worker(native_dtype, override_dtype, wait_to_enter_context, sig_entered_context, do_serialize, sig_serialize,
-               do_non_scoped_serialize):
+    def worker(
+        native_dtype,
+        override_dtype,
+        wait_to_enter_context,
+        sig_entered_context,
+        do_serialize,
+        sig_serialize,
+        do_non_scoped_serialize,
+    ):
         try:
             sym = symbolic.symbol('N', dtype=native_dtype)
             assert wait_to_enter_context.wait(timeout=10)
@@ -461,7 +481,8 @@ def test_serialization_symbol_dtypes_isolation_multi_thread():
             second_thread_has_entered_context,  # do_serializing
             first_thread_has_serialized,  # sig_serialize
             second_thread_has_serialized,  # do_non_scoped_serialize
-        ))
+        ),
+    )
     thread2 = threading.Thread(
         target=worker,
         args=(
@@ -472,7 +493,8 @@ def test_serialization_symbol_dtypes_isolation_multi_thread():
             first_thread_has_serialized,  # do_serialize
             second_thread_has_serialized,  # sig_serialize
             second_thread_has_serialized,  # do_non_scoped_serialize
-        ))
+        ),
+    )
 
     thread1.start()
     thread2.start()
@@ -607,8 +629,9 @@ def test_add_order_independent_of_arg_order():
     k = symbolic.symbol('k', dace.int64)
     t1 = sympy.Rational(1, 2) * (1 + k) * N
     t2 = -sympy.Rational(1, 2) * N * k
-    assert (symbolic.serialize_symbolic(sympy.Add(t1, t2, evaluate=False)) == symbolic.serialize_symbolic(
-        sympy.Add(t2, t1, evaluate=False)))
+    assert symbolic.serialize_symbolic(sympy.Add(t1, t2, evaluate=False)) == symbolic.serialize_symbolic(
+        sympy.Add(t2, t1, evaluate=False)
+    )
 
 
 def test_integer_symbol_assumptions_preserved():
@@ -624,7 +647,7 @@ def test_int64_symbol_dtype_preserved():
     k = symbolic.symbol('k', dace.int64)
     # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(k))
-    (rk, ) = reparsed.free_symbols
+    (rk,) = reparsed.free_symbols
     assert rk.name == 'k'
     assert rk.dtype == dace.int64
 

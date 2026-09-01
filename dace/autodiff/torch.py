@@ -10,6 +10,7 @@ from dace.autodiff.base_abc import AutoDiffException, BackwardResult
 try:
     from dace.libraries.onnx.converters import clean_onnx_name
     from dace.frontend.ml.onnx import ONNXModel
+
     ONNX_AVAILABLE = True
 except ImportError:
     ONNX_AVAILABLE = False
@@ -21,13 +22,13 @@ def make_backward_function(
     model,  # ONNXModel type hint removed for optional import
     required_grads: List[str],
 ) -> Tuple[dace.SDFG, dace.SDFG, BackwardResult, Dict[str, dt.Data]]:
-    """ Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
-        Instead use the ``backward=True`` parameter of :class:`dace.ml.DaceModule`.
+    """Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
+    Instead use the ``backward=True`` parameter of :class:`dace.ml.DaceModule`.
 
-        :param model: the model to convert.
-        :param required_grads: the list of inputs names of the module that we must compute gradients for.
-        :return: A 4-tuple of forward SDFG, backward SDFG, backward result, and input arrays for
-                 backward pass (as mapping of names to DaCe data descriptors).
+    :param model: the model to convert.
+    :param required_grads: the list of inputs names of the module that we must compute gradients for.
+    :return: A 4-tuple of forward SDFG, backward SDFG, backward result, and input arrays for
+             backward pass (as mapping of names to DaCe data descriptors).
     """
     if not ONNX_AVAILABLE:
         raise ImportError("make_backward_function requires ONNX. Install with: pip install dace[ml]")
@@ -39,10 +40,12 @@ def make_backward_function(
 
     backward_sdfg = dace.SDFG(forward_sdfg.name + "_backward")
 
-    gen = BackwardPassGenerator(sdfg=forward_sdfg,
-                                given_gradients=[clean_onnx_name(name) for name in model.outputs],
-                                required_gradients=required_grads,
-                                backward_sdfg=backward_sdfg)
+    gen = BackwardPassGenerator(
+        sdfg=forward_sdfg,
+        given_gradients=[clean_onnx_name(name) for name in model.outputs],
+        required_gradients=required_grads,
+        backward_sdfg=backward_sdfg,
+    )
 
     backward_result, backward_grad_arrays, backward_input_arrays = gen.backward()
 
@@ -75,28 +78,45 @@ def make_backward_function(
             raise AutoDiffException(
                 f"Cannot forward View '{name}' to backward pass. "
                 "Views should not be forwarded; the backward pass generator should forward "
-                "the source of the view and rebuild the sequence of required views in the backward pass.")
+                "the source of the view and rebuild the sequence of required views in the backward pass."
+            )
         if isinstance(forward_desc, dt.Scalar):
             # we can't return scalars from SDFGs, so we add a copy to an array of size 1
-            fwd_arr_name, _ = forward_sdfg.add_array(name + "_array", [1],
-                                                     forward_desc.dtype,
-                                                     transient=False,
-                                                     storage=forward_desc.storage,
-                                                     find_new_name=True)
-            bwd_arr_name, bwd_desc = backward_sdfg.add_array(name + "_array", [1],
-                                                             forward_desc.dtype,
-                                                             transient=False,
-                                                             storage=forward_desc.storage,
-                                                             find_new_name=True)
+            fwd_arr_name, _ = forward_sdfg.add_array(
+                name + "_array",
+                [1],
+                forward_desc.dtype,
+                transient=False,
+                storage=forward_desc.storage,
+                find_new_name=True,
+            )
+            bwd_arr_name, bwd_desc = backward_sdfg.add_array(
+                name + "_array",
+                [1],
+                forward_desc.dtype,
+                transient=False,
+                storage=forward_desc.storage,
+                find_new_name=True,
+            )
             backward_sdfg.arrays[name].transient = True
 
             fwd_copy_state = forward_sdfg.add_state_after(forward_state, label="copy_out_" + fwd_arr_name)
             bwd_copy_state = backward_sdfg.add_state_before(backward_state, label="copy_in_" + bwd_arr_name)
-            fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
-                                    dace.Memlet(name + "[0]"))
+            fwd_copy_state.add_edge(
+                fwd_copy_state.add_read(name),
+                None,
+                fwd_copy_state.add_write(fwd_arr_name),
+                None,
+                dace.Memlet(name + "[0]"),
+            )
 
-            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_arr_name), None, bwd_copy_state.add_write(name), None,
-                                    dace.Memlet(name + "[0]"))
+            bwd_copy_state.add_edge(
+                bwd_copy_state.add_read(bwd_arr_name),
+                None,
+                bwd_copy_state.add_write(name),
+                None,
+                dace.Memlet(name + "[0]"),
+            )
             replaced_scalars[name] = (bwd_arr_name, bwd_desc)
         else:
             forward_sdfg.arrays[name].transient = False
@@ -108,15 +128,18 @@ def make_backward_function(
     for fwd_name, bwd_name in backward_result.required_grad_names.items():
         desc = backward_sdfg.arrays[bwd_name]
         if isinstance(desc, dt.Scalar):
-            arr_name, arr_desc = backward_sdfg.add_array(bwd_name + "_array", [1],
-                                                         desc.dtype,
-                                                         transient=False,
-                                                         storage=desc.storage,
-                                                         find_new_name=True)
+            arr_name, arr_desc = backward_sdfg.add_array(
+                bwd_name + "_array", [1], desc.dtype, transient=False, storage=desc.storage, find_new_name=True
+            )
             desc.transient = True
             bwd_copy_state = backward_sdfg.add_state_after(backward_state, label="copy_out_" + bwd_name)
-            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_name), None, bwd_copy_state.add_write(arr_name), None,
-                                    dace.Memlet(bwd_name + "[0]"))
+            bwd_copy_state.add_edge(
+                bwd_copy_state.add_read(bwd_name),
+                None,
+                bwd_copy_state.add_write(arr_name),
+                None,
+                dace.Memlet(bwd_name + "[0]"),
+            )
             backward_result.required_grad_names[fwd_name] = arr_name
 
     backward_sdfg.validate()

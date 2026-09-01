@@ -5,7 +5,6 @@ import ctypes.util
 
 @dace.library.environment
 class cuBLAS:
-
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
@@ -23,9 +22,12 @@ class cuBLAS:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get();
 dace::blas::CheckCublasError(cublasSetStream(__dace_cublas_handle, __dace_current_stream));\n"""
+        )
 
     @staticmethod
     def _find_library():

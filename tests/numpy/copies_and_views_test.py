@@ -17,7 +17,7 @@ def test_set_by_view():
     set_by_view(val)
     ref = np.arange(10)
     set_by_view.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -31,7 +31,7 @@ def test_set_by_view_1():
     set_by_view_1(val)
     ref = np.arange(10)
     set_by_view_1.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -45,7 +45,7 @@ def test_set_by_view_2():
     set_by_view_2(val)
     ref = np.arange(10)
     set_by_view_2.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -59,7 +59,7 @@ def test_set_by_view_3():
     set_by_view_3(val)
     ref = np.arange(10)
     set_by_view_3.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -70,7 +70,7 @@ def set_by_view_4(A: dace.float64[10]):
 
 
 def test_set_by_view_4():
-    A = np.ones((10, ), dtype=np.float64)
+    A = np.ones((10,), dtype=np.float64)
 
     set_by_view_4(A)
 
@@ -91,7 +91,7 @@ def set_by_view_5(A: dace.float64[10]):
 
 
 def test_set_by_view_5():
-    A = np.ones((10, ), dtype=np.float64)
+    A = np.ones((10,), dtype=np.float64)
 
     set_by_view_5(A)
 
@@ -111,7 +111,7 @@ def test_is_a_copy():
     is_a_copy(val)
     ref = np.arange(10)
     is_a_copy.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_needs_view():
@@ -129,8 +129,9 @@ def test_needs_view():
     sdfg = selfcopy.to_sdfg()
     for s in sdfg.all_sdfgs_recursive():
         assert not any(
-            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3, )
-            for d in s.arrays.values())
+            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3,)
+            for d in s.arrays.values()
+        )
 
 
 def test_needs_copy():
@@ -149,8 +150,9 @@ def test_needs_copy():
     found_copy = False
     for s in sdfg.all_sdfgs_recursive():
         found_copy |= any(
-            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3, )
-            for d in s.arrays.values())
+            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3,)
+            for d in s.arrays.values()
+        )
     assert found_copy
 
 
@@ -188,7 +190,7 @@ def test_strided_copy_symbolic_0():
 
     @dace.program
     def strided_copy_symbolic_0(dst: dace.uint32[N], src: dace.uint32[2 * N]):
-        dst[0:N:2] = src[0:2 * N:4]
+        dst[0:N:2] = src[0 : 2 * N : 4]
 
     _test_strided_copy_program(strided_copy_symbolic_0, symbols={'N': 20})
 
@@ -198,7 +200,7 @@ def test_strided_copy_symbolic_1():
 
     @dace.program
     def strided_copy_symbolic_1(dst: dace.uint32[N], src: dace.uint32[2 * N]):
-        dst[0:N:2] = src[4 * N - 1:-1:-4]
+        dst[0:N:2] = src[4 * N - 1 : -1 : -4]
 
     with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
         # This should raise an error because of the negative stride in the source.
@@ -210,7 +212,7 @@ def test_strided_copy_symbolic_2():
 
     @dace.program
     def strided_copy_symbolic_2(dst: dace.uint32[20], src: dace.uint32[40]):
-        dst[0:20:N] = src[0:40:2 * N]
+        dst[0:20:N] = src[0 : 40 : 2 * N]
 
     _test_strided_copy_program(strided_copy_symbolic_2, symbols={'N': 2})
 
@@ -220,7 +222,7 @@ def test_strided_copy_symbolic_3():
 
     @dace.program
     def strided_copy_symbolic_3(dst: dace.uint32[M], src: dace.uint32[2 * M]):
-        dst[0:M:N] = src[0:2 * M:2 * N]
+        dst[0:M:N] = src[0 : 2 * M : 2 * N]
 
     _test_strided_copy_program(strided_copy_symbolic_3, symbols={'M': 20, 'N': 2})
 
@@ -240,7 +242,7 @@ def test_strided_copy_map_1():
     @dace.program
     def strided_copy_map_1(dst: dace.uint32[20], src: dace.uint32[40]):
         for i in dace.map[0:2]:
-            dst[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+            dst[i * 10 : (i + 1) * 10 : 2] = src[i * 20 : (i + 1) * 20 : 4]
 
     _test_strided_copy_program(strided_copy_map_1)
 
@@ -262,7 +264,7 @@ def test_strided_copy_map_symbolic_1():
     @dace.program
     def strided_copy_map_symbolic_1(dst: dace.uint32[2 * M], src: dace.uint32[4 * M]):
         for i in dace.map[0:2]:
-            dst[i * M:(i + 1) * M:N] = src[i * 2 * M:(i + 1) * 2 * M:2 * N]
+            dst[i * M : (i + 1) * M : N] = src[i * 2 * M : (i + 1) * 2 * M : 2 * N]
 
     _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
 

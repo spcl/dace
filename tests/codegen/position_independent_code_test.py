@@ -6,6 +6,7 @@ either fails to link or leaves text relocations in a library loaded into a long-
 ``CMAKE_POSITION_INDEPENDENT_CODE`` is what makes that independent of the configurable compiler
 arguments.
 """
+
 import json
 import os
 

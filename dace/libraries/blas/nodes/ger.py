@@ -26,7 +26,7 @@ class ExpandGerPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         inputs = ('_A', '_x', '_y')
-        outputs = ('_res', )
+        outputs = ('_res',)
         in_edges = [next(parent_state.in_edges_by_connector(node, conn)) for conn in inputs]
         out_edges = [next(parent_state.out_edges_by_connector(node, conn)) for conn in outputs]
         arrays = {}
@@ -52,26 +52,17 @@ class ExpandGerPure(ExpandTransformation):
         state = sdfg.add_state()
         state.add_mapped_tasklet(
             'ger',
-            {
-                '_i': f'0:M',
-                '_j': f'0:N'
-            },
-            {
-                'a': mm.Memlet('_A[_i, _j]'),
-                'xin': mm.Memlet('_x[_i]'),
-                'yin': mm.Memlet(f'_y[_j]')
-            },
+            {'_i': f'0:M', '_j': f'0:N'},
+            {'a': mm.Memlet('_A[_i, _j]'), 'xin': mm.Memlet('_x[_i]'), 'yin': mm.Memlet(f'_y[_j]')},
             f'aout = alpha * xin * yin + a',
             {'aout': mm.Memlet('_res[_i, _j]')},
             external_edges=True,
         )
 
         outshape = arrays['_res'].shape
-        nsdfg_node = nodes.NestedSDFG(node.label, sdfg, set(inputs), set(outputs), {
-            'M': outshape[0],
-            'N': outshape[1],
-            'alpha': node.alpha
-        })
+        nsdfg_node = nodes.NestedSDFG(
+            node.label, sdfg, set(inputs), set(outputs), {'M': outshape[0], 'N': outshape[1], 'alpha': node.alpha}
+        )
 
         return nsdfg_node
 
@@ -98,7 +89,8 @@ class Ger(LibraryNode):
     m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"))
 
     alpha = SymbolicProperty(
-        default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A")
+        default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A"
+    )
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
         super().__init__(name, location=location, inputs={"_x", "_y", "_A"}, outputs={"_res"})
@@ -110,9 +102,11 @@ class Ger(LibraryNode):
 
     def compare(self, other):
 
-        if (self.implementation == other.implementation and self.n_tile_size == other.n_tile
-                and self.m_tile_size == other.m_tile):
-
+        if (
+            self.implementation == other.implementation
+            and self.n_tile_size == other.n_tile
+            and self.m_tile_size == other.m_tile
+        ):
             return True
         else:
             return False
@@ -149,7 +143,7 @@ class Ger(LibraryNode):
             raise ValueError("Expected exactly one output from Ger (vector y).")
 
         # The following checks don't work for streams
-        if (not isinstance(desc_x, dt.Array) or not isinstance(desc_y, dt.Array) or not isinstance(desc_a, dt.Array)):
+        if not isinstance(desc_x, dt.Array) or not isinstance(desc_y, dt.Array) or not isinstance(desc_a, dt.Array):
             return
 
         if len(size_a) != 2:
@@ -171,7 +165,7 @@ class Ger(LibraryNode):
         out_subset.squeeze()
         size_out = out_subset.size()
 
-        if (len(size_out) != 2 or size_out[0] != size_a[0] or size_out[1] != size_a[1]):
+        if len(size_out) != 2 or size_out[0] != size_a[0] or size_out[1] != size_a[1]:
             raise ValueError("Output matrix must match input matrix a and outer product x*yT.")
 
         return desc_a, desc_x, desc_y

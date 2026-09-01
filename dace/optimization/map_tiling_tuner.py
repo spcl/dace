@@ -16,10 +16,9 @@ except (ImportError, ModuleNotFoundError):
 
 
 class MapTilingTuner(cutout_tuner.CutoutTuner):
-
-    def __init__(self,
-                 sdfg: dace.SDFG,
-                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(
+        self, sdfg: dace.SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer
+    ) -> None:
         super().__init__(task="MapTiling", sdfg=sdfg)
         self.instrument = measurement
 
@@ -36,10 +35,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
-        choices = [
-            None,
-            (64, 8, 1),
-        ]
+        choices = [None, (64, 8, 1)]
 
         return choices
 
@@ -68,13 +64,11 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         assert map_entry is not None
 
         new_kwargs = {
-            "space_kwargs": {
-                "map_entry": map_entry
-            },
+            "space_kwargs": {"map_entry": map_entry},
             "cutout": cutout.to_json(),
             "map_entry_id": cutout.start_state.node_id(map_entry),
             "measurements": measurements,
-            "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point))
+            "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point)),
         }
         return new_kwargs
 

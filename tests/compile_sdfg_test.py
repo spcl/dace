@@ -28,13 +28,14 @@ def test():
     B_ = state.add_access('B')
 
     # Easy way to add a tasklet
-    _, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A_, 'i')),
-                                                      'b = 5*a', dict(b=Memlet.simple(B_, 'i')))
+    _, map_entry, map_exit = state.add_mapped_tasklet(
+        'mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A_, 'i')), 'b = 5*a', dict(b=Memlet.simple(B_, 'i'))
+    )
     # Alternatively (the explicit way):
-    #map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
-    #tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
-    #state.add_edge(map_entry, None, tasklet, 'a', Memlet.simple(A_, 'i'))
-    #state.add_edge(tasklet, 'b', map_exit, None, Memlet.simple(B_, 'i'))
+    # map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
+    # tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
+    # state.add_edge(map_entry, None, tasklet, 'a', Memlet.simple(A_, 'i'))
+    # state.add_edge(tasklet, 'b', map_exit, None, Memlet.simple(B_, 'i'))
 
     # Add outer edges
     state.add_edge(A_, None, map_entry, None, Memlet.simple(A_, '0:N'))

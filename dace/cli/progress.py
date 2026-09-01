@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Progress bar command line interface. """
+"""Progress bar command line interface."""
 
 try:
     from tqdm import tqdm
@@ -14,11 +14,13 @@ from dace import config
 T = TypeVar('T')
 
 
-def optional_progressbar(iter: Generator[T, None, None],
-                         title: Optional[str] = None,
-                         n: Optional[int] = None,
-                         progress: Optional[bool] = None,
-                         time_threshold: float = 5.0) -> Generator[T, None, None]:
+def optional_progressbar(
+    iter: Generator[T, None, None],
+    title: Optional[str] = None,
+    n: Optional[int] = None,
+    progress: Optional[bool] = None,
+    time_threshold: float = 5.0,
+) -> Generator[T, None, None]:
     """
     Creates a progress bar for lengthy processes, depending on the time spent iterating over the generator.
 
@@ -70,11 +72,9 @@ class OptionalProgressBar:
     Creates a progress bar for lengthy processes, depending on the time spent between successive calls to ``next()``.
     """
 
-    def __init__(self,
-                 n: int,
-                 title: Optional[str] = None,
-                 progress: Optional[bool] = None,
-                 time_threshold: float = 5.0) -> None:
+    def __init__(
+        self, n: int, title: Optional[str] = None, progress: Optional[bool] = None, time_threshold: float = 5.0
+    ) -> None:
         # Config override
         if tqdm is None or (progress is None and not config.Config.get_bool('progress')):
             self.skip = True

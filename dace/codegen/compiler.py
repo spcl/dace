@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Handles compilation of code objects. Creates the proper folder structure,
-    compiles each target separately, links all targets to one binary, and
-    returns the corresponding CompiledSDFG object. """
+"""Handles compilation of code objects. Creates the proper folder structure,
+compiles each target separately, links all targets to one binary, and
+returns the corresponding CompiledSDFG object."""
 
 import collections
 import getpass
@@ -34,11 +34,7 @@ T = TypeVar('T')
 
 
 def generate_program_folder(
-    sdfg,
-    code_objects: List[CodeObject],
-    out_path: str,
-    config=None,
-    folder_mode: Optional[str] = None,
+    sdfg, code_objects: List[CodeObject], out_path: str, config=None, folder_mode: Optional[str] = None
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -80,7 +76,6 @@ def generate_program_folder(
 
     # Write each code object to a file
     for code_object in code_objects:
-
         name = code_object.name
         extension = code_object.language
         target_name = code_object.target.target_name
@@ -151,12 +146,16 @@ def generate_program_folder(
     cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
     if not os.path.exists(cachedir_tag):
         with open(cachedir_tag, "w") as f:
-            f.write("\n".join([
-                "Signature: 8a477f597d28d172789f06886806bc55",
-                "# This file is a cache directory tag created by DaCe.",
-                "# For information about cache directory tags, see:",
-                "#	http://www.brynosaurus.com/cachedir/",
-            ]))
+            f.write(
+                "\n".join(
+                    [
+                        "Signature: 8a477f597d28d172789f06886806bc55",
+                        "# This file is a cache directory tag created by DaCe.",
+                        "# For information about cache directory tags, see:",
+                        "#	http://www.brynosaurus.com/cachedir/",
+                    ]
+                )
+            )
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
@@ -282,10 +281,12 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
         with open(os.path.join(entry, 'CMakeCache.txt')) as fp:
             # CMake refuses a cache it finds anywhere other than where it was created, aborting the
             # configure outright, so retarget that one entry at this build folder.
-            cache = re.sub(r'(?m)^CMAKE_CACHEFILE_DIR:INTERNAL=.*$',
-                           'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'),
-                           fp.read(),
-                           count=1)
+            cache = re.sub(
+                r'(?m)^CMAKE_CACHEFILE_DIR:INTERNAL=.*$',
+                'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'),
+                fp.read(),
+                count=1,
+            )
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
@@ -331,8 +332,11 @@ def prepare_precompiled_header(targets) -> Optional[str]:
         return None
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     cxx = make_absolute(compiler_family.host_compiler())
-    flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
+    flags = (
+        [f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp']
+        + shlex.split(compiler_family.cpu_args() or '')
+        + build_type_flags()
+    )
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
@@ -346,9 +350,11 @@ def prepare_precompiled_header(targets) -> Optional[str]:
                 fp.write('#include <dace/dace.h>\n')
             # Build to a private name and rename, so a concurrent build never sees a partial header.
             staging = f'{header}.gch.{os.getpid()}'
-            subprocess.run([cxx] + flags + ['-I', runtime, '-x', 'c++-header', header, '-o', staging],
-                           check=True,
-                           capture_output=True)
+            subprocess.run(
+                [cxx] + flags + ['-I', runtime, '-x', 'c++-header', header, '-o', staging],
+                check=True,
+                capture_output=True,
+            )
             os.replace(staging, header + '.gch')
         return pch
     except (OSError, subprocess.SubprocessError):
@@ -391,10 +397,12 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
 
     # ``--parallel`` bounds the build; Ninja would otherwise use every core.
     try:
-        _run_liveoutput(f"cmake --build . --config {Config.get('compiler', 'build_type')} --parallel {jobs}",
-                        shell=True,
-                        cwd=build_folder,
-                        output_stream=output_stream)
+        _run_liveoutput(
+            f"cmake --build . --config {Config.get('compiler', 'build_type')} --parallel {jobs}",
+            shell=True,
+            cwd=build_folder,
+            output_stream=output_stream,
+        )
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
@@ -404,10 +412,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
 
 
 def configure_and_compile(
-    program_folder,
-    program_name=None,
-    output_stream=None,
-    folder_mode: Optional[str] = None,
+    program_folder, program_name=None, output_stream=None, folder_mode: Optional[str] = None
 ) -> pathlib.Path:
     """
     Configures and compiles a DaCe program in the specified folder into a shared library file.
@@ -524,8 +529,9 @@ def configure_and_compile(
     if cmake_linker:
         cmake_linker = make_absolute(cmake_linker)
         cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
-    cmake_link_flags = (' '.join(sorted(cmake_link_flags)) + ' ' +
-                        (Config.get('compiler', 'linker', 'args') or '')).strip()
+    cmake_link_flags = (
+        ' '.join(sorted(cmake_link_flags)) + ' ' + (Config.get('compiler', 'linker', 'args') or '')
+    ).strip()
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
@@ -540,8 +546,9 @@ def configure_and_compile(
     # editing the CMakeLists or an environment's .cmake changes the compile line but nothing above.
     cmake_sources = sorted({p for c in shape for p in re.findall(r'[^"=;\s]+\.cmake', c)})
     cmake_sources.append(os.path.join(dace_path, 'codegen', 'CMakeLists.txt'))
-    command_key = cache_key(*shape, *[f.replace(program_name, '$NAME') for f in files],
-                            *(newest_mtime(p) for p in cmake_sources))
+    command_key = cache_key(
+        *shape, *[f.replace(program_name, '$NAME') for f in files], *(newest_mtime(p) for p in cmake_sources)
+    )
     cmake_command = ' '.join(cmake_command)
 
     ##############################################
@@ -560,8 +567,10 @@ def configure_and_compile(
         run_cmake(cmake_command, build_folder, configure_key, jobs, output_stream)
         if reuse_commands and use_ninja:
             command_db.publish(
-                build_cache_root(), command_key,
-                command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
+                build_cache_root(),
+                command_key,
+                command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name),
+            )
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.
@@ -584,9 +593,7 @@ def configure_and_compile(
 
 
 def get_program_handle(
-    library_path: Union[pathlib.Path, str],
-    sdfg: 'dace.SDFG',
-    stub_library_path: Union[pathlib.Path, str, None] = None,
+    library_path: Union[pathlib.Path, str], sdfg: 'dace.SDFG', stub_library_path: Union[pathlib.Path, str, None] = None
 ) -> csd.CompiledSDFG:
     """Construct a  ``CompiledSDFG`` form a precompiled library directly.
 
@@ -601,8 +608,9 @@ def get_program_handle(
     library_path = pathlib.Path(library_path)
     if not library_path.is_file():
         raise FileNotFoundError('Compiled SDFG library not found: ' + library_path)
-    libstub_path = _get_stub_library_path(library_path) if stub_library_path is None else pathlib.Path(
-        stub_library_path).resolve()
+    libstub_path = (
+        _get_stub_library_path(library_path) if stub_library_path is None else pathlib.Path(stub_library_path).resolve()
+    )
     assert libstub_path.is_file()
 
     lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
@@ -619,18 +627,15 @@ def load_from_file(sdfg, binary_filename):
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[False] = False) -> str:
-    ...
+def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[False] = False) -> str: ...
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[True]) -> Optional[str]:
-    ...
+def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[True]) -> Optional[str]: ...
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool) -> Optional[str]:
-    ...
+def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool) -> Optional[str]: ...
 
 
 def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False) -> Optional[str]:
@@ -720,8 +725,7 @@ def get_binary_name(
 
 
 def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
-    """Returns the supposed location of the compiled stub library given the path of the compiled library.
-    """
+    """Returns the supposed location of the compiled stub library given the path of the compiled library."""
     sdfg_lib_path = pathlib.Path(sdfg_lib_path)
     parent = sdfg_lib_path.parent
     lib_name = sdfg_lib_path.name
@@ -730,10 +734,7 @@ def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.P
     return sdfg_lib_path.parent / ('libdacestub_' + lib_name[3:])
 
 
-def load_precompiled_sdfg(
-    folder: Union[pathlib.Path, str],
-    sdfg: Optional['dace.SDFG'] = None,
-) -> csd.CompiledSDFG:
+def load_precompiled_sdfg(folder: Union[pathlib.Path, str], sdfg: Optional['dace.SDFG'] = None) -> csd.CompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
@@ -765,8 +766,9 @@ def load_precompiled_sdfg(
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
 
-    return get_program_handle(library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode),
-                              sdfg=sdfg)
+    return get_program_handle(
+        library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode), sdfg=sdfg
+    )
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
@@ -798,7 +800,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     cmake_files = set()
     cmake_module_paths = set()
     for env in environments:
-        if (env.cmake_minimum_version is not None and len(env.cmake_minimum_version) > 0):
+        if env.cmake_minimum_version is not None and len(env.cmake_minimum_version) > 0:
             version_list = list(map(int, env.cmake_minimum_version.split(".")))
             for i in range(max(len(version_list), len(cmake_minimum_version))):
                 if i >= len(version_list):
@@ -812,9 +814,12 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
                 # Otherwise keep iterating
         env_variables = _get_or_eval(env.cmake_variables)
         for var in env_variables:
-            if (var in cmake_variables and cmake_variables[var] != env_variables[var]):
-                raise KeyError("CMake variable {} was redefined from {} to {}.".format(
-                    var, cmake_variables[var], env_variables[var]))
+            if var in cmake_variables and cmake_variables[var] != env_variables[var]:
+                raise KeyError(
+                    "CMake variable {} was redefined from {} to {}.".format(
+                        var, cmake_variables[var], env_variables[var]
+                    )
+                )
             cmake_variables[var] = env_variables[var]
         cmake_packages |= set(_get_or_eval(env.cmake_packages))
         cmake_includes |= set(_get_or_eval(env.cmake_includes))
@@ -825,7 +830,8 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         env_dir = os.path.dirname(env._dace_file_path)
         cmake_files |= set(
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
-            for f in _get_or_eval(env.cmake_files))
+            for f in _get_or_eval(env.cmake_files)
+        )
         headers = _get_or_eval(env.headers)
         if not isinstance(headers, dict):
             headers = {'frame': headers}

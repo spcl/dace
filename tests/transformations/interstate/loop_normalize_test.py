@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests loop normalization trainsformations. """
+"""Tests loop normalization trainsformations."""
 
 import numpy as np
 import pytest
@@ -11,20 +11,7 @@ from dace.transformation.passes.analysis import loop_analysis
 
 @pytest.mark.parametrize(
     "start, step",
-    [
-        (0, 1),
-        (1, 1),
-        (2, 2),
-        (4, 2),
-        (8, 4),
-        (16, 4),
-        (0, -1),
-        (1, -1),
-        (2, -2),
-        (4, -2),
-        (8, -4),
-        (16, -4),
-    ],
+    [(0, 1), (1, 1), (2, 2), (4, 2), (8, 4), (16, 4), (0, -1), (1, -1), (2, -2), (4, -2), (8, -4), (16, -4)],
 )
 def test_normalize(start, step):
     """

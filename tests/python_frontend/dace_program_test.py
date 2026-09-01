@@ -9,7 +9,7 @@ import time
 
 
 def _program_name(function) -> str:
-    """ Replicates the behavior of DaCe in determining the SDFG label. """
+    """Replicates the behavior of DaCe in determining the SDFG label."""
     result = ''
     if function.__module__ is not None and function.__module__ != '__main__':
         result += function.__module__.replace('.', '_') + '_'
@@ -17,7 +17,7 @@ def _program_name(function) -> str:
 
 
 def _build_folder(name: str) -> str:
-    """ Replicates the behavior of DaCe in determining the build folder. """
+    """Replicates the behavior of DaCe in determining the build folder."""
     return dace.SDFG(name).build_folder
 
 

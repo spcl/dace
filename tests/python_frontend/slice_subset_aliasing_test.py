@@ -5,6 +5,7 @@ Repeated reads of the same array slice hit the access cache and shared one
 ``Range`` object (``Memlet.simple`` stores the subset by reference), so an
 in-place subset rewrite on one edge corrupted the other.
 """
+
 import numpy as np
 
 import dace
@@ -35,8 +36,7 @@ def test_frontend_memlets_do_not_share_subset_objects():
                     if sub is None:
                         continue
                     here = (state.label, e.data.data, str(sub))
-                    assert id(sub) not in seen, \
-                        f'subset object shared by two memlets: {seen[id(sub)]} and {here}'
+                    assert id(sub) not in seen, f'subset object shared by two memlets: {seen[id(sub)]} and {here}'
                     seen[id(sub)] = here
 
 

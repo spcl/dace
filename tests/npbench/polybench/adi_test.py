@@ -43,27 +43,29 @@ def numpy_kernel(TSTEPS, N, u):
     f = d
 
     for t in range(0, TSTEPS):
-        v[0, 1:N - 1] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = v[0, 1:N - 1]
+        v[0, 1 : N - 1] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = v[0, 1 : N - 1]
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -c / (a * p[1:N - 1, j - 1] + b)
-            q[1:N - 1, j] = (-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
-                             a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
-        v[N - 1, 1:N - 1] = 1.0
+            p[1 : N - 1, j] = -c / (a * p[1 : N - 1, j - 1] + b)
+            q[1 : N - 1, j] = (
+                -d * u[j, 0 : N - 2] + (1.0 + 2.0 * d) * u[j, 1 : N - 1] - f * u[j, 2:N] - a * q[1 : N - 1, j - 1]
+            ) / (a * p[1 : N - 1, j - 1] + b)
+        v[N - 1, 1 : N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            v[j, 1:N - 1] = p[1:N - 1, j] * v[j + 1, 1:N - 1] + q[1:N - 1, j]
+            v[j, 1 : N - 1] = p[1 : N - 1, j] * v[j + 1, 1 : N - 1] + q[1 : N - 1, j]
 
-        u[1:N - 1, 0] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = u[1:N - 1, 0]
+        u[1 : N - 1, 0] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = u[1 : N - 1, 0]
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -f / (d * p[1:N - 1, j - 1] + e)
-            q[1:N - 1, j] = (-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
-                             d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
-        u[1:N - 1, N - 1] = 1.0
+            p[1 : N - 1, j] = -f / (d * p[1 : N - 1, j - 1] + e)
+            q[1 : N - 1, j] = (
+                -a * v[0 : N - 2, j] + (1.0 + 2.0 * a) * v[1 : N - 1, j] - c * v[2:N, j] - d * q[1 : N - 1, j - 1]
+            ) / (d * p[1 : N - 1, j - 1] + e)
+        u[1 : N - 1, N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            u[1:N - 1, j] = p[1:N - 1, j] * u[1:N - 1, j + 1] + q[1:N - 1, j]
+            u[1 : N - 1, j] = p[1 : N - 1, j] * u[1 : N - 1, j + 1] + q[1 : N - 1, j]
 
 
 @dace.program
@@ -89,27 +91,29 @@ def adi_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
     f = d
 
     for t in range(0, TSTEPS):
-        v[0, 1:N - 1] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = v[0, 1:N - 1]
+        v[0, 1 : N - 1] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = v[0, 1 : N - 1]
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -c / (a * p[1:N - 1, j - 1] + b)
-            q[1:N - 1, j] = (-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
-                             a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
-        v[N - 1, 1:N - 1] = 1.0
+            p[1 : N - 1, j] = -c / (a * p[1 : N - 1, j - 1] + b)
+            q[1 : N - 1, j] = (
+                -d * u[j, 0 : N - 2] + (1.0 + 2.0 * d) * u[j, 1 : N - 1] - f * u[j, 2:N] - a * q[1 : N - 1, j - 1]
+            ) / (a * p[1 : N - 1, j - 1] + b)
+        v[N - 1, 1 : N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            v[j, 1:N - 1] = p[1:N - 1, j] * v[j + 1, 1:N - 1] + q[1:N - 1, j]
+            v[j, 1 : N - 1] = p[1 : N - 1, j] * v[j + 1, 1 : N - 1] + q[1 : N - 1, j]
 
-        u[1:N - 1, 0] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = u[1:N - 1, 0]
+        u[1 : N - 1, 0] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = u[1 : N - 1, 0]
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -f / (d * p[1:N - 1, j - 1] + e)
-            q[1:N - 1, j] = (-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
-                             d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
-        u[1:N - 1, N - 1] = 1.0
+            p[1 : N - 1, j] = -f / (d * p[1 : N - 1, j - 1] + e)
+            q[1 : N - 1, j] = (
+                -a * v[0 : N - 2, j] + (1.0 + 2.0 * a) * v[1 : N - 1, j] - c * v[2:N, j] - d * q[1 : N - 1, j - 1]
+            ) / (d * p[1 : N - 1, j - 1] + e)
+        u[1 : N - 1, N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            u[1:N - 1, j] = p[1:N - 1, j] * u[1:N - 1, j + 1] + q[1:N - 1, j]
+            u[1 : N - 1, j] = p[1 : N - 1, j] * u[1 : N - 1, j + 1] + q[1 : N - 1, j]
 
 
 def initialize(N, datatype=np.float64):
@@ -140,49 +144,51 @@ def adi_jax_kernel(jnp, lax, TSTEPS, u):
     def first_j_scan(carry, j):
         p, q, u = carry
 
-        p = p.at[1:N - 1, j].set(-c / (a * p[1:N - 1, j - 1] + b))
-        q = q.at[1:N - 1,
-                 j].set((-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] - a * q[1:N - 1, j - 1]) /
-                        (a * p[1:N - 1, j - 1] + b))
+        p = p.at[1 : N - 1, j].set(-c / (a * p[1 : N - 1, j - 1] + b))
+        q = q.at[1 : N - 1, j].set(
+            (-d * u[j, 0 : N - 2] + (1.0 + 2.0 * d) * u[j, 1 : N - 1] - f * u[j, 2:N] - a * q[1 : N - 1, j - 1])
+            / (a * p[1 : N - 1, j - 1] + b)
+        )
         return (p, q, u), None
 
     def first_backward_j_scan(carry, j):
         v, p, q = carry
         idx = N - 2 - j  # reverse order index: when j=0, idx = N-2; when j=N-2, idx = 0.
-        v = v.at[idx, 1:N - 1].set(p[1:N - 1, idx] * v[idx + 1, 1:N - 1] + q[1:N - 1, idx])
+        v = v.at[idx, 1 : N - 1].set(p[1 : N - 1, idx] * v[idx + 1, 1 : N - 1] + q[1 : N - 1, idx])
         return (v, p, q), None
 
     def second_j_scan(carry, j):
         p, q, v = carry
-        p = p.at[1:N - 1, j].set(-f / (d * p[1:N - 1, j - 1] + e))
-        q = q.at[1:N - 1,
-                 j].set((-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] - d * q[1:N - 1, j - 1]) /
-                        (d * p[1:N - 1, j - 1] + e))
+        p = p.at[1 : N - 1, j].set(-f / (d * p[1 : N - 1, j - 1] + e))
+        q = q.at[1 : N - 1, j].set(
+            (-a * v[0 : N - 2, j] + (1.0 + 2.0 * a) * v[1 : N - 1, j] - c * v[2:N, j] - d * q[1 : N - 1, j - 1])
+            / (d * p[1 : N - 1, j - 1] + e)
+        )
         return (p, q, v), None
 
     def second_backward_j_scan(carry, j):
         u, p, q = carry
         idx = N - 2 - j
-        u = u.at[1:N - 1, idx].set(p[1:N - 1, idx] * u[1:N - 1, idx + 1] + q[1:N - 1, idx])
+        u = u.at[1 : N - 1, idx].set(p[1 : N - 1, idx] * u[1 : N - 1, idx + 1] + q[1 : N - 1, idx])
         return (u, p, q), None
 
     def time_step_body(carry, t):
         u, v, p, q = carry
 
-        v = v.at[0, 1:N - 1].set(1.0)
-        p = p.at[1:N - 1, 0].set(0.0)
-        q = q.at[1:N - 1, 0].set(v[0, 1:N - 1])
+        v = v.at[0, 1 : N - 1].set(1.0)
+        p = p.at[1 : N - 1, 0].set(0.0)
+        q = q.at[1 : N - 1, 0].set(v[0, 1 : N - 1])
         (p, q, u), _ = lax.scan(first_j_scan, (p, q, u), jnp.arange(1, N - 1))
 
-        v = v.at[N - 1, 1:N - 1].set(1.0)
+        v = v.at[N - 1, 1 : N - 1].set(1.0)
 
         (v, p, q), _ = lax.scan(first_backward_j_scan, (v, p, q), jnp.arange(0, N - 2))
 
-        u = u.at[1:N - 1, 0].set(1.0)
-        p = p.at[1:N - 1, 0].set(0.0)
-        q = q.at[1:N - 1, 0].set(u[1:N - 1, 0])
+        u = u.at[1 : N - 1, 0].set(1.0)
+        p = p.at[1 : N - 1, 0].set(0.0)
+        q = q.at[1 : N - 1, 0].set(u[1 : N - 1, 0])
         (p, q, v), _ = lax.scan(second_j_scan, (p, q, v), jnp.arange(1, N - 1))
-        u = u.at[1:N - 1, N - 1].set(1.0)
+        u = u.at[1 : N - 1, N - 1].set(1.0)
         (u, p, q), _ = lax.scan(second_backward_j_scan, (u, p, q), jnp.arange(0, N - 2))
 
         return (u, v, p, q), None
@@ -212,7 +218,7 @@ def run_adi(device_type: dace.dtypes.DeviceType):
 
     # Compute ground truth and Validate result
     numpy_kernel(TSTEPS, N, u)
-    assert (np.allclose(dace_u, u) or relerror(dace_u, u) < 1e-10)
+    assert np.allclose(dace_u, u) or relerror(dace_u, u) < 1e-10
     return sdfg
 
 
@@ -231,7 +237,7 @@ def run_adi_autodiff():
 
     # Initialize gradient computation data
     gradient_u = np.zeros_like(u)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dace.program
@@ -272,7 +278,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

@@ -5,35 +5,26 @@ import polybench
 N = dace.symbol('N')
 tsteps = dace.symbol('tsteps')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    tsteps: 20,
-    N: 30
-}, {
-    tsteps: 40,
-    N: 120
-}, {
-    tsteps: 100,
-    N: 400
-}, {
-    tsteps: 500,
-    N: 2000
-}, {
-    tsteps: 1000,
-    N: 4000
-}]
-args = [([N], datatype), ([N], datatype)]  #, N, tsteps]
+sizes = [
+    {tsteps: 20, N: 30},
+    {tsteps: 40, N: 120},
+    {tsteps: 100, N: 400},
+    {tsteps: 500, N: 2000},
+    {tsteps: 1000, N: 4000},
+]
+args = [([N], datatype), ([N], datatype)]  # , N, tsteps]
 
 
 @dace.program
-def jacobi1d(A: datatype[N], B: datatype[N]):  #, N, tsteps):
+def jacobi1d(A: datatype[N], B: datatype[N]):  # , N, tsteps):
     for t in range(tsteps):
 
         @dace.map
-        def a(i: _[1:N - 1]):
+        def a(i: _[1 : N - 1]):
             a1 << A[i - 1]
             a2 << A[i]
             a3 << A[i + 1]
@@ -41,7 +32,7 @@ def jacobi1d(A: datatype[N], B: datatype[N]):  #, N, tsteps):
             b = 0.33333 * (a1 + a2 + a3)
 
         @dace.map
-        def b(i: _[1:N - 1]):
+        def b(i: _[1 : N - 1]):
             a1 << B[i - 1]
             a2 << B[i]
             a3 << B[i + 1]

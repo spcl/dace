@@ -27,8 +27,8 @@ def test_inconn_self_copy():
     B = sdfg(A=A)
     refB = inconn_self_copy.f(refA)
 
-    assert (np.allclose(A, refA))
-    assert (np.allclose(B[0], refB[0]))
+    assert np.allclose(A, refA)
+    assert np.allclose(B[0], refB[0])
 
 
 def test_outconn_self_copy():
@@ -55,8 +55,8 @@ def test_outconn_self_copy():
     B = sdfg(A=A)
     refB = outconn_self_copy.f(refA)
 
-    assert (np.allclose(A, refA))
-    assert (np.allclose(B[0:2], refB[0:2]))
+    assert np.allclose(A, refA)
+    assert np.allclose(B[0:2], refB[0:2])
 
 
 def test_in_out_inconn_copy():
@@ -82,9 +82,9 @@ def test_in_out_inconn_copy():
     B = sdfg(A=A)
     refB = in_out_inconn_copy.f(refA)
 
-    assert (np.allclose(A, refA))
-    assert (np.allclose(B[1], refB[1]))
-    assert (np.allclose(B[3], refB[3]))
+    assert np.allclose(A, refA)
+    assert np.allclose(B[1], refB[1])
+    assert np.allclose(B[3], refB[3])
 
 
 def test_intermediate_copies():
@@ -120,8 +120,8 @@ def test_intermediate_copies():
     B = sdfg(A=A)
     refB = intermediate_copies.f(refA)
 
-    assert (np.allclose(A, refA))
-    assert (np.allclose(B[1:], refB[1:]))
+    assert np.allclose(A, refA)
+    assert np.allclose(B[1:], refB[1:])
 
 
 if __name__ == "__main__":

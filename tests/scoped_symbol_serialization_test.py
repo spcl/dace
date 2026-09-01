@@ -6,6 +6,7 @@ authority (the SDFG's registered symbols, overridden by any shadowing map/consum
 scope), not of the symbol instance's own (SymPy-cache-stale) dtype. Outside SDFG
 serialization the instance dtype is used.
 """
+
 import json
 
 import dace
@@ -46,7 +47,7 @@ def test_registered_sdfg_symbol_roundtrips_its_dtype():
     """A symbol registered on the SDFG keeps its declared dtype through a roundtrip."""
     sdfg = dace.SDFG('registered')
     sdfg.add_symbol('N', dace.uint64)
-    sdfg.add_array('A', (symbolic.symbol('N', dace.uint64), ), dace.float64)
+    sdfg.add_array('A', (symbolic.symbol('N', dace.uint64),), dace.float64)
 
     s1, s2 = _resave(sdfg)
     assert s1 == s2
@@ -62,14 +63,16 @@ def test_map_iterator_dtype_follows_scope():
     """A map iterator's dtype is inferred from its range under the scope authority and round-trips."""
     sdfg = dace.SDFG('mapscope')
     sdfg.add_symbol('N', dace.int64)
-    sdfg.add_array('A', (symbolic.symbol('N', dace.int64), ), dace.float64)
+    sdfg.add_array('A', (symbolic.symbol('N', dace.int64),), dace.float64)
     state = sdfg.add_state()
-    state.add_mapped_tasklet('m',
-                             map_ranges={'i': '0:N'},
-                             inputs={},
-                             code='b = 1.0',
-                             outputs={'b': dace.Memlet(data='A', subset='i')},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'm',
+        map_ranges={'i': '0:N'},
+        inputs={},
+        code='b = 1.0',
+        outputs={'b': dace.Memlet(data='A', subset='i')},
+        external_edges=True,
+    )
 
     s1, s2 = _resave(sdfg)
     assert s1 == s2
@@ -89,25 +92,25 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
     inner = dace.SDFG('inner')
     inner.add_symbol('first', dace.int32)
     inner.add_symbol('last', dace.int32)
-    inner.add_array('A0', (10, ), dace.int32)
-    inner.add_array('B0', (10, ), dace.int32)
+    inner.add_array('A0', (10,), dace.int32)
+    inner.add_array('B0', (10,), dace.int32)
     istate = inner.add_state('s', is_start_block=True)
-    istate.add_mapped_tasklet('plus',
-                              map_ranges={'j': 'first:last'},
-                              inputs={'__a': dace.Memlet(data='A0', subset='j')},
-                              code='__b = __a + 1',
-                              outputs={'__b': dace.Memlet(data='B0', subset='j')},
-                              external_edges=True)
+    istate.add_mapped_tasklet(
+        'plus',
+        map_ranges={'j': 'first:last'},
+        inputs={'__a': dace.Memlet(data='A0', subset='j')},
+        code='__b = __a + 1',
+        outputs={'__b': dace.Memlet(data='B0', subset='j')},
+        external_edges=True,
+    )
 
     state = sdfg.add_state('outer', is_start_block=True)
     a = state.add_access('A')
     b = state.add_access('B')
     me, mx = state.add_map('map', {'i': '0:2'})
-    nsdfg = state.add_nested_sdfg(inner, {'A0'}, {'B0'},
-                                  symbol_mapping={
-                                      'first': 'max(0, i - fidx)',
-                                      'last': 'min(10, i + lidx)'
-                                  })
+    nsdfg = state.add_nested_sdfg(
+        inner, {'A0'}, {'B0'}, symbol_mapping={'first': 'max(0, i - fidx)', 'last': 'min(10, i + lidx)'}
+    )
     state.add_memlet_path(a, me, nsdfg, memlet=dace.Memlet(data='A', subset='0, 0:10'), dst_conn='A0')
     state.add_memlet_path(nsdfg, mx, b, memlet=dace.Memlet(data='B', subset='0, 0:10'), src_conn='B0')
 
@@ -117,4 +120,5 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
 
 if __name__ == '__main__':
     import pytest
+
     pytest.main([__file__, '-v'])

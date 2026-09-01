@@ -5,8 +5,8 @@ from typing import Any, Dict, Tuple
 
 
 def to_blastype(dtype):
-    """ Returns a BLAS character that corresponds to the input type.
-        Used in MKL/CUBLAS calls. """
+    """Returns a BLAS character that corresponds to the input type.
+    Used in MKL/CUBLAS calls."""
 
     if dtype == np.float16:
         return 'H'
@@ -53,12 +53,12 @@ def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
         dtypes.int8: 'CUDA_R_8I',
         dtypes.uint8: 'CUDA_R_8U',
         dtypes.int32: 'CUDA_R_32I',
-        #dtypes.complex32: 'CUDA_C_16F',
-        #dtypes.bfloat16: 'CUDA_R_16BF',
-        #dtypes.bcomplex32: 'CUDA_C_16BF',
-        #dtypes.icomplex16: 'CUDA_C_8I',
-        #dtypes.iucomplex16: 'CUDA_C_8U',
-        #dtypes.icomplex64: 'CUDA_C_32I',
+        # dtypes.complex32: 'CUDA_C_16F',
+        # dtypes.bfloat16: 'CUDA_R_16BF',
+        # dtypes.bcomplex32: 'CUDA_C_16BF',
+        # dtypes.icomplex16: 'CUDA_C_8I',
+        # dtypes.iucomplex16: 'CUDA_C_8U',
+        # dtypes.icomplex64: 'CUDA_C_32I',
     }
     return types[dtype]
 
@@ -114,70 +114,14 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     sCM, sCN = c_strides[-2:]
 
     opts = {
-        'mkm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mnm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'knm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'T'
-        },
-        'knn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'mnn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mkn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'T'
-        },
+        'mkm': {'swap': False, 'lda': sAK, 'ldb': sBN, 'ldc': sCN, 'ta': 'N', 'tb': 'N'},
+        'kkm': {'swap': False, 'lda': sAM, 'ldb': sBN, 'ldc': sCN, 'ta': 'T', 'tb': 'N'},
+        'mnm': {'swap': False, 'lda': sAK, 'ldb': sBK, 'ldc': sCN, 'ta': 'N', 'tb': 'T'},
+        'knm': {'swap': False, 'lda': sAM, 'ldb': sBK, 'ldc': sCN, 'ta': 'T', 'tb': 'T'},
+        'knn': {'swap': True, 'lda': sAM, 'ldb': sBK, 'ldc': sCM, 'ta': 'N', 'tb': 'N'},
+        'kkn': {'swap': True, 'lda': sAM, 'ldb': sBN, 'ldc': sCM, 'ta': 'N', 'tb': 'T'},
+        'mnn': {'swap': True, 'lda': sAK, 'ldb': sBK, 'ldc': sCM, 'ta': 'T', 'tb': 'N'},
+        'mkn': {'swap': True, 'lda': sAK, 'ldb': sBN, 'ldc': sCM, 'ta': 'T', 'tb': 'T'},
     }
 
     if sAM == 1 and sAK != 1:
@@ -205,10 +149,10 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
 
 
 def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
-    """ If schedule cannot access all passed descriptors, through an error.
+    """If schedule cannot access all passed descriptors, through an error.
 
-        :param schedule: the schedule.
-        :param descs: the descriptors to check.
+    :param schedule: the schedule.
+    :param descs: the descriptors to check.
     """
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):

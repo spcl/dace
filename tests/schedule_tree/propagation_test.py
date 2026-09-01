@@ -2,6 +2,7 @@
 """
 Tests schedule tree input/output memlet computation
 """
+
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
@@ -36,19 +37,20 @@ def test_stree_propagation_symassign():
     N = dace.symbol('N')
     stree = tn.ScheduleTreeRoot(
         name='tester',
-        containers={
-            'A': dace.data.Array(dace.float64, [20]),
-        },
-        symbols={
-            'N': N,
-        },
+        containers={'A': dace.data.Array(dace.float64, [20])},
+        symbols={'N': N},
         children=[
-            tn.MapScope(node=dace.nodes.MapEntry(dace.nodes.Map('map', ['i'], dace.subsets.Range([(1, N - 1, 1)]))),
-                        children=[
-                            tn.AssignNode('j', CodeBlock('N + i'), dace.InterstateEdge(assignments=dict(j='N + i'))),
-                            tn.TaskletNode(nodes.Tasklet('inner', {}, {'out'}, 'out = inp + 2'),
-                                           {'inp': dace.Memlet('A[j]')}, {'out': dace.Memlet('A[j]')}),
-                        ]),
+            tn.MapScope(
+                node=dace.nodes.MapEntry(dace.nodes.Map('map', ['i'], dace.subsets.Range([(1, N - 1, 1)]))),
+                children=[
+                    tn.AssignNode('j', CodeBlock('N + i'), dace.InterstateEdge(assignments=dict(j='N + i'))),
+                    tn.TaskletNode(
+                        nodes.Tasklet('inner', {}, {'out'}, 'out = inp + 2'),
+                        {'inp': dace.Memlet('A[j]')},
+                        {'out': dace.Memlet('A[j]')},
+                    ),
+                ],
+            )
         ],
     )
     stree.children[0].parent = stree
@@ -69,7 +71,7 @@ def test_stree_propagation_dynset():
         b = np.zeros([H], dtype=np.float32)
 
         for i in dace.map[0:H]:
-            for j in dace.map[A_row[i]:A_row[i + 1]]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
         return b

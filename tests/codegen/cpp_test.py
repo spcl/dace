@@ -152,12 +152,14 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
     # Setup SDFG with array A that is too big to be allocated on the stack.
     sdfg = SDFG("test")
     array_a_alignment = 128
-    _, a_desc = sdfg.add_array(name="A",
-                               shape=(10000, ),
-                               dtype=dtypes.float64,
-                               storage=dtypes.StorageType.Register,
-                               transient=True,
-                               alignment=array_a_alignment)
+    _, a_desc = sdfg.add_array(
+        name="A",
+        shape=(10000,),
+        dtype=dtypes.float64,
+        storage=dtypes.StorageType.Register,
+        transient=True,
+        alignment=array_a_alignment,
+    )
     state = sdfg.add_state("state", is_start_block=True)
     read = state.add_access("A")
     tasklet = state.add_tasklet("dummy", {"a"}, {}, "a = 1")
@@ -178,7 +180,9 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         # new/delete forms, earlier standards the plain ones.
         if _use_aligned_operator_new(a_desc):
             assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
-            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, "A is deallocated from the heap."
+            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, (
+                "A is deallocated from the heap."
+            )
         else:
             assert "A = new double" in code, "A is allocated on the heap."
             assert "delete[] A" in code, "A is deallocated from the heap."

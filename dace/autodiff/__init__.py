@@ -31,6 +31,7 @@ from .autodiff import add_backward_pass
 
 try:
     from .torch import make_backward_function
+
     TORCH_INTEGRATION_AVAILABLE = True
 except ImportError:
     make_backward_function = None

@@ -2,6 +2,7 @@
 """
 Contains linear algebra function and operator replacements.
 """
+
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
@@ -28,12 +29,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     arr2 = sdfg.arrays[op2]
 
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
-
         res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
         if res is None:
             warnings.warn(
                 f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
-                f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
+                f'second tensor/matrix {arr2.shape[-2]} may not match',
+                UserWarning,
+            )
         elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
@@ -49,46 +51,47 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
             output_shape = (arr1.shape[-2], arr2.shape[-1])
 
     elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
-
         res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
         if res is None:
             warnings.warn(
-                f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
-                f'may not match', UserWarning)
+                f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} may not match',
+                UserWarning,
+            )
         elif not res:
-            raise SyntaxError("Number of matrix columns {} must match"
-                              "size of vector {}.".format(arr1.shape[1], arr2.shape[0]))
+            raise SyntaxError(
+                "Number of matrix columns {} must matchsize of vector {}.".format(arr1.shape[1], arr2.shape[0])
+            )
 
-        output_shape = (arr1.shape[0], )
+        output_shape = (arr1.shape[0],)
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
-
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
             warnings.warn(
-                f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
-                f'may not match', UserWarning)
+                f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} may not match', UserWarning
+            )
         elif not res:
-            raise SyntaxError("Size of vector {} must match number of matrix "
-                              "rows {} must match".format(arr1.shape[0], arr2.shape[0]))
+            raise SyntaxError(
+                "Size of vector {} must match number of matrix rows {} must match".format(arr1.shape[0], arr2.shape[0])
+            )
 
-        output_shape = (arr2.shape[1], )
+        output_shape = (arr2.shape[1],)
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
-
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
             warnings.warn(
-                f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
-                f'may not match', UserWarning)
+                f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} may not match',
+                UserWarning,
+            )
         elif not res:
-            raise SyntaxError("Vectors in vector product must have same size: "
-                              "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
+            raise SyntaxError(
+                "Vectors in vector product must have same size: {} vs. {}".format(arr1.shape[0], arr2.shape[0])
+            )
 
-        output_shape = (1, )
+        output_shape = (1,)
 
     else:  # Dunno what this is, bail
-
         raise SyntaxError("Cannot multiply arrays with shapes: {} and {}".format(arr1.shape, arr2.shape))
 
     type1 = arr1.dtype.type
@@ -133,8 +136,12 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
         # but it is not implemented yet
         return _matmult(pv, sdfg, state, op_a, op_b)
 
-    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or isinstance(arr_b, data.Scalar)
-            or list(arr_b.shape) == [1]):
+    if (
+        isinstance(arr_a, data.Scalar)
+        or list(arr_a.shape) == [1]
+        or isinstance(arr_b, data.Scalar)
+        or list(arr_b.shape) == [1]
+    ):
         # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
         node = ast.Call()
         ufunc_name = 'multiply'
@@ -183,11 +190,9 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
         raise SyntaxError()
 
     inp_arr = sdfg.arrays[inp_op]
-    out_arr = sdfg.add_transient(pv.get_target_name(),
-                                 inp_arr.shape,
-                                 inp_arr.dtype,
-                                 storage=inp_arr.storage,
-                                 find_new_name=True)
+    out_arr = sdfg.add_transient(
+        pv.get_target_name(), inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage, find_new_name=True
+    )
 
     from dace.libraries.linalg import Inv
 
@@ -251,13 +256,15 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
 @oprepo.replaces('dace.tensordot')
 @oprepo.replaces('numpy.tensordot')
-def _tensordot(pv: 'ProgramVisitor',
-               sdfg: SDFG,
-               state: SDFGState,
-               op_a: str,
-               op_b: str,
-               axes: Union[int, Sequence[int]] = 2,
-               out_axes: Sequence[int] = None):
+def _tensordot(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    op_a: str,
+    op_b: str,
+    axes: Union[int, Sequence[int]] = 2,
+    out_axes: Sequence[int] = None,
+):
 
     # NOTE: `out_axes` is a non-standard extension to `numpy.tensordot`, allowing trasposition of the output
 
@@ -296,6 +303,7 @@ def _tensordot(pv: 'ProgramVisitor',
     op_c, arr_c = pv.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
 
     from dace.libraries.linalg import TensorDot
+
     a = state.add_read(op_a)
     b = state.add_read(op_b)
     c = state.add_write(op_c)
@@ -308,24 +316,29 @@ def _tensordot(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.einsum')
-def _einsum(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            einsum_string: StringLiteral,
-            *arrays: str,
-            dtype: Optional[dtypes.typeclass] = None,
-            optimize: bool = False,
-            output: Optional[str] = None,
-            alpha: Optional[symbolic.SymbolicType] = 1.0,
-            beta: Optional[symbolic.SymbolicType] = 0.0):
+def _einsum(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    einsum_string: StringLiteral,
+    *arrays: str,
+    dtype: Optional[dtypes.typeclass] = None,
+    optimize: bool = False,
+    output: Optional[str] = None,
+    alpha: Optional[symbolic.SymbolicType] = 1.0,
+    beta: Optional[symbolic.SymbolicType] = 0.0,
+):
     from dace.frontend.common.einsum import create_einsum_sdfg
-    return create_einsum_sdfg(sdfg,
-                              state,
-                              str(einsum_string),
-                              *arrays,
-                              dtype=dtype,
-                              optimize=optimize,
-                              output=output,
-                              output_name=pv.get_target_name(),
-                              alpha=alpha,
-                              beta=beta)
+
+    return create_einsum_sdfg(
+        sdfg,
+        state,
+        str(einsum_string),
+        *arrays,
+        dtype=dtype,
+        optimize=optimize,
+        output=output,
+        output_name=pv.get_target_name(),
+        alpha=alpha,
+        beta=beta,
+    )

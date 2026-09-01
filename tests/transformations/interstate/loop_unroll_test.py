@@ -14,12 +14,14 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
     sdfg = dace.SDFG("size_5_loop_sdfg")
 
-    for_cfg = LoopRegion(label="size_5_loop",
-                         condition_expr=CodeBlock(f"i < {l}"),
-                         loop_var="i",
-                         initialize_expr=CodeBlock("i = 0"),
-                         update_expr=CodeBlock("i = i + 1"),
-                         sdfg=sdfg)
+    for_cfg = LoopRegion(
+        label="size_5_loop",
+        condition_expr=CodeBlock(f"i < {l}"),
+        loop_var="i",
+        initialize_expr=CodeBlock("i = 0"),
+        update_expr=CodeBlock("i = i + 1"),
+        sdfg=sdfg,
+    )
 
     if add_state_before:
         _ps = sdfg.add_state(label="pre_s", is_start_block=True)
@@ -49,8 +51,8 @@ def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
     s2.add_edge(t, "_out", b_an, None, Memlet(expr="B[i]"))
     s2.add_edge(a_an, None, t, "_in", Memlet(expr="A[i]"))
 
-    sdfg.add_array("A", shape=(5, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(5, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(5,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(5,), dtype=dace.float64)
 
     sdfg.validate()
     return sdfg
@@ -124,17 +126,14 @@ def melt_kernel(
 
 
 @dace.program
-def triang_elim_kernel(
-    zqlhs: dace.float64[nclv, nclv, klon],
-    kidia: dace.int32,
-    kfdia: dace.int32,
-):
+def triang_elim_kernel(zqlhs: dace.float64[nclv, nclv, klon], kidia: dace.int32, kfdia: dace.int32):
     for jn in range(1, nclv - 1 + 1):
         for jm in range(jn + 1, nclv + 1):
             for ik in range(jn + 1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
-                    zqlhs[ik - 1, jm - 1, jl - 1] = (zqlhs[ik - 1, jm - 1, jl - 1] -
-                                                     zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1])
+                    zqlhs[ik - 1, jm - 1, jl - 1] = (
+                        zqlhs[ik - 1, jm - 1, jl - 1] - zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1]
+                    )
 
 
 def test_triang_elim():
@@ -205,12 +204,14 @@ def test_unroll_loop_with_negative_iterate_values():
     """A descending loop must unroll every iteration, under a label that stays a valid name once
     the iterate goes negative."""
     sdfg = dace.SDFG('negative_iterate_loop_sdfg')
-    for_cfg = LoopRegion(label='size_3_countdown',
-                         condition_expr=CodeBlock('i > -5'),
-                         loop_var='i',
-                         initialize_expr=CodeBlock('i = 0'),
-                         update_expr=CodeBlock('i = i - 1'),
-                         sdfg=sdfg)
+    for_cfg = LoopRegion(
+        label='size_3_countdown',
+        condition_expr=CodeBlock('i > -5'),
+        loop_var='i',
+        initialize_expr=CodeBlock('i = 0'),
+        update_expr=CodeBlock('i = i - 1'),
+        sdfg=sdfg,
+    )
     sdfg.add_node(for_cfg, is_start_block=True)
     body = ControlFlowRegion(label='for_body', sdfg=sdfg, parent=for_cfg)
     for_cfg.add_node(body, is_start_block=True)

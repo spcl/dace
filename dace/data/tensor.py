@@ -5,6 +5,7 @@ Tensor data descriptors for sparse tensor formats.
 This module contains classes for representing various sparse tensor storage formats
 based on the abstraction described in [https://doi.org/10.1145/3276493].
 """
+
 import enum
 
 from abc import ABC, abstractmethod
@@ -27,6 +28,7 @@ class TensorIterationTypes(enum.Enum):
     with a compressed index, in which the pos array enables one to iterate over
     the positions in the crd array that hold the actual coordinates.
     """
+
     Value = enum.auto()
     Position = enum.auto()
 
@@ -43,6 +45,7 @@ class TensorAssemblyType(enum.Enum):
     on append order, this affects whether the index is ordered or not. This
     could be changed by sorting the index after assembly
     """
+
     NoAssembly = enum.auto()
     Insert = enum.auto()
     Append = enum.auto()
@@ -375,7 +378,7 @@ class TensorIndexSingleton(TensorIndex):
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
         return {
-            f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
+            f"idx{lvl}_crd": dtypes.int32[dummy_symbol]  # TODO (later) choose better length
         }
 
     def __repr__(self) -> str:
@@ -447,7 +450,7 @@ class TensorIndexRange(TensorIndex):
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
         return {
-            f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
+            f"idx{lvl}_offset": dtypes.int32[dummy_symbol]  # TODO (later) choose better length
         }
 
     def __repr__(self) -> str:
@@ -515,7 +518,7 @@ class TensorIndexOffset(TensorIndex):
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
         return {
-            f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
+            f"idx{lvl}_offset": dtypes.int32[dummy_symbol]  # TODO (later) choose better length
         }
 
     def __repr__(self) -> str:
@@ -547,17 +550,19 @@ class Tensor(Structure):
     index_ordering = ListProperty(element_type=symbolic.SymExpr)
     value_count = SymbolicProperty(default=0)
 
-    def __init__(self,
-                 value_dtype: dtypes.typeclass,
-                 tensor_shape,
-                 indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
-                 value_count: symbolic.SymExpr,
-                 name: str,
-                 transient: bool = False,
-                 storage: dtypes.StorageType = dtypes.StorageType.Default,
-                 location: Dict[str, str] = None,
-                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+    def __init__(
+        self,
+        value_dtype: dtypes.typeclass,
+        tensor_shape,
+        indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
+        value_count: symbolic.SymExpr,
+        name: str,
+        transient: bool = False,
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        location: Dict[str, str] = None,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+        debuginfo: dtypes.DebugInfo = None,
+    ):
         """
         Constructor for Tensor storage format.
 
@@ -667,9 +672,13 @@ class Tensor(Structure):
 
         # all tensor dimensions must occur exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
-            raise TypeError((f"All tensor dimensions must be referenced exactly once in "
-                             f"tensor indices. (referenced dimensions: {dimension_order}; "
-                             f"tensor dimensions: {list(range(num_dims))})"))
+            raise TypeError(
+                (
+                    f"All tensor dimensions must be referenced exactly once in "
+                    f"tensor indices. (referenced dimensions: {dimension_order}; "
+                    f"tensor dimensions: {list(range(num_dims))})"
+                )
+            )
 
         # assembling permanent and index specific fields
         fields = dict(
@@ -679,7 +688,7 @@ class Tensor(Structure):
             values=dtypes.float32[value_count],
         )
 
-        for (lvl, index) in enumerate(indices):
+        for lvl, index in enumerate(indices):
             fields.update(index.fields(lvl, value_count))
 
         super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)

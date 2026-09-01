@@ -15,7 +15,7 @@ sizes = {
     "small": (40, 50, 60, 70, 80),
     "medium": (180, 190, 200, 210, 220),
     "large": (800, 900, 1000, 1100, 1200),
-    "extra-large": (1600, 1800, 2000, 2200, 2400)
+    "extra-large": (1600, 1800, 2000, 2200, 2400),
 }
 
 NI, NJ, NK, NL, NM = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK', 'NL', 'NM'))
@@ -72,7 +72,7 @@ def run_k3mm_autodiff():
 
     # Intiialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -111,7 +111,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

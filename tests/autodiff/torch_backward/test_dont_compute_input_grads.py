@@ -14,7 +14,6 @@ from tests.utils import torch_tensors_close
 def test_skip_input_grads(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
@@ -29,22 +28,20 @@ def test_skip_input_grads(use_cpp_dispatcher: bool):
     shape = [8, 10]
     input_value = torch.rand(*shape, dtype=torch.float32)
 
-    pytorch_input = torch.empty(
-        *shape,
-        dtype=torch.float32,
-        requires_grad=False,
-    )
+    pytorch_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     pytorch_input.copy_(input_value)
     dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     dace_input.copy_(input_value)
 
     # TODO: provide a better API for input names
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_module = DaceModule(dace_module,
-                             sdfg_name=f"test_skip_input_grads_{dispatcher_suffix}",
-                             backward=True,
-                             inputs_to_skip=["onnx::MatMul_0"],
-                             compile_torch_extension=use_cpp_dispatcher)
+    dace_module = DaceModule(
+        dace_module,
+        sdfg_name=f"test_skip_input_grads_{dispatcher_suffix}",
+        backward=True,
+        inputs_to_skip=["onnx::MatMul_0"],
+        compile_torch_extension=use_cpp_dispatcher,
+    )
 
     dy = torch.rand(8, 10)
 
@@ -59,8 +56,9 @@ def test_skip_input_grads(use_cpp_dispatcher: bool):
     torch_tensors_close("param_grad", pt_module.fc1.grad, dace_module.model.fc1.grad)
 
     # Make sure that input grad is not being computed
-    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1, \
+    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1, (
         f"Expected 1 sink node (no input gradient), got {len(dace_module.backward_sdfg.node(0).sink_nodes())}"
+    )
 
 
 if __name__ == "__main__":

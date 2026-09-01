@@ -9,8 +9,15 @@ from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
-                                          SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
+from dace.transformation.dataflow import (
+    RedundantArray,
+    RedundantReadSlice,
+    RedundantSecondArray,
+    RedundantWriteSlice,
+    SqueezeViewRemove,
+    UnsqueezeViewRemove,
+    RemoveSliceView,
+)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 from ordered_set import OrderedSet
@@ -58,7 +65,8 @@ class ArrayElimination(ppl.Pass):
         for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
             removable_data: OrderedSet[str] = OrderedSet(
-                s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
+                s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state}
+            )
 
             # Find duplicate access nodes as an ordered list
             access_nodes: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
@@ -102,8 +110,12 @@ class ArrayElimination(ppl.Pass):
     def report(self, pass_retval: Set[str]) -> str:
         return f'Eliminated {len(pass_retval)} arrays: {pass_retval}.'
 
-    def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
-                           condition: Callable[[nodes.AccessNode], bool]):
+    def merge_access_nodes(
+        self,
+        state: SDFGState,
+        access_nodes: Dict[str, List[nodes.AccessNode]],
+        condition: Callable[[nodes.AccessNode], bool],
+    ):
         """
         Merges access nodes that follow the same conditions together to the first access node.
         """
@@ -122,7 +134,7 @@ class ArrayElimination(ppl.Pass):
                 if first_node is None:
                     continue
 
-                for node in nodeset[first_node_idx + 1:]:
+                for node in nodeset[first_node_idx + 1 :]:
                     if not condition(node):
                         continue
 
@@ -137,8 +149,12 @@ class ArrayElimination(ppl.Pass):
                             if edge.dst_conn == 'views':
                                 other_edges = list(state.in_edges_by_connector(first_node, 'views'))
                                 if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError('Multiple edges connected to views connector',
-                                                               state.sdfg, state.block_id, state.node_id(first_node))
+                                    raise InvalidSDFGNodeError(
+                                        'Multiple edges connected to views connector',
+                                        state.sdfg,
+                                        state.block_id,
+                                        state.node_id(first_node),
+                                    )
                                 other_view_edge = other_edges[0]
                                 if other_view_edge.data != edge.data:
                                     # The memlets do not match, skip the node.
@@ -149,8 +165,12 @@ class ArrayElimination(ppl.Pass):
                             if edge.src_conn == 'views':
                                 other_edges = list(state.out_edges_by_connector(first_node, 'views'))
                                 if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError('Multiple edges connected to views connector',
-                                                               state.sdfg, state.block_id, state.node_id(first_node))
+                                    raise InvalidSDFGNodeError(
+                                        'Multiple edges connected to views connector',
+                                        state.sdfg,
+                                        state.block_id,
+                                        state.node_id(first_node),
+                                    )
                                 other_view_edge = other_edges[0]
                                 if other_view_edge.data != edge.data:
                                     # The memlets do not match, skip the node.
@@ -185,8 +205,9 @@ class ArrayElimination(ppl.Pass):
                         nodeset.remove(anode)
         return removed_nodes
 
-    def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],
-                                access_nodes: Dict[str, List[nodes.AccessNode]]):
+    def remove_redundant_copies(
+        self, sdfg: SDFG, state: SDFGState, removable_data: Set[str], access_nodes: Dict[str, List[nodes.AccessNode]]
+    ):
         """
         Removes access nodes that represent redundant copies and/or views.
         """
@@ -197,8 +218,9 @@ class ArrayElimination(ppl.Pass):
         xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
         # Transformations that remove the second access node
         xforms_second: List[SingleStateTransformation] = [
-            RedundantReadSlice(), SqueezeViewRemove(),
-            RedundantSecondArray()
+            RedundantReadSlice(),
+            SqueezeViewRemove(),
+            RedundantSecondArray(),
         ]
 
         # Try the different redundant copy/view transformations on the node
@@ -221,12 +243,9 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg,
-                                                  state.parent_graph.cfg_id,
-                                                  state_id,
-                                                  candidate,
-                                                  0,
-                                                  override=True)
+                                xform.setup_match(
+                                    sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True
+                                )
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
@@ -246,12 +265,9 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg,
-                                                  state.parent_graph.cfg_id,
-                                                  state_id,
-                                                  candidate,
-                                                  0,
-                                                  override=True)
+                                xform.setup_match(
+                                    sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True
+                                )
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):

@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
 
 @dace.library.expansion
 class ExpandRecvMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -32,25 +31,22 @@ class ExpandRecvMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = '1'
         buffer_offset = 0  # this is here because the frontend already changes the ptr
-        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        code += (
+            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        )
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Recv(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandRecvMPI,
-    }
+    implementations = {"MPI": ExpandRecvMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):

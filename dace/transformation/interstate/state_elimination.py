@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" State elimination transformations """
+"""State elimination transformations"""
 
 import networkx as nx
 from typing import Dict, Set
@@ -338,7 +338,8 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
 
 @transformation.explicit_cf_compatible
 class HoistState(transformation.SingleStateTransformation):
-    """ Move a state out of a nested SDFG """
+    """Move a state out of a nested SDFG"""
+
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     @classmethod

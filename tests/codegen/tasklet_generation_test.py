@@ -25,12 +25,14 @@ def _gen_sdfg_with_a_print_tasklet_between_map_exits() -> dace.SDFG:
     state.add_edge(inner_map_exit, "OUT_B", outer_map_exit, "IN_B", dace.Memlet("B[i0:i0+10]"))
     state.add_edge(outer_map_exit, "OUT_B", out_B, None, dace.Memlet("B[0:100]"))
 
-    t2 = state.add_tasklet(name='printf',
-                           inputs={},
-                           outputs={},
-                           code_global='#include <stdio.h>',
-                           code='printf("At iteration %d\\n", i0);',
-                           language=dace.Language.CPP)
+    t2 = state.add_tasklet(
+        name='printf',
+        inputs={},
+        outputs={},
+        code_global='#include <stdio.h>',
+        code='printf("At iteration %d\\n", i0);',
+        language=dace.Language.CPP,
+    )
     state.add_edge(inner_map_exit, None, t2, None, dace.Memlet())
     state.add_edge(t2, None, outer_map_exit, None, dace.Memlet())
 

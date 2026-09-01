@@ -24,6 +24,7 @@ def consumer(inp):
 
 def arraysquarer(outp_array, inp_array):
     import numpy as np
+
     np.copyto(outp_array, np.square(inp_array))
 
 
@@ -61,18 +62,13 @@ def callback_with_arrays(out_arr: dace.float64[M, N, O], in_arr: dace.float64[M,
 
 
 def test_callback():
-    A = dace.ndarray((2, ), dtype=dace.int32)
-    B = dace.ndarray((2, ), dtype=dace.int32)
+    A = dace.ndarray((2,), dtype=dace.int32)
+    B = dace.ndarray((2,), dtype=dace.int32)
     A[:] = 5
     B[:] = 0
 
     callback_test(
-        A,
-        B,
-        giveandtake=mysquarer,
-        take=consumer,
-        give=answertolifeuniverseandeverything,
-        donothing=failed_test,
+        A, B, giveandtake=mysquarer, take=consumer, give=answertolifeuniverseandeverything, donothing=failed_test
     )
     for b in B:
         assert b == 25

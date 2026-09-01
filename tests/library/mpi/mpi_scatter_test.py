@@ -24,15 +24,13 @@ def make_sdfg(dtype):
     root = state.add_access("root")
     scatter_node = mpi.nodes.scatter.Scatter("scatter")
 
-    state.add_memlet_path(inbuf,
-                          scatter_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inbuf, "0:n*p", num_accesses=n))
+    state.add_memlet_path(
+        inbuf, scatter_node, dst_conn="_inbuffer", memlet=Memlet.simple(inbuf, "0:n*p", num_accesses=n)
+    )
     state.add_memlet_path(root, scatter_node, dst_conn="_root", memlet=Memlet.simple(root, "0:1", num_accesses=1))
-    state.add_memlet_path(scatter_node,
-                          outbuf,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(outbuf, "0:n", num_accesses=1))
+    state.add_memlet_path(
+        scatter_node, outbuf, src_conn="_outbuffer", memlet=Memlet.simple(outbuf, "0:n", num_accesses=1)
+    )
 
     return sdfg
 
@@ -40,12 +38,16 @@ def make_sdfg(dtype):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
-    pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
+        pytest.param("MPI", dace.float64, marks=pytest.mark.mpi),
+    ],
+)
 def test_mpi(implementation, dtype):
     from mpi4py import MPI as MPI4PY
+
     np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
@@ -86,6 +88,7 @@ def dace_scatter_gather(A: dace.float32[N * P]):
 @pytest.mark.mpi
 def test_dace_scatter_gather():
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -106,9 +109,9 @@ def test_dace_scatter_gather():
     mpi_sdfg(A=A, N=length, P=commsize)
 
     if rank == 0:
-        assert (np.allclose(A, np.full([length * commsize], np.pi, dtype=np.float32)))
+        assert np.allclose(A, np.full([length * commsize], np.pi, dtype=np.float32))
     else:
-        assert (True)
+        assert True
 
 
 ###############################################################################

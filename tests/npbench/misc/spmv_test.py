@@ -30,9 +30,10 @@ def spmv_kernel(A_row: dc.uint32[M + 1], A_col: dc.uint32[nnz], A_val: dc.float6
 
 def initialize(M, N, nnz):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
-    x = rng.random((N, ))
+    x = rng.random((N,))
 
     from scipy.sparse import random
 
@@ -48,8 +49,8 @@ def ground_truth(A_row, A_col, A_val, x):
     y = np.empty(A_row.size - 1, A_val.dtype)
 
     for i in range(A_row.size - 1):
-        cols = A_col[A_row[i]:A_row[i + 1]]
-        vals = A_val[A_row[i]:A_row[i + 1]]
+        cols = A_col[A_row[i] : A_row[i + 1]]
+        vals = A_val[A_row[i] : A_row[i + 1]]
         y[i] = vals @ x[cols]
 
     return y
@@ -89,7 +90,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

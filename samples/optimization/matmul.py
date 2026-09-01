@@ -3,14 +3,21 @@
 Sample showcasing transformations applied on a naive matrix multiplication program, yielding performance that competes
 with Intel MKL and NVIDIA CUBLAS.
 """
+
 import click
 import dace
 import numpy as np
 from typing import Tuple
 
 # For optimizations
-from dace.transformation.dataflow import (DoubleBuffering, MapCollapse, MapReduceFusion, InLocalStorage,
-                                          AccumulateTransient, Vectorization)
+from dace.transformation.dataflow import (
+    DoubleBuffering,
+    MapCollapse,
+    MapReduceFusion,
+    InLocalStorage,
+    AccumulateTransient,
+    Vectorization,
+)
 from dace.transformation import helpers as xfutil
 
 # For library node implementations
@@ -58,18 +65,19 @@ def matmul_lib(A: dtype[M, K], B: dtype[K, N]):
 
 
 def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
-    """ Finds the first map entry node by the given parameter name. """
+    """Finds the first map entry node by the given parameter name."""
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
 def find_map_and_state_by_param(sdfg: dace.SDFG, pname: str) -> Tuple[dace.nodes.MapEntry, dace.SDFGState]:
-    """ Finds the first map entry node by the given parameter name. """
+    """Finds the first map entry node by the given parameter name."""
     return next(
-        (n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+        (n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params
+    )
 
 
 def find_mapexit_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapExit:
-    """ Finds the first map exit node by the given parameter name. """
+    """Finds the first map exit node by the given parameter name."""
     entry, state = find_map_and_state_by_param(sdfg, pname)
     return state.exit_node(entry)
 
@@ -79,7 +87,7 @@ def find_mapexit_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapExit:
 
 
 def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
-    """ Optimize the matrix multiplication example for multi-core CPUs. """
+    """Optimize the matrix multiplication example for multi-core CPUs."""
     # Ensure integers are 32-bit by default
     dace.Config.set('compiler', 'default_data_types', value='C')
 
@@ -112,9 +120,9 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         # Vectorize microkernel map
         postamble = n % 4 != 0
         entry_inner, inner_state = find_map_and_state_by_param(sdfg, 'k')
-        Vectorization.apply_to(inner_state.parent,
-                               dict(vector_len=4, preamble=False, postamble=postamble),
-                               map_entry=entry_inner)
+        Vectorization.apply_to(
+            inner_state.parent, dict(vector_len=4, preamble=False, postamble=postamble), map_entry=entry_inner
+        )
 
     # Mark outer tile map as sequential to remove atomics
     find_map_by_param(sdfg, 'tile_k').map.schedule = dace.ScheduleType.Sequential
@@ -130,7 +138,7 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 
 
 def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
-    """ Optimize the matrix multiplication example for GPUs. """
+    """Optimize the matrix multiplication example for GPUs."""
     # Ensure integers are 32-bit by default
     dace.Config.set('compiler', 'default_data_types', value='C')
 
@@ -195,9 +203,11 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 @click.option('-M', type=int, default=64)
 @click.option('-K', type=int, default=64)
 @click.option('-N', type=int, default=64)
-@click.option('--version',
-              type=click.Choice(('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'rocblas')),
-              default='unoptimized')
+@click.option(
+    '--version',
+    type=click.Choice(('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'rocblas')),
+    default='unoptimized',
+)
 @click.option('--verify/--no-verify', default=True)
 def cli(m, k, n, version, verify):
     """

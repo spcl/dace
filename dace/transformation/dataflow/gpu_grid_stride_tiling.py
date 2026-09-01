@@ -1,6 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the grid-strided map tiling
-    transformation."""
+"""This module contains classes and functions that implement the grid-strided map tiling
+transformation."""
 
 import dace
 from copy import deepcopy as dcpy
@@ -78,7 +78,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         return True
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
-        """ Finds a variable that is not already defined in scope. """
+        """Finds a variable that is not already defined in scope."""
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
         defined_vars = set(str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys()))
@@ -117,12 +117,18 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         i_range_new = (i_from + symbolic.pystr_to_symbolic(tile_i_dim_new) * i_step, i_to, block_dim * i_step)
 
         # Create the new maps
-        tile_o_map = nodes.Map(o_entry.map.label, [tile_o_dim_new],
-                               subsets.Range([tile_o_range_new]),
-                               schedule=dtypes.ScheduleType.GPU_Device)
-        tile_i_map = nodes.Map(i_entry.map.label, [tile_i_dim_new],
-                               subsets.Range([tile_i_range_new]),
-                               schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+        tile_o_map = nodes.Map(
+            o_entry.map.label,
+            [tile_o_dim_new],
+            subsets.Range([tile_o_range_new]),
+            schedule=dtypes.ScheduleType.GPU_Device,
+        )
+        tile_i_map = nodes.Map(
+            i_entry.map.label,
+            [tile_i_dim_new],
+            subsets.Range([tile_i_range_new]),
+            schedule=dtypes.ScheduleType.GPU_ThreadBlock,
+        )
 
         # Create the new map entries and exits
         tile_o_entry = nodes.MapEntry(tile_o_map)
@@ -160,13 +166,12 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
             entry_in_conn = {}
             entry_out_conn = {}
             for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
-                if (src_conn is not None and src_conn[:4] == 'OUT_'
-                        and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
-                    new_subset = calc_set_image(
-                        map_entry.map.params,
-                        map_entry.map.range,
-                        memlet.subset,
-                    )
+                if (
+                    src_conn is not None
+                    and src_conn[:4] == 'OUT_'
+                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
+                ):
+                    new_subset = calc_set_image(map_entry.map.params, map_entry.map.range, memlet.subset)
                     conn = src_conn[4:]
                     key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                     if key in new_in_edges.keys():
@@ -205,13 +210,12 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
             exit_in_conn = {}
             exit_out_conn = {}
             for _src, _, _dst, dst_conn, memlet in graph.in_edges(map_exit):
-                if (dst_conn is not None and dst_conn[:3] == 'IN_'
-                        and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
-                    new_subset = calc_set_image(
-                        map_entry.map.params,
-                        map_entry.map.range,
-                        memlet.subset,
-                    )
+                if (
+                    dst_conn is not None
+                    and dst_conn[:3] == 'IN_'
+                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
+                ):
+                    new_subset = calc_set_image(map_entry.map.params, map_entry.map.range, memlet.subset)
                     conn = dst_conn[3:]
                     key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
                     if key in new_out_edges.keys():

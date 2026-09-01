@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+"""Loop unroll transformation"""
 
 import ast
 import copy
@@ -18,7 +18,7 @@ from dace.transformation.passes.analysis import loop_analysis
 @make_properties
 @xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
-    """ Unrolls a for-loop into multiple individual control flow regions """
+    """Unrolls a for-loop into multiple individual control flow regions"""
 
     loop = xf.PatternNode(LoopRegion)
 
@@ -28,9 +28,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
     )
 
-    inline_iterations = Property(dtype=bool,
-                                 default=True,
-                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
+    inline_iterations = Property(
+        dtype=bool, default=True, desc="Whether or not to inline individual iterations' CFGs after unrolling"
+    )
 
     @classmethod
     def expressions(cls):
@@ -125,14 +125,20 @@ class LoopUnroll(xf.MultiStateTransformation):
                     continue
                 it.inline()
 
-    def instantiate_loop_iteration(self,
-                                   graph: ControlFlowRegion,
-                                   loop: LoopRegion,
-                                   value: symbolic.SymbolicType,
-                                   index: int,
-                                   label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix
-                                                            if label_suffix is not None else symbolic.symstr(value))
+    def instantiate_loop_iteration(
+        self,
+        graph: ControlFlowRegion,
+        loop: LoopRegion,
+        value: symbolic.SymbolicType,
+        index: int,
+        label_suffix: Optional[str] = None,
+    ) -> ControlFlowRegion:
+        it_label = (
+            loop.label
+            + '_'
+            + loop.loop_variable
+            + (label_suffix if label_suffix is not None else symbolic.symstr(value))
+        )
         if not dtypes.validate_name(it_label):
             # A negative iterate renders a bare '-', which is not a legal identifier. The
             # enumeration index always is.
@@ -201,9 +207,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         for node in iteration_region.all_nodes_recursive():
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
-                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: value_str
-                    }).visit(node.symbol_mapping[loop.loop_variable])
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({loop.loop_variable: value_str}).visit(
+                        node.symbol_mapping[loop.loop_variable]
+                    )
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
 

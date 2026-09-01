@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the AccessRanges analysis pass. """
+"""Tests the AccessRanges analysis pass."""
+
 import dace
 from dace.transformation.passes.analysis import AccessRanges
 

@@ -7,7 +7,7 @@ from dace import SDFG, SDFGState
 import dace.sdfg.nodes
 import dace.sdfg.utils
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import to_blastype, check_access, to_cublas_computetype
 from dace.libraries.sparse import environments
 import numpy as np
 
@@ -27,22 +27,22 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
+            type=dace.dtype_to_typeclass(dtype).to_string(), real=cast_value.real, imag=cast_value.imag
         )
     else:
         return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
-def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
-                        state: SDFGState,
-                        sdfg: SDFG,
-                        name_lhs_rows="_a_rows",
-                        name_lhs_cols="_a_cols",
-                        name_lhs_vals="_a_vals",
-                        name_rhs="_b",
-                        name_out="_c"):
+def _get_csrmv_operands(
+    node: dace.sdfg.nodes.LibraryNode,
+    state: SDFGState,
+    sdfg: SDFG,
+    name_lhs_rows="_a_rows",
+    name_lhs_cols="_a_cols",
+    name_lhs_vals="_a_vals",
+    name_rhs="_b",
+    name_out="_c",
+):
     """Returns the CSRMV input edges, arrays, and shape."""
 
     result = {}
@@ -69,8 +69,7 @@ def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError("Matrix multiplication connector "
-                             "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector \"{}\" not found.".format(name))
     return result
 
 
@@ -112,12 +111,13 @@ class ExpandCSRMVPure(ExpandTransformation):
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmv_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(shape_c)
-                }, {},
-                'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-                external_edges=True)
+                'csrmv_init',
+                {'_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(shape_c)},
+                {},
+                'out = 0',
+                {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True,
+            )
         elif node.beta == 1.0:
             # Simplify computation
             edges = state.in_edges_by_connector(node, "_cin")
@@ -136,13 +136,13 @@ class ExpandCSRMVPure(ExpandTransformation):
             nsdfg.add_datadesc('_cin', cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmv_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(cdesc.shape)
-                }, {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                'csrmv_init',
+                {'_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(cdesc.shape)},
+                {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 f'_out = {node.beta} * _in',
                 {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
-                external_edges=True)
+                external_edges=True,
+            )
 
         # Multiplication map
 
@@ -169,18 +169,30 @@ class ExpandCSRMVPure(ExpandTransformation):
 
         inner_map_entry.add_in_connector("__map_19_b0")
         inner_map_entry.add_in_connector("__map_19_e1")
-        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_b0",
-                        mm.Memlet("_a_rows[i]", data="_a_rows"))
-        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_e1",
-                        mm.Memlet("_a_rows[i + 1]", data="_a_rows"))
+        nstate.add_edge(
+            outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_b0", mm.Memlet("_a_rows[i]", data="_a_rows")
+        )
+        nstate.add_edge(
+            outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_e1", mm.Memlet("_a_rows[i + 1]", data="_a_rows")
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_a_vals")
-        nstate.add_edge(outer_map_entry, "OUT__a_vals", inner_map_entry, "IN_tmp_a_vals",
-                        mm.Memlet.from_array("_a_vals", array_a_vals))
+        nstate.add_edge(
+            outer_map_entry,
+            "OUT__a_vals",
+            inner_map_entry,
+            "IN_tmp_a_vals",
+            mm.Memlet.from_array("_a_vals", array_a_vals),
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_a_cols")
-        nstate.add_edge(outer_map_entry, "OUT__a_cols", inner_map_entry, "IN_tmp_a_cols",
-                        mm.Memlet.from_array("_a_cols", array_a_cols))
+        nstate.add_edge(
+            outer_map_entry,
+            "OUT__a_cols",
+            inner_map_entry,
+            "IN_tmp_a_cols",
+            mm.Memlet.from_array("_a_cols", array_a_cols),
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_b")
         nstate.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", mm.Memlet.from_array("_b", array_b))
@@ -190,24 +202,22 @@ class ExpandCSRMVPure(ExpandTransformation):
         inner_map_entry.add_out_connector("OUT_tmp_b")
 
         # inner map -> indirection
-        tasklet_ind = nstate.add_tasklet("Indirection",
-                                         inputs={
-                                             "__ind_b": None,
-                                             "index_a_cols_0": None
-                                         },
-                                         outputs={'lookup': None},
-                                         code="lookup = __ind_b[index_a_cols_0]")
+        tasklet_ind = nstate.add_tasklet(
+            "Indirection",
+            inputs={"__ind_b": None, "index_a_cols_0": None},
+            outputs={'lookup': None},
+            code="lookup = __ind_b[index_a_cols_0]",
+        )
 
-        nstate.add_edge(inner_map_entry, "OUT_tmp_a_cols", tasklet_ind, "index_a_cols_0",
-                        mm.Memlet.simple("_a_cols", "j"))
+        nstate.add_edge(
+            inner_map_entry, "OUT_tmp_a_cols", tasklet_ind, "index_a_cols_0", mm.Memlet.simple("_a_cols", "j")
+        )
         nstate.add_edge(inner_map_entry, "OUT_tmp_b", tasklet_ind, "__ind_b", mm.Memlet.from_array("_b", array_b))
 
         # inner map -> spmv
-        tasklet_mult = nstate.add_tasklet("spmv", {
-            "__a": None,
-            "__b": None
-        }, {"__o": None},
-                                          code=f"__o = {node.alpha} * (__a * __b)")
+        tasklet_mult = nstate.add_tasklet(
+            "spmv", {"__a": None, "__b": None}, {"__o": None}, code=f"__o = {node.alpha} * (__a * __b)"
+        )
 
         nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
         nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
@@ -217,8 +227,13 @@ class ExpandCSRMVPure(ExpandTransformation):
 
         # spmv -> inner map
         inner_map_exit.add_in_connector("IN__c_1")
-        nstate.add_edge(tasklet_mult, "__o", inner_map_exit, "IN__c_1",
-                        mm.Memlet.simple("_c", subset_str="i", wcr_str="lambda x, y: (x + y)"))
+        nstate.add_edge(
+            tasklet_mult,
+            "__o",
+            inner_map_exit,
+            "IN__c_1",
+            mm.Memlet.simple("_c", subset_str="i", wcr_str="lambda x, y: (x + y)"),
+        )
 
         # inner map -> outer map
         inner_map_exit.add_out_connector("OUT__c_1")
@@ -299,18 +314,13 @@ class ExpandCSRMVMKL(ExpandTransformation):
         """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandCSRMVCuSPARSE(ExpandTransformation):
-
     environments = [environments.cuSPARSE]
 
     @staticmethod
@@ -325,8 +335,10 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
         # If buffers are not on the GPU, copy them
-        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
-                         for desc in (arows, acols, avals, bdesc, cdesc))
+        needs_copy = any(
+            desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
+            for desc in (arows, acols, avals, bdesc, cdesc)
+        )
 
         dtype = avals.dtype.base_type
         func = "cusparseSpMV"
@@ -431,13 +443,9 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             cudaFree(dBuffer);
         """.format_map(opt)
 
-        code = (call_prefix + call + call_suffix)
+        code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
 
         # If buffers are not on the GPU, copy them
@@ -510,19 +518,24 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    alpha = properties.Property(allow_none=False,
-                                default=1,
-                                desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(allow_none=False,
-                               default=0,
-                               desc="A scalar which will be multiplied with C before adding it")
+    alpha = properties.Property(
+        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+    )
+    beta = properties.Property(
+        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding it"
+    )
 
     def __init__(self, name, location=None, alpha=1, beta=0):
-        super().__init__(name,
-                         location=location,
-                         inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
-                                 if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
-                         outputs={"_c"})
+        super().__init__(
+            name,
+            location=location,
+            inputs=(
+                {"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
+                if beta != 0
+                else {"_a_rows", "_a_cols", "_a_vals", "_b"}
+            ),
+            outputs={"_c"},
+        )
         self.alpha = alpha
         self.beta = beta
 
@@ -557,8 +570,11 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-vector product")
         if len(size_a_rowptr) != 1 or len(size_a_cols) != 1 or len(size_a_vals) != 1:
-            raise ValueError("Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {},{},{}".format(
-                len(size_a_rowptr), len(size_a_cols), len(size_a_vals)))
+            raise ValueError(
+                "Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {},{},{}".format(
+                    len(size_a_rowptr), len(size_a_cols), len(size_a_vals)
+                )
+            )
         if len(size_b) != 1:
             raise ValueError("Matrix-vector product only supported on vector B")
 

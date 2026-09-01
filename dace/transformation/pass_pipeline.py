@@ -33,6 +33,7 @@ class Modifies(Flag):
     This is used when deciding whether to rerun certain Passes for SDFG analysis.
     Note that this is a Python ``Flag``, which means values such as ``Memlets | Symbols`` are allowed.
     """
+
     Nothing = 0  #: Nothing was modified
     Descriptors = auto()  #: Data descriptors (e.g., arrays, streams) and their properties were modified
     Symbols = auto()  #: Symbols were modified
@@ -43,10 +44,16 @@ class Modifies(Flag):
     Tasklets = auto()  #: Tasklets were created/removed or their contents were modified
     NestedSDFGs = auto()  #: SDFG nesting structure or properties of NestedSDFG nodes were modified
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
-    Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
+    Nodes = (
+        AccessNodes | Scopes | Tasklets | NestedSDFGs
+    )  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    CFG = States | InterstateEdges  #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
-    Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
+    CFG = (
+        States | InterstateEdges
+    )  #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
+    Everything = (
+        Descriptors | Symbols | CFG | Nodes | Memlets
+    )  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
 @properties.make_properties
@@ -156,10 +163,10 @@ class Pass:
         for opt_name in opts:
             if not opt_name.startswith(pass_pattern):
                 continue
-            attr_name = opt_name[len(pass_pattern):]
-            assert hasattr(
-                self, attr_name
-            ), f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
+            attr_name = opt_name[len(pass_pattern) :]
+            assert hasattr(self, attr_name), (
+                f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
+            )
             setattr(self, attr_name, opts[opt_name])
 
 
@@ -300,13 +307,15 @@ class ControlFlowRegionPass(Pass):
 
     CATEGORY: str = 'Helper'
 
-    apply_to_conditionals = properties.Property(dtype=bool,
-                                                default=False,
-                                                desc='Whether or not to apply to conditional blocks. If false, do ' +
-                                                'not apply to conditional blocks, but only their children.')
-    top_down = properties.Property(dtype=bool,
-                                   default=False,
-                                   desc='Whether or not to apply top down (i.e., parents before children)')
+    apply_to_conditionals = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Whether or not to apply to conditional blocks. If false, do '
+        + 'not apply to conditional blocks, but only their children.',
+    )
+    top_down = properties.Property(
+        dtype=bool, default=False, desc='Whether or not to apply top down (i.e., parents before children)'
+    )
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
         """
@@ -356,9 +365,7 @@ class ScopePass(Pass):
     CATEGORY: str = 'Helper'
 
     def apply_pass(
-        self,
-        sdfg: SDFG,
-        pipeline_results: Dict[str, Any],
+        self, sdfg: SDFG, pipeline_results: Dict[str, Any]
     ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
         """
         Applies the pass to the scopes of the given SDFG by calling ``apply`` on each scope entry node.
@@ -423,10 +430,9 @@ class Pipeline(Pass):
 
     CATEGORY: str = 'Helper'
 
-    passes = properties.ListProperty(element_type=Pass,
-                                     default=[],
-                                     category='(Debug)',
-                                     desc='List of passes that this pipeline contains')
+    passes = properties.ListProperty(
+        element_type=Pass, default=[], category='(Debug)', desc='List of passes that this pipeline contains'
+    )
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
@@ -453,8 +459,10 @@ class Pipeline(Pass):
         if len(check_if_unique) != len(passes):
             pass_types = [type(p) for p in passes]
             dups = set([x for x in pass_types if pass_types.count(x) > 1])
-            raise NameError('Duplicate pass types found in pipeline. Please use unique Pass type objects within one '
-                            f'Pipeline. Duplicates: {dups}')
+            raise NameError(
+                'Duplicate pass types found in pipeline. Please use unique Pass type objects within one '
+                f'Pipeline. Duplicates: {dups}'
+            )
 
         # Traverse pass dependencies until there is nothing to visit
         passes_to_check = passes
@@ -469,7 +477,8 @@ class Pipeline(Pass):
                             raise NameError(
                                 f'Duplicate dependency passes given: "{type(dep).__name__}" is a Pass object dependency '
                                 'that is already a dependency of a pass or used directly in the pipeline. Please use a '
-                                'class instead of an object in the `depends_on` method.')
+                                'class instead of an object in the `depends_on` method.'
+                            )
 
                         check_if_unique.add(type(dep))
                         self.passes.append(dep)
@@ -541,7 +550,7 @@ class Pipeline(Pass):
         applied_passes: Dict[Pass, Modifies] = {}
 
         def reapply_recursive(p: Pass):
-            """ Reapply pass dependencies in a recursive fashion. """
+            """Reapply pass dependencies in a recursive fashion."""
             # If pass should not reapply, skip
             if p in applied_passes and not p.should_reapply(applied_passes[p]):
                 return

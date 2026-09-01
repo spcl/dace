@@ -221,7 +221,6 @@ def test_fortran_frontend_arr2loop_2d_offset3():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_arr2loop_1d_offset()
     test_fortran_frontend_arr2loop_2d_offset()
     test_fortran_frontend_arr2loop_2d_offset2()

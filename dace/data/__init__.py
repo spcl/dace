@@ -58,11 +58,7 @@ from dace.data.ml import ParameterArray
 from dace.data.distributed import DistributedDescriptor, ProcessGrid, SubArray, RedistrArray
 
 # Descriptor creation and array creation from descriptors
-from dace.data.creation import (
-    create_datadescriptor,
-    make_array_from_descriptor,
-    make_reference_from_descriptor,
-)
+from dace.data.creation import create_datadescriptor, make_array_from_descriptor, make_reference_from_descriptor
 
 # Ctypes interoperability
 from dace.data.ctypes_interop import make_ctypes_argument

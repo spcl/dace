@@ -30,15 +30,17 @@ def _make_nested_loops_sdfg():
     after_outer = sdfg.add_state('after_outer')
 
     sdfg.add_loop(outer_before_inner, inner_body, after_inner, 'j', '0', 'j < 4', 'j + 1', label='inner_loop')
-    sdfg.add_loop(before_outer,
-                  outer_before_inner,
-                  after_outer,
-                  'i',
-                  '0',
-                  'i < 4',
-                  'i + 1',
-                  label='outer_loop',
-                  loop_end_block=after_inner)
+    sdfg.add_loop(
+        before_outer,
+        outer_before_inner,
+        after_outer,
+        'i',
+        '0',
+        'i < 4',
+        'i + 1',
+        label='outer_loop',
+        loop_end_block=after_inner,
+    )
 
     return sdfg
 
@@ -61,16 +63,14 @@ def test_all_isedges_between_consecutive_loops():
     blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
 
     edges_to_after_first = {
-        _edge_signature(edge)
-        for edge in all_isedges_between(blocks['first_body'], blocks['between_loops'])
+        _edge_signature(edge) for edge in all_isedges_between(blocks['first_body'], blocks['between_loops'])
     }
     assert edges_to_after_first == {
-        ('first_loop', 'LoopRegion', 'consecutive_loops', 'between_loops', 'SDFGState', 'consecutive_loops', '1', ()),
+        ('first_loop', 'LoopRegion', 'consecutive_loops', 'between_loops', 'SDFGState', 'consecutive_loops', '1', ())
     }
 
     edges_to_second_body = {
-        _edge_signature(edge)
-        for edge in all_isedges_between(blocks['first_body'], blocks['second_body'])
+        _edge_signature(edge) for edge in all_isedges_between(blocks['first_body'], blocks['second_body'])
     }
     assert edges_to_second_body == {
         ('first_loop', 'LoopRegion', 'consecutive_loops', 'between_loops', 'SDFGState', 'consecutive_loops', '1', ()),
@@ -83,16 +83,14 @@ def test_all_isedges_between_nested_loops():
     blocks = {block.label: block for block in sdfg.all_control_flow_blocks()}
 
     edges_to_after_inner = {
-        _edge_signature(edge)
-        for edge in all_isedges_between(blocks['inner_body'], blocks['after_inner'])
+        _edge_signature(edge) for edge in all_isedges_between(blocks['inner_body'], blocks['after_inner'])
     }
     assert edges_to_after_inner == {
-        ('inner_loop', 'LoopRegion', 'outer_loop', 'after_inner', 'SDFGState', 'outer_loop', '1', ()),
+        ('inner_loop', 'LoopRegion', 'outer_loop', 'after_inner', 'SDFGState', 'outer_loop', '1', ())
     }
 
     edges_to_after_outer = {
-        _edge_signature(edge)
-        for edge in all_isedges_between(blocks['inner_body'], blocks['after_outer'])
+        _edge_signature(edge) for edge in all_isedges_between(blocks['inner_body'], blocks['after_outer'])
     }
     assert edges_to_after_outer == {
         ('inner_loop', 'LoopRegion', 'outer_loop', 'after_inner', 'SDFGState', 'outer_loop', '1', ()),

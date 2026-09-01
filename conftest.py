@@ -2,6 +2,7 @@
 """
 Root pytest configuration file.
 """
+
 import os
 import subprocess
 
@@ -46,6 +47,7 @@ def resolve_worker_id() -> str:
     if xdist_worker is not None:
         return xdist_worker
     from dace.sdfg.sdfg import LAUNCHER_RANK_VARS
+
     for var in LAUNCHER_RANK_VARS:
         rank = os.environ.get(var)
         if rank:

@@ -2,6 +2,7 @@
 """
 This module contains classes that implement the OTF map fusion transformation.
 """
+
 import copy
 import sympy
 
@@ -27,6 +28,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     Performs fusion of two maps by replicating the contents of the first into the second map
     until all the input dependencies (memlets) of the second one are met.
     """
+
     first_map_exit = transformation.PatternNode(nds.ExitNode)
     array = transformation.PatternNode(nds.AccessNode)
     second_map_entry = transformation.PatternNode(nds.EntryNode)
@@ -119,8 +121,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             produce_memlet = produce_memlets[memlet.data]
             produce_subset = tuple(produce_memlet.subset.ranges)
-            param_mapping = OTFMapFusion.solve(first_map_entry.map.params, produce_subset,
-                                               self.second_map_entry.map.params, consume_subset)
+            param_mapping = OTFMapFusion.solve(
+                first_map_entry.map.params, produce_subset, self.second_map_entry.map.params, consume_subset
+            )
 
             if param_mapping is None:
                 return False
@@ -163,11 +166,13 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             xform.node_b = edge.dst
             xform.array = intermediate_access_node.data
             if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
-                InLocalStorage.apply_to(sdfg=sdfg,
-                                        node_a=edge.src,
-                                        node_b=edge.dst,
-                                        options={"array": intermediate_access_node.data},
-                                        save=False)
+                InLocalStorage.apply_to(
+                    sdfg=sdfg,
+                    node_a=edge.src,
+                    node_b=edge.dst,
+                    options={"array": intermediate_access_node.data},
+                    save=False,
+                )
 
         for edge in graph.in_edges(first_map_exit):
             if edge.data is None or edge.data.data != intermediate_access_node.data:
@@ -181,13 +186,13 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 xform.node_b = edge.dst
                 xform.array = intermediate_access_node.data
                 if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
-                    OutLocalStorage.apply_to(sdfg=sdfg,
-                                             node_a=edge.src,
-                                             node_b=edge.dst,
-                                             options={
-                                                 "array": intermediate_access_node.data,
-                                             },
-                                             save=False)
+                    OutLocalStorage.apply_to(
+                        sdfg=sdfg,
+                        node_a=edge.src,
+                        node_b=edge.dst,
+                        options={"array": intermediate_access_node.data},
+                        save=False,
+                    )
             else:
                 xform = AccumulateTransient()
                 xform._sdfg = sdfg
@@ -197,15 +202,14 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 xform.array = intermediate_access_node.data
                 xform.identity = self.identity
                 if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
-                    AccumulateTransient.apply_to(sdfg=sdfg,
-                                                 map_exit=edge.src,
-                                                 outer_map_exit=edge.dst,
-                                                 array=intermediate_access_node.data,
-                                                 options={
-                                                     "array": intermediate_access_node.data,
-                                                     "identity": self.identity
-                                                 },
-                                                 save=False)
+                    AccumulateTransient.apply_to(
+                        sdfg=sdfg,
+                        map_exit=edge.src,
+                        outer_map_exit=edge.dst,
+                        array=intermediate_access_node.data,
+                        options={"array": intermediate_access_node.data, "identity": self.identity},
+                        save=False,
+                    )
 
         # Phase 1: Add new access nodes to second map
         for edge in graph.edges_between(intermediate_access_node, second_map_entry):
@@ -255,18 +259,21 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             first_accesses = tuple(first_memlet.subset.ranges)
             for second_accesses in consume_memlets[array]:
                 # Step 1: Infer index access of second map to new inputs with respect to original first map
-                mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses, second_map_entry.map.params,
-                                             second_accesses)
+                mapping = OTFMapFusion.solve(
+                    first_map_entry.map.params, first_accesses, second_map_entry.map.params, second_accesses
+                )
 
                 # Step 2: Add Temporary buffer
                 tmp_name = sdfg.temp_data_name()
                 shape = first_memlet.subset.size_exact()
-                tmp_name, tmp_desc = sdfg.add_array(tmp_name,
-                                                    shape=shape,
-                                                    dtype=sdfg.arrays[array].dtype,
-                                                    transient=True,
-                                                    find_new_name=True,
-                                                    lifetime=dtypes.AllocationLifetime.Scope)
+                tmp_name, tmp_desc = sdfg.add_array(
+                    tmp_name,
+                    shape=shape,
+                    dtype=sdfg.arrays[array].dtype,
+                    transient=True,
+                    find_new_name=True,
+                    lifetime=dtypes.AllocationLifetime.Scope,
+                )
                 tmp_access = graph.add_access(tmp_name)
 
                 # Add edges from temporary buffer to second map's content
@@ -319,12 +326,15 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             graph.remove_node(intermediate_access_node)
 
             subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
-            obsolete_nodes = graph.all_nodes_between(first_map_entry,
-                                                     first_map_exit) | {first_map_entry, first_map_exit}
+            obsolete_nodes = graph.all_nodes_between(first_map_entry, first_map_exit) | {
+                first_map_entry,
+                first_map_exit,
+            }
             graph.remove_nodes_from(obsolete_nodes)
 
-    def _copy_first_map_contents(self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry,
-                                 first_map_exit: nodes.MapExit):
+    def _copy_first_map_contents(
+        self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry, first_map_exit: nodes.MapExit
+    ):
         inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
 
         # Add new nodes

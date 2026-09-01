@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests loop raising trainsformations. """
+"""Tests loop raising trainsformations."""
 
 import numpy as np
 import pytest
@@ -16,7 +16,7 @@ def test_lift_regular_for_loop():
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -40,8 +40,8 @@ def test_lift_regular_for_loop():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N, )).astype(np.int32)
-    A_valid = np.zeros((N, )).astype(np.int32)
+    A = np.zeros((N,)).astype(np.int32)
+    A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -61,7 +61,7 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
 
     entry = sdfg.add_state('entry', is_start_block=True)
     guard = sdfg.add_state('guard')
@@ -96,8 +96,8 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N, )).astype(np.int32)
-    A_valid = np.zeros((N, )).astype(np.int32)
+    A = np.zeros((N,)).astype(np.int32)
+    A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -114,7 +114,7 @@ def test_lift_loop_llvm_canonical_while():
     N = dace.symbol('N')
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     sdfg.add_scalar('i', dace.int32, transient=True)
 
     entry = sdfg.add_state('entry', is_start_block=True)
@@ -155,8 +155,8 @@ def test_lift_loop_llvm_canonical_while():
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N, )).astype(np.int32)
-    A_valid = np.zeros((N, )).astype(np.int32)
+    A = np.zeros((N,)).astype(np.int32)
+    A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -174,7 +174,7 @@ def test_do_while():
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -198,8 +198,8 @@ def test_do_while():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N, )).astype(np.int32)
-    A_valid = np.zeros((N, )).astype(np.int32)
+    A = np.zeros((N,)).astype(np.int32)
+    A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -216,7 +216,7 @@ def test_inverted_loop_with_additional_increment_assignment():
     N = dace.symbol('N')
     sdfg.add_scalar('i', dace.int32, transient=True)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     a_state = sdfg.add_state('a_state', is_start_block=True)
     b_state = sdfg.add_state('b_state')
     c_state = sdfg.add_state('c_state')
@@ -238,8 +238,8 @@ def test_inverted_loop_with_additional_increment_assignment():
     d_state.add_edge(w_tasklet_2, 'out', a_access_2, None, Memlet('A[1]'))
 
     N = 30
-    A = np.zeros((N, )).astype(np.int32)
-    A_valid = np.zeros((N, )).astype(np.int32)
+    A = np.zeros((N,)).astype(np.int32)
+    A_valid = np.zeros((N,)).astype(np.int32)
     sdfg(A=A_valid, N=N)
 
     sdfg.apply_transformations_repeated([LoopLifting])
@@ -287,8 +287,8 @@ def test_lift_for_loop_with_dataflow_guard():
     false)."""
     sdfg = SDFG('for_with_dataflow_guard')
     sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', (11, ), dace.int32)
-    sdfg.add_array('C', (10, ), dace.int32)
+    sdfg.add_array('A', (11,), dace.int32)
+    sdfg.add_array('C', (10,), dace.int32)
     init_state = sdfg.add_state('init', is_start_block=True)
     guard_state = sdfg.add_state('guard')
     main_state = sdfg.add_state('loop_state')
@@ -310,8 +310,8 @@ def test_lift_for_loop_with_dataflow_guard():
     assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.all_control_flow_regions())
 
-    A = np.full((11, ), -1, dtype=np.int32)
-    C = np.zeros((10, ), dtype=np.int32)
+    A = np.full((11,), -1, dtype=np.int32)
+    C = np.zeros((10,), dtype=np.int32)
     sdfg(A=A, C=C)
     assert np.allclose(A, np.arange(11, dtype=np.int32))
     assert np.allclose(C, 1)
@@ -374,6 +374,7 @@ def test_lift_while_loop_with_data_dependent_condition(extra_state):
     # stack memory is usually zero).
     from dace.codegen.exceptions import CompilationError
     from dace.config import Config, set_temporary
+
     hardened_args = Config.get('compiler', 'cpu', 'args') + ' -ftrivial-auto-var-init=pattern'
     with set_temporary('compiler', 'cpu', 'args', value=hardened_args):
         a = np.zeros([1], np.int64)
@@ -454,6 +455,7 @@ def test_lift_nested_data_dependent_loops(extra_state):
 
     from dace.codegen.exceptions import CompilationError
     from dace.config import Config, set_temporary
+
     hardened_args = Config.get('compiler', 'cpu', 'args') + ' -ftrivial-auto-var-init=pattern'
     with set_temporary('compiler', 'cpu', 'args', value=hardened_args):
         a = np.zeros([1], np.int64)
@@ -480,7 +482,7 @@ def test_lift_nested_for_loops_with_dataflow_guards():
     sdfg = SDFG('nested_for_dataflow_guards')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
-    sdfg.add_array('A', (NI + 1, ), dace.int32)
+    sdfg.add_array('A', (NI + 1,), dace.int32)
     sdfg.add_array('B', (NI, NJ + 1), dace.int32)
     sdfg.add_array('C', (NI, NJ), dace.int32)
     init_state = sdfg.add_state('init', is_start_block=True)
@@ -513,7 +515,7 @@ def test_lift_nested_for_loops_with_dataflow_guards():
                 if cond is not None:
                     assert cond.as_string.strip() not in ('(not 1)', 'not 1', '0', 'false', 'False')
 
-    A = np.zeros((NI + 1, ), dtype=np.int32)
+    A = np.zeros((NI + 1,), dtype=np.int32)
     B = np.zeros((NI, NJ + 1), dtype=np.int32)
     C = np.zeros((NI, NJ), dtype=np.int32)
     sdfg(A=A, B=B, C=C)

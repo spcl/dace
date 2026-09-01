@@ -9,17 +9,18 @@ from .. import environments
 
 @dace.library.expansion
 class ExpandDummyMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          inputs=expanded_input_connectors(node, parent_state),
-                                          outputs=node.out_connectors,
-                                          code='',
-                                          state_fields=node.fields,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            inputs=expanded_input_connectors(node, parent_state),
+            outputs=node.out_connectors,
+            code='',
+            state_fields=node.fields,
+            side_effects=True,
+        )
         return tasklet
 
 
@@ -33,9 +34,7 @@ class Dummy(MPINode):
     """
 
     # Global properties
-    implementations = {
-        "MPI": ExpandDummyMPI,
-    }
+    implementations = {"MPI": ExpandDummyMPI}
     default_implementation = "MPI"
 
     fields = dace.properties.ListProperty(default=[], element_type=str)

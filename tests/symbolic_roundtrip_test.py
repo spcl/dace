@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Round-trip tests for symbolic expressions through ``pystr_to_symbolic`` and ``symstr``
+"""Round-trip tests for symbolic expressions through ``pystr_to_symbolic`` and ``symstr``
 (and through interstate-edge serialization), covering subscripts, operators, infinities,
-NaN, booleans and float precision. """
+NaN, booleans and float precision."""
+
 import sympy
 
 import dace
@@ -223,7 +224,7 @@ def test_map_range_array_bound_is_hoisted():
     def maprange(ptr: dace.uint32[N + 1], data: dace.float32[64], out: dace.float32[N]):
         for i in dace.map[0:N]:
 
-            @dace.map(_[ptr[i]:ptr[i + 1]])
+            @dace.map(_[ptr[i] : ptr[i + 1]])
             def inner(j):
                 d << data[j]
                 o >> out(1, lambda x, y: x + y)[i]
@@ -263,12 +264,8 @@ def test_interstate_edge_assignment_roundtrip():
     s0 = sdfg.add_state('s0', is_start_block=True)
     s1 = sdfg.add_state('s1')
     sdfg.add_edge(
-        s0, s1, dace.InterstateEdge(assignments={
-            'p': 'a | b',
-            'q': 'True',
-            'r': '1',
-            's': '1.79769313486232e+308',
-        }))
+        s0, s1, dace.InterstateEdge(assignments={'p': 'a | b', 'q': 'True', 'r': '1', 's': '1.79769313486232e+308'})
+    )
 
     reloaded = dace.SDFG.from_json(sdfg.to_json())
     twice = dace.SDFG.from_json(reloaded.to_json())
@@ -289,11 +286,7 @@ def test_symbolic_expression_serialization_preserves_integerness():
 
     expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
 
-    sdfg.add_array(
-        "A",
-        shape=[expr],
-        dtype=dace.float64,
-    )
+    sdfg.add_array("A", shape=[expr], dtype=dace.float64)
 
     reloaded = dace.SDFG.from_json(sdfg.to_json())
 
@@ -312,10 +305,7 @@ def test_symbolic_roundtrip_preserves_integerness():
 
     assert expr.is_integer == rt.is_integer
 
-    for s1, s2 in zip(
-            sorted(expr.free_symbols, key=str),
-            sorted(rt.free_symbols, key=str),
-    ):
+    for s1, s2 in zip(sorted(expr.free_symbols, key=str), sorted(rt.free_symbols, key=str)):
         assert s1.is_integer == s2.is_integer
 
 

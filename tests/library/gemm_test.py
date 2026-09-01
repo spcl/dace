@@ -15,9 +15,9 @@ O = dace.symbol('O')
 
 
 @pytest.mark.parametrize(
-    ('implementation', ),
-    [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl),
-     pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+    ('implementation',),
+    [('pure',), pytest.param('MKL', marks=pytest.mark.mkl), pytest.param('cuBLAS', marks=pytest.mark.gpu)],
+)
 def test_gemm_no_c(implementation):
 
     Gemm.default_implementation = implementation
@@ -62,14 +62,8 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, 
 
 
 _impls = ['pure', pytest.param('MKL', marks=pytest.mark.mkl), pytest.param('cuBLAS', marks=pytest.mark.gpu)]
-_param_grid_trans = dict(
-    transA=[True, False],
-    transB=[True, False],
-)
-_param_grid_scalars = dict(
-    alpha=[1.0, 0.0, random.random()],
-    beta=[1.0, 0.0, random.random()],
-)
+_param_grid_trans = dict(transA=[True, False], transB=[True, False])
+_param_grid_scalars = dict(alpha=[1.0, 0.0, random.random()], beta=[1.0, 0.0, random.random()])
 _param_grid_complex = dict(
     complex=[True],
     alpha=[random.random(), complex(random.random(), random.random())],
@@ -77,9 +71,7 @@ _param_grid_complex = dict(
 )
 
 _param_grid_broadcast_C = dict(
-    alpha=[random.random()],
-    beta=[random.random()],
-    C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
+    alpha=[random.random()], beta=[random.random()], C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]]
 )
 
 
@@ -114,8 +106,13 @@ def _do_test_gemm(implementation, params):
 
     # unique name for sdfg
     C_str = "None" if C_shape is None else (str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
-    sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(
-        ".", "_dot_").replace("+", "_plus_").replace("-", "_minus_").replace("(", "").replace(")", "")
+    sdfg_name = (
+        f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(".", "_dot_")
+        .replace("+", "_plus_")
+        .replace("-", "_minus_")
+        .replace("(", "")
+        .replace(")", "")
+    )
 
     # shape of the transposed arrays
     A_shape = trans_A_shape = [M, K]
@@ -152,8 +149,19 @@ def _do_test_gemm(implementation, params):
 
     Y_regression = numpy_gemm(A, B, C, transA, transB, alpha, beta)
 
-    sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32, A_shape, B_shape, C_shape, Y_shape, transA,
-                            transB, alpha, beta, implementation, sdfg_name)
+    sdfg = create_gemm_sdfg(
+        dace.complex64 if complex else dace.float32,
+        A_shape,
+        B_shape,
+        C_shape,
+        Y_shape,
+        transA,
+        transB,
+        alpha,
+        beta,
+        implementation,
+        sdfg_name,
+    )
 
     if C_shape is not None:
         Y[:] = C

@@ -5,7 +5,7 @@ import polybench
 M = dace.symbol('M')
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -57,7 +57,7 @@ def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
                 indi << data[k, i]
                 indj << data[k, j]
                 cov_ij >> cov(1, lambda x, y: x + y)[i, j]
-                cov_ij = (indi * indj)
+                cov_ij = indi * indj
 
             with dace.tasklet:
                 cov_ij_in << cov[i, j]

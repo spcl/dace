@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for half-precision syntax quirks. """
+"""Tests for half-precision syntax quirks."""
 
 import dace
 import math
@@ -17,7 +17,7 @@ def _config():
 
 
 def _test_half(veclen):
-    """ Tests a set of elementwise operations on a vector half type. """
+    """Tests a set of elementwise operations on a vector half type."""
     _config()
 
     @dace.program
@@ -32,8 +32,9 @@ def _test_half(veclen):
 
     # Apply vectorization on each map and count applied
     applied = 0
-    for xform in Optimizer(sdfg).get_pattern_matches(patterns=Vectorization,
-                                                     options=dict(vector_len=veclen, postamble=False)):
+    for xform in Optimizer(sdfg).get_pattern_matches(
+        patterns=Vectorization, options=dict(vector_len=veclen, postamble=False)
+    ):
         xform.apply(sdfg.node(xform.state_id), sdfg)
         applied += 1
     assert applied == 2
@@ -44,19 +45,19 @@ def _test_half(veclen):
 
 @pytest.mark.gpu
 def test_half4():
-    """ Tests a set of elementwise operations on half with vector length 4. """
+    """Tests a set of elementwise operations on half with vector length 4."""
     _test_half(4)
 
 
 @pytest.mark.gpu
 def test_half8():
-    """ Tests a set of elementwise operations on half with vector length 8. """
+    """Tests a set of elementwise operations on half with vector length 8."""
     _test_half(8)
 
 
 @pytest.mark.gpu
 def test_exp_vec():
-    """ Tests an exp operator on a vector half type. """
+    """Tests an exp operator on a vector half type."""
     _config()
 
     @dace.program
@@ -79,7 +80,7 @@ def test_exp_vec():
 
 @pytest.mark.gpu
 def test_relu_vec():
-    """ Tests a ReLU operator on a vector half type. """
+    """Tests a ReLU operator on a vector half type."""
     _config()
 
     @dace.program
@@ -102,7 +103,7 @@ def test_relu_vec():
 
 @pytest.mark.gpu
 def test_dropout_vec():
-    """ Tests a dropout operator on a vector half type. """
+    """Tests a dropout operator on a vector half type."""
     _config()
 
     @dace.program
@@ -127,7 +128,7 @@ def test_dropout_vec():
 
 @pytest.mark.gpu
 def test_gelu_vec():
-    """ Tests a GELU operator on a vector half type. """
+    """Tests a GELU operator on a vector half type."""
     _config()
     s2pi = math.sqrt(2.0 / math.pi)
 
@@ -138,8 +139,11 @@ def test_gelu_vec():
             with dace.tasklet:
                 a << A[i]
                 o >> out[i]
-                o = dace.float16(0.5) * a * (dace.float16(1) +
-                                             math.tanh(dace.float16(s2pi) * (a + dace.float16(0.044715) * (a**3))))
+                o = (
+                    dace.float16(0.5)
+                    * a
+                    * (dace.float16(1) + math.tanh(dace.float16(s2pi) * (a + dace.float16(0.044715) * (a**3))))
+                )
         return out
 
     A = np.random.rand(24).astype(np.float16)

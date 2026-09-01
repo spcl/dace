@@ -3,10 +3,7 @@ import pytest
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
 
 BASE_PATH = "tutorials/"
-NOTEBOOK_PATHS = [
-    f"{BASE_PATH}getting_started.ipynb",
-    f"{BASE_PATH}codegen.ipynb",
-]
+NOTEBOOK_PATHS = [f"{BASE_PATH}getting_started.ipynb", f"{BASE_PATH}codegen.ipynb"]
 
 
 @pytest.mark.parametrize("notebook", NOTEBOOK_PATHS)

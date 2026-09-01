@@ -16,24 +16,12 @@ def test_duplicate_codegen():
     e_task = state.add_tasklet("e_task", inputs={"a", "d"}, outputs={"e"}, code="e = a + d")
     f_task = state.add_tasklet("f_task", inputs={"b", "d"}, outputs={"f"}, code="f = b + d")
 
-    _, A_arr = sdfg.add_array("A", [
-        1,
-    ], dace.float32)
-    _, B_arr = sdfg.add_array("B", [
-        1,
-    ], dace.float32)
-    _, C_arr = sdfg.add_array("C", [
-        1,
-    ], dace.float32)
-    _, D_arr = sdfg.add_array("D", [
-        1,
-    ], dace.float32)
-    _, E_arr = sdfg.add_array("E", [
-        1,
-    ], dace.float32)
-    _, F_arr = sdfg.add_array("F", [
-        1,
-    ], dace.float32)
+    _, A_arr = sdfg.add_array("A", [1], dace.float32)
+    _, B_arr = sdfg.add_array("B", [1], dace.float32)
+    _, C_arr = sdfg.add_array("C", [1], dace.float32)
+    _, D_arr = sdfg.add_array("D", [1], dace.float32)
+    _, E_arr = sdfg.add_array("E", [1], dace.float32)
+    _, F_arr = sdfg.add_array("F", [1], dace.float32)
     A = state.add_read("A")
     B = state.add_read("B")
     C = state.add_read("C")

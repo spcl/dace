@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Helper functions shared by the SDFG performance analyses: element UUIDs, fixed-point symbol
-substitution, and static-symbol detection. """
+"""Helper functions shared by the SDFG performance analyses: element UUIDs, fixed-point symbol
+substitution, and static-symbol detection."""
 
 import re
 from typing import Dict
@@ -15,8 +15,7 @@ UUID_SEPARATOR = '/'
 
 
 def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
-    return (str(cfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR +
-            str(edge_id))
+    return str(cfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR + str(edge_id)
 
 
 def get_uuid(element, state=None):

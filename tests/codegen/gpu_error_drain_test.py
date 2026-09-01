@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for __dace_init_cuda: the inherited-error drain, and one-GPU-per-process."""
+
 import ctypes
 import importlib
 from ctypes.util import find_library
@@ -17,12 +18,14 @@ def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
     sdfg.add_array('A', [8], dace.float64)
     sdfg.arrays['A'].optional = False
     state = sdfg.add_state()
-    state.add_mapped_tasklet('inc',
-                             dict(i='0:8'),
-                             dict(inp=dace.Memlet('A[i]')),
-                             'out = inp + 1.0',
-                             dict(out=dace.Memlet('A[i]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'inc',
+        dict(i='0:8'),
+        dict(inp=dace.Memlet('A[i]')),
+        'out = inp + 1.0',
+        dict(out=dace.Memlet('A[i]')),
+        external_edges=True,
+    )
     sdfg.apply_transformations(GPUTransformSDFG)
     return sdfg
 
@@ -56,12 +59,14 @@ def test_gpu_drain_absent_without_gpu_code():
     sdfg.add_array('A', [8], dace.float64)
     sdfg.arrays['A'].optional = False
     state = sdfg.add_state()
-    state.add_mapped_tasklet('inc',
-                             dict(i='0:8'),
-                             dict(inp=dace.Memlet('A[i]')),
-                             'out = inp + 1.0',
-                             dict(out=dace.Memlet('A[i]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'inc',
+        dict(i='0:8'),
+        dict(inp=dace.Memlet('A[i]')),
+        'out = inp + 1.0',
+        dict(out=dace.Memlet('A[i]')),
+        external_edges=True,
+    )
     frame = next(o.clean_code for o in sdfg.generate_code() if o.language == 'cpp' and o.name == 'drain_cpu_only_probe')
     assert '__dace_gpu_drain_error' not in frame
 
@@ -85,8 +90,10 @@ def test_gpu_init_template_substitution_does_not_break_comments():
             if match.group(1) != 'backend':
                 offenders.append(f'{cuda_target.__file__}:{lineno}: {{{match.group(1)}}} in {line.strip()!r}')
 
-    assert not offenders, ('a format placeholder inside a generated C++ comment is substituted there, '
-                           'so anything expanding to statements breaks the comment:\n  ' + '\n  '.join(offenders))
+    assert not offenders, (
+        'a format placeholder inside a generated C++ comment is substituted there, '
+        'so anything expanding to statements breaks the comment:\n  ' + '\n  '.join(offenders)
+    )
 
 
 def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
@@ -125,7 +132,7 @@ def _load_cudart():
     return None
 
 
-_reduction_axes = (0, )
+_reduction_axes = (0,)
 
 
 @dace.program
@@ -150,6 +157,7 @@ def test_foreign_error_is_not_charged_to_the_next_program():
     sdfg = _summed.to_sdfg(a, b)
     sdfg.apply_gpu_transformations()
     import dace.libraries.standard as std
+
     reduce_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
     reduce_node.implementation = 'CUDA (device)'
     csdfg = sdfg.compile()

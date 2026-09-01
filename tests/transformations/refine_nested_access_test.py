@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the RefineNestedAccess transformation. """
+"""Tests for the RefineNestedAccess transformation."""
+
 import dace
 import numpy as np
 
@@ -65,11 +66,9 @@ def test_refine_interstate():
     me, mx = state.add_map('m', dict(i='0:5', j='0:5'))
     nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), {'A', 'select'}, {'B'}, {'i': 'i', 'j': 'j'})
     state.add_memlet_path(A, me, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
-    state.add_memlet_path(select,
-                          me,
-                          nsdfg,
-                          dst_conn='select',
-                          memlet=dace.Memlet.from_array('select', sdfg.arrays['select']))
+    state.add_memlet_path(
+        select, me, nsdfg, dst_conn='select', memlet=dace.Memlet.from_array('select', sdfg.arrays['select'])
+    )
     state.add_memlet_path(nsdfg, mx, B, src_conn='B', memlet=dace.Memlet.from_array('B', sdfg.arrays['B']))
 
     num = sdfg.apply_transformations_repeated(RefineNestedAccess)
@@ -119,16 +118,12 @@ def test_free_symbols_only_by_indices():
     nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), {'A', 'idx_a', 'idx_b'}, {'B'}, {'i': 'i'})
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='B', memlet=dace.Memlet.from_array('B', sdfg.arrays['B']))
-    state.add_memlet_path(ia,
-                          map_entry,
-                          nsdfg,
-                          dst_conn='idx_a',
-                          memlet=dace.Memlet.from_array('idx_a', sdfg.arrays['idx_a']))
-    state.add_memlet_path(ib,
-                          map_entry,
-                          nsdfg,
-                          dst_conn='idx_b',
-                          memlet=dace.Memlet.from_array('idx_b', sdfg.arrays['idx_b']))
+    state.add_memlet_path(
+        ia, map_entry, nsdfg, dst_conn='idx_a', memlet=dace.Memlet.from_array('idx_a', sdfg.arrays['idx_a'])
+    )
+    state.add_memlet_path(
+        ib, map_entry, nsdfg, dst_conn='idx_b', memlet=dace.Memlet.from_array('idx_b', sdfg.arrays['idx_b'])
+    )
 
     num = sdfg.apply_transformations_repeated(RefineNestedAccess)
     assert num == 1
@@ -170,25 +165,19 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
     def _make_nested_sdfg(diff_in_out: bool) -> dace.SDFG:
         sdfg = dace.SDFG("inner_sdfg")
         state = sdfg.add_state(is_start_block=True)
-        sdfg.add_array("A", dtype=dace.float64, shape=(2, ), transient=False)
-        sdfg.add_array("T1", dtype=dace.float64, shape=(2, ), transient=False)
+        sdfg.add_array("A", dtype=dace.float64, shape=(2,), transient=False)
+        sdfg.add_array("T1", dtype=dace.float64, shape=(2,), transient=False)
 
         A = state.add_access("A")
         T1_output = state.add_access("T1")
         if diff_in_out:
-            sdfg.add_array("T2", dtype=dace.float64, shape=(2, ), transient=False)
+            sdfg.add_array("T2", dtype=dace.float64, shape=(2,), transient=False)
             T1_input = state.add_access("T2")
         else:
             T1_input = state.add_access("T1")
 
         tsklt = state.add_tasklet(
-            "comp",
-            inputs={
-                "__in1": None,
-                "__in2": None
-            },
-            outputs={"__out": None},
-            code="__out = __in1 + __in2",
+            "comp", inputs={"__in1": None, "__in2": None}, outputs={"__out": None}, code="__out = __in1 + __in2"
         )
 
         state.add_edge(A, None, tsklt, "__in1", dace.Memlet("A[1]"))
@@ -202,19 +191,16 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
     sdfg = dace.SDFG("Parent_SDFG")
     state = sdfg.add_state(is_start_block=True)
 
-    sdfg.add_array("A", dtype=dace.float64, shape=(2, ), transient=False)
-    sdfg.add_array("T1", dtype=dace.float64, shape=(2, ), transient=False)
-    sdfg.add_array("T2", dtype=dace.float64, shape=(2, ), transient=False)
+    sdfg.add_array("A", dtype=dace.float64, shape=(2,), transient=False)
+    sdfg.add_array("T1", dtype=dace.float64, shape=(2,), transient=False)
+    sdfg.add_array("T2", dtype=dace.float64, shape=(2,), transient=False)
     A = state.add_access("A")
     T1 = state.add_access("T1")
 
     nested_sdfg = _make_nested_sdfg(diff_in_out)
 
     nsdfg = state.add_nested_sdfg(
-        nested_sdfg,
-        inputs={"A"},
-        outputs={"T2", "T1"} if diff_in_out else {"T1"},
-        symbol_mapping={},
+        nested_sdfg, inputs={"A"}, outputs={"T2", "T1"} if diff_in_out else {"T1"}, symbol_mapping={}
     )
 
     state.add_edge(A, None, nsdfg, "A", dace.Memlet("A[0:2]"))
@@ -230,11 +216,7 @@ def test_rna_read_and_write_sets_doule_use():
     # The transformation does not apply because we access element `0` of both arrays that we
     #  pass inside the nested SDFG.
     sdfg = _make_rna_read_and_write_set_sdfg(False)
-    nb_applied = sdfg.apply_transformations_repeated(
-        [RefineNestedAccess],
-        validate=True,
-        validate_all=True,
-    )
+    nb_applied = sdfg.apply_transformations_repeated([RefineNestedAccess], validate=True, validate_all=True)
     assert nb_applied == 0
 
 
@@ -243,11 +225,7 @@ def test_rna_read_and_write_sets_different_storage():
     # There is a dedicated temporary storage used.
     sdfg = _make_rna_read_and_write_set_sdfg(True)
 
-    nb_applied = sdfg.apply_transformations_repeated(
-        [RefineNestedAccess],
-        validate=True,
-        validate_all=True,
-    )
+    nb_applied = sdfg.apply_transformations_repeated([RefineNestedAccess], validate=True, validate_all=True)
     assert nb_applied > 0
 
     args = {

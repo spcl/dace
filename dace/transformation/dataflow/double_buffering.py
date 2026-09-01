@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-"""Contains classes that implement the double buffering pattern. """
+"""Contains classes that implement the double buffering pattern."""
 
 import copy
 
@@ -12,12 +12,12 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
 class DoubleBuffering(transformation.SingleStateTransformation):
-    """ Implements the double buffering pattern, which pipelines reading
-        and processing data by creating a second copy of the memory.
-        In particular, the transformation takes a 1D map and all internal
-        (directly connected) transients, adds an additional dimension of size 2,
-        and turns the map into a for loop that processes and reads the data in a
-        double-buffered manner. Other memlets will not be transformed.
+    """Implements the double buffering pattern, which pipelines reading
+    and processing data by creating a second copy of the memory.
+    In particular, the transformation takes a 1D map and all internal
+    (directly connected) transients, adds an additional dimension of size 2,
+    and turns the map into a for loop that processes and reads the data in a
+    double-buffered manner. Other memlets will not be transformed.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -37,8 +37,13 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         # Verify the map can be transformed to a for-loop
         m2for = MapToForLoop()
-        m2for.setup_match(sdfg, sdfg.cfg_id, self.state_id,
-                          {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
+        m2for.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            self.state_id,
+            {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]},
+            expr_index,
+        )
         if not m2for.can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
@@ -72,8 +77,9 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Gather transients to modify
-        transients_to_modify = set(edge.dst.data for edge in graph.out_edges(map_entry)
-                                   if isinstance(edge.dst, nodes.AccessNode))
+        transients_to_modify = set(
+            edge.dst.data for edge in graph.out_edges(map_entry) if isinstance(edge.dst, nodes.AccessNode)
+        )
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
@@ -98,20 +104,21 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
                 # other_subset could be None. In that case, recreate from array
                 dataname = None
-                if (isinstance(src_node, nodes.AccessNode) and src_node.data in transients_to_modify):
+                if isinstance(src_node, nodes.AccessNode) and src_node.data in transients_to_modify:
                     dataname = src_node.data
-                elif (isinstance(dst_node, nodes.AccessNode) and dst_node.data in transients_to_modify):
+                elif isinstance(dst_node, nodes.AccessNode) and dst_node.data in transients_to_modify:
                     dataname = dst_node.data
                 if dataname is not None:
-                    subset = (edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname]))
+                    subset = edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname])
                     edge.data.other_subset = self._modify_memlet(sdfg, subset, dataname)
                     modified_subsets.append(edge.data.other_subset)
 
         ##############################
         # Turn map into for loop
         map_to_for = MapToForLoop()
-        map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
-                               {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
+        map_to_for.setup_match(
+            sdfg, self.cfg_id, self.state_id, {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index
+        )
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
         ##############################
@@ -119,7 +126,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         edges_to_replace = []
         for node in nstate.source_nodes():
             for edge in nstate.out_edges(node):
-                if (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in transients_to_modify):
+                if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in transients_to_modify:
                     edges_to_replace.append(edge)
                     nstate.remove_edge(edge)
             if nstate.out_degree(node) == 0:
@@ -174,11 +181,13 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             wnode = nstate.add_write(edge.dst.data)
             new_memlet = copy.deepcopy(edge.data)
             if new_memlet.data in transients_to_modify:
-                new_memlet.other_subset = self._replace_in_subset(new_memlet.other_subset, map_param,
-                                                                  '(%s + %s)' % (map_param, map_rstride))
+                new_memlet.other_subset = self._replace_in_subset(
+                    new_memlet.other_subset, map_param, '(%s + %s)' % (map_param, map_rstride)
+                )
             else:
-                new_memlet.subset = self._replace_in_subset(new_memlet.subset, map_param,
-                                                            '(%s + %s)' % (map_param, map_rstride))
+                new_memlet.subset = self._replace_in_subset(
+                    new_memlet.subset, map_param, '(%s + %s)' % (map_param, map_rstride)
+                )
 
             nstate.add_edge(rnode, edge.src_conn, wnode, edge.dst_conn, new_memlet)
 
@@ -213,6 +222,6 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             try:
                 new_subset[i] = tuple(d.subs(repldict) for d in dim)
             except TypeError:
-                new_subset[i] = (dim.subs(repldict) if symbolic.issymbolic(dim) else dim)
+                new_subset[i] = dim.subs(repldict) if symbolic.issymbolic(dim) else dim
 
         return new_subset

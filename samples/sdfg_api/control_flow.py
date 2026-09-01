@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" SDFG API sample that showcases state machine creation and the `simplify` call, which will fuse them. """
+"""SDFG API sample that showcases state machine creation and the `simplify` call, which will fuse them."""
+
 import dace
 import numpy as np
 
@@ -60,7 +61,7 @@ endstate(state2)
 # Note: dataflow (arrays) CAN affect control flow assignments and conditions,
 #       but not the other way around (you cannot change an interstate variable
 #       inside a state). The following code works as well:
-#sdfg.add_edge(state0, guard, dace.InterstateEdge(assigments=dict('k', 'A[0]')))
+# sdfg.add_edge(state0, guard, dace.InterstateEdge(assigments=dict('k', 'A[0]')))
 
 # Loop initialization (k=0)
 sdfg.add_edge(state0, guard, dace.InterstateEdge(assignments=dict(k='0')))

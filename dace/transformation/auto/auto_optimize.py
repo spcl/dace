@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Automatic optimization routines for SDFGs. """
+"""Automatic optimization routines for SDFGs."""
 
 import dace
 import sympy
@@ -28,14 +28,16 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
 
 
-def greedy_fuse(graph_or_subgraph: GraphViewType,
-                validate_all: bool,
-                device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
-                recursive: bool = True,
-                stencil: bool = False,
-                stencil_tile=None,
-                permutations_only: bool = True,
-                expand_reductions: bool = False) -> None:
+def greedy_fuse(
+    graph_or_subgraph: GraphViewType,
+    validate_all: bool,
+    device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
+    recursive: bool = True,
+    stencil: bool = False,
+    stencil_tile=None,
+    permutations_only: bool = True,
+    expand_reductions: bool = False,
+) -> None:
     """
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
@@ -54,24 +56,23 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # Apply MapFusionVertical for the more trivial cases
-            full_map_fusion_pass = FullMapFusion(
-                strict_dataflow=True,
-                validate_all=validate_all,
-            )
+            full_map_fusion_pass = FullMapFusion(strict_dataflow=True, validate_all=validate_all)
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
 
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
             if isinstance(graph, (SDFGState, ControlFlowRegion)):
-                greedy_fuse(graph,
-                            validate_all=validate_all,
-                            device=device,
-                            recursive=recursive,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    graph,
+                    validate_all=validate_all,
+                    device=device,
+                    recursive=recursive,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
@@ -148,25 +149,29 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if recursive:
                 global_entry = cf._global_map_entry if len(map_entries) > 1 else map_entries[0]
 
-                greedy_fuse(graph.scope_subgraph(global_entry, include_entry=False, include_exit=False),
-                            validate_all=validate_all,
-                            device=device,
-                            recursive=recursive,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    graph.scope_subgraph(global_entry, include_entry=False, include_exit=False),
+                    validate_all=validate_all,
+                    device=device,
+                    recursive=recursive,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
 
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                greedy_fuse(node.sdfg,
-                            validate_all=validate_all,
-                            device=device,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            recursive=recursive,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    node.sdfg,
+                    validate_all=validate_all,
+                    device=device,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    recursive=recursive,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
 
         if applied_transformations > 0:
             if debugprint:
@@ -215,7 +220,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry)):
+            if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
@@ -259,7 +264,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             nonconflicted_dims = set(mapentry.params) - conflicts
             if nonconflicted_dims:
                 dims = [i for i, p in enumerate(mapentry.params) if p in nonconflicted_dims]
-                if ((dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True):
+                if (dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True:
                     # Map has a small range, extracting parallelism may not be
                     # beneficial
                     continue
@@ -283,15 +288,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             continue
 
         # MapTiling -> AccumulateTransient / AccumulateStream
-        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
+        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size,)), map_entry=mapentry)
 
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
         outer_mapexit = graph.exit_node(outer_mapentry)
 
         # Tuple of (transformation type, options, pattern)
-        to_apply: Tuple[Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any],
-                        Dict[str, nodes.Node]] = None
+        to_apply: Tuple[
+            Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any], Dict[str, nodes.Node]
+        ] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -305,11 +311,18 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
                     to_apply = None
                     break
 
-                to_apply = (dataflow.StreamTransient, {},
-                            dict(tasklet=tasklet, map_exit=mapexit, outer_map_exit=outer_mapexit))
+                to_apply = (
+                    dataflow.StreamTransient,
+                    {},
+                    dict(tasklet=tasklet, map_exit=mapexit, outer_map_exit=outer_mapexit),
+                )
             else:
-                if (e.data.is_empty() or e.data.wcr is None or e.data.wcr_nonatomic or
-                    (e.data.dst_subset is not None and e.data.dst_subset.num_elements() != 0 and e.data.dynamic)):
+                if (
+                    e.data.is_empty()
+                    or e.data.wcr is None
+                    or e.data.wcr_nonatomic
+                    or (e.data.dst_subset is not None and e.data.dst_subset.num_elements() != 0 and e.data.dynamic)
+                ):
                     continue
 
                 dtype = sdfg.arrays[e.data.data].dtype
@@ -322,8 +335,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
                     to_apply = None
                     break
 
-                to_apply = (dataflow.AccumulateTransient, dict(identity=identity, array=e.data.data),
-                            dict(map_exit=mapexit, outer_map_exit=outer_mapexit))
+                to_apply = (
+                    dataflow.AccumulateTransient,
+                    dict(identity=identity, array=e.data.data),
+                    dict(map_exit=mapexit, outer_map_exit=outer_mapexit),
+                )
         if to_apply is not None:
             xform, opts, pattern = to_apply
             xform.apply_to(sdfg, options=opts, **pattern)
@@ -376,8 +392,11 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     for sd, aname, array in sdfg.arrays_recursive():
         if isinstance(array, dt.Stream):
             continue
-        if (array.transient and array.storage == dtypes.StorageType.Default
-                and array.lifetime == dtypes.AllocationLifetime.Scope):
+        if (
+            array.transient
+            and array.storage == dtypes.StorageType.Default
+            and array.lifetime == dtypes.AllocationLifetime.Scope
+        ):
             if not symbolic.issymbolic(array.total_size, sd.constants):
                 eval_size = symbolic.evaluate(array.total_size, sd.constants)
                 if (eval_size <= tile_size) == True:
@@ -388,10 +407,12 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
-def set_fast_implementations(sdfg: SDFG,
-                             device: dtypes.DeviceType,
-                             blocklist: List[str] = None,
-                             find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> None:
+def set_fast_implementations(
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    blocklist: List[str] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+) -> None:
     """
     Set fast library node implementations for the given device
 
@@ -416,9 +437,10 @@ def set_fast_implementations(sdfg: SDFG,
         for state in current_sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode):
-                    if (node.default_implementation == 'specialize'
-                            and (len(set(node.implementations)
-                                     & set(implementation_prio))) == 0):
+                    if (
+                        node.default_implementation == 'specialize'
+                        and (len(set(node.implementations) & set(implementation_prio))) == 0
+                    ):
                         node.expand(state)
 
     # general nodes
@@ -431,9 +453,10 @@ def set_fast_implementations(sdfg: SDFG,
                 continue
             for impl in implementation_prio:
                 if impl in node.implementations:
-                    if isinstance(
-                            node,
-                            dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
+                    if (
+                        isinstance(node, dace.libraries.standard.nodes.reduce.Reduce)
+                        and node.implementation == 'CUDA (block)'
+                    ):
                         continue
                     node.implementation = impl
                     break
@@ -446,20 +469,25 @@ def set_fast_implementations(sdfg: SDFG,
                     node.implementation = "pure"
                     continue
                 # use GPUAuto expansion if applicable
-                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None):
+                if (
+                    'GPUAuto' in node.implementations
+                    and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                    and state.scope_dict()[node] is None
+                ):
                     node.implementation = 'GPUAuto'
                     continue
                 # Use CUB for device-level reductions
-                if ('CUDA (device)' in node.implementations
-                        and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None):
+                if (
+                    'CUDA (device)' in node.implementations
+                    and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                    and state.scope_dict()[node] is None
+                ):
                     node.implementation = 'CUDA (device)'
 
 
-def make_transients_persistent(sdfg: SDFG,
-                               device: dtypes.DeviceType,
-                               toplevel_only: bool = True) -> Dict[int, Set[str]]:
+def make_transients_persistent(
+    sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True
+) -> Dict[int, Set[str]]:
     """
     Helper function to change several storage and scheduling properties
 
@@ -491,8 +519,10 @@ def make_transients_persistent(sdfg: SDFG,
                     continue
                 desc = dnode.desc(nsdfg)
                 # Only convert what is not a member of a non-persistent struct.
-                if (dnode.root_data != dnode.data
-                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                if (
+                    dnode.root_data != dnode.data
+                    and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent
+                ):
                     continue
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
@@ -524,10 +554,10 @@ def make_transients_persistent(sdfg: SDFG,
 
                 persistent.add(dnode.data)
 
-        for aname in (persistent - not_persistent):
+        for aname in persistent - not_persistent:
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
-        result[nsdfg.cfg_id] = (persistent - not_persistent)
+        result[nsdfg.cfg_id] = persistent - not_persistent
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
@@ -539,7 +569,7 @@ def make_transients_persistent(sdfg: SDFG,
 
 
 def apply_gpu_storage(sdfg: SDFG) -> None:
-    """ Changes the storage of the SDFG's input and output data to GPU global memory. """
+    """Changes the storage of the SDFG's input and output data to GPU global memory."""
 
     written_scalars = set()
     for state in sdfg.states():
@@ -555,13 +585,15 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
             desc.storage = dtypes.StorageType.GPU_Global
 
 
-def auto_optimize(sdfg: SDFG,
-                  device: dtypes.DeviceType,
-                  validate: bool = True,
-                  validate_all: bool = False,
-                  symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False,
-                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> SDFG:
+def auto_optimize(
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    validate: bool = True,
+    validate_all: bool = False,
+    symbols: Dict[str, int] = None,
+    use_gpu_storage: bool = False,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -598,9 +630,9 @@ def auto_optimize(sdfg: SDFG,
 
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
-                                                   validate=False,
-                                                   validate_all=validate_all)
+        l2ms = sdfg.apply_transformations_repeated(
+            (LoopToMap, RefineNestedAccess), validate=False, validate_all=validate_all
+        )
         transformed = l2ms > 0
 
     # Collapse maps and eliminate trivial dimensions
@@ -625,6 +657,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
+
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     # Tiled WCR and streams
@@ -663,7 +696,7 @@ def auto_optimize(sdfg: SDFG,
     if symbols:
         # Specialize for all known symbols
         known_symbols = {}
-        for (s, v) in symbols.items():
+        for s, v in symbols.items():
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
                     known_symbols[s] = v

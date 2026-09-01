@@ -157,13 +157,13 @@ class TransformationRepoManager:
             # Remove existing directory if it exists
             if target_path.exists():
                 import shutil
+
                 shutil.rmtree(target_path)
 
             # Clone the repository
-            result = subprocess.run(['git', 'clone', url, str(target_path)],
-                                    capture_output=True,
-                                    text=True,
-                                    check=False)
+            result = subprocess.run(
+                ['git', 'clone', url, str(target_path)], capture_output=True, text=True, check=False
+            )
 
             if result.returncode != 0:
                 print(f"Error cloning repository: {result.stderr}")
@@ -215,9 +215,7 @@ class TransformationRepoManager:
             return False
 
         # Add to registry
-        registry[name] = {
-            'url': url,
-        }
+        registry[name] = {'url': url}
 
         self._save_registry(registry)
         print(f"Successfully added repository '{name}'")
@@ -244,6 +242,7 @@ class TransformationRepoManager:
         target_path = self.external_path / name
         if target_path.exists():
             import shutil
+
             shutil.rmtree(target_path)
             print(f"Removed directory: {target_path}")
 
@@ -326,9 +325,10 @@ def main():
     transformation repositories. All repositories and the registry file will be managed
     under this directory.
     """
-    parser = argparse.ArgumentParser(description="Manage DaCe transformation repositories",
-                                     formatter_class=argparse.RawDescriptionHelpFormatter,
-                                     epilog="""
+    parser = argparse.ArgumentParser(
+        description="Manage DaCe transformation repositories",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
 Examples:
   %(prog)s add https://github.com/user/my-transformations.git
   %(prog)s add https://github.com/user/repo.git --name custom-name
@@ -343,7 +343,8 @@ Examples:
                 },
                 <...>
             }
-        """)
+        """,
+    )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 

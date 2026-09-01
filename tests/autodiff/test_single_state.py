@@ -36,7 +36,6 @@ def run_correctness(func):
 
 
 class SDFGBackwardRunner:
-
     def __init__(self, sdfg, target, simplify=True):
         if simplify:
             sdfg.simplify()
@@ -50,8 +49,7 @@ class SDFGBackwardRunner:
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode):
                     arr = node.desc(sdfg)
-                    if (arr.dtype in [dace.float32, dace.float64] and not arr.transient
-                            and node.data not in seen_names):
+                    if arr.dtype in [dace.float32, dace.float64] and not arr.transient and node.data not in seen_names:
                         required_grads.append(node)
                         seen_names.add(node.data)
 
@@ -65,15 +63,16 @@ class SDFGBackwardRunner:
 
         for name, arr in self.sdfg.arrays.items():
             # Skip gradient target, dunder names, inputs, and transients
-            if (name == gradient_target or name.startswith("__") or name in inputs or arr.transient):
+            if name == gradient_target or name.startswith("__") or name in inputs or arr.transient:
                 continue
 
             dtype = getattr(np, arr.dtype.to_string())
             intermediate_arrs[name] = np.zeros(arr.shape, dtype=dtype)
 
         inputs.update(intermediate_arrs)
-        inputs["gradient_" + self.target] = np.ones((1, ),
-                                                    dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
+        inputs["gradient_" + self.target] = np.ones(
+            (1,), dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string())
+        )
 
         self.sdfg(**inputs)
 
@@ -94,12 +93,7 @@ def test_gemm():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad)
 
     @dace.program
-    def dace_gemm(
-        X: dace.float32[5, 4],
-        Y: dace.float32[4, 3],
-        Z: dace.float32[5, 3],
-        S: dace.float32[1],
-    ):
+    def dace_gemm(X: dace.float32[5, 4], Y: dace.float32[4, 3], Z: dace.float32[5, 3], S: dace.float32[1]):
 
         Z[:] = X @ Y
 
@@ -114,10 +108,7 @@ def test_gemm():
     return (
         SDFGBackwardRunner(sdfg, "S"),
         torch_gemm,
-        dict(
-            X=np.random.rand(5, 4).astype(np.float32),
-            Y=np.random.rand(4, 3).astype(np.float32),
-        ),
+        dict(X=np.random.rand(5, 4).astype(np.float32), Y=np.random.rand(4, 3).astype(np.float32)),
     )
 
 
@@ -133,12 +124,7 @@ def test_sum():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad)
 
     @dace.program
-    def dace_sum(
-        X: dace.float32[3, 3],
-        Y: dace.float32[3, 3],
-        Z: dace.float32[3, 3],
-        S: dace.float32[1],
-    ):
+    def dace_sum(X: dace.float32[3, 3], Y: dace.float32[3, 3], Z: dace.float32[3, 3], S: dace.float32[1]):
 
         Z[:] = X + Y
 
@@ -153,10 +139,7 @@ def test_sum():
     return (
         SDFGBackwardRunner(sdfg, "S"),
         torch_sum,
-        dict(
-            X=np.random.rand(3, 3).astype(np.float32),
-            Y=np.random.rand(3, 3).astype(np.float32),
-        ),
+        dict(X=np.random.rand(3, 3).astype(np.float32), Y=np.random.rand(3, 3).astype(np.float32)),
     )
 
 
@@ -172,12 +155,7 @@ def test_complex_tasklet():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad)
 
     @dace.program
-    def dace_sum_complex(
-        X: dace.float32[3, 3],
-        Y: dace.float32[3, 3],
-        Z: dace.float32[3, 3],
-        S: dace.float32[1],
-    ):
+    def dace_sum_complex(X: dace.float32[3, 3], Y: dace.float32[3, 3], Z: dace.float32[3, 3], S: dace.float32[1]):
 
         Z[:] = X + Y
 
@@ -197,10 +175,7 @@ def test_complex_tasklet():
     return (
         SDFGBackwardRunner(sdfg, "S"),
         torch_sum,
-        dict(
-            X=np.random.rand(3, 3).astype(np.float32),
-            Y=np.random.rand(3, 3).astype(np.float32),
-        ),
+        dict(X=np.random.rand(3, 3).astype(np.float32), Y=np.random.rand(3, 3).astype(np.float32)),
     )
 
 
@@ -242,11 +217,7 @@ def test_tasklets_only_reuse():
 
     sdfg = tasklets_only_reuse.to_sdfg(simplify=False)
     sdfg.simplify()
-    return (
-        SDFGBackwardRunner(sdfg, "C"),
-        torch_func,
-        dict(A=np.random.rand(1).astype(np.float32)),
-    )
+    return (SDFGBackwardRunner(sdfg, "C"), torch_func, dict(A=np.random.rand(1).astype(np.float32)))
 
 
 @pytest.mark.autodiff
@@ -295,10 +266,7 @@ def test_tasklets_multioutput():
     return (
         SDFGBackwardRunner(sdfg, "C"),
         torch_func,
-        dict(
-            A=np.random.rand(1).astype(np.float32),
-            B=np.random.rand(1).astype(np.float32),
-        ),
+        dict(A=np.random.rand(1).astype(np.float32), B=np.random.rand(1).astype(np.float32)),
     )
 
 
@@ -344,10 +312,7 @@ def test_tasklets_only():
     return (
         SDFGBackwardRunner(sdfg, "C"),
         torch_func,
-        dict(
-            A=np.random.rand(1).astype(np.float32),
-            B=np.random.rand(1).astype(np.float32),
-        ),
+        dict(A=np.random.rand(1).astype(np.float32), B=np.random.rand(1).astype(np.float32)),
     )
 
 
@@ -367,12 +332,7 @@ def test_add_mmul_transpose_log():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad, gradient_W=W.grad)
 
     @dace.program
-    def add_mmul_transpose_log(
-        X: dace.float32[4, 5],
-        Y: dace.float32[4, 3],
-        W: dace.float32[4, 3],
-        S: dace.float32[1],
-    ):
+    def add_mmul_transpose_log(X: dace.float32[4, 5], Y: dace.float32[4, 3], W: dace.float32[4, 3], S: dace.float32[1]):
 
         Xt = np.transpose(X)
         YW = W * Y
@@ -456,11 +416,7 @@ def test_reduce_max_simple():
 
     sdfg = reduce_max_simple.to_sdfg()
 
-    return (
-        SDFGBackwardRunner(sdfg, "__return"),
-        torch_func,
-        dict(W=np.random.rand(4, 5).astype(np.float32)),
-    )
+    return (SDFGBackwardRunner(sdfg, "__return"), torch_func, dict(W=np.random.rand(4, 5).astype(np.float32)))
 
 
 @pytest.mark.autodiff
@@ -532,10 +488,7 @@ def test_reshape():
     return (
         SDFGBackwardRunner(sdfg, "__return", simplify=False),
         torch_func,
-        dict(
-            inp=np.random.rand(9).astype(np.float64),
-            bias=np.random.rand(3).astype(np.float64),
-        ),
+        dict(inp=np.random.rand(9).astype(np.float64), bias=np.random.rand(3).astype(np.float64)),
     )
 
 
@@ -574,10 +527,7 @@ def test_reshape_on_memlet_path():
     return (
         SDFGBackwardRunner(sdfg, "__return", simplify=False),
         torch_func,
-        dict(
-            inp1=np.random.rand(9).astype(np.float64),
-            bias=np.random.rand(3).astype(np.float64),
-        ),
+        dict(inp1=np.random.rand(9).astype(np.float64), bias=np.random.rand(3).astype(np.float64)),
     )
 
 
@@ -615,7 +565,7 @@ def test_reshape_reuse_in_same_state():
     return (
         SDFGBackwardRunner(sdfg, "__return", simplify=False),
         torch_func,
-        dict(inp=np.random.rand(9).astype(np.float64), ),
+        dict(inp=np.random.rand(9).astype(np.float64)),
     )
 
 

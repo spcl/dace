@@ -5,6 +5,7 @@ CloudSC is the scaling case for this pass: thousands of blocks and loop regions 
 deep, which is where the collection schedule dominates the runtime. The last test closes the loop
 by compiling and running, so a schedule change that quietly altered a value cannot pass.
 """
+
 import pytest
 
 import dace

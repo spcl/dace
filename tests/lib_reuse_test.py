@@ -52,17 +52,14 @@ def test_reload():
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
     print("Differences:", diff1, diff2)
-    assert (diff1 < 1e-5 and diff2 < 1e-5)
+    assert diff1 < 1e-5 and diff2 < 1e-5
 
 
 def test_load_precompiled():
     for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:
             conf.set('compiler', 'build_folder_mode', value=folder_mode)
-            _load_precompiled_impl(
-                test_name="test_load_precompiled",
-                folder_mode=folder_mode,
-            )
+            _load_precompiled_impl(test_name="test_load_precompiled", folder_mode=folder_mode)
 
 
 def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
@@ -89,7 +86,7 @@ def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
     assert lib1_path != lib2_path
     assert lib1_path.parent == lib2_path.parent
 
-    assert (np.allclose(output_one, output_two))
+    assert np.allclose(output_one, output_two)
 
     del func1
     del func2

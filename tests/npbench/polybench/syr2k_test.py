@@ -19,9 +19,9 @@ M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 def syr2k_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M], B: dc.float64[N, M]):
 
     for i in range(N):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(M):
-            C[i, :i + 1] += (A[:i + 1, k] * alpha * B[i, k] + B[:i + 1, k] * alpha * A[i, k])
+            C[i, : i + 1] += A[: i + 1, k] * alpha * B[i, k] + B[: i + 1, k] * alpha * A[i, k]
 
 
 def initialize(M, N, datatype=np.float64):
@@ -82,9 +82,9 @@ def syr2k_jax_kernel(jnp, lax, alpha, beta, C, A, B):
 def ground_truth(alpha, beta, C, A, B):
 
     for i in range(A.shape[0]):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(A.shape[1]):
-            C[i, :i + 1] += (A[:i + 1, k] * alpha * B[i, k] + B[:i + 1, k] * alpha * A[i, k])
+            C[i, : i + 1] += A[: i + 1, k] * alpha * B[i, k] + B[: i + 1, k] * alpha * A[i, k]
 
 
 def run_syr2k(device_type: dace.dtypes.DeviceType):
@@ -120,12 +120,13 @@ def run_syr2k_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M],
-                        B: dc.float64[N, M]):
+    def autodiff_kernel(
+        alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M], B: dc.float64[N, M]
+    ):
         syr2k_kernel(alpha, beta, C, A, B)
         return np.sum(C)
 
@@ -161,7 +162,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

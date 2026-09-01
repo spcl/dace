@@ -7,17 +7,17 @@ from typing import List, Optional, Union
 
 
 class FNode(object):
-
     def __init__(self, *args, **kwargs):  # real signature unknown
         self.integrity_exceptions = []
         self.read_vars = []
         self.written_vars = []
-        self.parent: Optional[Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node,
-                                    Module_Node]] = None
+        self.parent: Optional[
+            Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node, Module_Node]
+        ] = None
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    _attributes = ("line_number", )
+    _attributes = ("line_number",)
     _fields = ()
     integrity_exceptions: List
     read_vars: List
@@ -37,83 +37,56 @@ class FNode(object):
 
 class Program_Node(FNode):
     _attributes = ()
-    _fields = (
-        "main_program",
-        "function_definitions",
-        "subroutine_definitions",
-        "modules",
-    )
+    _fields = ("main_program", "function_definitions", "subroutine_definitions", "modules")
 
 
 class BinOp_Node(FNode):
-    _attributes = (
-        'op',
-        'type',
-    )
-    _fields = (
-        'lval',
-        'rval',
-    )
+    _attributes = ('op', 'type')
+    _fields = ('lval', 'rval')
 
 
 class UnOp_Node(FNode):
-    _attributes = (
-        'op',
-        'postfix',
-        'type',
-    )
-    _fields = ('lval', )
+    _attributes = ('op', 'postfix', 'type')
+    _fields = ('lval',)
 
 
 class Main_Program_Node(FNode):
-    _attributes = ("name", )
+    _attributes = ("name",)
     _fields = ("execution_part", "specification_part")
 
 
 class Module_Node(FNode):
-    _attributes = ('name', )
-    _fields = (
-        'specification_part',
-        'subroutine_definitions',
-        'function_definitions',
-    )
+    _attributes = ('name',)
+    _fields = ('specification_part', 'subroutine_definitions', 'function_definitions')
 
 
 class Function_Subprogram_Node(FNode):
     _attributes = ('name', 'type', 'ret_name')
-    _fields = (
-        'args',
-        'specification_part',
-        'execution_part',
-    )
+    _fields = ('args', 'specification_part', 'execution_part')
 
 
 class Subroutine_Subprogram_Node(FNode):
     _attributes = ('name', 'type')
-    _fields = (
-        'args',
-        'specification_part',
-        'execution_part',
-    )
+    _fields = ('args', 'specification_part', 'execution_part')
 
 
 class Module_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ()
 
 
 class Program_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ()
 
 
 class Subroutine_Stmt_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('args', )
+    _attributes = ('name',)
+    _fields = ('args',)
 
 
 class Function_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name',)
     _fields = ('args', 'return')
 
 
@@ -137,103 +110,70 @@ class Specification_Part_Node(FNode):
 
 
 class Execution_Part_Node(FNode):
-    _fields = ('execution', )
+    _fields = ('execution',)
 
 
 class Statement_Node(FNode):
-    _attributes = ('col_offset', )
+    _attributes = ('col_offset',)
     _fields = ()
 
 
 class Array_Subscript_Node(FNode):
-    _attributes = (
-        'name',
-        'type',
-    )
-    _fields = ('indices', )
+    _attributes = ('name', 'type')
+    _fields = ('indices',)
 
 
 class Type_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-    )
+    _attributes = ('name', 'type')
     _fields = ()
 
 
 class Allocate_Shape_Spec_Node(FNode):
     _attributes = ()
-    _fields = ('sizes', )
+    _fields = ('sizes',)
 
 
 class Allocate_Shape_Spec_List(FNode):
     _attributes = ()
-    _fields = ('shape_list', )
+    _fields = ('shape_list',)
 
 
 class Allocation_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('shape', )
+    _attributes = ('name',)
+    _fields = ('shape',)
 
 
 class Allocate_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('allocation_list', )
+    _fields = ('allocation_list',)
 
 
 class Symbol_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-    )
-    _fields = (
-        'sizes',
-        'typeref',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc')
+    _fields = ('sizes', 'typeref', 'init')
 
 
 class Symbol_Array_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-    )
-    _fields = (
-        'sizes',
-        'offsets'
-        'typeref',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc')
+    _fields = ('sizes', 'offsetstyperef', 'init')
 
 
 class Var_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-        'kind',
-    )
-    _fields = (
-        'sizes',
-        'offsets',
-        'typeref',
-        'init',
-    )
+    _attributes = ('name', 'type', 'alloc', 'kind')
+    _fields = ('sizes', 'offsets', 'typeref', 'init')
 
 
 class Arg_List_Node(FNode):
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Component_Spec_List_Node(FNode):
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Decl_Stmt_Node(Statement_Node):
     _attributes = ()
-    _fields = ('vardecl', )
+    _fields = ('vardecl',)
 
 
 class VarType:
@@ -245,7 +185,7 @@ class Void(VarType):
 
 
 class Literal(FNode):
-    _attributes = ('value', )
+    _attributes = ('value',)
     _fields = ()
 
 
@@ -276,53 +216,36 @@ class Char_Literal_Node(Literal):
 
 class Call_Expr_Node(FNode):
     _attributes = ('type', 'subroutine')
-    _fields = (
-        'name',
-        'args',
-    )
+    _fields = ('name', 'args')
 
 
 class Array_Constructor_Node(FNode):
     _attributes = ()
-    _fields = ('value_list', )
+    _fields = ('value_list',)
 
 
 class Ac_Value_List_Node(FNode):
     _attributes = ()
-    _fields = ('value_list', )
+    _fields = ('value_list',)
 
 
 class Section_Subscript_List_Node(FNode):
-    _fields = ('list')
+    _fields = 'list'
 
 
 class For_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'body',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'body', 'iter')
 
 
 class Map_Stmt_Node(For_Stmt_Node):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'body',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'body', 'iter')
 
 
 class If_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'cond',
-        'body',
-        'body_else',
-    )
+    _fields = ('cond', 'body', 'body_else')
 
 
 class Else_Separator_Node(FNode):
@@ -332,55 +255,47 @@ class Else_Separator_Node(FNode):
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
-    _fields = ('expr', )
+    _fields = ('expr',)
 
 
 class Nonlabel_Do_Stmt_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'iter')
 
 
 class Loop_Control_Node(FNode):
     _attributes = ()
-    _fields = (
-        'init',
-        'cond',
-        'iter',
-    )
+    _fields = ('init', 'cond', 'iter')
 
 
 class Else_If_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('cond', )
+    _fields = ('cond',)
 
 
 class Only_List_Node(FNode):
     _attributes = ()
-    _fields = ('names', )
+    _fields = ('names',)
 
 
 class ParDecl_Node(FNode):
-    _attributes = ('type', )
-    _fields = ('range', )
+    _attributes = ('type',)
+    _fields = ('range',)
 
 
 class Structure_Constructor_Node(FNode):
-    _attributes = ('type', )
+    _attributes = ('type',)
     _fields = ('name', 'args')
 
 
 class Use_Stmt_Node(FNode):
-    _attributes = ('name', )
-    _fields = ('list', )
+    _attributes = ('name',)
+    _fields = ('list',)
 
 
 class Write_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args', )
+    _fields = ('args',)
 
 
 class Break_Node(FNode):

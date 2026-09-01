@@ -65,28 +65,8 @@ def _gen_sdfg():
 
     interesting_type = dace.opaque("interesting_type")
 
-    sdfg.add_array(
-        "A",
-        dtype=interesting_type,
-        shape=[
-            10,
-        ],
-        strides=[
-            1,
-        ],
-        transient=False,
-    )
-    sdfg.add_array(
-        "B",
-        dtype=interesting_type,
-        shape=[
-            10,
-        ],
-        strides=[
-            1,
-        ],
-        transient=False,
-    )
+    sdfg.add_array("A", dtype=interesting_type, shape=[10], strides=[1], transient=False)
+    sdfg.add_array("B", dtype=interesting_type, shape=[10], strides=[1], transient=False)
 
     a = s1.add_access("A")
     b = s1.add_access("B")
@@ -106,20 +86,13 @@ def _gen_sdfg_with_copy_in_and_out():
 
     interesting_type = dace.opaque("interesting_type")
 
-    for name, is_transient, dtype in [("A", False, dace.float64), ("iA", True, interesting_type),
-                                      ("B", False, dace.float64), ("iB", True, interesting_type)]:
-
-        sdfg.add_array(
-            name,
-            dtype=dtype,
-            shape=[
-                10,
-            ],
-            strides=[
-                1,
-            ],
-            transient=is_transient,
-        )
+    for name, is_transient, dtype in [
+        ("A", False, dace.float64),
+        ("iA", True, interesting_type),
+        ("B", False, dace.float64),
+        ("iB", True, interesting_type),
+    ]:
+        sdfg.add_array(name, dtype=dtype, shape=[10], strides=[1], transient=is_transient)
 
     ia = s1.add_access("iA")
     ib = s1.add_access("iB")
@@ -133,9 +106,7 @@ def _gen_sdfg_with_copy_in_and_out():
 
     s0.add_mapped_tasklet(
         "copy_in_map",
-        map_ranges={
-            "i": "0:10",
-        },
+        map_ranges={"i": "0:10"},
         inputs={"__in": dace.Memlet("A[i]")},
         code="__out = __in;",
         outputs={"__out": dace.Memlet("iA[i]")},
@@ -150,9 +121,7 @@ def _gen_sdfg_with_copy_in_and_out():
 
     s2.add_mapped_tasklet(
         "copy_in_map",
-        map_ranges={
-            "i": "0:10",
-        },
+        map_ranges={"i": "0:10"},
         inputs={"__in": dace.Memlet("iB[i]")},
         code="__out = __in;",
         outputs={"__out": dace.Memlet("B[i]")},
@@ -180,8 +149,8 @@ def test_non_trivial_copy_execution():
     sdfg = _gen_sdfg_with_copy_in_and_out()
     sdfg.validate()
     csdfg = sdfg.compile()
-    A = numpy.ndarray((10, ), dtype=float)
-    B = numpy.ndarray((10, ), dtype=float)
+    A = numpy.ndarray((10,), dtype=float)
+    B = numpy.ndarray((10,), dtype=float)
     for i in range(10):
         A[i] = 1
         B[i] = -1

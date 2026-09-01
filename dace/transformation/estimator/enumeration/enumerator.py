@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This file implements the Enuerator class """
+"""This file implements the Enuerator class"""
 
 from dace.transformation.subgraph import helpers
 from dace.properties import make_properties, Property
@@ -19,13 +19,12 @@ class Enumerator:
     An abstract enumerator interface that is able to enumerate subgraphs
     based on custom rules and criteria.
     """
+
     debug = Property(desc="Debug mode", default=False, dtype=bool)
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 graph: SDFGState,
-                 subgraph: SubgraphView = None,
-                 condition_function: Callable = None):
+    def __init__(
+        self, sdfg: SDFG, graph: SDFGState, subgraph: SubgraphView = None, condition_function: Callable = None
+    ):
 
         self._sdfg = sdfg
         self._graph = graph
@@ -71,7 +70,7 @@ class Enumerator:
             proximity_out = set(ie.dst for me in exit_nodes for ie in graph.out_edges(me))
             extended_subgraph = SubgraphView(graph, set(itertools.chain(subgraph.nodes(), proximity_in, proximity_out)))
 
-        for node in (extended_subgraph.nodes() if subgraph else graph.nodes()):
+        for node in extended_subgraph.nodes() if subgraph else graph.nodes():
             if isinstance(node, nodes.AccessNode):
                 adjacent_entries = set()
                 for e in graph.in_edges(node):

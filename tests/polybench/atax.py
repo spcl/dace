@@ -5,26 +5,11 @@ import polybench
 N = dace.symbol('N')
 M = dace.symbol('M')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 38,
-    N: 42,
-}, {
-    M: 116,
-    N: 124,
-}, {
-    M: 390,
-    N: 410,
-}, {
-    M: 1900,
-    N: 2100,
-}, {
-    M: 1800,
-    N: 2200,
-}]
+sizes = [{M: 38, N: 42}, {M: 116, N: 124}, {M: 390, N: 410}, {M: 1900, N: 2100}, {M: 1800, N: 2200}]
 
 args = [([M, N], datatype), ([N], datatype), ([N], datatype)]
 

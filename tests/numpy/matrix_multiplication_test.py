@@ -7,7 +7,6 @@ B, M, N, K, L, O = tuple(dace.symbol(k) for k in 'BMNKLO')
 
 
 class MatrixMultiplication(unittest.TestCase):
-
     def test_mmm(self):
 
         @dace.program

@@ -20,25 +20,29 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Create_cart')
 @oprepo.replaces('dace.comm.Cart_create')
 def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeType):
-    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with
-        [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
-        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
-        :return: Name of the new process-grid descriptor.
+    """Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with
+    [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+    :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
+    :return: Name of the new process-grid descriptor.
     """
     name = pv.get_target_name()
     pgrid_name = sdfg.add_pgrid(dims, name=name)
 
     # Dummy tasklet adds MPI variables to the program's state.
     from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name};',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{len(dims)}];',
-        f'int {pgrid_name}_dims[{len(dims)}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
+
+    tasklet = Dummy(
+        pgrid_name,
+        [
+            f'MPI_Comm {pgrid_name};',
+            f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_coords[{len(dims)}];',
+            f'int {pgrid_name}_dims[{len(dims)}];',
+            f'int {pgrid_name}_rank;',
+            f'int {pgrid_name}_size;',
+            f'bool {pgrid_name}_valid;',
+        ],
+    )
 
     state.add_node(tasklet)
 
@@ -50,12 +54,13 @@ def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeTy
 
 @oprepo.replaces_method('Intracomm', 'Create_cart')
 def _intracomm_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, dims: ShapeType):
-    """ Equivalent to `dace.comm.Cart_create(dims).
-        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
-        :return: Name of the new process-grid descriptor.
+    """Equivalent to `dace.comm.Cart_create(dims).
+    :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
+    :return: Name of the new process-grid descriptor.
     """
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -63,18 +68,20 @@ def _intracomm_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: s
 
 
 @oprepo.replaces('dace.comm.Cart_sub')
-def _cart_sub(pv: ProgramVisitor,
-              sdfg: SDFG,
-              state: SDFGState,
-              parent_grid: str,
-              color: Sequence[Union[Integral, bool]],
-              exact_grid: RankType = None):
-    """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
-        The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
-        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
-        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
-        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
-        :return: Name of the new sub-grid descriptor.
+def _cart_sub(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    parent_grid: str,
+    color: Sequence[Union[Integral, bool]],
+    exact_grid: RankType = None,
+):
+    """Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
+    The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
+    :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
+    :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
+    :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+    :return: Name of the new sub-grid descriptor.
     """
     name = pv.get_target_name()
     pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid, name=name)
@@ -84,15 +91,19 @@ def _cart_sub(pv: ProgramVisitor,
 
     # Dummy tasklet adds MPI variables to the program's state.
     from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name};',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{pgrid_ndims}];',
-        f'int {pgrid_name}_dims[{pgrid_ndims}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
+
+    tasklet = Dummy(
+        pgrid_name,
+        [
+            f'MPI_Comm {pgrid_name};',
+            f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_coords[{pgrid_ndims}];',
+            f'int {pgrid_name}_dims[{pgrid_ndims}];',
+            f'int {pgrid_name}_rank;',
+            f'int {pgrid_name}_size;',
+            f'bool {pgrid_name}_valid;',
+        ],
+    )
 
     state.add_node(tasklet)
 
@@ -107,12 +118,13 @@ def _cart_sub(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('ProcessGrid', 'Sub')
-def _pgrid_sub(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral,
-                                                                                                         bool]]):
-    """ Equivalent to `dace.comm.Cart_sub(parent_grid, color).
-        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
-        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
-        :return: Name of the new sub-grid descriptor.
+def _pgrid_sub(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral, bool]]
+):
+    """Equivalent to `dace.comm.Cart_sub(parent_grid, color).
+    :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
+    :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
+    :return: Name of the new sub-grid descriptor.
     """
 
     return _cart_sub(pv, sdfg, state, parent_grid, color)
@@ -138,8 +150,9 @@ for left_cls, right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], 
         return op1 is not op2
 
 
-for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'],
-                                          ['Eq', 'NotEq', 'Is', 'IsNot']):
+for cls_a, cls_b, op in itertools.product(
+    ['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'], ['Eq', 'NotEq', 'Is', 'IsNot']
+):
 
     @oprepo.replaces_operator(cls_a, op, otherclass=cls_b)
     @oprepo.replaces_operator(cls_b, op, otherclass=cls_a)
@@ -154,13 +167,15 @@ for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
 @oprepo.replaces('dace.comm.Bcast')
-def _bcast(pv: ProgramVisitor,
-           sdfg: SDFG,
-           state: SDFGState,
-           buffer: str,
-           root: Union[str, sp.Expr, Number] = 0,
-           grid: str = None,
-           fcomm: str = None):
+def _bcast(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    root: Union[str, sp.Expr, Number] = 0,
+    grid: str = None,
+    fcomm: str = None,
+):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
@@ -189,15 +204,13 @@ def _bcast(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Cartcomm', 'Bcast')
 @oprepo.replaces_method('Intracomm', 'Bcast')
-def _intracomm_bcast(pv: ProgramVisitor,
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     comm: str,
-                     buffer: str,
-                     root: Union[str, sp.Expr, Number] = 0):
-    """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
+def _intracomm_bcast(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, comm: str, buffer: str, root: Union[str, sp.Expr, Number] = 0
+):
+    """Equivalent to `dace.comm.Bcast(buffer, root)`."""
 
     from mpi4py import MPI
+
     comm_name, comm_obj = comm, pv.globals[comm]
     if comm_obj == MPI.COMM_WORLD:
         return _bcast(pv, sdfg, state, buffer, root)
@@ -207,13 +220,10 @@ def _intracomm_bcast(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('ProcessGrid', 'Bcast')
-def _pgrid_bcast(pv: ProgramVisitor,
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 pgrid: str,
-                 buffer: str,
-                 root: Union[str, sp.Expr, Number] = 0):
-    """ Equivalent to `dace.comm.Bcast(buffer, root, grid=pgrid)`. """
+def _pgrid_bcast(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str, root: Union[str, sp.Expr, Number] = 0
+):
+    """Equivalent to `dace.comm.Bcast(buffer, root, grid=pgrid)`."""
 
     return _bcast(pv, sdfg, state, buffer, root, grid=pgrid)
 
@@ -230,13 +240,15 @@ def _mpi4py_to_MPI(MPI, op):
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Reduce')
 @oprepo.replaces('dace.comm.Reduce')
-def _Reduce(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            buffer: str,
-            op: str,
-            root: Union[str, sp.Expr, Number] = 0,
-            grid: str = None):
+def _Reduce(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    op: str,
+    root: Union[str, sp.Expr, Number] = 0,
+    grid: str = None,
+):
 
     from dace.libraries.mpi.nodes.reduce import Reduce
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
@@ -285,9 +297,10 @@ def _alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inbuffer: str, o
 
 @oprepo.replaces_method('Intracomm', 'Alltoall')
 def _intracomm_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: str, out_buffer: str):
-    """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
+    """Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`."""
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -296,24 +309,21 @@ def _intracomm_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm:
 
 @oprepo.replaces_method('ProcessGrid', 'Alltoall')
 def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
-    """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """
+    """Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`."""
 
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer, grid=pgrid)
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: ProgramVisitor,
-               sdfg: SDFG,
-               state: SDFGState,
-               inp_buffer: 'InPlace',
-               buffer: str,
-               op: str,
-               grid: str = None):
+def _allreduce(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_buffer: 'InPlace', buffer: str, op: str, grid: str = None
+):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
     from mpi4py import MPI
+
     if isinstance(op, MPI.Op):
         op = _mpi4py_to_MPI(MPI, op)
     if inp_buffer != MPI.IN_PLACE:
@@ -332,11 +342,13 @@ def _allreduce(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Allreduce')
-def _intracomm_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: 'InPlace',
-                         out_buffer: str, op: str):
-    """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
+def _intracomm_allreduce(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: 'InPlace', out_buffer: str, op: str
+):
+    """Equivalent to `dace.comm.Allreduce(out_buffer, op)`."""
 
     from mpi4py import MPI
+
     icomm_obj = pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -344,20 +356,23 @@ def _intracomm_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm
 
 
 @oprepo.replaces_method('ProcessGrid', 'Allreduce')
-def _pgrid_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
-                     out_buffer: str, op: str):
-    """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
+def _pgrid_allreduce(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace', out_buffer: str, op: str
+):
+    """Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`."""
     return _allreduce(pv, sdfg, state, inp_buffer, out_buffer, op, grid=pgrid)
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Scatter')
 @oprepo.replaces('dace.comm.Scatter')
-def _scatter(pv: ProgramVisitor,
-             sdfg: SDFG,
-             state: SDFGState,
-             in_buffer: str,
-             out_buffer: str,
-             root: Union[str, sp.Expr, Number] = 0):
+def _scatter(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    root: Union[str, sp.Expr, Number] = 0,
+):
 
     from dace.libraries.mpi.nodes.scatter import Scatter
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
@@ -384,12 +399,14 @@ def _scatter(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Gather')
 @oprepo.replaces('dace.comm.Gather')
-def _gather(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            in_buffer: str,
-            out_buffer: str,
-            root: Union[str, sp.Expr, Number] = 0):
+def _gather(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    root: Union[str, sp.Expr, Number] = 0,
+):
 
     from dace.libraries.mpi.nodes.gather import Gather
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
@@ -419,12 +436,14 @@ def _gather(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
-def _send(pv: ProgramVisitor,
-          sdfg: SDFG,
-          state: SDFGState,
-          buffer: str,
-          dst: Union[str, sp.Expr, Number],
-          tag: Union[str, sp.Expr, Number] = 0):
+def _send(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number] = 0,
+):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.send import Send
 
@@ -491,11 +510,19 @@ def _send(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Send')
-def _intracomm_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
-                    dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
+def _intracomm_send(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    icomm: str,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.end(buffer, dst, tag)`."""
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -503,9 +530,16 @@ def _intracomm_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str
 
 
 @oprepo.replaces_method('ProcessGrid', 'Send')
-def _pgrid_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`. """
+def _pgrid_send(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    pgrid: str,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`."""
 
     raise NotImplementedError('ProcessGrid.Send is not supported yet.')
     # return _send(pv, sdfg, state, buffer, dst, tag, grid=pgrid)
@@ -513,24 +547,25 @@ def _pgrid_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, bu
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Isend')
 @oprepo.replaces('dace.comm.Isend')
-def _isend(pv: ProgramVisitor,
-           sdfg: SDFG,
-           state: SDFGState,
-           buffer: str,
-           dst: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number],
-           request: str = None,
-           grid: str = None):
+def _isend(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+    request: str = None,
+    grid: str = None,
+):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.isend import Isend
 
     ret_req = False
     if not request:
         ret_req = True
-        request, _ = sdfg.add_array("isend_req", [1],
-                                    dace.dtypes.opaque("MPI_Request"),
-                                    transient=True,
-                                    find_new_name=True)
+        request, _ = sdfg.add_array(
+            "isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True
+        )
 
     libnode = Isend('_Isend_')
 
@@ -617,11 +652,19 @@ def _isend(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Isend')
-def _intracomm_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
-                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
+def _intracomm_isend(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    icomm: str,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`."""
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -631,9 +674,16 @@ def _intracomm_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: st
 
 
 @oprepo.replaces_method('ProcessGrid', 'Isend')
-def _pgrid_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
+def _pgrid_isend(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    pgrid: str,
+    buffer: str,
+    dst: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`."""
 
     req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _isend(pv, sdfg, state, buffer, dst, tag, req, grid=pgrid)
@@ -642,12 +692,14 @@ def _pgrid_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, b
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Recv')
 @oprepo.replaces('dace.comm.Recv')
-def _recv(pv: ProgramVisitor,
-          sdfg: SDFG,
-          state: SDFGState,
-          buffer: str,
-          src: Union[str, sp.Expr, Number],
-          tag: Union[str, sp.Expr, Number] = 0):
+def _recv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number] = 0,
+):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.recv import Recv
 
@@ -714,11 +766,19 @@ def _recv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Recv')
-def _intracomm_Recv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
-                    src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
+def _intracomm_Recv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    icomm: str,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Recv(buffer, src, tagq)`."""
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -726,9 +786,16 @@ def _intracomm_Recv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str
 
 
 @oprepo.replaces_method('ProcessGrid', 'Recv')
-def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                 src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Recv(buffer, dst, tag, grid=pgrid)`. """
+def _pgrid_irecv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    pgrid: str,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Recv(buffer, dst, tag, grid=pgrid)`."""
 
     raise NotImplementedError('ProcessGrid.Recv is not supported yet.')
     # return _recv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
@@ -736,14 +803,16 @@ def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, b
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Irecv')
 @oprepo.replaces('dace.comm.Irecv')
-def _irecv(pv: ProgramVisitor,
-           sdfg: SDFG,
-           state: SDFGState,
-           buffer: str,
-           src: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number],
-           request: str = None,
-           grid: str = None):
+def _irecv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+    request: str = None,
+    grid: str = None,
+):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.irecv import Irecv
@@ -751,10 +820,9 @@ def _irecv(pv: ProgramVisitor,
     ret_req = False
     if not request:
         ret_req = True
-        request, _ = sdfg.add_array("irecv_req", [1],
-                                    dace.dtypes.opaque("MPI_Request"),
-                                    transient=True,
-                                    find_new_name=True)
+        request, _ = sdfg.add_array(
+            "irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True
+        )
 
     libnode = Irecv('_Irecv_')
 
@@ -839,11 +907,19 @@ def _irecv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Irecv')
-def _intracomm_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
-                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
+def _intracomm_irecv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    icomm: str,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`."""
 
     from mpi4py import MPI
+
     icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
@@ -853,9 +929,16 @@ def _intracomm_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: st
 
 
 @oprepo.replaces_method('ProcessGrid', 'Irecv')
-def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                 src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
-    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
+def _pgrid_irecv(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    pgrid: str,
+    buffer: str,
+    src: Union[str, sp.Expr, Number],
+    tag: Union[str, sp.Expr, Number],
+):
+    """Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`."""
 
     req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _irecv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
@@ -922,23 +1005,25 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
-def _define_subarray(pv: ProgramVisitor,
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     array: Union[str, ShapeType],
-                     subarray: Union[str, ShapeType],
-                     dtype: dtypes.typeclass = None,
-                     process_grid: str = None,
-                     correspondence: Sequence[Integral] = None) -> Tuple[str, Optional[dace.sdfg.nodes.AccessNode]]:
-    """ Adds a sub-array descriptor to the DaCe Program.
-        Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
+def _define_subarray(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    array: Union[str, ShapeType],
+    subarray: Union[str, ShapeType],
+    dtype: dtypes.typeclass = None,
+    process_grid: str = None,
+    correspondence: Sequence[Integral] = None,
+) -> Tuple[str, Optional[dace.sdfg.nodes.AccessNode]]:
+    """Adds a sub-array descriptor to the DaCe Program.
+    Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
 
-        :param array: Either the name of an Array descriptor or the shape of the array (similar to the `array_of_sizes` parameter of `MPI_Type_create_subarray`).
-        :param subarray: Either the name of an Array descriptor or the sub-shape of the (sub-)array (similar to the `array_of_subsizes` parameter of `MPI_Type_create_subarray`).
-        :param dtype: Datatype of the array/sub-array (similar to the `oldtype` parameter of `MPI_Type_create_subarray`).
-        :process_grid: Name of the process-grid for collective scatter/gather operations.
-        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
-        :return: Name of the new sub-array descriptor.
+    :param array: Either the name of an Array descriptor or the shape of the array (similar to the `array_of_sizes` parameter of `MPI_Type_create_subarray`).
+    :param subarray: Either the name of an Array descriptor or the sub-shape of the (sub-)array (similar to the `array_of_subsizes` parameter of `MPI_Type_create_subarray`).
+    :param dtype: Datatype of the array/sub-array (similar to the `oldtype` parameter of `MPI_Type_create_subarray`).
+    :process_grid: Name of the process-grid for collective scatter/gather operations.
+    :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+    :return: Name of the new sub-array descriptor.
     """
     # Get dtype, shape, and subshape
     if isinstance(array, str):
@@ -962,9 +1047,11 @@ def _define_subarray(pv: ProgramVisitor,
     if process_grid:
         # Dummy tasklet adds MPI variables to the program's state.
         from dace.libraries.mpi import Dummy
+
         tasklet = Dummy(
             subarray_name,
-            [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
+            [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'],
+        )
 
         state.add_node(tasklet)
 
@@ -976,36 +1063,40 @@ def _define_subarray(pv: ProgramVisitor,
 
 
 @oprepo.replaces('dace.comm.Subarray')
-def _subarray(pv: ProgramVisitor,
-              sdfg: SDFG,
-              state: SDFGState,
-              array: Union[str, ShapeType],
-              subarray: Union[str, ShapeType],
-              dtype: dtypes.typeclass = None,
-              process_grid: str = None,
-              correspondence: Sequence[Integral] = None):
+def _subarray(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    array: Union[str, ShapeType],
+    subarray: Union[str, ShapeType],
+    dtype: dtypes.typeclass = None,
+    process_grid: str = None,
+    correspondence: Sequence[Integral] = None,
+):
     subarray_name, _ = _define_subarray(pv, sdfg, state, array, subarray, dtype, process_grid, correspondence)
     return subarray_name
 
 
 @oprepo.replaces('dace.comm.BlockScatter')
-def _block_scatter(pv: ProgramVisitor,
-                   sdfg: SDFG,
-                   state: SDFGState,
-                   in_buffer: str,
-                   out_buffer: str,
-                   scatter_grid: str,
-                   bcast_grid: str = None,
-                   correspondence: Sequence[Integral] = None):
-    """ Block-scatters an Array using process-grids, sub-arrays, and the BlockScatter library node.
-        This method currently does not support Array slices and imperfect tiling.
+def _block_scatter(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    scatter_grid: str,
+    bcast_grid: str = None,
+    correspondence: Sequence[Integral] = None,
+):
+    """Block-scatters an Array using process-grids, sub-arrays, and the BlockScatter library node.
+    This method currently does not support Array slices and imperfect tiling.
 
-        :param in_buffer: Name of the (global) Array descriptor.
-        :param out_buffer: Name of the (local) Array descriptor.
-        :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
-        :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups).
-        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
-        :return: Name of the new sub-array descriptor.
+    :param in_buffer: Name of the (global) Array descriptor.
+    :param out_buffer: Name of the (local) Array descriptor.
+    :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
+    :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups).
+    :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+    :return: Name of the new sub-array descriptor.
     """
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
@@ -1013,15 +1104,12 @@ def _block_scatter(pv: ProgramVisitor,
     if in_desc.dtype != out_desc.dtype:
         raise ValueError("Input/output buffer datatypes must match!")
 
-    subarray_name, subarray_node = _define_subarray(pv,
-                                                    sdfg,
-                                                    state,
-                                                    in_buffer,
-                                                    out_buffer,
-                                                    process_grid=scatter_grid,
-                                                    correspondence=correspondence)
+    subarray_name, subarray_node = _define_subarray(
+        pv, sdfg, state, in_buffer, out_buffer, process_grid=scatter_grid, correspondence=correspondence
+    )
 
     from dace.libraries.mpi import BlockScatter
+
     libnode = BlockScatter('_BlockScatter_')
 
     inbuf_name = in_buffer
@@ -1055,23 +1143,25 @@ def _block_scatter(pv: ProgramVisitor,
 
 
 @oprepo.replaces('dace.comm.BlockGather')
-def _block_gather(pv: ProgramVisitor,
-                  sdfg: SDFG,
-                  state: SDFGState,
-                  in_buffer: str,
-                  out_buffer: str,
-                  gather_grid: str,
-                  reduce_grid: str = None,
-                  correspondence: Sequence[Integral] = None):
-    """ Block-gathers an Array using process-grids, sub-arrays, and the BlockGather library node.
-        This method currently does not support Array slices and imperfect tiling.
+def _block_gather(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    gather_grid: str,
+    reduce_grid: str = None,
+    correspondence: Sequence[Integral] = None,
+):
+    """Block-gathers an Array using process-grids, sub-arrays, and the BlockGather library node.
+    This method currently does not support Array slices and imperfect tiling.
 
-        :param in_buffer: Name of the (local) Array descriptor.
-        :param out_buffer: Name of the (global) Array descriptor.
-        :param gather_grid: Name of the sub-grid used for gathering the Array (reduction group leaders).
-        :param reduce_grid: Name of the sub-grid used for broadcasting the Array (reduction groups).
-        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
-        :return: Name of the new sub-array descriptor.
+    :param in_buffer: Name of the (local) Array descriptor.
+    :param out_buffer: Name of the (global) Array descriptor.
+    :param gather_grid: Name of the sub-grid used for gathering the Array (reduction group leaders).
+    :param reduce_grid: Name of the sub-grid used for broadcasting the Array (reduction groups).
+    :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+    :return: Name of the new sub-array descriptor.
     """
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
@@ -1079,15 +1169,12 @@ def _block_gather(pv: ProgramVisitor,
     if in_desc.dtype != out_desc.dtype:
         raise ValueError("Input/output buffer datatypes must match!")
 
-    subarray_name, subarray_node = _define_subarray(pv,
-                                                    sdfg,
-                                                    state,
-                                                    out_buffer,
-                                                    in_buffer,
-                                                    process_grid=gather_grid,
-                                                    correspondence=correspondence)
+    subarray_name, subarray_node = _define_subarray(
+        pv, sdfg, state, out_buffer, in_buffer, process_grid=gather_grid, correspondence=correspondence
+    )
 
     from dace.libraries.mpi import BlockGather
+
     libnode = BlockGather('_BlockGather_')
 
     inbuf_name = in_buffer
@@ -1121,15 +1208,22 @@ def _block_gather(pv: ProgramVisitor,
 
 
 @oprepo.replaces('dace.comm.Redistribute')
-def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
-                  out_subarray: str):
-    """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
+def _redistribute(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    in_subarray: str,
+    out_buffer: str,
+    out_subarray: str,
+):
+    """Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
 
-        :param in_buffer: Name of the (local) input Array descriptor.
-        :param in_subarray: Input sub-array descriptor.
-        :param out_buffer: Name of the (local) output Array descriptor.
-        :param out_subarray: Output sub-array descriptor.
-        :return: Name of the new redistribution descriptor.
+    :param in_buffer: Name of the (local) input Array descriptor.
+    :param in_subarray: Input sub-array descriptor.
+    :param out_buffer: Name of the (local) output Array descriptor.
+    :param out_subarray: Output sub-array descriptor.
+    :return: Name of the new redistribution descriptor.
     """
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
@@ -1138,14 +1232,23 @@ def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: s
     rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray, name=name)
 
     from dace.libraries.mpi import Dummy, Redistribute
-    tasklet = Dummy(rdistrarray_name, [
-        f'MPI_Datatype {rdistrarray_name};', f'int {rdistrarray_name}_sends;',
-        f'MPI_Datatype* {rdistrarray_name}_send_types;', f'int* {rdistrarray_name}_dst_ranks;',
-        f'int {rdistrarray_name}_recvs;', f'MPI_Datatype* {rdistrarray_name}_recv_types;',
-        f'int* {rdistrarray_name}_src_ranks;', f'int {rdistrarray_name}_self_copies;',
-        f'int* {rdistrarray_name}_self_src;', f'int* {rdistrarray_name}_self_dst;',
-        f'int* {rdistrarray_name}_self_size;'
-    ])
+
+    tasklet = Dummy(
+        rdistrarray_name,
+        [
+            f'MPI_Datatype {rdistrarray_name};',
+            f'int {rdistrarray_name}_sends;',
+            f'MPI_Datatype* {rdistrarray_name}_send_types;',
+            f'int* {rdistrarray_name}_dst_ranks;',
+            f'int {rdistrarray_name}_recvs;',
+            f'MPI_Datatype* {rdistrarray_name}_recv_types;',
+            f'int* {rdistrarray_name}_src_ranks;',
+            f'int {rdistrarray_name}_self_copies;',
+            f'int* {rdistrarray_name}_self_src;',
+            f'int* {rdistrarray_name}_self_dst;',
+            f'int* {rdistrarray_name}_self_size;',
+        ],
+    )
     state.add_node(tasklet)
     wnode = state.add_write(rdistrarray_name)
     state.add_edge(tasklet, None, wnode, None, Memlet())
@@ -1186,8 +1289,14 @@ def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: s
 
 
 @oprepo.replaces('dace.comm.BCScatter')
-def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
-               block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
+def _bcscatter(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
+):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
 
@@ -1208,13 +1317,16 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
-                                                          dtype=dace.int32,
-                                                          find_new_name=True)
+            bsizes_name, bsizes_desc = sdfg.add_transient(
+                'bsizes', (len(block_sizes),), dtype=dace.int32, find_new_name=True
+            )
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
-                '_set_bsizes_', {}, {'__out'},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]))
+                '_set_bsizes_',
+                {},
+                {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]),
+            )
             state.add_edge(bsizes_tasklet, '__out', bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
         bsizes_name = block_sizes
@@ -1229,10 +1341,10 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
     out_desc = sdfg.arrays[outbuf_name]
     outbuf_node = state.add_write(outbuf_name)
 
-    gdesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=0)
+    gdesc = pv.add_temp_transient((9,), dtype=dace.int32, output_index=0)
     gdesc_node = state.add_write(gdesc[0])
 
-    ldesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=1)
+    ldesc = pv.add_temp_transient((9,), dtype=dace.int32, output_index=1)
     ldesc_node = state.add_write(ldesc[0])
 
     if inbuf_range:
@@ -1260,8 +1372,14 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
 
 
 @oprepo.replaces('dace.comm.BCGather')
-def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
-              block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
+def _bcgather(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    in_buffer: str,
+    out_buffer: str,
+    block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
+):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
 
@@ -1282,13 +1400,16 @@ def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, 
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
-                                                          dtype=dace.int32,
-                                                          find_new_name=True)
+            bsizes_name, bsizes_desc = sdfg.add_transient(
+                'bsizes', (len(block_sizes),), dtype=dace.int32, find_new_name=True
+            )
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
-                '_set_bsizes_', {}, {'__out'},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]))
+                '_set_bsizes_',
+                {},
+                {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]),
+            )
             state.add_edge(bsizes_tasklet, '__out', bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
         bsizes_name = block_sizes
@@ -1325,15 +1446,17 @@ def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, 
 
 @oprepo.replaces('dace.distr.MatMult')
 @oprepo.replaces('distr.MatMult')
-def _distr_matmult(pv: ProgramVisitor,
-                   sdfg: SDFG,
-                   state: SDFGState,
-                   opa: str,
-                   opb: str,
-                   shape: Sequence[Union[sp.Expr, Number]],
-                   a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
-                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
-                   c_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None):
+def _distr_matmult(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    opa: str,
+    opb: str,
+    shape: Sequence[Union[sp.Expr, Number]],
+    a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+    b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+    c_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+):
 
     arra = sdfg.arrays[opa]
     arrb = sdfg.arrays[opb]
@@ -1360,15 +1483,19 @@ def _distr_matmult(pv: ProgramVisitor,
             a_bsizes_desc = sdfg.arrays[a_bsizes_name]
             a_bsizes_node = state.add_read(a_bsizes_name)
         else:
-            a_bsizes_name, a_bsizes_desc = sdfg.add_transient('a_bsizes', (len(a_block_sizes), ),
-                                                              dtype=dace.int32,
-                                                              find_new_name=True)
+            a_bsizes_name, a_bsizes_desc = sdfg.add_transient(
+                'a_bsizes', (len(a_block_sizes),), dtype=dace.int32, find_new_name=True
+            )
             a_bsizes_node = state.add_access(a_bsizes_name)
             a_bsizes_tasklet = state.add_tasklet(
-                '_set_a_bsizes_', {}, {'__out'},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(a_block_sizes)]))
-            state.add_edge(a_bsizes_tasklet, '__out', a_bsizes_node, None,
-                           Memlet.from_array(a_bsizes_name, a_bsizes_desc))
+                '_set_a_bsizes_',
+                {},
+                {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(a_block_sizes)]),
+            )
+            state.add_edge(
+                a_bsizes_tasklet, '__out', a_bsizes_node, None, Memlet.from_array(a_bsizes_name, a_bsizes_desc)
+            )
     else:
         a_bsizes_name = a_block_sizes
         a_bsizes_desc = sdfg.arrays[a_bsizes_name]
@@ -1381,15 +1508,19 @@ def _distr_matmult(pv: ProgramVisitor,
             b_bsizes_desc = sdfg.arrays[b_bsizes_name]
             b_bsizes_node = state.add_read(b_bsizes_name)
         else:
-            b_bsizes_name, b_bsizes_desc = sdfg.add_transient('b_bsizes', (len(b_block_sizes), ),
-                                                              dtype=dace.int32,
-                                                              find_new_name=True)
+            b_bsizes_name, b_bsizes_desc = sdfg.add_transient(
+                'b_bsizes', (len(b_block_sizes),), dtype=dace.int32, find_new_name=True
+            )
             b_bsizes_node = state.add_access(b_bsizes_name)
             b_bsizes_tasklet = state.add_tasklet(
-                '_set_b_sizes_', {}, {'__out'},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(b_block_sizes)]))
-            state.add_edge(b_bsizes_tasklet, '__out', b_bsizes_node, None,
-                           Memlet.from_array(b_bsizes_name, b_bsizes_desc))
+                '_set_b_sizes_',
+                {},
+                {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(b_block_sizes)]),
+            )
+            state.add_edge(
+                b_bsizes_tasklet, '__out', b_bsizes_node, None, Memlet.from_array(b_bsizes_name, b_bsizes_desc)
+            )
     else:
         b_bsizes_name = b_block_sizes
         b_bsizes_desc = sdfg.arrays[b_bsizes_name]
@@ -1398,6 +1529,7 @@ def _distr_matmult(pv: ProgramVisitor,
     if len(arra.shape) == 2 and len(arrb.shape) == 2:
         # Gemm
         from dace.libraries.pblas.nodes.pgemm import Pgemm
+
         tasklet = Pgemm("__DistrMatMult__", gm, gn, gk)
         m = arra.shape[0]
         n = arrb.shape[-1]
@@ -1405,24 +1537,26 @@ def _distr_matmult(pv: ProgramVisitor,
     elif len(arra.shape) == 2 and len(arrb.shape) == 1:
         # Gemv
         from dace.libraries.pblas.nodes.pgemv import Pgemv
+
         tasklet = Pgemv("__DistrMatVecMult__", m=gm, n=gn)
         if c_block_sizes:
             m = c_block_sizes[0]
         else:
             m = arra.shape[0]
-        out = pv.add_temp_transient((m, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((m,), dtype=arra.dtype)
     elif len(arra.shape) == 1 and len(arrb.shape) == 2:
         # Gemv transposed
         # Swap a and b
         opa, opb = opb, opa
         arra, arrb = arrb, arra
         from dace.libraries.pblas.nodes.pgemv import Pgemv
+
         tasklet = Pgemv("__DistrMatVecMult__", transa='T', m=gm, n=gn)
         if c_block_sizes:
             n = c_block_sizes[0]
         else:
             n = arra.shape[1]
-        out = pv.add_temp_transient((n, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((n,), dtype=arra.dtype)
 
     anode = state.add_read(opa)
     bnode = state.add_read(opb)

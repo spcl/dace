@@ -14,8 +14,8 @@ ScopeDictType = Dict[nd.Node, List[nd.Node]]
 
 
 class ScopeTree(object):
-    """ A class defining a scope, its parent and children scopes, and
-        scope entry/exit nodes. """
+    """A class defining a scope, its parent and children scopes, and
+    scope entry/exit nodes."""
 
     def __init__(self, entrynode: nd.EntryNode, exitnode: nd.ExitNode):
         self.parent: 'ScopeTree' = None
@@ -36,8 +36,8 @@ class ScopeTree(object):
 
 
 class ScopeSubgraphView(StateSubgraphView):
-    """ An extension to SubgraphView that enables the creation of scope
-        dictionaries in subgraphs and free symbols. """
+    """An extension to SubgraphView that enables the creation of scope
+    dictionaries in subgraphs and free symbols."""
 
     def __init__(self, graph, subgraph_nodes, entry_node):
         super().__init__(graph, subgraph_nodes)
@@ -48,7 +48,7 @@ class ScopeSubgraphView(StateSubgraphView):
         return self._graph.parent
 
     def top_level_transients(self):
-        """ Iterate over top-level transients of this subgraph. """
+        """Iterate over top-level transients of this subgraph."""
         schildren = self.scope_children()
         sdfg = self.parent
         result = set()
@@ -87,7 +87,7 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubg
 
 
 def _scope_dict_inner(graph, node_queue, current_scope, node_to_children, result):
-    """ Returns a queue of nodes that are external to the current scope. """
+    """Returns a queue of nodes that are external to the current scope."""
     # Initialize an empty list, if necessary
     if node_to_children and current_scope not in result:
         result[current_scope] = []
@@ -127,11 +127,12 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children, result
 
 
 def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
-    """ Return a JSON-serializable dictionary of a scope dictionary,
-        using integral node IDs instead of object references. """
+    """Return a JSON-serializable dictionary of a scope dictionary,
+    using integral node IDs instead of object references."""
 
     def node_id_or_none(node):
-        if node is None: return -1
+        if node is None:
+            return -1
         return state.node_id(node)
 
     return {node_id_or_none(k): [node_id_or_none(vi) for vi in v] for k, v in scope_dict.items()}
@@ -219,15 +220,16 @@ def get_node_schedule(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node
     return dtypes.ScheduleType.Default
 
 
-def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node,
-                schedules: List[dtypes.ScheduleType]) -> bool:
-    """ Tests whether a node in an SDFG is contained within a certain set of
-        scope schedules.
+def is_in_scope(
+    sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node, schedules: List[dtypes.ScheduleType]
+) -> bool:
+    """Tests whether a node in an SDFG is contained within a certain set of
+    scope schedules.
 
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in device-level code, False otherwise.
+    :param sdfg: The SDFG in which the node resides.
+    :param state: The SDFG state in which the node resides.
+    :param node: The node in question
+    :return: True if node is in device-level code, False otherwise.
     """
     while sdfg is not None:
         if state is not None and node is not None:
@@ -249,47 +251,43 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.N
 
 
 def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
-    """ Tests whether a node in an SDFG is contained within GPU device-level code.
+    """Tests whether a node in an SDFG is contained within GPU device-level code.
 
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in device-level code, False otherwise.
+    :param sdfg: The SDFG in which the node resides.
+    :param state: The SDFG state in which the node resides.
+    :param node: The node in question
+    :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(
-        sdfg,
-        state,
-        node,
-        dtypes.GPU_SCHEDULES,
-    )
+    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
 
 
 def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
-    """ Tests whether a node in an SDFG is contained within an actual GPU kernel.
-        The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
-        device-level schedule, but are not within an actual GPU kernel.
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in GPU kernel code, False otherwise.
+    """Tests whether a node in an SDFG is contained within an actual GPU kernel.
+    The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
+    device-level schedule, but are not within an actual GPU kernel.
+    :param sdfg: The SDFG in which the node resides.
+    :param state: The SDFG state in which the node resides.
+    :param node: The node in question
+    :return: True if node is in GPU kernel code, False otherwise.
     """
-    is_parent_nested = (sdfg.parent is not None)
+    is_parent_nested = sdfg.parent is not None
     if is_parent_nested:
         return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node)
     else:
         return is_devicelevel_gpu(state.parent, state, node)
 
 
-def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                           node: nd.Node) -> Tuple[symbolic.SymExpr]:
-    """ Returns the current thread-block size if the given node is enclosed in
-        a GPU kernel, or None otherwise.
+def devicelevel_block_size(
+    sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node
+) -> Tuple[symbolic.SymExpr]:
+    """Returns the current thread-block size if the given node is enclosed in
+    a GPU kernel, or None otherwise.
 
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: A tuple of sizes or None if the node is not in device-level
-                 code.
+    :param sdfg: The SDFG in which the node resides.
+    :param state: The SDFG state in which the node resides.
+    :param node: The node in question
+    :return: A tuple of sizes or None if the node is not in device-level
+             code.
     """
     from dace.sdfg import nodes as nd
     from dace.sdfg.sdfg import SDFGState
@@ -314,8 +312,12 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 parent = sdfg.parent.parent
             else:
                 parent = sdfg.parent
-            state, node = next((s, n) for s in parent.nodes() for n in s.nodes()
-                               if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+            state, node = next(
+                (s, n)
+                for s in parent.nodes()
+                for n in s.nodes()
+                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name
+            )
         else:
             parent = sdfg.parent
         sdfg = parent

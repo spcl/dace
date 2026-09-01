@@ -22,9 +22,7 @@ class FullMapFusion(ppl.Pass):
 
     # Settings
     only_toplevel_maps = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only perform fusing if the Maps are in the top level.",
+        dtype=bool, default=False, desc="Only perform fusing if the Maps are in the top level."
     )
     only_inner_maps = properties.Property(
         dtype=bool,
@@ -33,15 +31,11 @@ class FullMapFusion(ppl.Pass):
     )
 
     strict_dataflow = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="If `True` then the transformation will ensure a more stricter data flow.",
+        dtype=bool, default=True, desc="If `True` then the transformation will ensure a more stricter data flow."
     )
 
     assume_always_shared = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="If `True` then all intermediates will be classified as shared.",
+        dtype=bool, default=False, desc="If `True` then all intermediates will be classified as shared."
     )
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
@@ -77,19 +71,15 @@ class FullMapFusion(ppl.Pass):
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Only consolidate if this does not lead to an extension of the subset.",
+        dtype=bool, default=False, desc="Only consolidate if this does not lead to an extension of the subset."
     )
 
     validate = properties.Property(
-        dtype=bool,
-        default=True,
-        desc='If True, validates the SDFG after all transformations have been applied.',
+        dtype=bool, default=True, desc='If True, validates the SDFG after all transformations have been applied.'
     )
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       desc='If True, validates the SDFG after each transformation applies.')
+    validate_all = properties.Property(
+        dtype=bool, default=False, desc='If True, validates the SDFG after each transformation applies.'
+    )
 
     def __init__(
         self,
@@ -153,7 +143,8 @@ class FullMapFusion(ppl.Pass):
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
+                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor'
+                )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -196,7 +187,8 @@ class FullMapFusion(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                     # TODO: Remove once issue#1911 has been solved.
                     _single_use_data=pipeline_results["FindSingleUseData"],
-                ))
+                )
+            )
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -209,13 +201,11 @@ class FullMapFusion(ppl.Pass):
                     only_if_common_ancestor=self.only_if_common_ancestor,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                ))
+                )
+            )
 
         pazz = pmp.PatternMatchAndApplyRepeated(
-            fusion_transforms,
-            permissive=False,
-            validate=False,
-            validate_all=self.validate_all,
+            fusion_transforms, permissive=False, validate=False, validate_all=self.validate_all
         )
         result = pazz.apply_pass(sdfg, pipeline_results)
 

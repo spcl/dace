@@ -3,6 +3,7 @@
 Unit tests for the TensorTranspose library node with the cuTENSOR v2 expansion.
 Tests float64 and int32 tensors using parametrization.
 """
+
 import numpy as np
 import pytest
 import dace
@@ -11,11 +12,7 @@ from dace.libraries.linalg import TensorTranspose
 
 
 def _build_transpose_sdfg(
-    name: str,
-    inp_shape: tuple,
-    axes: list[int],
-    dtype: dace.typeclass = dace.float64,
-    implementation: str = "cuTENSOR",
+    name: str, inp_shape: tuple, axes: list[int], dtype: dace.typeclass = dace.float64, implementation: str = "cuTENSOR"
 ) -> dace.SDFG:
     out_shape = tuple(inp_shape[a] for a in axes)
 
@@ -49,11 +46,7 @@ def _build_transpose_sdfg(
 
 
 def _run_transpose_test(
-    inp_shape: tuple,
-    axes: list[int],
-    dtype_np=np.float64,
-    dtype_dace=dace.float64,
-    implementation: str = "cuTENSOR",
+    inp_shape: tuple, axes: list[int], dtype_np=np.float64, dtype_dace=dace.float64, implementation: str = "cuTENSOR"
 ):
     """Helper to run a transpose test. For integers, uses random ints and tolerance 0."""
     rng = np.random.default_rng(42)
@@ -78,58 +71,35 @@ def _run_transpose_test(
     np.testing.assert_allclose(B, expected, rtol=rtol, atol=atol, err_msg=f"Transpose {axes} failed for {dtype_np}")
 
 
-dtype_params = [
-    (np.float64, dace.float64, "f64"),
-    (np.int32, dace.int32, "i32"),
-]
+dtype_params = [(np.float64, dace.float64, "f64"), (np.int32, dace.int32, "i32")]
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype_np,dtype_dace,type_name", dtype_params, ids=[p[2] for p in dtype_params])
 def test_transpose_3d_jik(dtype_np, dtype_dace, type_name):
     """(i,j,k) -> (j,i,k)"""
-    _run_transpose_test(
-        inp_shape=(3, 5, 7),
-        axes=[1, 0, 2],
-        dtype_np=dtype_np,
-        dtype_dace=dtype_dace,
-    )
+    _run_transpose_test(inp_shape=(3, 5, 7), axes=[1, 0, 2], dtype_np=dtype_np, dtype_dace=dtype_dace)
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype_np,dtype_dace,type_name", dtype_params, ids=[p[2] for p in dtype_params])
 def test_transpose_3d_kji(dtype_np, dtype_dace, type_name):
     """(i,j,k) -> (k,j,i)"""
-    _run_transpose_test(
-        inp_shape=(4, 6, 8),
-        axes=[2, 1, 0],
-        dtype_np=dtype_np,
-        dtype_dace=dtype_dace,
-    )
+    _run_transpose_test(inp_shape=(4, 6, 8), axes=[2, 1, 0], dtype_np=dtype_np, dtype_dace=dtype_dace)
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype_np,dtype_dace,type_name", dtype_params, ids=[p[2] for p in dtype_params])
 def test_transpose_4d_reverse(dtype_np, dtype_dace, type_name):
     """(i,j,k,l) -> (l,k,j,i)"""
-    _run_transpose_test(
-        inp_shape=(2, 3, 5, 7),
-        axes=[3, 2, 1, 0],
-        dtype_np=dtype_np,
-        dtype_dace=dtype_dace,
-    )
+    _run_transpose_test(inp_shape=(2, 3, 5, 7), axes=[3, 2, 1, 0], dtype_np=dtype_np, dtype_dace=dtype_dace)
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype_np,dtype_dace,type_name", dtype_params, ids=[p[2] for p in dtype_params])
 def test_transpose_4d_cyclic(dtype_np, dtype_dace, type_name):
     """(i,j,k,l) -> (j,k,l,i)"""
-    _run_transpose_test(
-        inp_shape=(2, 4, 6, 8),
-        axes=[1, 2, 3, 0],
-        dtype_np=dtype_np,
-        dtype_dace=dtype_dace,
-    )
+    _run_transpose_test(inp_shape=(2, 4, 6, 8), axes=[1, 2, 3, 0], dtype_np=dtype_np, dtype_dace=dtype_dace)
 
 
 def _build_pure_sdfg(name, inp_shape, axes, dtype):
@@ -174,7 +144,7 @@ def test_transpose_pure_3d_jik(dtype_np, dtype_dace, type_name):
 
 
 if __name__ == "__main__":
-    for (nptype, dacetype, strtype) in dtype_params:
+    for nptype, dacetype, strtype in dtype_params:
         test_transpose_pure_3d_jik(nptype, dacetype, strtype)
         test_transpose_3d_jik(nptype, dacetype, strtype)
         test_transpose_4d_reverse(nptype, dacetype, strtype)

@@ -52,7 +52,8 @@ def get_proto_attr(proto, name: str):
     if not is_ascii(name):
         raise ValueError(
             f"Attempted to access non-ASCII property name '{name}' on protobuf {proto} (type {type(proto)}). "
-            "Please open an issue")
+            "Please open an issue"
+        )
 
     return getattr(proto, name)
 
@@ -74,7 +75,8 @@ def convert_onnx_proto(attribute):
             return ONNXParameterType.Variadic
         else:
             raise NotImplementedError(
-                "Only single, optional and variadic formal parameters are supported, got".format(attribute))
+                "Only single, optional and variadic formal parameters are supported, got".format(attribute)
+            )
 
     if type(attribute) is onnx.defs.OpSchema.AttrType:
         if attribute == onnx.defs.OpSchema.AttrType.FLOAT:
@@ -140,8 +142,10 @@ def convert_attribute_proto(proto):
     if onnx_type not in inv_map:
         type_str = {v: k for k, v in onnx.AttributeProto.AttributeType.items()}[onnx_type]
         raise NotImplementedError(
-            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}"
-            .format(type_str))
+            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}".format(
+                type_str
+            )
+        )
 
     return inv_map[onnx_type](proto)
 
@@ -177,7 +181,8 @@ def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
 def onnx_tensor_type_to_typeclass_map() -> Dict[int, typeclass]:
     return {
         v: ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
-        for k, v in onnx.TensorProto.DataType.items() if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS
+        for k, v in onnx.TensorProto.DataType.items()
+        if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS
     }
 
 
@@ -185,10 +190,11 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
     inv_map = onnx_tensor_type_to_typeclass_map()
 
     if elem_type not in inv_map:
-        raise ValueError("Got unsupported ONNX tensor type: {}".format({
-            v: k
-            for k, v in onnx.TensorProto.DataType.items()
-        }[elem_type]))
+        raise ValueError(
+            "Got unsupported ONNX tensor type: {}".format(
+                {v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]
+            )
+        )
 
     return inv_map[elem_type]
 
@@ -242,4 +248,4 @@ def clean_onnx_name(name: str) -> str:
         name = f"ONNX_{name}"
 
     # Replace special characters with their textual equivalents
-    return (name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH"))
+    return name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH")

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" 2D histogram sample that showcases memlets with write-conflict resolution and unknown element. """
+"""2D histogram sample that showcases memlets with write-conflict resolution and unknown element."""
+
 import argparse
 import dace
 import numpy as np

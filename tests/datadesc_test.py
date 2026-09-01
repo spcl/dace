@@ -31,10 +31,10 @@ def test_strides_alignment():
 
 
 def test_numpy_integral_properties():
-    desc = dace.data.Array(dace.float64, (np.int32(10), ), strides=(np.int64(2), ), offset=(np.int16(1), ))
-    assert desc.shape == (10, )
-    assert desc.strides == (2, )
-    assert desc.offset == (1, )
+    desc = dace.data.Array(dace.float64, (np.int32(10),), strides=(np.int64(2),), offset=(np.int16(1),))
+    assert desc.shape == (10,)
+    assert desc.strides == (2,)
+    assert desc.offset == (1,)
 
 
 @dace.program
@@ -43,7 +43,7 @@ def numpy_integral_shape_program(A: dace.float64[np.int32(10)]):
 
 
 def test_numpy_integral_shape_program():
-    A = np.ones((10, ))
+    A = np.ones((10,))
     numpy_integral_shape_program(A)
     np.testing.assert_equal(A, 2)
 
@@ -55,6 +55,7 @@ def test_strides_alignment_symbolic_uses_int_ceil():
     each term truncates on its own and the padded size collapses (N=1, a=8 emits 0 instead of 8).
     """
     from dace.codegen.targets.cpp import sym2cpp
+
     N = dace.symbol('N')
     desc = dace.data.Array(dace.float32, [N])
     _, total_size = desc.strides_from_layout(0, alignment=8)

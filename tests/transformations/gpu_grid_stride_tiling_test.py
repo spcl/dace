@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
+
 from typing import List, Tuple
 import pytest
 import dace
@@ -10,9 +11,7 @@ import scipy.sparse as sparse
 
 def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:
     if isinstance(map_name_list, str):
-        map_name_list = [
-            map_name_list,
-        ]
+        map_name_list = [map_name_list]
     ret_list = [None] * len(map_name_list)
     for state in sdfg.states():
         for node in state.nodes():
@@ -74,10 +73,16 @@ def test_gpu_grid_stride_tiling_with_indirection():
     D_ref = np.zeros_like(A.data)
 
     @dace.program
-    def sddmm(D_vals: dace.float32[nnz], A2_crd: dace.int32[nnz], A2_pos: dace.int32[M + 1], A_vals: dace.float32[nnz],
-              B: dace.float32[M, K], C: dace.float32[K, N]):
+    def sddmm(
+        D_vals: dace.float32[nnz],
+        A2_crd: dace.int32[nnz],
+        A2_pos: dace.int32[M + 1],
+        A_vals: dace.float32[nnz],
+        B: dace.float32[M, K],
+        C: dace.float32[K, N],
+    ):
         for i in dace.map[0:M]:
-            for j in dace.map[A2_pos[i]:A2_pos[i + 1]]:
+            for j in dace.map[A2_pos[i] : A2_pos[i + 1]]:
                 for k in dace.map[0:K]:
                     D_vals[j] += A_vals[j] * B[i, k] * C[k, A2_crd[j]]
 

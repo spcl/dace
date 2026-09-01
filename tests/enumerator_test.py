@@ -26,7 +26,7 @@ def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H], out: dace.float32[W,
             c = a + b * 2
 
     tmp2 = np.ndarray([W, H, B], dtype=dace.float32)
-    #tmp3 = np.ndarray([W, H], dtype=dace.float32)
+    # tmp3 = np.ndarray([W, H], dtype=dace.float32)
 
     for i, j, k in dace.map[0:W, 0:H, 0:B]:
         with dace.tasklet:

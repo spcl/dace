@@ -6,8 +6,8 @@ from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
 # For comparison
-#@dp.program
-#def mymodexp_prog(A,B):
+# @dp.program
+# def mymodexp_prog(A,B):
 #    @dp.map
 #    def compute(i: _[0:N]):
 #        a << A[i%N]
@@ -35,16 +35,16 @@ def test_dynamic_sdfg_with_math_functions():
     B = state.add_access('B')
 
     # Easy way to add a tasklet
-    tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'),
-                                                            dict(a=Memlet.simple(A, 'i % N')), 'b = math.exp(a)',
-                                                            dict(b=Memlet.simple(B, 'i')))
+    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
+        'mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A, 'i % N')), 'b = math.exp(a)', dict(b=Memlet.simple(B, 'i'))
+    )
 
     # Add outer edges
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(map_exit, None, B, None, Memlet.simple(B, '0:N'))
 
     mysdfg(A=input, B=output, N=n)
-    #mymodexp_prog(input, output)
+    # mymodexp_prog(input, output)
 
     diff = np.linalg.norm(np.exp(input) - output) / n
     assert diff <= 1e-5

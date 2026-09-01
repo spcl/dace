@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module initializes the dataflow transformations package. """
+"""This module initializes the dataflow transformations package."""
 
 # Map-related
 from .mapreduce import MapReduceFusion, MapWCRFusion
@@ -34,10 +34,22 @@ from .reduce_expansion import ReduceExpansion
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
-from .redundant_array import (RedundantArray, RedundantSecondArray, SqueezeViewRemove, UnsqueezeViewRemove,
-                              RedundantReadSlice, RedundantWriteSlice, RemoveSliceView, RemoveIntermediateWrite)
-from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCopying, RedundantArrayCopying2,
-                                      RedundantArrayCopying3)
+from .redundant_array import (
+    RedundantArray,
+    RedundantSecondArray,
+    SqueezeViewRemove,
+    UnsqueezeViewRemove,
+    RedundantReadSlice,
+    RedundantWriteSlice,
+    RemoveSliceView,
+    RemoveIntermediateWrite,
+)
+from .redundant_array_copying import (
+    RedundantArrayCopyingIn,
+    RedundantArrayCopying,
+    RedundantArrayCopying2,
+    RedundantArrayCopying3,
+)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
 from .wcr_conversion import AugAssignToWCR, WCRToAugAssign
@@ -56,4 +68,4 @@ from .matrix_product_transpose import MatrixProductTranspose
 from .lift_einsum import LiftEinsum
 
 # Distributions
-from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
+from .map_distribution import ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D

@@ -74,15 +74,19 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
     Replaces the symbols used in a persistent data descriptor according to NestedSDFG's symbol mapping.
     The replacement happens recursively up to the top-level SDFG.
     """
-    if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External) and sdfg.parent
-            and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
+    if (
+        desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+        and sdfg.parent
+        and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)
+    ):
         newdesc = deepcopy(desc)
         csdfg = sdfg
         while csdfg.parent_sdfg:
             if any(str(s) not in csdfg.parent_nsdfg_node.symbol_mapping for s in newdesc.free_symbols):
                 raise ValueError("Persistent data descriptor depends on symbols defined in NestedSDFG scope.")
-            symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                  lambda m: sd.replace_properties_dict(newdesc, m))
+            symbolic.safe_replace(
+                csdfg.parent_nsdfg_node.symbol_mapping, lambda m: sd.replace_properties_dict(newdesc, m)
+            )
             csdfg = csdfg.parent_sdfg
         return newdesc
     return desc
@@ -153,10 +157,12 @@ def get_gpu_backend() -> str:
     elif ctypes.util.find_library('cudart') and not ctypes.util.find_library('amdhip64'):
         return 'cuda'
 
-    raise RuntimeError('Cannot autodetect existence of NVIDIA or AMD GPU, please '
-                       'set the DaCe configuration entry ``compiler.cuda.backend`` '
-                       'or the ``DACE_compiler_cuda_backend`` environment variable '
-                       'to either "cuda" or "hip".')
+    raise RuntimeError(
+        'Cannot autodetect existence of NVIDIA or AMD GPU, please '
+        'set the DaCe configuration entry ``compiler.cuda.backend`` '
+        'or the ``DACE_compiler_cuda_backend`` environment variable '
+        'to either "cuda" or "hip".'
+    )
 
 
 @lru_cache()
@@ -179,17 +185,19 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
 
     if not libpath:
         envname = 'PATH' if os.name == 'nt' else 'LD_LIBRARY_PATH'
-        raise RuntimeError(f'GPU runtime library for {backend} not found. Please set the {envname} '
-                           'environment variable to point to the libraries.')
+        raise RuntimeError(
+            f'GPU runtime library for {backend} not found. Please set the {envname} '
+            'environment variable to point to the libraries.'
+        )
 
     return gpu_runtime.GPURuntime(backend, libpath)
 
 
 def platform_library_name(libname: str) -> str:
-    """ Get the filename of a library.
+    """Get the filename of a library.
 
-        :param libname: the name of the library.
-        :return: the filename of the library.
+    :param libname: the name of the library.
+    :return: the filename of the library.
     """
     prefix = config.Config.get('compiler', 'library_prefix')
     suffix = config.Config.get('compiler', 'library_extension')

@@ -5,17 +5,13 @@ import polybench
 M = dace.symbol('M')
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
 sizes = [{M: 20, N: 30}, {M: 60, N: 80}, {M: 200, N: 240}, {M: 1000, N: 1200}, {M: 2000, N: 2600}]
 
-args = [
-    ([M, M], datatype),
-    ([M, N], datatype),
-    ([1], datatype),
-]
+args = [([M, M], datatype), ([M, N], datatype), ([1], datatype)]
 
 outputs = [(1, 'B')]
 
@@ -47,7 +43,7 @@ def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
                 out = 0
 
             @dace.map
-            def compute_elem(k: _[i + 1:M]):
+            def compute_elem(k: _[i + 1 : M]):
                 ia << A[k, i]
                 ib << B[k, j]
                 ob >> tmp(1, lambda a, b: a + b)

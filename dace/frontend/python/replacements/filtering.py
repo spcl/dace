@@ -3,6 +3,7 @@
 Contains replacements for filtering functions. This module includes functions from both
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
+
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
 from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
@@ -11,15 +12,17 @@ from typing import List, Optional, Set
 
 
 @oprepo.replaces('numpy.where')
-def _array_array_where(visitor: ProgramVisitor,
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       cond_operand: str,
-                       left_operand: str = None,
-                       right_operand: str = None,
-                       generated_nodes: Optional[Set[nodes.Node]] = None,
-                       left_operand_node: Optional[nodes.AccessNode] = None,
-                       right_operand_node: Optional[nodes.AccessNode] = None):
+def _array_array_where(
+    visitor: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    cond_operand: str,
+    left_operand: str = None,
+    right_operand: str = None,
+    generated_nodes: Optional[Set[nodes.Node]] = None,
+    left_operand_node: Optional[nodes.AccessNode] = None,
+    right_operand_node: Optional[nodes.AccessNode] = None,
+):
     from dace.frontend.python.replacements.operators import result_type
 
     if left_operand is None or right_operand is None:
@@ -71,15 +74,17 @@ def _array_array_where(visitor: ProgramVisitor,
         raise ValueError('Both x and y cannot be scalars in numpy.where')
     storage = left_arr.storage if left_arr else right_arr.storage
 
-    out_operand, out_arr = sdfg.add_transient(visitor.get_target_name(),
-                                              out_shape,
-                                              result_type,
-                                              storage,
-                                              find_new_name=True)
+    out_operand, out_arr = sdfg.add_transient(
+        visitor.get_target_name(), out_shape, result_type, storage, find_new_name=True
+    )
 
     if list(out_shape) == [1]:
-        tasklet = state.add_tasklet('_where_', {'__incond', '__in1', '__in2'}, {'__out'},
-                                    '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]))
+        tasklet = state.add_tasklet(
+            '_where_',
+            {'__incond', '__in1', '__in2'},
+            {'__out'},
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]),
+        )
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)
         if generated_nodes is not None:
@@ -117,14 +122,15 @@ def _array_array_where(visitor: ProgramVisitor,
             input_nodes[left_operand] = left_operand_node
         if right_operand_node:
             input_nodes[right_operand] = right_operand_node
-        tasklet, me, mx = state.add_mapped_tasklet("_where_",
-                                                   all_idx_dict,
-                                                   inputs,
-                                                   '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
-                                                                                               i2=tasklet_args[2]),
-                                                   {'__out': Memlet.simple(out_operand, out_idx)},
-                                                   external_edges=True,
-                                                   input_nodes=input_nodes)
+        tasklet, me, mx = state.add_mapped_tasklet(
+            "_where_",
+            all_idx_dict,
+            inputs,
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True,
+            input_nodes=input_nodes,
+        )
         if generated_nodes is not None:
             generated_nodes.add(tasklet)
             generated_nodes.add(me)
@@ -139,12 +145,9 @@ def _array_array_where(visitor: ProgramVisitor,
 
 
 @oprepo.replaces('numpy.select')
-def _array_array_select(visitor: ProgramVisitor,
-                        sdfg: SDFG,
-                        state: SDFGState,
-                        cond_list: List[str],
-                        choice_list: List[str],
-                        default=None):
+def _array_array_select(
+    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, cond_list: List[str], choice_list: List[str], default=None
+):
     if len(cond_list) != len(choice_list):
         raise ValueError('numpy.select is only valid with same-length condition and choice lists')
 
@@ -158,14 +161,16 @@ def _array_array_select(visitor: ProgramVisitor,
     out_operand = None
     while i >= 0:
         generated_nodes = set()
-        out_operand = _array_array_where(visitor,
-                                         sdfg,
-                                         state,
-                                         cond_operand,
-                                         left_operand,
-                                         right_operand,
-                                         generated_nodes=generated_nodes,
-                                         right_operand_node=right_operand_node)
+        out_operand = _array_array_where(
+            visitor,
+            sdfg,
+            state,
+            cond_operand,
+            left_operand,
+            right_operand,
+            generated_nodes=generated_nodes,
+            right_operand_node=right_operand_node,
+        )
         i -= 1
         cond_operand = cond_list[i]
         left_operand = choice_list[i]

@@ -13,12 +13,13 @@ from dace.transformation.interstate.loop_detection import DetectLoop
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
-
-    def can_be_applied(self,
-                       graph: transformation.ControlFlowRegion,
-                       expr_index: int,
-                       sdfg: transformation.SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(
+        self,
+        graph: transformation.ControlFlowRegion,
+        expr_index: int,
+        sdfg: transformation.SDFG,
+        permissive: bool = False,
+    ) -> bool:
         # Check loop detection with permissive = True, which allows loops where no iteration variable could be detected.
         # We want this to detect while loops.
         if not super().can_be_applied(graph, expr_index, sdfg, permissive=True):
@@ -127,8 +128,10 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
             graph.add_node(pre_block)
             graph.add_node(loop)
             graph.add_edge(
-                init_edge.src, pre_block,
-                InterstateEdge(condition=init_edge.data.condition, assignments=dict(init_edge.data.assignments)))
+                init_edge.src,
+                pre_block,
+                InterstateEdge(condition=init_edge.data.condition, assignments=dict(init_edge.data.assignments)),
+            )
             graph.add_edge(pre_block, loop, InterstateEdge())
             to_connect = loop
         else:
@@ -137,14 +140,16 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
             else:
                 update_before_condition = True
 
-            loop = LoopRegion(label,
-                              condition_expr=cond_edge.data.condition,
-                              loop_var=itvar,
-                              initialize_expr=init_expr,
-                              update_expr=incr_expr,
-                              inverted=inverted,
-                              sdfg=sdfg,
-                              update_before_condition=update_before_condition)
+            loop = LoopRegion(
+                label,
+                condition_expr=cond_edge.data.condition,
+                loop_var=itvar,
+                initialize_expr=init_expr,
+                update_expr=incr_expr,
+                inverted=inverted,
+                sdfg=sdfg,
+                update_before_condition=update_before_condition,
+            )
 
             # First state is added explicitly to mark the start of the region.
             loop.add_node(first_state, is_start_block=True)
@@ -178,7 +183,8 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                                         incr_graph.add_edge(
                                             incr_graph.add_state(label + '_post_incr_start', is_start_block=True),
                                             incr_graph.add_state(label + '_post_incr_end'),
-                                            InterstateEdge(assignments=left_over_incr_assignments))
+                                            InterstateEdge(assignments=left_over_incr_assignments),
+                                        )
                                         dst = left_over_incr_cond_region
                                         assignments = {}
                                     else:
@@ -225,8 +231,11 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                 to_connect = loop_guard_conditional
             else:
                 graph.add_node(loop)
-                graph.add_edge(init_edge.src, loop,
-                               InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
+                graph.add_edge(
+                    init_edge.src,
+                    loop,
+                    InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments),
+                )
                 to_connect = loop
 
         # Connect the loop to everything after the loop.

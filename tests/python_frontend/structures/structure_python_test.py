@@ -11,22 +11,25 @@ from scipy import sparse
 def test_read_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                              name='CSRMatrix')
+    CSR = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     @dace.program
     def csr_to_dense_python(A: CSR, B: dace.float32[M, N]):
         for i in dace.map[0:M]:
-            for idx in dace.map[A.indptr[i]:A.indptr[i + 1]]:
+            for idx in dace.map[A.indptr[i] : A.indptr[i + 1]]:
                 B[i, A.indices[idx]] = A.data[idx]
 
     rng = np.random.default_rng(42)
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     B = np.zeros((20, 20), dtype=np.float32)
 
-    inpA = CSR.dtype._typeclass.as_ctypes()(indptr=A.indptr.__array_interface__['data'][0],
-                                            indices=A.indices.__array_interface__['data'][0],
-                                            data=A.data.__array_interface__['data'][0])
+    inpA = CSR.dtype._typeclass.as_ctypes()(
+        indptr=A.indptr.__array_interface__['data'][0],
+        indices=A.indices.__array_interface__['data'][0],
+        data=A.data.__array_interface__['data'][0],
+    )
 
     # TODO: The following doesn't work because we need to create a Structure data descriptor from the ctypes class.
     # csr_to_dense_python(inpA, B)
@@ -40,8 +43,9 @@ def test_read_structure():
 def test_write_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                              name='CSRMatrix')
+    CSR = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     @dace.program
     def dense_to_csr_python(A: dace.float32[M, N], B: CSR):
@@ -63,9 +67,11 @@ def test_write_structure():
     B.indices[:] = -1
     B.data[:] = -1
 
-    outB = CSR.dtype._typeclass.as_ctypes()(indptr=B.indptr.__array_interface__['data'][0],
-                                            indices=B.indices.__array_interface__['data'][0],
-                                            data=B.data.__array_interface__['data'][0])
+    outB = CSR.dtype._typeclass.as_ctypes()(
+        indptr=B.indptr.__array_interface__['data'][0],
+        indices=B.indices.__array_interface__['data'][0],
+        data=B.data.__array_interface__['data'][0],
+    )
 
     func = dense_to_csr_python.compile()
     func(A=A, B=outB, M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
@@ -88,7 +94,7 @@ def test_write_structure_scalar():
     N = 40
     A = np.random.rand(N)
     C = np.random.rand(N)
-    C_val = np.zeros((N, ))
+    C_val = np.zeros((N,))
     sum = 0
     for i in range(N):
         sum += A[i]
@@ -108,8 +114,9 @@ def test_write_structure_scalar():
 def test_local_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                              name='CSRMatrix')
+    CSR = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     @dace.program
     def dense_to_csr_local_python(A: dace.float32[M, N], B: CSR):
@@ -135,9 +142,11 @@ def test_local_structure():
     B.indices[:] = -1
     B.data[:] = -1
 
-    outB = CSR.dtype._typeclass.as_ctypes()(indptr=B.indptr.__array_interface__['data'][0],
-                                            indices=B.indices.__array_interface__['data'][0],
-                                            data=B.data.__array_interface__['data'][0])
+    outB = CSR.dtype._typeclass.as_ctypes()(
+        indptr=B.indptr.__array_interface__['data'][0],
+        indices=B.indices.__array_interface__['data'][0],
+        data=B.data.__array_interface__['data'][0],
+    )
 
     func = dense_to_csr_local_python.compile()
     func(A=A, B=outB, M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
@@ -146,17 +155,20 @@ def test_local_structure():
 def test_rgf():
     # NOTE: "diag" is a sympy function
     class BTD:
-
         def __init__(self, diag, upper, lower):
             self.diagonal = diag
             self.upper = upper
             self.lower = lower
 
     n, nblocks = dace.symbol('n'), dace.symbol('nblocks')
-    BlockTriDiagonal = dace.data.Structure(dict(diagonal=dace.complex128[nblocks, n, n],
-                                                upper=dace.complex128[nblocks, n, n],
-                                                lower=dace.complex128[nblocks, n, n]),
-                                           name='BlockTriDiagonalMatrix')
+    BlockTriDiagonal = dace.data.Structure(
+        dict(
+            diagonal=dace.complex128[nblocks, n, n],
+            upper=dace.complex128[nblocks, n, n],
+            lower=dace.complex128[nblocks, n, n],
+        ),
+        name='BlockTriDiagonalMatrix',
+    )
 
     @dace.program
     def rgf_leftToRight(A: BlockTriDiagonal, B: BlockTriDiagonal, n_: dace.int32, nblocks_: dace.int32):
@@ -167,7 +179,7 @@ def test_rgf():
 
         # 1. Initialisation of tmp
         tmp[0] = np.linalg.inv(A.diagonal[0])
-        for i in dace.map[0:identity.shape[0]]:
+        for i in dace.map[0 : identity.shape[0]]:
             identity[i, i] = 1
 
         # 2. Forward substitution
@@ -190,23 +202,30 @@ def test_rgf():
     A_diag = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
     A_upper = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
     A_lower = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
-    inpBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(diagonal=A_diag.__array_interface__['data'][0],
-                                                           upper=A_upper.__array_interface__['data'][0],
-                                                           lower=A_lower.__array_interface__['data'][0])
+    inpBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(
+        diagonal=A_diag.__array_interface__['data'][0],
+        upper=A_upper.__array_interface__['data'][0],
+        lower=A_lower.__array_interface__['data'][0],
+    )
 
     B_diag = np.zeros((10, 20, 20), dtype=np.complex128)
     B_upper = np.zeros((10, 20, 20), dtype=np.complex128)
     B_lower = np.zeros((10, 20, 20), dtype=np.complex128)
-    outBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(diagonal=B_diag.__array_interface__['data'][0],
-                                                           upper=B_upper.__array_interface__['data'][0],
-                                                           lower=B_lower.__array_interface__['data'][0])
+    outBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(
+        diagonal=B_diag.__array_interface__['data'][0],
+        upper=B_upper.__array_interface__['data'][0],
+        lower=B_lower.__array_interface__['data'][0],
+    )
 
     func = rgf_leftToRight.compile()
     func(A=inpBTD, B=outBTD, n_=A_diag.shape[1], nblocks_=A_diag.shape[0], n=A_diag.shape[1], nblocks=A_diag.shape[0])
 
     A = BTD(A_diag, A_upper, A_lower)
-    B = BTD(np.zeros((10, 20, 20), dtype=np.complex128), np.zeros((10, 20, 20), dtype=np.complex128),
-            np.zeros((10, 20, 20), dtype=np.complex128))
+    B = BTD(
+        np.zeros((10, 20, 20), dtype=np.complex128),
+        np.zeros((10, 20, 20), dtype=np.complex128),
+        np.zeros((10, 20, 20), dtype=np.complex128),
+    )
 
     rgf_leftToRight.f(A, B, A_diag.shape[1], A_diag.shape[0])
 
@@ -220,22 +239,25 @@ def test_rgf():
 def test_read_structure_gpu():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                              name='CSRMatrix')
+    CSR = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     @dace.program
     def csr_to_dense_python(A: CSR, B: dace.float32[M, N]):
         for i in dace.map[0:M]:
-            for idx in dace.map[A.indptr[i]:A.indptr[i + 1]]:
+            for idx in dace.map[A.indptr[i] : A.indptr[i + 1]]:
                 B[i, A.indices[idx]] = A.data[idx]
 
     rng = np.random.default_rng(42)
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     ref = A.toarray()
 
-    inpA = CSR.dtype._typeclass.as_ctypes()(indptr=A.indptr.__array_interface__['data'][0],
-                                            indices=A.indices.__array_interface__['data'][0],
-                                            data=A.data.__array_interface__['data'][0])
+    inpA = CSR.dtype._typeclass.as_ctypes()(
+        indptr=A.indptr.__array_interface__['data'][0],
+        indices=A.indices.__array_interface__['data'][0],
+        data=A.data.__array_interface__['data'][0],
+    )
 
     # TODO: The following doesn't work because we need to create a Structure data descriptor from the ctypes class.
     # csr_to_dense_python(inpA, B)
@@ -260,23 +282,18 @@ def test_read_structure_gpu():
 def test_write_structure_in_map():
     M = dace.symbol('M')
     N = dace.symbol('N')
-    Bundle = dace.data.Structure(members={
-        "data": dace.data.Array(dace.float32, (M, N)),
-        "size": dace.data.Scalar(dace.int64)
-    },
-                                 name="BundleType")
+    Bundle = dace.data.Structure(
+        members={"data": dace.data.Array(dace.float32, (M, N)), "size": dace.data.Scalar(dace.int64)}, name="BundleType"
+    )
 
     @dace.program
     def init_prog(bundle: Bundle, fill_value: int) -> None:
-        for index in dace.map[0:bundle.size]:
+        for index in dace.map[0 : bundle.size]:
             bundle.data[index, :] = fill_value
 
     data = np.zeros((10, 5), dtype=np.float32)
     fill_value = 42
-    inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        size=9,
-    )
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(data=data.__array_interface__['data'][0], size=9)
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:9, :] = fill_value
 
@@ -288,24 +305,24 @@ def test_write_structure_in_map():
 def test_readwrite_structure_in_map():
     M = dace.symbol('M')
     N = dace.symbol('N')
-    Bundle = dace.data.Structure(members={
-        "data": dace.data.Array(dace.float32, (M, N)),
-        "data2": dace.data.Array(dace.float32, (M, N)),
-        "size": dace.data.Scalar(dace.int64)
-    },
-                                 name="BundleType")
+    Bundle = dace.data.Structure(
+        members={
+            "data": dace.data.Array(dace.float32, (M, N)),
+            "data2": dace.data.Array(dace.float32, (M, N)),
+            "size": dace.data.Scalar(dace.int64),
+        },
+        name="BundleType",
+    )
 
     @dace.program
     def copy_prog(bundle: Bundle) -> None:
-        for index in dace.map[0:bundle.size]:
+        for index in dace.map[0 : bundle.size]:
             bundle.data[index, :] = bundle.data2[index, :] + 5
 
     data = np.zeros((10, 5), dtype=np.float32)
     data2 = np.ones((10, 5), dtype=np.float32)
     inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        data2=data2.__array_interface__['data'][0],
-        size=6,
+        data=data.__array_interface__['data'][0], data2=data2.__array_interface__['data'][0], size=6
     )
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = 6.0
@@ -318,11 +335,9 @@ def test_readwrite_structure_in_map():
 def test_write_structure_in_loop():
     M = dace.symbol('M')
     N = dace.symbol('N')
-    Bundle = dace.data.Structure(members={
-        "data": dace.data.Array(dace.float32, (M, N)),
-        "size": dace.data.Scalar(dace.int64)
-    },
-                                 name="BundleType")
+    Bundle = dace.data.Structure(
+        members={"data": dace.data.Array(dace.float32, (M, N)), "size": dace.data.Scalar(dace.int64)}, name="BundleType"
+    )
 
     @dace.program
     def init_prog(bundle: Bundle, fill_value: int) -> None:
@@ -331,10 +346,7 @@ def test_write_structure_in_loop():
 
     data = np.zeros((10, 5), dtype=np.float32)
     fill_value = 42
-    inp_struct = Bundle.dtype.base_type.as_ctypes()(
-        data=data.__array_interface__['data'][0],
-        size=6,
-    )
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(data=data.__array_interface__['data'][0], size=6)
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = fill_value
 
@@ -345,8 +357,9 @@ def test_write_structure_in_loop():
 
 def test_struct_interface():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                              name='CSRMatrix')
+    CSR = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     @dace.program
     def dense_to_csr_local_python(A: dace.float32[M, N], B: CSR):
@@ -395,13 +408,11 @@ def test_struct_recursive():
 
     Struct = dace.data.Structure(
         {
-            'x': dace.data.Structure({
-                'a': dace.float32[20],
-                'b': dace.int32
-            }, name='InnerStruct'),
-            'y': dace.float64[10, 10]
+            'x': dace.data.Structure({'a': dace.float32[20], 'b': dace.int32}, name='InnerStruct'),
+            'y': dace.float64[10, 10],
         },
-        name='OuterStruct')
+        name='OuterStruct',
+    )
 
     @dace.program
     def struct_recursive(A: Struct, B: Struct):

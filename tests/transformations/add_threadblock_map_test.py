@@ -9,34 +9,40 @@ N = dace.symbol("N")
 
 
 @dace.program
-def elementwise_constexpr_size(A: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global,
-                               B: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global):
+def elementwise_constexpr_size(
+    A: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global, B: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global
+):
     for i in dace.map[0:512] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i] = 2.0 * B[i]
 
 
 @dace.program
-def elementwise_small_constexpr_size(A: dace.float64[16] @ dace.dtypes.StorageType.GPU_Global,
-                                     B: dace.float64[16] @ dace.dtypes.StorageType.GPU_Global):
+def elementwise_small_constexpr_size(
+    A: dace.float64[16] @ dace.dtypes.StorageType.GPU_Global, B: dace.float64[16] @ dace.dtypes.StorageType.GPU_Global
+):
     for i in dace.map[0:16] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i] = 2.0 * B[i]
 
 
 @dace.program
-def elementwise_symbolic(A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global,
-                         B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global):
+def elementwise_symbolic(
+    A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global, B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global
+):
     for i in dace.map[0:N] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i] = 2.0 * B[i]
 
 
 @dace.program
-def elementwise_with_floor_div(A: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global,
-                               B: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global, i_beg: dace.int64,
-                               i_end: dace.int64):
+def elementwise_with_floor_div(
+    A: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global,
+    B: dace.float64[512] @ dace.dtypes.StorageType.GPU_Global,
+    i_beg: dace.int64,
+    i_end: dace.int64,
+):
     # To avoid shadowing error coming from the Python-frontend an assignment is necessary
     sym_i_beg = i_beg
     sym_i_end = i_end
-    for i in dace.map[sym_i_beg:(sym_i_end // 2)] @ dace.dtypes.ScheduleType.GPU_Device:
+    for i in dace.map[sym_i_beg : (sym_i_end // 2)] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i] = 2.0 * B[i]
 
 
@@ -46,57 +52,20 @@ def _get_sdfg_with_memlet_tree():
 
     for aname in "ab":
         sdfg.add_array(
-            aname,
-            shape=(10, 2),
-            dtype=dace.float64,
-            storage=dace.dtypes.StorageType.GPU_Global,
-            transient=False,
+            aname, shape=(10, 2), dtype=dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=False
         )
-    sdfg.add_scalar(
-        "s",
-        dtype=dace.float64,
-        transient=True,
-    )
+    sdfg.add_scalar("s", dtype=dace.float64, transient=True)
 
     a, b, s = (state.add_access(name) for name in "abs")
     me, mx = state.add_map("comp", ndrange={"__i": "0:10"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
-    tlet = state.add_tasklet(
-        "tlet",
-        inputs={"__in"},
-        outputs={"__out"},
-        code="__out = __in + 1.0",
-    )
+    tlet = state.add_tasklet("tlet", inputs={"__in"}, outputs={"__out"}, code="__out = __in + 1.0")
 
-    state.add_edge(
-        a,
-        None,
-        me,
-        "IN_a1",
-        dace.Memlet("a[0:10, 0]"),
-    )
-    state.add_edge(
-        me,
-        "OUT_a1",
-        tlet,
-        "__in",
-        dace.Memlet("a[__i, 0]"),
-    )
+    state.add_edge(a, None, me, "IN_a1", dace.Memlet("a[0:10, 0]"))
+    state.add_edge(me, "OUT_a1", tlet, "__in", dace.Memlet("a[__i, 0]"))
     me.add_scope_connectors("a1")
 
-    state.add_edge(
-        tlet,
-        "__out",
-        mx,
-        "IN_b1",
-        dace.Memlet("b[__i, 0]"),
-    )
-    state.add_edge(
-        mx,
-        "OUT_b1",
-        b,
-        None,
-        dace.Memlet("b[0:10, 0]"),
-    )
+    state.add_edge(tlet, "__out", mx, "IN_b1", dace.Memlet("b[__i, 0]"))
+    state.add_edge(mx, "OUT_b1", b, None, dace.Memlet("b[0:10, 0]"))
     mx.add_scope_connectors("b1")
 
     state.add_edge(
@@ -110,20 +79,8 @@ def _get_sdfg_with_memlet_tree():
         dace.Memlet("s[0] -> [__i, 0]"),
     )
 
-    state.add_edge(
-        s,
-        None,
-        mx,
-        "IN_b2",
-        dace.Memlet("b[__i, 1] -> [0]"),
-    )
-    state.add_edge(
-        mx,
-        "OUT_b2",
-        b,
-        None,
-        dace.Memlet("b[0:10, 1]"),
-    )
+    state.add_edge(s, None, mx, "IN_b2", dace.Memlet("b[__i, 1] -> [0]"))
+    state.add_edge(mx, "OUT_b2", b, None, dace.Memlet("b[0:10, 1]"))
     mx.add_scope_connectors("b2")
 
     sdfg.validate()
@@ -133,11 +90,7 @@ def _get_sdfg_with_memlet_tree():
 def test_memlet_tree():
     sdfg = _get_sdfg_with_memlet_tree()
 
-    sdfg.apply_transformations_once_everywhere(
-        AddThreadBlockMap,
-        validate=True,
-        validate_all=True,
-    )
+    sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, validate=True, validate_all=True)
 
     sdfg.validate()
 
@@ -145,6 +98,7 @@ def test_memlet_tree():
 def _run_and_compare(prog, A_host, B_host, constants=None):
     """Run SDFG with and without AddThreadBlockMap and compare results."""
     import cupy
+
     # Prepare GPU arrays
     A_gpu = cupy.asarray(A_host)
     B_gpu = cupy.asarray(B_host)
@@ -154,11 +108,13 @@ def _run_and_compare(prog, A_host, B_host, constants=None):
 
     # Count GPU_ThreadBlock maps
     threadblock_maps = [
-        m for m, _ in sdfg.all_nodes_recursive()
+        m
+        for m, _ in sdfg.all_nodes_recursive()
         if isinstance(m, dace.sdfg.nodes.MapEntry) and m.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
     ]
-    assert len(
-        threadblock_maps) == 0, f"Expected 0 GPU_ThreadBlock map before transformation, got {len(threadblock_maps)}"
+    assert len(threadblock_maps) == 0, (
+        f"Expected 0 GPU_ThreadBlock map before transformation, got {len(threadblock_maps)}"
+    )
 
     sdfg_expanded = copy.deepcopy(sdfg)
 
@@ -167,11 +123,13 @@ def _run_and_compare(prog, A_host, B_host, constants=None):
 
     # Count GPU_ThreadBlock maps
     threadblock_maps = [
-        m for m, _ in sdfg_expanded.all_nodes_recursive()
+        m
+        for m, _ in sdfg_expanded.all_nodes_recursive()
         if isinstance(m, dace.sdfg.nodes.MapEntry) and m.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
     ]
-    assert len(
-        threadblock_maps) == 1, f"Expected 1 GPU_ThreadBlock map after transformation, got {len(threadblock_maps)}"
+    assert len(threadblock_maps) == 1, (
+        f"Expected 1 GPU_ThreadBlock map after transformation, got {len(threadblock_maps)}"
+    )
 
     # Run both SDFGs
     A_ref = cupy.zeros_like(A_gpu)

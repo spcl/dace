@@ -2,6 +2,7 @@
 """Regression test for std::numeric_limits<dace::half>/<dace::bfloat16>. Unspecialized, the primary
 template makes max()/lowest() both zero, so a min/max reduction seeded from them gets stuck at 0.
 """
+
 import ml_dtypes
 import numpy as np
 
@@ -30,10 +31,12 @@ mx = amx;
 '''
     tasklet = state.add_tasklet('lowp_minmax', {'d': None}, {'mn': None, 'mx': None}, code, language=dace.Language.CPP)
     state.add_edge(state.add_read('data'), None, tasklet, 'd', dace.Memlet.from_array('data', sdfg.arrays['data']))
-    state.add_edge(tasklet, 'mn', state.add_write('out_min'), None,
-                   dace.Memlet.from_array('out_min', sdfg.arrays['out_min']))
-    state.add_edge(tasklet, 'mx', state.add_write('out_max'), None,
-                   dace.Memlet.from_array('out_max', sdfg.arrays['out_max']))
+    state.add_edge(
+        tasklet, 'mn', state.add_write('out_min'), None, dace.Memlet.from_array('out_min', sdfg.arrays['out_min'])
+    )
+    state.add_edge(
+        tasklet, 'mx', state.add_write('out_max'), None, dace.Memlet.from_array('out_max', sdfg.arrays['out_max'])
+    )
     sdfg.validate()
     return sdfg
 

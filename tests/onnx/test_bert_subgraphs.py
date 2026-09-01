@@ -2,6 +2,7 @@
 """
 Regression tests for BERT subgraphs
 """
+
 import numpy as np
 import pytest
 
@@ -24,11 +25,9 @@ def make_slice_model():
 
     slice_node = helper.make_node('Slice', inputs=['data', 'starts', 'ends', 'axes'], outputs=['output'])
 
-    graph = helper.make_graph([slice_node],
-                              'slice_graph',
-                              inputs=[data_input],
-                              outputs=[output],
-                              initializer=[starts, ends, axes])
+    graph = helper.make_graph(
+        [slice_node], 'slice_graph', inputs=[data_input], outputs=[output], initializer=[starts, ends, axes]
+    )
 
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 12)])
     model.ir_version = 7
@@ -39,32 +38,41 @@ def make_reshape_model():
     """Create an ONNX model simulating BERT embedding reshape operations."""
     output = helper.make_tensor_value_info('bert/embeddings/Reshape_4:0', TensorProto.FLOAT, [1, 256, 768])
 
-    position_embeddings = numpy_helper.from_array(np.random.randn(512, 768).astype(np.float32),
-                                                  name='bert/embeddings/position_embeddings:0')
+    position_embeddings = numpy_helper.from_array(
+        np.random.randn(512, 768).astype(np.float32), name='bert/embeddings/position_embeddings:0'
+    )
     slice_starts = numpy_helper.from_array(np.array([0, 0], dtype=np.int64), name='const_slice__40')
     slice_ends = numpy_helper.from_array(np.array([256, 2147483647], dtype=np.int64), name='const_slice__41')
-    reshape_shape = numpy_helper.from_array(np.array([1, 256, 768], dtype=np.int32),
-                                            name='bert/embeddings/Reshape_4/shape:0')
+    reshape_shape = numpy_helper.from_array(
+        np.array([1, 256, 768], dtype=np.int32), name='bert/embeddings/Reshape_4/shape:0'
+    )
 
     slice_node = helper.make_node(
         'Slice',
         inputs=['bert/embeddings/position_embeddings:0', 'const_slice__40', 'const_slice__41'],
-        outputs=['bert/embeddings/Slice:0'])
+        outputs=['bert/embeddings/Slice:0'],
+    )
 
-    cast_node = helper.make_node('Cast',
-                                 inputs=['bert/embeddings/Reshape_4/shape:0'],
-                                 outputs=['bert/embeddings/Reshape_4__42:0'],
-                                 to=TensorProto.INT64)
+    cast_node = helper.make_node(
+        'Cast',
+        inputs=['bert/embeddings/Reshape_4/shape:0'],
+        outputs=['bert/embeddings/Reshape_4__42:0'],
+        to=TensorProto.INT64,
+    )
 
-    reshape_node = helper.make_node('Reshape',
-                                    inputs=['bert/embeddings/Slice:0', 'bert/embeddings/Reshape_4__42:0'],
-                                    outputs=['bert/embeddings/Reshape_4:0'])
+    reshape_node = helper.make_node(
+        'Reshape',
+        inputs=['bert/embeddings/Slice:0', 'bert/embeddings/Reshape_4__42:0'],
+        outputs=['bert/embeddings/Reshape_4:0'],
+    )
 
-    graph = helper.make_graph([slice_node, cast_node, reshape_node],
-                              'reshape_graph',
-                              inputs=[],
-                              outputs=[output],
-                              initializer=[position_embeddings, slice_starts, slice_ends, reshape_shape])
+    graph = helper.make_graph(
+        [slice_node, cast_node, reshape_node],
+        'reshape_graph',
+        inputs=[],
+        outputs=[output],
+        initializer=[position_embeddings, slice_starts, slice_ends, reshape_shape],
+    )
 
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 12)])
     model.ir_version = 7
@@ -79,7 +87,7 @@ def test_slice():
     data = torch.ones(2)
 
     out = dace_model(data=data)
-    assert out.shape == (1, ), f"Expected output shape (1,), got {out.shape}"
+    assert out.shape == (1,), f"Expected output shape (1,), got {out.shape}"
     assert out[0] == 1.0, f"Expected output value 1.0, got {out[0]}"
 
 
@@ -96,8 +104,9 @@ def test_save_transients():
     transients = {}
     dace_model = ONNXModel("test_save_transients", model, save_transients=transients)
     dace_model()
-    assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(),
-                          dace_model.weights["bert/embeddings/Reshape_4:0"])
+    assert torch.allclose(
+        transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(), dace_model.weights["bert/embeddings/Reshape_4:0"]
+    )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ descriptor + SDFG serialization (including symbolic shapes), CPU compilation and
 bit-exact execution, and -- on a GPU -- that the CPU struct and the CUDA native
 type share one byte representation so a host<->device copy is well-defined.
 """
+
 import ml_dtypes
 import numpy as np
 import pytest
@@ -56,10 +57,14 @@ def test_sdfg_serialization_roundtrip():
     sdfg.add_array('c', [N], dace.float8_e5m2)
 
     sd2 = dace.SDFG.from_json(sdfg.to_json())
-    assert (sd2.arrays['a'].dtype, sd2.arrays['b'].dtype, sd2.arrays['c'].dtype) == \
-           (dace.bfloat16, dace.float8_e4m3fn, dace.float8_e5m2)
+    assert (sd2.arrays['a'].dtype, sd2.arrays['b'].dtype, sd2.arrays['c'].dtype) == (
+        dace.bfloat16,
+        dace.float8_e4m3fn,
+        dace.float8_e5m2,
+    )
 
     import tempfile, os
+
     path = os.path.join(tempfile.gettempdir(), 'lowp_roundtrip.sdfgz')
     sdfg.save(path)
     assert dace.SDFG.from_file(path).arrays['a'].dtype == dace.bfloat16
@@ -134,6 +139,7 @@ def test_openmp_reduction_bf16():
     # needs the `declare reduction` the runtime header provides. N <= 256 keeps a bf16 sum of ones
     # exact under any thread split, so the result is asserted with zero tolerance.
     from dace.libraries.standard.nodes.reduce import Reduce
+
     N = 128
 
     @dace.program

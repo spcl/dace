@@ -31,10 +31,9 @@ class OptionalArrayInference(ppl.Pass):
         # If connectivity or any edges were changed, some new descriptors may be marked as optional
         return modified & (ppl.Modifies.States)
 
-    def apply_pass(self,
-                   sdfg: SDFG,
-                   _,
-                   parent_arrays: Optional[Dict[str, bool]] = None) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(
+        self, sdfg: SDFG, _, parent_arrays: Optional[Dict[str, bool]] = None
+    ) -> Optional[Set[Tuple[int, str]]]:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
 
@@ -97,10 +96,9 @@ class OptionalArrayInference(ppl.Pass):
 
         return result or None
 
-    def traverse_unconditional_blocks(self,
-                                      cfg: ControlFlowRegion,
-                                      recursive: bool = True,
-                                      produce_nonstate: bool = False) -> Iterator[ControlFlowBlock]:
+    def traverse_unconditional_blocks(
+        self, cfg: ControlFlowRegion, recursive: bool = True, produce_nonstate: bool = False
+    ) -> Iterator[ControlFlowBlock]:
         """
         Traverse CFG and keep track of whether the block is executed unconditionally.
         """

@@ -35,7 +35,7 @@ def test_symbol_mapping_replace():
     c = 2.0
     outer(A, inp1=b, inp2=c)
     outer.f(ref, inp1=b, inp2=c)
-    assert (np.allclose(A, ref))
+    assert np.allclose(A, ref)
 
 
 if __name__ == '__main__':

@@ -10,7 +10,6 @@ from dace.libraries.mpi.nodes.node import MPINode
 
 @library.expansion
 class ExpandRedistribute(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -34,10 +33,12 @@ class ExpandRedistribute(ExpandTransformation):
         out_repl = ""
         for i, s in enumerate(out_symbols):
             out_repl += f"int {s} = __state->{node.redistr}_self_dst[__idx * {len(out_buffer.shape)} + {i}];\n"
-        copy_args = ", ".join([
-            f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
-            for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
-        ])
+        copy_args = ", ".join(
+            [
+                f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
+                for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
+            ]
+        )
 
         code = f"""
             int myrank;
@@ -84,11 +85,8 @@ class ExpandRedistribute(ExpandTransformation):
 
 @library.node
 class Redistribute(MPINode):
-
     # Global properties
-    implementations = {
-        "MPI": ExpandRedistribute,
-    }
+    implementations = {"MPI": ExpandRedistribute}
     default_implementation = "MPI"
 
     redistr = properties.DataProperty(default='tmp')

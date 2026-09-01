@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tries to allocate a symbolically-sized array on a register and makes
-    sure that it is allocated on the heap instead.
+"""Tries to allocate a symbolically-sized array on a register and makes
+sure that it is allocated on the heap instead.
 """
+
 import dace
 import numpy as np
 import warnings

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the `apply_to` transformation API. """
+"""Tests the `apply_to` transformation API."""
+
 import dace
 import numpy as np
 import pytest
@@ -35,10 +36,12 @@ def test_applyto_enumerate():
     # Construct subgraph pattern
     pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry)
     for subgraph in enumerate_matches(sdfg, pattern):
-        MapFusionVertical.apply_to(sdfg,
-                                   first_map_exit=subgraph.source_nodes()[0],
-                                   array=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
-                                   second_map_entry=subgraph.sink_nodes()[0])
+        MapFusionVertical.apply_to(
+            sdfg,
+            first_map_exit=subgraph.source_nodes()[0],
+            array=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
+            second_map_entry=subgraph.sink_nodes()[0],
+        )
 
 
 def test_applyto_pattern():
@@ -58,10 +61,9 @@ def test_applyto_pattern():
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
 
-    assert MapFusionVertical.can_be_applied_to(sdfg,
-                                               first_map_exit=mult_exit,
-                                               array=access_node,
-                                               second_map_entry=add_entry)
+    assert MapFusionVertical.can_be_applied_to(
+        sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry
+    )
     MapFusionVertical.apply_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
 
     assert len([node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry)]) == 1
@@ -85,16 +87,14 @@ def test_applyto_pattern_2():
     map_entry_2 = next(e.dst for e in state.out_edges(tmp) if isinstance(e.dst, dace.nodes.MapEntry))
 
     assert not MapFusionVertical.can_be_applied_to(
-        sdfg, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2)
+        sdfg, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2
+    )
     with pytest.raises(
-            ValueError,
-            match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
+        ValueError, match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)'
     ):
-        MapFusionVertical.apply_to(sdfg,
-                                   verify=True,
-                                   first_map_exit=map_exit_1,
-                                   array=tmp,
-                                   second_map_entry=map_entry_2)
+        MapFusionVertical.apply_to(
+            sdfg, verify=True, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2
+        )
 
 
 def test_applyto_subgraph():
@@ -117,8 +117,7 @@ def test_applyto_subgraph_2():
     assert not SubgraphFusion.can_be_applied_to(sdfg, state.nodes())
 
     with pytest.raises(
-            ValueError,
-            match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
+        ValueError, match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)'
     ):
         SubgraphFusion.apply_to(sdfg, state.nodes())
 

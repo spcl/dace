@@ -108,12 +108,15 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bin_name = '_aout'
         bout = state.add_access('_aout')
 
-    _, _, mx = state.add_mapped_tasklet('_eye_',
-                                        dict(__i0="0:n", __i1="0:n"), {},
-                                        '_out = (__i0 == __i1) ? 1 : 0;',
-                                        dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
-                                        language=dace.dtypes.Language.CPP,
-                                        external_edges=True)
+    _, _, mx = state.add_mapped_tasklet(
+        '_eye_',
+        dict(__i0="0:n", __i1="0:n"),
+        {},
+        '_out = (__i0 == __i1) ? 1 : 0;',
+        dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
+        language=dace.dtypes.Language.CPP,
+        external_edges=True,
+    )
     bin = state.out_edges(mx)[0].dst
 
     ipiv = state.add_access('_pivots')
@@ -135,7 +138,6 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
 @dace.library.expansion
 class ExpandInvPure(ExpandTransformation):
-
     environments = []
 
     @staticmethod
@@ -152,7 +154,6 @@ class ExpandInvPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -165,7 +166,6 @@ class ExpandInvOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -178,7 +178,6 @@ class ExpandInvMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -188,7 +187,6 @@ class ExpandInvCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
     default_implementation = None
@@ -224,7 +222,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         dims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout = None, None,
+        desc_ain, desc_aout = (None, None)
         for e in state.in_edges(self):
             if e.dst_conn == "_ain":
                 desc_ain = sdfg.arrays[e.data.data]

@@ -52,30 +52,25 @@ class ExpandAxpyVectorized(ExpandTransformation):
 
         vec_map_entry, vec_map_exit = axpy_state.add_map("axpy", {"i": f"0:{n}"}, schedule=schedule)
 
-        axpy_tasklet = axpy_state.add_tasklet("axpy", ["x_conn", "y_conn"], ["z_conn"],
-                                              f"z_conn = {a} * x_conn + y_conn")
+        axpy_tasklet = axpy_state.add_tasklet(
+            "axpy", ["x_conn", "y_conn"], ["z_conn"], f"z_conn = {a} * x_conn + y_conn"
+        )
 
         # Access container either as an array or as a stream
         index = "0" if isinstance(x_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(x_in,
-                                   vec_map_entry,
-                                   axpy_tasklet,
-                                   dst_conn="x_conn",
-                                   memlet=dace.Memlet(f"_x[{index}]"))
+        axpy_state.add_memlet_path(
+            x_in, vec_map_entry, axpy_tasklet, dst_conn="x_conn", memlet=dace.Memlet(f"_x[{index}]")
+        )
 
         index = "0" if isinstance(y_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(y_in,
-                                   vec_map_entry,
-                                   axpy_tasklet,
-                                   dst_conn="y_conn",
-                                   memlet=dace.Memlet(f"_y[{index}]"))
+        axpy_state.add_memlet_path(
+            y_in, vec_map_entry, axpy_tasklet, dst_conn="y_conn", memlet=dace.Memlet(f"_y[{index}]")
+        )
 
         index = "0" if isinstance(res_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(axpy_tasklet,
-                                   vec_map_exit,
-                                   z_out,
-                                   src_conn="z_conn",
-                                   memlet=dace.Memlet(f"_res[{index}]"))
+        axpy_state.add_memlet_path(
+            axpy_tasklet, vec_map_exit, z_out, src_conn="z_conn", memlet=dace.Memlet(f"_res[{index}]")
+        )
 
         return axpy_sdfg
 
@@ -89,9 +84,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {
-        "pure": ExpandAxpyVectorized,
-    }
+    implementations = {"pure": ExpandAxpyVectorized}
     default_implementation = None
 
     # Object fields
@@ -105,8 +98,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def compare(self, other):
 
-        if (self.veclen == other.veclen and self.implementation == other.implementation):
-
+        if self.veclen == other.veclen and self.implementation == other.implementation:
             return True
         else:
             return False
@@ -134,7 +126,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None):
+        if in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None:
             raise ValueError("WCR on axpy memlets not supported")
 
         return True

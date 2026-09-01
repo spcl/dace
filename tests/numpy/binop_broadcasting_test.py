@@ -219,8 +219,8 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 #
 # this test can be reenabled when this is fixed
 
-#@compare_numpy_output()
-#def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
+# @compare_numpy_output()
+# def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
 #    return A != B
 
 

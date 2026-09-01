@@ -74,27 +74,12 @@ def test_read_and_write_set_filter():
     sdfg.add_array('C', [2, 2], dace.float64)
     A, B, C = (state.add_access(name) for name in ('A', 'B', 'C'))
 
-    state.add_nedge(
-        A,
-        B,
-        dace.Memlet("B[0] -> [0, 0]"),
-    )
-    state.add_nedge(
-        B,
-        C,
-        dace.Memlet("C[1, 1] -> [0]"),
-    )
-    state.add_nedge(
-        B,
-        C,
-        dace.Memlet("B[0] -> [0, 0]"),
-    )
+    state.add_nedge(A, B, dace.Memlet("B[0] -> [0, 0]"))
+    state.add_nedge(B, C, dace.Memlet("C[1, 1] -> [0]"))
+    state.add_nedge(B, C, dace.Memlet("B[0] -> [0, 0]"))
     sdfg.validate()
 
-    expected_reads = {
-        "A": [sbs.Range.from_string("0, 0")],
-        "B": [sbs.Range.from_string("0")],
-    }
+    expected_reads = {"A": [sbs.Range.from_string("0, 0")], "B": [sbs.Range.from_string("0")]}
     expected_writes = {
         "B": [sbs.Range.from_string("0")],
         "C": [sbs.Range.from_string("0, 0"), sbs.Range.from_string("1, 1")],
@@ -102,8 +87,9 @@ def test_read_and_write_set_filter():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -121,24 +107,17 @@ def test_read_and_write_set_selection():
     sdfg.add_scalar('B', dace.float64)
     A, B = (state.add_access(name) for name in ('A', 'B'))
 
-    state.add_nedge(
-        A,
-        B,
-        dace.Memlet("A[0, 0]"),
-    )
+    state.add_nedge(A, B, dace.Memlet("A[0, 0]"))
     sdfg.validate()
 
-    expected_reads = {
-        "A": [sbs.Range.from_string("0, 0")],
-    }
-    expected_writes = {
-        "B": [sbs.Range.from_string("0")],
-    }
+    expected_reads = {"A": [sbs.Range.from_string("0, 0")]}
+    expected_writes = {"B": [sbs.Range.from_string("0")]}
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -160,32 +139,20 @@ def test_read_and_write_set_names():
     for name in names:
         sdfg.add_symbol(f"{name}_size_0", dace.int32)
         sdfg.add_symbol(f"{name}_size_1", dace.int32)
-        sdfg.add_array(
-            name,
-            shape=(f"{name}_size_0", f"{name}_size_1"),
-            dtype=dace.float64,
-            transient=False,
-        )
+        sdfg.add_array(name, shape=(f"{name}_size_0", f"{name}_size_1"), dtype=dace.float64, transient=False)
     A, B = (state.add_access(name) for name in names)
 
     # Print copy `A` into `B`.
     #  Because, `dst_subset` is `None` we expect that everything is transferred.
-    state.add_nedge(
-        A,
-        B,
-        dace.Memlet("A[0:A_size_0, 0:A_size_1]"),
-    )
-    expected_read_set = {
-        "A": [sbs.Range.from_string("0:A_size_0, 0:A_size_1")],
-    }
-    expected_write_set = {
-        "B": [sbs.Range.from_string("0:B_size_0, 0:B_size_1")],
-    }
+    state.add_nedge(A, B, dace.Memlet("A[0:A_size_0, 0:A_size_1]"))
+    expected_read_set = {"A": [sbs.Range.from_string("0:A_size_0, 0:A_size_1")]}
+    expected_write_set = {"B": [sbs.Range.from_string("0:B_size_0, 0:B_size_1")]}
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_read_set, read_set), (expected_write_set, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -206,10 +173,7 @@ def test_add_mapped_tasklet():
 
     tsklt, me, mx = state.add_mapped_tasklet(
         "test_map",
-        map_ranges={
-            "i": "0:10",
-            "j": "0:10"
-        },
+        map_ranges={"i": "0:10", "j": "0:10"},
         inputs={"__in": dace.Memlet("A[i, j]")},
         code="__out = math.sin(__in)",
         outputs={"__out": dace.Memlet("B[j, i]")},
@@ -227,7 +191,7 @@ def _make_find_upstream_and_downstream_node_test_sdfg():
     state = sdfg.add_state()
 
     for name in "ab":
-        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=True)
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=True)
     a, b = (state.add_access(name) for name in "ab")
 
     tlet, me, mx = state.add_mapped_tasklet(
@@ -248,10 +212,7 @@ def _make_find_upstream_and_downstream_node_test_sdfg():
 def test_find_upstream_nodes():
     sdfg, state, a, me, tlet, _, _ = _make_find_upstream_and_downstream_node_test_sdfg()
 
-    found = sdutil.find_upstream_nodes(
-        node_to_start=tlet,
-        state=state,
-    )
+    found = sdutil.find_upstream_nodes(node_to_start=tlet, state=state)
     assert found == {a, me, tlet}
 
 
@@ -259,11 +220,7 @@ def test_find_upstream_nodes_bloking():
     sdfg, state, a, me, tlet, _, _ = _make_find_upstream_and_downstream_node_test_sdfg()
 
     seen = {me}
-    found = sdutil.find_upstream_nodes(
-        node_to_start=tlet,
-        state=state,
-        seen=seen,
-    )
+    found = sdutil.find_upstream_nodes(node_to_start=tlet, state=state, seen=seen)
     assert found is seen
     assert found == {me, tlet}
 
@@ -271,10 +228,7 @@ def test_find_upstream_nodes_bloking():
 def test_find_downstream_nodes():
     sdfg, state, _, _, tlet, mx, b = _make_find_upstream_and_downstream_node_test_sdfg()
 
-    found = sdutil.find_downstream_nodes(
-        node_to_start=tlet,
-        state=state,
-    )
+    found = sdutil.find_downstream_nodes(node_to_start=tlet, state=state)
     assert found == {tlet, mx, b}
 
 
@@ -282,11 +236,7 @@ def test_find_downstream_nodes_bloking():
     sdfg, state, _, _, tlet, mx, b = _make_find_upstream_and_downstream_node_test_sdfg()
 
     seen = {mx}
-    found = sdutil.find_downstream_nodes(
-        node_to_start=tlet,
-        state=state,
-        seen=seen,
-    )
+    found = sdutil.find_downstream_nodes(node_to_start=tlet, state=state, seen=seen)
     assert found is seen
     assert found == {mx, tlet}
 

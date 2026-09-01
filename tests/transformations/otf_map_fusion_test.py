@@ -54,10 +54,10 @@ def test_solve_permute():
 def test_solve_constant():
     i = dace.symbolic.symbol('i')
     write_params = [i]
-    write_accesses = ((i, i, 1), )
+    write_accesses = ((i, i, 1),)
 
     read_params = [i]
-    read_accesses = ((0, 0, 1), )
+    read_accesses = ((0, 0, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert sol[i] == 0
@@ -65,10 +65,10 @@ def test_solve_constant():
 
 def test_solve_constant2():
     write_params = []
-    write_accesses = ((0, 0, 1), )
+    write_accesses = ((0, 0, 1),)
 
     read_params = []
-    read_accesses = ((1, 1, 1), )
+    read_accesses = ((1, 1, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert (0, 0) in sol and sol[(0, 0)] == (1, 1)
@@ -78,10 +78,10 @@ def test_solve_constant2():
 def test_solve_unsolvable():
     i = dace.symbolic.symbol('i')
     write_params = [i]
-    write_accesses = ((0, 0, 1), )
+    write_accesses = ((0, 0, 1),)
 
     read_params = [i]
-    read_accesses = ((i, i, 1), )
+    read_accesses = ((i, i, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert sol is None
@@ -319,13 +319,13 @@ def test_trivial_fusion_nested_sdfg():
     assert count_maps(sdfg) == 2
 
     nums = np.arange(2, 130, 1, dtype=np.int64)
-    res = np.zeros((128, ), dtype=np.int64)
+    res = np.zeros((128,), dtype=np.int64)
     sdfg(A=nums, B=res)
 
     sdfg.apply_transformations(OTFMapFusion)
     assert count_maps(sdfg) == 1
 
-    res_fused = np.zeros((128, ), dtype=np.int64)
+    res_fused = np.zeros((128,), dtype=np.int64)
     sdfg(A=nums, B=res_fused)
     assert (res == res_fused).all()
 
@@ -617,8 +617,13 @@ def test_local_storage_fusion_nested_map():
 
 
 @dace.program
-def matmuls(A: dace.float32[64, 32], B: dace.float32[32, 16], C: dace.float32[16, 64], o1: dace.float32[64, 16],
-            o2: dace.float32[64, 64]):
+def matmuls(
+    A: dace.float32[64, 32],
+    B: dace.float32[32, 16],
+    C: dace.float32[16, 64],
+    o1: dace.float32[64, 16],
+    o2: dace.float32[64, 64],
+):
     for i, j, k in dace.map[0:64, 0:16, 0:32]:
         with dace.tasklet:
             in_A << A[i, k]
@@ -675,26 +680,29 @@ def test_matmuls():
 
 
 @dace.program
-def hdiff(in_field: dace.float64[128 + 4, 128 + 4, 64], out_field: dace.float64[128, 128, 64],
-          coeff: dace.float64[128, 128, 64]):
-    lap_field = 4.0 * in_field[1:128 + 3, 1:128 + 3, :] - (
-        in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] + in_field[1:128 + 3, 2:128 + 4, :] +
-        in_field[1:128 + 3, 0:128 + 2, :])
+def hdiff(
+    in_field: dace.float64[128 + 4, 128 + 4, 64],
+    out_field: dace.float64[128, 128, 64],
+    coeff: dace.float64[128, 128, 64],
+):
+    lap_field = 4.0 * in_field[1 : 128 + 3, 1 : 128 + 3, :] - (
+        in_field[2 : 128 + 4, 1 : 128 + 3, :]
+        + in_field[0 : 128 + 2, 1 : 128 + 3, :]
+        + in_field[1 : 128 + 3, 2 : 128 + 4, :]
+        + in_field[1 : 128 + 3, 0 : 128 + 2, :]
+    )
 
-    res1 = lap_field[1:, 1:128 + 1, :] - lap_field[:128 + 1, 1:128 + 1, :]
+    res1 = lap_field[1:, 1 : 128 + 1, :] - lap_field[: 128 + 1, 1 : 128 + 1, :]
     flx_field = np.where(
-        (res1 * (in_field[2:128 + 3, 2:128 + 2, :] - in_field[1:128 + 2, 2:128 + 2, :])) > 0,
-        0,
-        res1,
+        (res1 * (in_field[2 : 128 + 3, 2 : 128 + 2, :] - in_field[1 : 128 + 2, 2 : 128 + 2, :])) > 0, 0, res1
     )
-    res2 = lap_field[1:128 + 1, 1:, :] - lap_field[1:128 + 1, :128 + 1, :]
+    res2 = lap_field[1 : 128 + 1, 1:, :] - lap_field[1 : 128 + 1, : 128 + 1, :]
     fly_field = np.where(
-        (res2 * (in_field[2:128 + 2, 2:128 + 3, :] - in_field[2:128 + 2, 1:128 + 2, :])) > 0,
-        0,
-        res2,
+        (res2 * (in_field[2 : 128 + 2, 2 : 128 + 3, :] - in_field[2 : 128 + 2, 1 : 128 + 2, :])) > 0, 0, res2
     )
-    out_field[:, :, :] = in_field[2:128 + 2, 2:128 + 2, :] - coeff[:, :, :] * (
-        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])
+    out_field[:, :, :] = in_field[2 : 128 + 2, 2 : 128 + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]
+    )
 
 
 def test_hdiff():

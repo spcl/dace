@@ -10,6 +10,7 @@ slots are whatever ``Malloc`` returned, and the index taken from them faults the
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
+
 import re
 
 import dace
@@ -67,13 +68,14 @@ def test_a_stream_reset_is_ordered_against_the_pushes_of_its_state():
     assert resets, 'no stream reset was emitted, so this test would pass vacuously'
 
     for reset in resets:
-        after = code[reset.end():]
+        after = code[reset.end() :]
         push = after.find(f'{reset.group(1)}.push(')
         assert push != -1, f'stream {reset.group(1)} is reset but never pushed to'
         barrier = after.find('__gbar.Sync();')
         assert barrier != -1 and barrier < push, (
             f'stream {reset.group(1)} is pushed to without a grid barrier after its reset: a block '
-            'that enters the state late rewinds the queue head under a block that already pushed')
+            'that enters the state late rewinds the queue head under a block that already pushed'
+        )
 
 
 if __name__ == '__main__':

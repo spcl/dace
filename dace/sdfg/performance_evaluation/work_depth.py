@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Work depth analysis for any input SDFG. Can be used with the DaCe VS Code extension or
-from command line as a Python script. """
+"""Work depth analysis for any input SDFG. Can be used with the DaCe VS Code extension or
+from command line as a Python script."""
 
 import argparse
 from collections import deque
@@ -341,16 +341,13 @@ LIBNODES_TO_DEPTH = {
 # Type-cast calls (e.g. ``int``, ``float``, ``dace.float64``, ``dace.uint16``) perform no
 # arithmetic and count as zero work. The names are derived from the available DaCe data types plus
 # the Python/C builtins, so new dtypes need no maintenance here.
-_TYPECAST_NAMES = ({'int', 'float', 'complex', 'bool', 'double'}
-                   | {name
-                      for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)})
+_TYPECAST_NAMES = {'int', 'float', 'complex', 'bool', 'double'} | {
+    name for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)
+}
 _TYPECAST_NAMES |= {f'dace.{name}' for name in _TYPECAST_NAMES}
 
 PYFUNC_TO_ARITHMETICS = {
-    **{
-        name: 0
-        for name in _TYPECAST_NAMES
-    },
+    **{name: 0 for name in _TYPECAST_NAMES},
     # Transcendental intrinsics each count as one realised operation (np.* and math.* both lower to
     # the bare C name in tasklet code); a user wanting hardware flop counts overrides these.
     'math.exp': 1,
@@ -384,14 +381,12 @@ PYFUNC_TO_ARITHMETICS = {
 
 
 class ArithmeticCounter(ast.NodeVisitor):
-
     def __init__(self):
         self.count = 0
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
-            raise NotImplementedError('MatMult op count requires shape '
-                                      'inference')
+            raise NotImplementedError('MatMult op count requires shape inference')
         self.count += 1
         return self.generic_visit(node)
 
@@ -450,8 +445,7 @@ class DepthCounter(ast.NodeVisitor):
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
-            raise NotImplementedError('MatMult op count requires shape '
-                                      'inference')
+            raise NotImplementedError('MatMult op count requires shape inference')
         # Depth is 1 (for this operation) + max depth of the two operands
         left_depth = self.visit(node.left)
         right_depth = self.visit(node.right)
@@ -628,8 +622,10 @@ def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
         return count_arithmetic_ops_code(tasklet_node.code.code)
     else:
         # other languages not implemented, count whole tasklet as work of 1
-        warnings.warn('Work of tasklets only properly analyzed for Python or CPP. For all other '
-                      'languages work = 1 will be counted for each tasklet.')
+        warnings.warn(
+            'Work of tasklets only properly analyzed for Python or CPP. For all other '
+            'languages work = 1 will be counted for each tasklet.'
+        )
         return 1
 
 
@@ -641,8 +637,10 @@ def tasklet_depth(tasklet_node: nd.Tasklet, state: SDFGState):
         return count_depth_code(tasklet_node.code.code)
     else:
         # other languages not implemented, count whole tasklet as work of 1
-        warnings.warn('Depth of tasklets only properly analyzed for Python code. For all other '
-                      'languages depth = 1 will be counted for each tasklet.')
+        warnings.warn(
+            'Depth of tasklets only properly analyzed for Python code. For all other '
+            'languages depth = 1 will be counted for each tasklet.'
+        )
         return 1
 
 
@@ -672,8 +670,10 @@ def do_initial_subs(w, d, eq, subs1):
     """
     Calls subs three times for the given (w)ork and (d)epth values.
     """
-    result = simplify(pystr_to_symbolic(w).subs(eq[0]).subs(eq[1]).subs(subs1)), simplify(
-        pystr_to_symbolic(d).subs(eq[0]).subs(eq[1]).subs(subs1))
+    result = (
+        simplify(pystr_to_symbolic(w).subs(eq[0]).subs(eq[1]).subs(subs1)),
+        simplify(pystr_to_symbolic(d).subs(eq[0]).subs(eq[1]).subs(subs1)),
+    )
     return result
 
 
@@ -685,7 +685,7 @@ def control_flow_region_work_depth(
     equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
     subs1: Dict[str, sp.Expr],
     detailed_analysis: bool = False,
-    data_symbols: Optional[Set[str]] = None
+    data_symbols: Optional[Set[str]] = None,
 ) -> Tuple[sp.Expr | List[Tuple[sp.Expr, sp.Expr]], sp.Expr | List[Tuple[sp.Expr, sp.Expr]]]:
     """
     Analyze the work and depth of a given (structured) ControlFlowRegion.
@@ -715,10 +715,11 @@ def control_flow_region_work_depth(
     region_works: Dict[AbstractControlFlowRegion, sp.Expr] = {}
     for region in cfr.nodes():
         if isinstance(region, SDFGState):
-            #rename variable to make code more readable
+            # rename variable to make code more readable
             state = region
-            state_work, state_depth = state_work_depth(state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1,
-                                                       detailed_analysis)
+            state_work, state_depth = state_work_depth(
+                state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis
+            )
             # Substitutions for state_work and state_depth already performed, but state.executions needs to be subs'd now.
             state_work = simplify(state_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
             state_depth = simplify(state_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
@@ -726,7 +727,7 @@ def control_flow_region_work_depth(
             region_works[state], region_depths[state] = state_work, state_depth
             w_d_map[get_uuid(state)] = (region_works[state], region_depths[state])
         elif isinstance(region, LoopRegion):
-            #rename variable to make code more readable
+            # rename variable to make code more readable
             loop = region
             fallback = False
 
@@ -739,16 +740,18 @@ def control_flow_region_work_depth(
             upper_bound = loop_analysis.get_loop_end(loop)
             step = pystr_to_symbolic(loop_analysis.get_loop_stride(loop))
             if any(v is None for v in (loop_var, lower_bound, upper_bound)):
-                warnings.warn('Loop without a static loop variable/bounds; falling back to its '
-                              'execution count, which can affect the resulting expression.')
+                warnings.warn(
+                    'Loop without a static loop variable/bounds; falling back to its '
+                    'execution count, which can affect the resulting expression.'
+                )
                 fallback = True
                 executions = loop.start_block.executions
                 executions = executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
 
             # Recursively get the work and depth of the loop body
-            loop_work, loop_depth = control_flow_region_work_depth(loop, w_d_map, analyze_tasklet, symbols,
-                                                                   equality_subs, subs1, detailed_analysis,
-                                                                   data_symbols)
+            loop_work, loop_depth = control_flow_region_work_depth(
+                loop, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis, data_symbols
+            )
 
             if not fallback:
                 # If static loop bounds are available, we can write the work and depth of the loop as a summation over the loop variable from the lower to the upper bound.
@@ -759,7 +762,7 @@ def control_flow_region_work_depth(
                     if var.name == loop_var.name:
                         loop_var = var
 
-                #TEMPORARY FIX: with library nodes it can happen that we get two symbols (with the same name)
+                # TEMPORARY FIX: with library nodes it can happen that we get two symbols (with the same name)
                 for var in loop_work.free_symbols:
                     if var.name == loop_var.name and not var == loop_var:
                         loop_work = loop_work.subs({var: loop_var})
@@ -767,10 +770,12 @@ def control_flow_region_work_depth(
 
                 # Accumulate the per-iteration work and depth over the loop range (shared with the
                 # map handler), so iteration-dependent work is summed rather than multiplied.
-                loop_work = accumulate_over_range(loop_work, loop_var, lower_bound, upper_bound, step, equality_subs,
-                                                  subs1)
-                loop_depth = accumulate_over_range(loop_depth, loop_var, lower_bound, upper_bound, step, equality_subs,
-                                                   subs1)
+                loop_work = accumulate_over_range(
+                    loop_work, loop_var, lower_bound, upper_bound, step, equality_subs, subs1
+                )
+                loop_depth = accumulate_over_range(
+                    loop_depth, loop_var, lower_bound, upper_bound, step, equality_subs, subs1
+                )
 
                 # Do equality subs
                 loop_work = simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
@@ -783,8 +788,9 @@ def control_flow_region_work_depth(
                     loop_work = loop_work * executions
                     loop_depth = loop_depth * executions
                 else:
-                    exec_symbol = symbol(f'num_execs_{region.sdfg.cfg_id}_{region.sdfg.node_id(region)}',
-                                         nonnegative=True)
+                    exec_symbol = symbol(
+                        f'num_execs_{region.sdfg.cfg_id}_{region.sdfg.node_id(region)}', nonnegative=True
+                    )
                     loop_work = loop_work * exec_symbol
                     loop_depth = loop_depth * exec_symbol
 
@@ -795,11 +801,13 @@ def control_flow_region_work_depth(
             branch_conditions = {}
             branch_works = {}
             branch_depths = {}
-            for (condition, branch) in region.branches:
-                branch_conditions[branch] = (pystr_to_symbolic(condition.as_string)
-                                             if condition is not None else pystr_to_symbolic(True))
+            for condition, branch in region.branches:
+                branch_conditions[branch] = (
+                    pystr_to_symbolic(condition.as_string) if condition is not None else pystr_to_symbolic(True)
+                )
                 branch_works[branch], branch_depths[branch] = control_flow_region_work_depth(
-                    branch, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis, data_symbols)
+                    branch, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis, data_symbols
+                )
 
             if analyze_tasklet == get_tasklet_avg_par:
                 # For avg_par we want the branch minimising W/D (worst case parallelism).
@@ -837,9 +845,9 @@ def control_flow_region_work_depth(
             w_d_map[get_uuid(region)] = (region_works[region], region_depths[region])
 
         else:
-            function_work, function_depth = control_flow_region_work_depth(region, w_d_map, analyze_tasklet, symbols,
-                                                                           equality_subs, subs1, detailed_analysis,
-                                                                           data_symbols)
+            function_work, function_depth = control_flow_region_work_depth(
+                region, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, detailed_analysis, data_symbols
+            )
             function_work = simplify(function_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
             function_depth = simplify(function_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
 
@@ -920,10 +928,12 @@ def control_flow_region_work_depth(
                         old_avg_par = (cse[0] + work_map[region]) / (cse[1] + depth_map[region])
                         new_avg_par = (cse[0] + n_work) / (cse[1] + n_depth)
                         # we take either old work/depth or new work/depth (or both if we cannot determine which one is greater)
-                        depth_map[region] = cse[1] + sp.Piecewise((n_depth, simplify(new_avg_par < old_avg_par)),
-                                                                  (depth_map[region], True))
-                        work_map[region] = cse[0] + sp.Piecewise((n_work, simplify(new_avg_par < old_avg_par)),
-                                                                 (work_map[region], True))
+                        depth_map[region] = cse[1] + sp.Piecewise(
+                            (n_depth, simplify(new_avg_par < old_avg_par)), (depth_map[region], True)
+                        )
+                        work_map[region] = cse[0] + sp.Piecewise(
+                            (n_work, simplify(new_avg_par < old_avg_par)), (work_map[region], True)
+                        )
             else:
                 depth_map[region] = n_depth
                 work_map[region] = n_work
@@ -964,20 +974,37 @@ def control_flow_region_work_depth(
                     new_cse_stack.append((work_map[region], depth_map[region]))
                     # same for value_map
                     new_value_map = dict(region_value_map[region])
-                    new_value_map.update({
-                        pystr_to_symbolic(k):
-                        pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-                        for k, v in oedge.data.assignments.items()
-                    })
+                    new_value_map.update(
+                        {
+                            pystr_to_symbolic(k): pystr_to_symbolic(v)
+                            .subs(equality_subs[0])
+                            .subs(equality_subs[1])
+                            .subs(subs1)
+                            for k, v in oedge.data.assignments.items()
+                        }
+                    )
                     traversal_q.append((oedge.dst, 0, 0, oedge, new_cond_stack, new_cse_stack, new_value_map))
                 else:
-                    value_map.update({
-                        pystr_to_symbolic(k):
-                        pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-                        for k, v in oedge.data.assignments.items()
-                    })
-                    traversal_q.append((oedge.dst, depth_map[region], work_map[region], oedge, condition_stack,
-                                        common_subexpr_stack, value_map))
+                    value_map.update(
+                        {
+                            pystr_to_symbolic(k): pystr_to_symbolic(v)
+                            .subs(equality_subs[0])
+                            .subs(equality_subs[1])
+                            .subs(subs1)
+                            for k, v in oedge.data.assignments.items()
+                        }
+                    )
+                    traversal_q.append(
+                        (
+                            oedge.dst,
+                            depth_map[region],
+                            work_map[region],
+                            oedge,
+                            condition_stack,
+                            common_subexpr_stack,
+                            value_map,
+                        )
+                    )
 
     try:
         max_depth = depth_map[dummy_exit]
@@ -1035,9 +1062,15 @@ def compute_symbols(sdfg: SDFG) -> Set[str]:
     return data_symbols
 
 
-def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr, step: sp.Expr,
-                          equality_subs: Tuple[Dict[str, sp.Symbol],
-                                               Dict[str, sp.Expr]], subs1: Dict[str, sp.Expr]) -> sp.Expr:
+def accumulate_over_range(
+    expr: sp.Expr,
+    var: sp.Symbol,
+    lower: sp.Expr,
+    upper: sp.Expr,
+    step: sp.Expr,
+    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
+    subs1: Dict[str, sp.Expr],
+) -> sp.Expr:
     """
     Accumulate ``expr`` over one map/loop dimension ``var`` ranging over ``lower:upper:step`` (with
     ``upper`` inclusive). Shared by the loop and map handlers so both accumulate identically.
@@ -1117,8 +1150,9 @@ def scope_work_depth(
         if isinstance(node, nd.EntryNode):
             # If the scope contains an entry node, we need to recursively analyze the sub-scope of the entry node first.
             # The resulting work/depth are summarized into the entry node
-            s_work, s_depth = scope_work_depth(state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, node,
-                                               detailed_analysis)
+            s_work, s_depth = scope_work_depth(
+                state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, node, detailed_analysis
+            )
             s_work, s_depth = do_initial_subs(s_work, s_depth, equality_subs, subs1)
             # add up work for whole state, but also save work for this sub-scope scope in w_d_map
             work += s_work
@@ -1140,11 +1174,13 @@ def scope_work_depth(
             nested_syms.update(symbols)
             nested_syms.update(evaluate_symbols(symbols, node.symbol_mapping))
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, {},
-                                                                     equality_subs, {}, detailed_analysis)
+            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(
+                node.sdfg, w_d_map, analyze_tasklet, {}, equality_subs, {}, detailed_analysis
+            )
 
-            nsdfg_work, nsdfg_depth = nsdfg_work.subs(nested_syms), nsdfg_depth.subs(
-                nested_syms
+            nsdfg_work, nsdfg_depth = (
+                nsdfg_work.subs(nested_syms),
+                nsdfg_depth.subs(nested_syms),
             )  # We cannot use assumptions for nested sdfg analysis. It interfers with the global assumptions. We thus substitute afterwards
             nsdfg_work, nsdfg_depth = do_initial_subs(nsdfg_work, nsdfg_depth, equality_subs, subs1)
 
@@ -1248,8 +1284,9 @@ def scope_work_depth(
                         wcr_depth = oedge.data.volume / oedge.data.subset.num_elements()
                         if get_uuid(node, state) in wcr_depth_map:
                             # max
-                            wcr_depth_map[get_uuid(node, state)] = sp.Max(wcr_depth_map[get_uuid(node, state)],
-                                                                          wcr_depth)
+                            wcr_depth_map[get_uuid(node, state)] = sp.Max(
+                                wcr_depth_map[get_uuid(node, state)], wcr_depth
+                            )
                         else:
                             wcr_depth_map[get_uuid(node, state)] = wcr_depth
                     # We do not need to propagate the wcr_depth to MapExits, since else this will result in depth N + 1 for Maps of range N.
@@ -1278,13 +1315,15 @@ def scope_work_depth(
     return scope_result
 
 
-def state_work_depth(state: SDFGState,
-                     w_d_map: Dict[str, sp.Expr],
-                     analyze_tasklet,
-                     symbols,
-                     equality_subs,
-                     subs1,
-                     detailed_analysis=False) -> Tuple[sp.Expr, sp.Expr]:
+def state_work_depth(
+    state: SDFGState,
+    w_d_map: Dict[str, sp.Expr],
+    analyze_tasklet,
+    symbols,
+    equality_subs,
+    subs1,
+    detailed_analysis=False,
+) -> Tuple[sp.Expr, sp.Expr]:
     """
     Analyze the work and depth of a state.
 
@@ -1299,16 +1338,15 @@ def state_work_depth(state: SDFGState,
     :param subs1: First substitution dict for greater/lesser assumptions.
     :return: A tuple containing the work and depth of the state.
     """
-    work, depth = scope_work_depth(state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, None,
-                                   detailed_analysis)
+    work, depth = scope_work_depth(
+        state, w_d_map, analyze_tasklet, symbols, equality_subs, subs1, None, detailed_analysis
+    )
     return work, depth
 
 
-def analyze_sdfg(sdfg: SDFG,
-                 w_d_map: Dict[str, sp.Expr],
-                 analyze_tasklet,
-                 assumptions: List[str],
-                 detailed_analysis: bool = False):
+def analyze_sdfg(
+    sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet, assumptions: List[str], detailed_analysis: bool = False
+):
     """
     Analyze a given SDFG. We can either analyze work, work and depth or average parallelism.
 
@@ -1331,11 +1369,16 @@ def analyze_sdfg(sdfg: SDFG,
     # The analysis only models structured control flow. If the SDFG has a legacy loop or
     # unstructured branching, bail out with a zero result rather than producing a wrong one.
     if has_unstructured_control_flow(sdfg):
-        warnings.warn('Work-depth analysis supports only structured control flow (LoopRegion / '
-                      'ConditionalBlock); the SDFG contains a legacy loop or unstructured branch, '
-                      'so no result is produced.')
-        result = (pystr_to_symbolic(0),
-                  pystr_to_symbolic(0)) if analyze_tasklet == get_tasklet_work_depth else pystr_to_symbolic(0)
+        warnings.warn(
+            'Work-depth analysis supports only structured control flow (LoopRegion / '
+            'ConditionalBlock); the SDFG contains a legacy loop or unstructured branch, '
+            'so no result is produced.'
+        )
+        result = (
+            (pystr_to_symbolic(0), pystr_to_symbolic(0))
+            if analyze_tasklet == get_tasklet_work_depth
+            else pystr_to_symbolic(0)
+        )
         w_d_map[get_uuid(sdfg)] = result
         return result
 
@@ -1354,8 +1397,15 @@ def analyze_sdfg(sdfg: SDFG,
 
     # Analyze the work and depth of the SDFG.
     symbols = {}
-    control_flow_region_work_depth(sdfg, w_d_map, analyze_tasklet, symbols, equality_subs,
-                                   all_subs[0][0] if len(all_subs) > 0 else {}, detailed_analysis)
+    control_flow_region_work_depth(
+        sdfg,
+        w_d_map,
+        analyze_tasklet,
+        symbols,
+        equality_subs,
+        all_subs[0][0] if len(all_subs) > 0 else {},
+        detailed_analysis,
+    )
 
     for k, (v_w, v_d) in w_d_map.items():
         # The symeval replaces nested SDFG symbols with their global counterparts.
@@ -1364,19 +1414,21 @@ def analyze_sdfg(sdfg: SDFG,
         v_d = symeval(v_d, symbols)
         w_d_map[k] = (v_w, v_d)
 
-    for k, v, in w_d_map.items():
-        w_d_map[k] = ((v[0].subs(static_symbol_mapping).subs(equality_subs[1])),
-                      (v[1].subs(static_symbol_mapping).subs(equality_subs[1])))
+    for k, v in w_d_map.items():
+        w_d_map[k] = (
+            (v[0].subs(static_symbol_mapping).subs(equality_subs[1])),
+            (v[1].subs(static_symbol_mapping).subs(equality_subs[1])),
+        )
 
     if analyze_tasklet == get_tasklet_work_depth:
-        for k, v, in w_d_map.items():
+        for k, v in w_d_map.items():
             w_d_map[k] = ((simplify(v[0])), (simplify(v[1])))
     elif analyze_tasklet == get_tasklet_work:
-        for k, v, in w_d_map.items():
-            w_d_map[k] = (simplify(v[0]))
+        for k, v in w_d_map.items():
+            w_d_map[k] = simplify(v[0])
     elif analyze_tasklet == get_tasklet_avg_par:
-        for k, v, in w_d_map.items():
-            w_d_map[k] = (simplify(v[0] / v[1]) if (v[1]) != 0 else 0)  # work / depth = avg par
+        for k, v in w_d_map.items():
+            w_d_map[k] = simplify(v[0] / v[1]) if (v[1]) != 0 else 0  # work / depth = avg par
 
     result_whole_sdfg = w_d_map[get_uuid(sdfg)]
 
@@ -1409,15 +1461,19 @@ def do_subs(work, depth, all_subs):
 
 def main() -> None:
 
-    parser = argparse.ArgumentParser('work_depth',
-                                     usage='python work_depth.py [-h] filename --analyze {work,workDepth,avgPar}',
-                                     description='Analyze the work/depth of an SDFG.')
+    parser = argparse.ArgumentParser(
+        'work_depth',
+        usage='python work_depth.py [-h] filename --analyze {work,workDepth,avgPar}',
+        description='Analyze the work/depth of an SDFG.',
+    )
 
     parser.add_argument('filename', type=str, help='The SDFG file to analyze.')
-    parser.add_argument('--analyze',
-                        choices=['work', 'workDepth', 'avgPar'],
-                        default='workDepth',
-                        help='Choose what to analyze. Default: workDepth')
+    parser.add_argument(
+        '--analyze',
+        choices=['work', 'workDepth', 'avgPar'],
+        default='workDepth',
+        help='Choose what to analyze. Default: workDepth',
+    )
     parser.add_argument('--assume', nargs='*', help='Collect assumptions about symbols, e.g. x>0 x>y y==5')
 
     parser.add_argument("--detailed", action="store_true", help="Turns on detailed mode.")

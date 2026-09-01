@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" A code sample that uses a data-centric map to compute the Mandelbrot set in parallel. """
+"""A code sample that uses a data-centric map to compute the Mandelbrot set in parallel."""
+
 import argparse
 import dace
 import numpy as np
@@ -18,7 +19,7 @@ def mandelbrot(output: dace.uint16[H, W], maxiter: dace.int64):
         x = 0.0
         y = 0.0
         iteration = 0
-        while (x * x + y * y < 2 * 2 and iteration < maxiter):
+        while x * x + y * y < 2 * 2 and iteration < maxiter:
             xtemp = x * x - y * y + x0
             y = 2 * x * y + y0
             x = xtemp
@@ -32,12 +33,12 @@ def mandelbrot(output: dace.uint16[H, W], maxiter: dace.int64):
 
 
 def printcolor(val):
-    """ Prints out a color (in [0,1]) to a 256-color ANSI terminal). """
-    ESC = "\x1B["
+    """Prints out a color (in [0,1]) to a 256-color ANSI terminal)."""
+    ESC = "\x1b["
     MINVAL = 232
     MAXVAL = 255
     color = int(val * (MAXVAL - MINVAL) + MINVAL)
-    #232 -- 255
+    # 232 -- 255
     sys.stdout.write((ESC + "48;5;%dm " + ESC + "0m") % color)
 
 

@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the BufferTiling transformation. """
+"""Contains classes that implement the BufferTiling transformation."""
 
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -10,12 +10,12 @@ from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFus
 
 @make_properties
 class BufferTiling(transformation.SingleStateTransformation):
-    """ Implements the buffer tiling transformation.
+    """Implements the buffer tiling transformation.
 
-        BufferTiling tiles a buffer that is in between two maps, where the preceding map
-        writes to the buffer and the succeeding map reads from it.
-        It introduces additional computations in exchange for reduced memory footprint.
-        Commonly used to make use of shared memory on GPUs.
+    BufferTiling tiles a buffer that is in between two maps, where the preceding map
+    writes to the buffer and the succeeding map reads from it.
+    It introduces additional computations in exchange for reduced memory footprint.
+    Commonly used to make use of shared memory on GPUs.
     """
 
     map1_exit = transformation.PatternNode(nodes.MapExit)
@@ -78,13 +78,11 @@ class BufferTiling(transformation.SingleStateTransformation):
         upper_extents = tuple(a - b for a, b in zip(map1_entry.range.max_element(), map2_entry.range.max_element()))
 
         # Tile the first map with overlap
-        MapTilingWithOverlap.apply_to(sdfg,
-                                      map_entry=map1_entry,
-                                      options={
-                                          'tile_sizes': self.tile_sizes,
-                                          'lower_overlap': lower_extents,
-                                          'upper_overlap': upper_extents
-                                      })
+        MapTilingWithOverlap.apply_to(
+            sdfg,
+            map_entry=map1_entry,
+            options={'tile_sizes': self.tile_sizes, 'lower_overlap': lower_extents, 'upper_overlap': upper_extents},
+        )
         tile_map1_exit = graph.out_edges(map1_exit)[0].dst
         tile_map1_entry = graph.entry_node(tile_map1_exit)
         tile_map1_entry.label = 'BufferTiling'
@@ -96,11 +94,7 @@ class BufferTiling(transformation.SingleStateTransformation):
         # Fuse maps
         some_buffer = next(iter(buffers))  # some dummy to pass to MapFusionVertical.apply_to()
         MapFusionVertical.apply_to(
-            sdfg,
-            first_map_exit=tile_map1_exit,
-            array=some_buffer,
-            second_map_entry=tile_map2_entry,
-            verify=True,
+            sdfg, first_map_exit=tile_map1_exit, array=some_buffer, second_map_entry=tile_map2_entry, verify=True
         )
 
         # Optimize the simple cases
@@ -109,8 +103,9 @@ class BufferTiling(transformation.SingleStateTransformation):
             for r, l_ext, u_ext, ts in zip(map1_entry.range.ranges, lower_extents, upper_extents, self.tile_sizes)
         ]
 
-        map2_entry.range.ranges = [(r[0], r[0], r[2]) if ts == 1 else r
-                                   for r, ts in zip(map2_entry.range.ranges, self.tile_sizes)]
+        map2_entry.range.ranges = [
+            (r[0], r[0], r[2]) if ts == 1 else r for r, ts in zip(map2_entry.range.ranges, self.tile_sizes)
+        ]
 
         if any(ts == 1 for ts in self.tile_sizes):
             if any(r[0] == r[1] for r in map1_entry.map.range):

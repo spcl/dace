@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for half-precision syntax quirks. """
+"""Tests for half-precision syntax quirks."""
 
 import dace
 import numpy as np
@@ -67,7 +67,7 @@ def test_dropout():
                 a << A[i]
                 d << mask[i]
                 o >> out[i]
-                #o = a * dace.float16(d)
+                # o = a * dace.float16(d)
                 o = a if d else dace.float16(0)
         return out
 

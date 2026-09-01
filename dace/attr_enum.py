@@ -297,9 +297,11 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
         if member._is_template:
             # Try to create instance from dataclass fields
             from dace import serialize
+
             data_fields = {
                 k: serialize.from_json(v, context, known_type=member._dataclass_type.__dataclass_fields__[k].type)
-                for k, v in json_obj.items() if k != 'type'
+                for k, v in json_obj.items()
+                if k != 'type'
             }
             if data_fields:
                 return member(**data_fields)

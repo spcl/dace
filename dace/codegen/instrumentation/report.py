@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implementation of the performance instrumentation report. """
+"""Implementation of the performance instrumentation report."""
 
 from dataclasses import dataclass
 import json
@@ -30,6 +30,7 @@ class DurationEvent:
     """
     Instrumentation report event of a duration (e.g., execution time).
     """
+
     name: str  #: Event name
     category: str  #: Category
     uuid: UUIDType  #: Unique locator for SDFG/state/node/edge
@@ -42,14 +43,16 @@ class DurationEvent:
     def save(self) -> Dict[str, Any]:
         info = self.additional_info or {}
         args = {**info, **_uuid_to_dict(self.uuid)}
-        return dict(name=self.name,
-                    cat=self.category,
-                    ph='X',
-                    ts=self.timestamp,
-                    dur=self.duration,
-                    pid=self.pid,
-                    tid=self.tid,
-                    args=args)
+        return dict(
+            name=self.name,
+            cat=self.category,
+            ph='X',
+            ts=self.timestamp,
+            dur=self.duration,
+            pid=self.pid,
+            tid=self.tid,
+            args=args,
+        )
 
 
 @dataclass
@@ -57,6 +60,7 @@ class CounterEvent:
     """
     Instrumentation report event of a counter (e.g., performance counters).
     """
+
     name: str  #: Event name
     category: str  #: Category
     uuid: UUIDType  #: Unique locator for SDFG/state/node/edge
@@ -101,9 +105,9 @@ class InstrumentationReport(object):
 
         # Summarized fields:
         # UUID -> Name -> Thread ID -> Times
-        self.durations: Dict[UUIDType,
-                             Dict[str, Dict[int,
-                                            List[float]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        self.durations: Dict[UUIDType, Dict[str, Dict[int, List[float]]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(list))
+        )
 
         # UUID -> Name -> Counter -> Thread ID -> Values
         self.counters: Dict[UUIDType, Dict[str, Dict[str, Dict[int, List[float]]]]] = defaultdict(dict)
@@ -135,12 +139,23 @@ class InstrumentationReport(object):
                 uuid, other_info = self.get_event_uuid_and_other_info(event)
                 if event['ph'] == 'X':  # Duration event
                     self.events.append(
-                        DurationEvent(event['name'], event['cat'], uuid, event['ts'], event['dur'], event['pid'],
-                                      event['tid'], other_info))
+                        DurationEvent(
+                            event['name'],
+                            event['cat'],
+                            uuid,
+                            event['ts'],
+                            event['dur'],
+                            event['pid'],
+                            event['tid'],
+                            other_info,
+                        )
+                    )
                 elif event['ph'] == 'C':  # Counter event
                     self.events.append(
-                        CounterEvent(event['name'], event['cat'], uuid, event['ts'], other_info, event['pid'],
-                                     event['tid']))
+                        CounterEvent(
+                            event['name'], event['cat'], uuid, event['ts'], other_info, event['pid'], event['tid']
+                        )
+                    )
 
         # Summarize events for printouts
         self.process_events()
@@ -181,22 +196,14 @@ class InstrumentationReport(object):
         return 'InstrumentationReport(name=%s)' % self.name
 
     def sortby(self, column: str, ascending: bool = False):
-        if (column and column.lower() not in ('counter', 'value', 'min', 'max', 'mean', 'median')):
+        if column and column.lower() not in ('counter', 'value', 'min', 'max', 'mean', 'median'):
             raise ValueError('Only Counter, Value, Min, Max, Mean, Median are supported')
         self._sortcat = column if column is None else column.lower()
         self._sortdesc = not ascending
 
-    def _get_runtimes_string(self,
-                             label,
-                             runtimes,
-                             element,
-                             sdfg,
-                             state,
-                             string,
-                             row_format,
-                             colw,
-                             with_element_heading=True,
-                             title=''):
+    def _get_runtimes_string(
+        self, label, runtimes, element, sdfg, state, string, row_format, colw, with_element_heading=True, title=''
+    ):
         indent = ''
         if len(runtimes) > 0:
             element_label = ''
@@ -237,26 +244,20 @@ class InstrumentationReport(object):
                 string += row_format.format(element_label, '', '', '', '', width=colw)
 
             string += row_format.format(indent + label + ':', '', '', '', '', width=colw)
-            string += row_format.format(indent,
-                                        '%.3f' % np.min(runtimes),
-                                        '%.3f' % np.mean(runtimes),
-                                        '%.3f' % np.median(runtimes),
-                                        '%.3f' % np.max(runtimes),
-                                        width=colw)
+            string += row_format.format(
+                indent,
+                '%.3f' % np.min(runtimes),
+                '%.3f' % np.mean(runtimes),
+                '%.3f' % np.median(runtimes),
+                '%.3f' % np.max(runtimes),
+                width=colw,
+            )
 
         return string, sdfg, state
 
-    def _get_counters_string(self,
-                             counter,
-                             label,
-                             values,
-                             element,
-                             sdfg,
-                             state,
-                             string,
-                             row_format,
-                             colw,
-                             with_element_heading=True):
+    def _get_counters_string(
+        self, counter, label, values, element, sdfg, state, string, row_format, colw, with_element_heading=True
+    ):
         indent = ''
         if len(values) > 0:
             element_label = ''
@@ -295,12 +296,9 @@ class InstrumentationReport(object):
                 string += row_format.format(f"{counter}", '', '', '', '', width=colw)
 
             string += row_format.format(indent + "|" + label + ':', '', '', '', '', width=colw)
-            string += row_format.format(indent,
-                                        np.min(values),
-                                        '%.2f' % np.mean(values),
-                                        '%.2f' % np.median(values),
-                                        np.max(values),
-                                        width=colw)
+            string += row_format.format(
+                indent, np.min(values), '%.2f' % np.mean(values), '%.2f' % np.median(values), np.max(values), width=colw
+            )
 
         return string, sdfg, state
 
@@ -354,8 +352,9 @@ class InstrumentationReport(object):
                         else:
                             label = ""
 
-                        string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
-                                                                        row_format, COLW, with_element_heading, event)
+                        string, sdfg, state = self._get_runtimes_string(
+                            label, runtimes, element, sdfg, state, string, row_format, COLW, with_element_heading, event
+                        )
 
                         with_element_heading = False
 
@@ -381,9 +380,18 @@ class InstrumentationReport(object):
                             else:
                                 label = ""
 
-                            string, sdfg, state = self._get_counters_string(counter, label, thread_values, element,
-                                                                            sdfg, state, string, row_format, COLW,
-                                                                            with_element_heading)
+                            string, sdfg, state = self._get_counters_string(
+                                counter,
+                                label,
+                                thread_values,
+                                element,
+                                sdfg,
+                                state,
+                                string,
+                                row_format,
+                                COLW,
+                                with_element_heading,
+                            )
 
                             with_element_heading = False
 
@@ -410,10 +418,15 @@ class InstrumentationReport(object):
                         sdfg, state, node = element
                         nptimes = np.array(runtimes)
                         cnt = len(runtimes)
-                        mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
-                            nptimes)
+                        mint, meant, mediant, maxt = (
+                            np.min(nptimes),
+                            np.mean(nptimes),
+                            np.median(nptimes),
+                            np.max(nptimes),
+                        )
                         durations_csv.write(
-                            f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
+                            f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n'
+                        )
 
         # Create counters CSV
         if len(self.counters) > 0:
@@ -428,7 +441,8 @@ class InstrumentationReport(object):
                             cnt = len(values)
                             mint, meant, mediant, maxt = np.min(npval), np.mean(npval), np.median(npval), np.max(npval)
                             counters_csv.write(
-                                f'{ctrname},{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
+                                f'{ctrname},{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n'
+                            )
 
         return durations_csv.getvalue(), counters_csv.getvalue()
 

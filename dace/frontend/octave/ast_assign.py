@@ -6,7 +6,6 @@ import dace
 
 
 class AST_Assign(AST_Node):
-
     def __init__(self, context, lhs, rhs, op):
         # for a normal assignment op is "=", but there is also
         # in place modification, i.e., "+="
@@ -69,8 +68,13 @@ class AST_Assign(AST_Node):
                 rhs_datanode = self.rhs.get_datanode(sdfg, state)
                 lhs_datanode = self.lhs.get_datanode(sdfg, state)
 
-                s.add_edge(rhs_datanode, None, lhs_datanode, None,
-                           dace.memlet.Memlet.from_array(lhs_datanode.data, lhs_datanode.desc(sdfg)))
+                s.add_edge(
+                    rhs_datanode,
+                    None,
+                    lhs_datanode,
+                    None,
+                    dace.memlet.Memlet.from_array(lhs_datanode.data, lhs_datanode.desc(sdfg)),
+                )
 
             # We assign only to a part of an (existing) array, in order to not
             # create cycles we need to add a new data-node, the add_array()
@@ -81,8 +85,9 @@ class AST_Assign(AST_Node):
                 lhs_data = self.lhs.arrayname.get_datanode(sdfg, state)
                 vardef = self.search_vardef_in_scope(self.lhs.arrayname.get_name())
                 if vardef is None:
-                    raise ValueError("No definition found for " + self.lhs.arrayname.get_name() + " searching from " +
-                                     str(self))
+                    raise ValueError(
+                        "No definition found for " + self.lhs.arrayname.get_name() + " searching from " + str(self)
+                    )
                 dims = vardef.get_dims()
                 basetype = vardef.get_basetype()
                 if self.lhs.arrayname.get_name() not in sdfg.arrays:
@@ -127,18 +132,33 @@ class AST_Assign(AST_Node):
                         dname = d.get_name_in_sdfg(sdfg)
                         men.add_in_connector(dname)
                         datanode = d.get_datanode(sdfg, state)
-                        s.add_edge(datanode, None, men, dname,
-                                   dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg)))
-                    s.add_edge(rhs_datanode, None, men, 'IN_1',
-                               dace.memlet.Memlet.from_array(rhs_datanode.data, rhs_datanode.desc(sdfg)))
+                        s.add_edge(
+                            datanode,
+                            None,
+                            men,
+                            dname,
+                            dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg)),
+                        )
                     s.add_edge(
-                        men, 'OUT_1', dn, None,
-                        dace.memlet.Memlet.simple(self.lhs.arrayname.get_name(), ','.join([str(d) for d in acc_dims])))
+                        rhs_datanode,
+                        None,
+                        men,
+                        'IN_1',
+                        dace.memlet.Memlet.from_array(rhs_datanode.data, rhs_datanode.desc(sdfg)),
+                    )
+                    s.add_edge(
+                        men,
+                        'OUT_1',
+                        dn,
+                        None,
+                        dace.memlet.Memlet.simple(self.lhs.arrayname.get_name(), ','.join([str(d) for d in acc_dims])),
+                    )
                     s.add_edge(dn, None, mex, None, dace.memlet.Memlet())
 
             else:
-                raise NotImplementedError("Assignment with lhs of type " + str(type(self.lhs)) +
-                                          " has not been implemented yet.")
+                raise NotImplementedError(
+                    "Assignment with lhs of type " + str(type(self.lhs)) + " has not been implemented yet."
+                )
         else:
             raise NotImplementedError("Assignment operator " + self.op + " has not been implemented yet.")
 

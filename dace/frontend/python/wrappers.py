@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Types and wrappers used in DaCe's Python frontend. """
+"""Types and wrappers used in DaCe's Python frontend."""
+
 import numpy
 import itertools
 from collections import deque
@@ -11,7 +12,7 @@ T = TypeVar('T')
 
 
 def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
-    """ Returns a numpy ndarray where all types are converted to numpy types. """
+    """Returns a numpy ndarray where all types are converted to numpy types."""
     new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
     return numpy.ndarray(shape=shape, dtype=new_dtype, *args, **kwargs)
 
@@ -20,7 +21,7 @@ stream: Type[Deque[T]] = deque
 
 
 class stream_array(Generic[T]):
-    """ Stream array object in Python. """
+    """Stream array object in Python."""
 
     def __init__(self, dtype, shape):
         from dace import data
@@ -44,25 +45,25 @@ class stream_array(Generic[T]):
 
 
 def scalar(dtype=dtypes.float32):
-    """ Convenience function that defines a scalar (array of size 1). """
+    """Convenience function that defines a scalar (array of size 1)."""
     return ndarray([1], dtype)
 
 
 def define_local(dimensions, dtype=dtypes.float32):
-    """ Defines a transient array in a DaCe program. """
+    """Defines a transient array in a DaCe program."""
     return ndarray(dimensions, dtype=dtype)
 
 
 def define_local_scalar(dtype=dtypes.float32):
-    """ Defines a transient scalar (array of size 1) in a DaCe program. """
+    """Defines a transient scalar (array of size 1) in a DaCe program."""
     return ndarray([1], dtype=dtype)
 
 
 def define_stream(dtype=dtypes.float32, buffer_size=1):
-    """ Defines a local stream in a DaCe program. """
+    """Defines a local stream in a DaCe program."""
     return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
 
 
 def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
-    """ Defines a local stream array in a DaCe program. """
+    """Defines a local stream array in a DaCe program."""
     return stream_array(dtype, dimensions)

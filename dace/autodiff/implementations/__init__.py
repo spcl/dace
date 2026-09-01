@@ -41,6 +41,4 @@ try:
 except ImportError:
     pass
 
-__all__ = [
-    "DaceNodeBackwardImplementations",
-]
+__all__ = ["DaceNodeBackwardImplementations"]

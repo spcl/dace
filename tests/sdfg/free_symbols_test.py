@@ -56,7 +56,7 @@ def test_sdfg():
     sdfg.simplify()
     # Test each state separately
     for state in sdfg.states():
-        assert (state.free_symbols == {'k', 'N', 'M', 'L'} or state.free_symbols == set())
+        assert state.free_symbols == {'k', 'N', 'M', 'L'} or state.free_symbols == set()
     # The SDFG itself should have another free symbol
     assert sdfg.free_symbols == {'K', 'M', 'N', 'L'}
 
@@ -68,7 +68,7 @@ def test_constants():
     sdfg.add_constant('L', 20)
 
     for state in sdfg.states():
-        assert (state.free_symbols == {'k', 'N', 'M'} or state.free_symbols == set())
+        assert state.free_symbols == {'k', 'N', 'M'} or state.free_symbols == set()
     assert sdfg.free_symbols == {'M', 'N'}
 
 
@@ -102,11 +102,13 @@ def test_nested_sdfg_free_symbols():
     outer_body_state_2 = outer_sdfg.add_state('outer_body_2')
     outer_exit_state = outer_sdfg.add_state('outer_exit')
     outer_sdfg.add_edge(outer_init_state, outer_guard_state, dace.InterstateEdge(assignments={'i': '0'}))
-    outer_sdfg.add_edge(outer_guard_state, outer_body_state_1,
-                        dace.InterstateEdge(condition='i < 10', assignments={'j': 'i + 1'}))
+    outer_sdfg.add_edge(
+        outer_guard_state, outer_body_state_1, dace.InterstateEdge(condition='i < 10', assignments={'j': 'i + 1'})
+    )
     outer_sdfg.add_edge(outer_guard_state, outer_exit_state, dace.InterstateEdge(condition='i >= 10'))
-    outer_sdfg.add_edge(outer_body_state_1, outer_guard_state,
-                        dace.InterstateEdge(condition='j >= 10', assignments={'i': 'i + 1'}))
+    outer_sdfg.add_edge(
+        outer_body_state_1, outer_guard_state, dace.InterstateEdge(condition='j >= 10', assignments={'i': 'i + 1'})
+    )
     outer_sdfg.add_edge(outer_body_state_1, outer_body_state_2, dace.InterstateEdge(condition='j < 10'))
     outer_sdfg.add_edge(outer_body_state_2, outer_body_state_1, dace.InterstateEdge(assignments={'j': 'j + 1'}))
 
@@ -117,8 +119,9 @@ def test_nested_sdfg_free_symbols():
     inner_exit_state = inner_sdfg.add_state('inner_exit')
     inner_sdfg.add_edge(inner_init_state, inner_guard_state, dace.InterstateEdge(assignments={'k': 'j + 1'}))
     inner_sdfg.add_edge(inner_guard_state, inner_body_state, dace.InterstateEdge(condition='k < 10'))
-    inner_sdfg.add_edge(inner_guard_state, inner_exit_state,
-                        dace.InterstateEdge(condition='k >= 10', assignments={'j': 'j + 1'}))
+    inner_sdfg.add_edge(
+        inner_guard_state, inner_exit_state, dace.InterstateEdge(condition='k >= 10', assignments={'j': 'j + 1'})
+    )
     inner_sdfg.add_edge(inner_body_state, inner_guard_state, dace.InterstateEdge(assignments={'k': 'k + 1'}))
 
     outer_body_state_2.add_nested_sdfg(inner_sdfg, {}, {}, symbol_mapping={'j': 'j'})

@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the symbol write scopes analysis pass. """
+"""Tests the symbol write scopes analysis pass."""
 
 import dace
 from dace.transformation.pass_pipeline import FixedPointPipeline

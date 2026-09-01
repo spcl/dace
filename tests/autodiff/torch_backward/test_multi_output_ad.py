@@ -13,7 +13,6 @@ from tests.utils import torch_tensors_close
 def test_multi_output(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             return x + 1, x * 2
 
@@ -21,12 +20,7 @@ def test_multi_output(use_cpp_dispatcher: bool):
 
     input_value = torch.rand(5, 10, dtype=torch.float32)
 
-    pytorch_input = torch.empty(
-        5,
-        10,
-        dtype=torch.float32,
-        requires_grad=False,
-    )
+    pytorch_input = torch.empty(5, 10, dtype=torch.float32, requires_grad=False)
     pytorch_input.copy_(input_value)
 
     dace_input = torch.empty(5, 10, dtype=torch.float32, requires_grad=False)

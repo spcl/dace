@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests dace.program as class methods """
+"""Tests dace.program as class methods"""
+
 import pytest
 import dace
 import numpy as np
@@ -7,7 +8,8 @@ import time
 
 
 class MyTestClass:
-    """ Test class with various values, lifetimes, and call types. """
+    """Test class with various values, lifetimes, and call types."""
+
     classvalue = 2
 
     def __init__(self, n=5) -> None:
@@ -46,9 +48,7 @@ class MyTestClass:
 
 
 class MyTestCallAttributesClass:
-
     class SDFGMethodTestClass:
-
         def __sdfg__(self, *args, **kwargs):
 
             @dace.program
@@ -205,7 +205,6 @@ def test_sdfgattr_method_jit_with_scalar():
 def test_nested_field_in_map():
 
     class B:
-
         def __init__(self) -> None:
             self.field = np.random.rand(10, 10)
 
@@ -214,7 +213,6 @@ def test_nested_field_in_map():
             return self.field[1, 1]
 
     class A:
-
         def __init__(self, nested: B):
             self.nested = nested
 
@@ -234,7 +232,6 @@ def test_nested_field_in_map():
 def test_nested_callback_in_map():
 
     class B:
-
         def __init__(self) -> None:
             self.field = np.random.rand(10, 10)
 
@@ -243,7 +240,6 @@ def test_nested_callback_in_map():
             val[i] = time.time()
 
     class A:
-
         def __init__(self, nested: B):
             self.nested = nested
 
@@ -282,7 +278,7 @@ if __name__ == '__main__':
     test_callable()
     test_static()
     test_static_withclass()
-    #test_classmethod()
+    # test_classmethod()
     test_nested_methods()
     test_decorator()
     test_sdfgattr_method_jit()

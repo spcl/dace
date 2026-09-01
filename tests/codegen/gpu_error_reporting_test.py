@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests that a GPU failure inside a compiled SDFG reaches the caller, and reaches the right caller."""
+
 import numpy as np
 import pytest
 
@@ -35,12 +36,7 @@ def build_doubler():
 
 
 def arguments(m):
-    return {
-        'A': np.ones((m, 2), dtype=np.float64),
-        'B': np.zeros((m, 2), dtype=np.float64),
-        'N': 2,
-        'M': m,
-    }
+    return {'A': np.ones((m, 2), dtype=np.float64), 'B': np.zeros((m, 2), dtype=np.float64), 'N': 2, 'M': m}
 
 
 @pytest.mark.gpu

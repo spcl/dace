@@ -7,6 +7,7 @@ such edges is neither read nor written. Counting raw degree made one an apparent
 of its own; ``ScalarFission`` renamed the node twice and versioned a later read onto a container
 that nothing ever writes.
 """
+
 import dace
 from dace.transformation.passes.analysis import FindAccessNodes
 

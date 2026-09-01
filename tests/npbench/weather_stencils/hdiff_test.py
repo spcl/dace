@@ -14,56 +14,51 @@ I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 # Adapted from https://github.com/GridTools/gt4py/blob/1caca893034a18d5df1522ed251486659f846589/tests/test_integration/stencil_definitions.py#L194
 @dc.program
 def hdiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I, J, K], coeff: dc.float64[I, J, K]):
-    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
-                                                       in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
+    lap_field = 4.0 * in_field[1 : I + 3, 1 : J + 3, :] - (
+        in_field[2 : I + 4, 1 : J + 3, :]
+        + in_field[0 : I + 2, 1 : J + 3, :]
+        + in_field[1 : I + 3, 2 : J + 4, :]
+        + in_field[1 : I + 3, 0 : J + 2, :]
+    )
 
     # res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
-    res1 = lap_field[1:, 1:J + 1, :] - lap_field[:I + 1, 1:J + 1, :]
-    flx_field = np.where(
-        (res1 * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :])) > 0,
-        0,
-        res1,
-    )
+    res1 = lap_field[1:, 1 : J + 1, :] - lap_field[: I + 1, 1 : J + 1, :]
+    flx_field = np.where((res1 * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res1)
 
-    res2 = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :J + 1, :]
-    fly_field = np.where(
-        (res2 * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :])) > 0,
-        0,
-        res2,
-    )
+    res2 = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, : J + 1, :]
+    fly_field = np.where((res2 * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res2)
 
-    out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] +
-                                                                           fly_field[:, 1:, :] - fly_field[:, :-1, :])
+    out_field[:, :, :] = in_field[2 : I + 2, 2 : J + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]
+    )
 
 
 def hdiff_jax_kernel(jnp, in_field, out_field, coeff):
     I, J, K = out_field.shape[0], out_field.shape[1], out_field.shape[2]
-    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
-                                                       in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
-
-    res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
-    flx_field = jnp.where(
-        (res * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :])) > 0,
-        0,
-        res,
+    lap_field = 4.0 * in_field[1 : I + 3, 1 : J + 3, :] - (
+        in_field[2 : I + 4, 1 : J + 3, :]
+        + in_field[0 : I + 2, 1 : J + 3, :]
+        + in_field[1 : I + 3, 2 : J + 4, :]
+        + in_field[1 : I + 3, 0 : J + 2, :]
     )
 
-    res = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :-1, :]
-    fly_field = jnp.where(
-        (res * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :])) > 0,
-        0,
-        res,
-    )
+    res = lap_field[1:, 1 : J + 1, :] - lap_field[:-1, 1 : J + 1, :]
+    flx_field = jnp.where((res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res)
+
+    res = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, :-1, :]
+    fly_field = jnp.where((res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res)
 
     out_field = out_field.at[:, :, :].set(
-        in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] *
-        (flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]))
+        in_field[2 : I + 2, 2 : J + 2, :]
+        - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])
+    )
 
     return jnp.sum(out_field)
 
 
 def initialize(I, J, K):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     # Define arrays
@@ -76,25 +71,22 @@ def initialize(I, J, K):
 
 def ground_truth(in_field, out_field, coeff):
     I, J, K = out_field.shape[0], out_field.shape[1], out_field.shape[2]
-    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
-                                                       in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
-
-    res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]
-    flx_field = np.where(
-        (res * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :])) > 0,
-        0,
-        res,
+    lap_field = 4.0 * in_field[1 : I + 3, 1 : J + 3, :] - (
+        in_field[2 : I + 4, 1 : J + 3, :]
+        + in_field[0 : I + 2, 1 : J + 3, :]
+        + in_field[1 : I + 3, 2 : J + 4, :]
+        + in_field[1 : I + 3, 0 : J + 2, :]
     )
 
-    res = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :-1, :]
-    fly_field = np.where(
-        (res * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :])) > 0,
-        0,
-        res,
-    )
+    res = lap_field[1:, 1 : J + 1, :] - lap_field[:-1, 1 : J + 1, :]
+    flx_field = np.where((res * (in_field[2 : I + 3, 2 : J + 2, :] - in_field[1 : I + 2, 2 : J + 2, :])) > 0, 0, res)
 
-    out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] +
-                                                                           fly_field[:, 1:, :] - fly_field[:, :-1, :])
+    res = lap_field[1 : I + 1, 1:, :] - lap_field[1 : I + 1, :-1, :]
+    fly_field = np.where((res * (in_field[2 : I + 2, 2 : J + 3, :] - in_field[2 : I + 2, 1 : J + 2, :])) > 0, 0, res)
+
+    out_field[:, :, :] = in_field[2 : I + 2, 2 : J + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]
+    )
 
 
 def run_hdiff(device_type: dace.dtypes.DeviceType):
@@ -130,26 +122,29 @@ def run_hdiff_autodiff():
 
     # Initialize gradient computation data
     gradient_in_field = np.zeros_like(in_field)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I, J, K], coeff: dc.float64[I, J,
-                                                                                                                 K]):
+    def autodiff_kernel(
+        in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I, J, K], coeff: dc.float64[I, J, K]
+    ):
         hdiff_kernel(in_field, out_field, coeff)
         return np.sum(out_field)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["in_field"], outputs=["__return"])
-    sdfg(in_field,
-         out_field,
-         coeff,
-         I=I,
-         J=J,
-         K=K,
-         gradient_in_field=gradient_in_field,
-         gradient___return=gradient___return)
+    sdfg(
+        in_field,
+        out_field,
+        coeff,
+        I=I,
+        J=J,
+        K=K,
+        gradient_in_field=gradient_in_field,
+        gradient___return=gradient___return,
+    )
 
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
@@ -177,7 +172,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

@@ -88,14 +88,17 @@ if __name__ == '__main__':
     test_peeling_end()
 
 
-@pytest.mark.parametrize('start, condition, step, expected', [
-    (0, 'i < 10', 'i + 1', list(range(0, 10, 1))),
-    (0, 'i < 10', 'i + 3', list(range(0, 10, 3))),
-    (9, 'i > -1', 'i - 1', list(range(9, -1, -1))),
-    (9, 'i > -1', 'i - 3', list(range(9, -1, -3))),
-    (9, 'i >= 0', 'i - 1', list(range(9, -1, -1))),
-    (5, 'i <= 5', 'i + 1', [5]),
-])
+@pytest.mark.parametrize(
+    'start, condition, step, expected',
+    [
+        (0, 'i < 10', 'i + 1', list(range(0, 10, 1))),
+        (0, 'i < 10', 'i + 3', list(range(0, 10, 3))),
+        (9, 'i > -1', 'i - 1', list(range(9, -1, -1))),
+        (9, 'i > -1', 'i - 3', list(range(9, -1, -3))),
+        (9, 'i >= 0', 'i - 1', list(range(9, -1, -1))),
+        (5, 'i <= 5', 'i + 1', [5]),
+    ],
+)
 def test_unroll_covers_every_iteration(start, condition, step, expected):
     """Every iteration is unrolled, counting up or down, at any stride."""
     sdfg = dace.SDFG(f'unroll_{start}_{step.replace(" ", "").replace("-", "m").replace("+", "p")}')

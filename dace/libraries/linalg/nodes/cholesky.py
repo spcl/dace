@@ -33,13 +33,15 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     potrf_node = Potrf('potrf', lower=node.lower)
     potrf_node.implementation = implementation
 
-    _, me, mx = state.add_mapped_tasklet('_uzero_',
-                                         dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
-                                         dict(_inp=Memlet.simple('_b', '__i, __j')),
-                                         '_out = (__i < __j) ? 0 : _inp;',
-                                         dict(_out=Memlet.simple('_b', '__i, __j')),
-                                         language=dace.dtypes.Language.CPP,
-                                         external_edges=True)
+    _, me, mx = state.add_mapped_tasklet(
+        '_uzero_',
+        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+        dict(_inp=Memlet.simple('_b', '__i, __j')),
+        '_out = (__i < __j) ? 0 : _inp;',
+        dict(_out=Memlet.simple('_b', '__i, __j')),
+        language=dace.dtypes.Language.CPP,
+        external_edges=True,
+    )
 
     ain = state.add_read('_a')
     if implementation == 'cuSolverDn':
@@ -85,7 +87,6 @@ class ExpandCholeskyPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -95,7 +96,6 @@ class ExpandCholeskyOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -105,7 +105,6 @@ class ExpandCholeskyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -115,21 +114,18 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
-        "cuSolverDn": ExpandCholeskyCuSolverDn
+        "cuSolverDn": ExpandCholeskyCuSolverDn,
     }
     default_implementation = None
 
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a"}, outputs={
-            "_b",
-        }, **kwargs)
+        super().__init__(name, *args, inputs={"_a"}, outputs={"_b"}, **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):
@@ -152,7 +148,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         sqdims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout, = None, None
+        (desc_ain, desc_aout) = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_a":
                 desc_ain = sdfg.arrays[e.data.data]

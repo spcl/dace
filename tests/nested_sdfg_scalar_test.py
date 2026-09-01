@@ -12,12 +12,14 @@ def _construct_sdfg():
     nsdfg.add_array('a', [1], dace.float64)
     nsdfg.add_array('b', [1], dace.float64)
     nstate = nsdfg.add_state()
-    nstate.add_mapped_tasklet('m',
-                              dict(i='0'),
-                              dict(inp=dace.Memlet.simple('a', 'i')),
-                              'out = inp * 5.0',
-                              dict(out=dace.Memlet.simple('b', 'i')),
-                              external_edges=True)
+    nstate.add_mapped_tasklet(
+        'm',
+        dict(i='0'),
+        dict(inp=dace.Memlet.simple('a', 'i')),
+        'out = inp * 5.0',
+        dict(out=dace.Memlet.simple('b', 'i')),
+        external_edges=True,
+    )
 
     r = state.add_read('A')
     n = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})

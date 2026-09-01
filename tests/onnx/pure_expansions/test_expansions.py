@@ -50,7 +50,8 @@ def test_matmul_expansion(a_shape, b_shape):
         sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = sdfg(X=X, Z=Z)
 
@@ -81,7 +82,8 @@ def test_cast_int_to_float():
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = sdfg(X=X)
 
@@ -112,7 +114,8 @@ def test_cast_float_to_int():
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = sdfg(X=X)
 
@@ -143,7 +146,8 @@ def test_cast_float_to_long():
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = sdfg(X=X)
 
@@ -151,18 +155,22 @@ def test_cast_float_to_long():
 
 
 @pytest.mark.onnx
-#+yapf: disable
-@pytest.mark.parametrize("reduce_type, keepdims, axes",
-                         [('Sum',  True,  [0]),
-                          ('Sum',  False, [-1]),
-                          ('Sum',  True,  [0, -1]),
-                          ('Max',  False, [0, -1]),
-                          ('Max',  True,  [0]),
-                          ('Max',  True,  [-1]),
-                          ('Mean', True,  [-1]),
-                          ('Mean', True,  [0, -1]),
-                          ('Mean', False, [0])])
-#+yapf: enable
+# +yapf: disable
+@pytest.mark.parametrize(
+    "reduce_type, keepdims, axes",
+    [
+        ('Sum', True, [0]),
+        ('Sum', False, [-1]),
+        ('Sum', True, [0, -1]),
+        ('Max', False, [0, -1]),
+        ('Max', True, [0]),
+        ('Max', True, [-1]),
+        ('Mean', True, [-1]),
+        ('Mean', True, [0, -1]),
+        ('Mean', False, [0]),
+    ],
+)
+# +yapf: enable
 def test_reduce(keepdims, reduce_type, axes):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
@@ -194,7 +202,8 @@ def test_reduce(keepdims, reduce_type, axes):
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
     result = sdfg(X=X)
 
     assert_allclose(numpy_result, result, rtol=1e-5, atol=1e-5)
@@ -326,7 +335,8 @@ def test_reciprocal():
 
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = sdfg(X=X)
 
@@ -489,11 +499,7 @@ def test_gather_onnx_2():
     sdfg.expand_library_nodes()
     sdfg.simplify()
 
-    data = np.array([
-        [1.0, 1.2, 1.9],
-        [2.3, 3.4, 3.9],
-        [4.5, 5.7, 5.9],
-    ])
+    data = np.array([[1.0, 1.2, 1.9], [2.3, 3.4, 3.9], [4.5, 5.7, 5.9]])
     indices = np.array([[0, 2]])
     result = sdfg(inp=data.copy(), indices=indices.copy())
     np_result = np.take(data, indices, axis=1)
@@ -515,11 +521,7 @@ def test_unsqueeze():
 
     sdfg: dace.SDFG = unsqueeze.to_sdfg()
 
-    data = np.array([
-        [1.0, 1.2, 1.9],
-        [2.3, 3.4, 3.9],
-        [4.5, 5.7, 5.9],
-    ])
+    data = np.array([[1.0, 1.2, 1.9], [2.3, 3.4, 3.9], [4.5, 5.7, 5.9]])
 
     np_result = np.reshape(data, [3, 1, 3, 1])
 
@@ -534,9 +536,17 @@ if __name__ == "__main__":
     test_cast_float_to_int()
     test_cast_float_to_long()
 
-    reduce_params = [(True, 'Sum', [0]), (False, 'Sum', [-1]), (True, 'Sum', [0, -1]), (False, 'Max', [0, -1]),
-                     (True, 'Max', [0]), (True, 'Max', [-1]), (True, 'Mean', [-1]), (True, 'Mean', [0, -1]),
-                     (False, 'Mean', [0])]
+    reduce_params = [
+        (True, 'Sum', [0]),
+        (False, 'Sum', [-1]),
+        (True, 'Sum', [0, -1]),
+        (False, 'Max', [0, -1]),
+        (True, 'Max', [0]),
+        (True, 'Max', [-1]),
+        (True, 'Mean', [-1]),
+        (True, 'Mean', [0, -1]),
+        (False, 'Mean', [0]),
+    ]
     for keepdims, reduce_type, axes in reduce_params:
         test_reduce(keepdims=keepdims, reduce_type=reduce_type, axes=axes)
 

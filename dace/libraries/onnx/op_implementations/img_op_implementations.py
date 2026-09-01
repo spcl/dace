@@ -55,8 +55,9 @@ class PureMaxPool2D(ONNXForward):
         if node.ceil_mode != 0 or node.storage_order != 0:
             return False
 
-        if node.dilations is not None and (not all(d == 1
-                                                   for d in node.dilations) or len(node.dilations) != image_dims):
+        if node.dilations is not None and (
+            not all(d == 1 for d in node.dilations) or len(node.dilations) != image_dims
+        ):
             return False
         return True
 
@@ -99,10 +100,11 @@ class PureMaxPool2D(ONNXForward):
         Y_write = nstate.add_write("Y")
 
         # Create tasklet that performs the max pooling operation
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={"__X": dace.pointer(X.dtype)},
-                                     outputs={"__Y": dace.pointer(Y.dtype)},
-                                     code=f"""
+        tasklet = nstate.add_tasklet(
+            name=node.label + "_tasklet",
+            inputs={"__X": dace.pointer(X.dtype)},
+            outputs={"__Y": dace.pointer(Y.dtype)},
+            code=f"""
             // Initialize output with minimum value
             for (int b = 0; b < {batch_size}; b++) {{
                 for (int c = 0; c < {num_channels}; c++) {{
@@ -136,7 +138,8 @@ class PureMaxPool2D(ONNXForward):
                 }}
             }}
             """,
-                                     language=dace.Language.CPP)
+            language=dace.Language.CPP,
+        )
 
         # Connect the tasklet with memlets
         nstate.add_edge(X_read, None, tasklet, "__X", dace.Memlet.from_array("X", X))
@@ -169,8 +172,11 @@ class PureConv2D(ONNXForward):
         num_filters = W.shape[0]
         num_channels = X.shape[1]
 
-        if (X.dtype not in [dace.float16, dace.float32, dace.float64]
-                or W.dtype not in [dace.float16, dace.float32, dace.float64]):
+        if X.dtype not in [dace.float16, dace.float32, dace.float64] or W.dtype not in [
+            dace.float16,
+            dace.float32,
+            dace.float64,
+        ]:
             return False
 
         # Only do 2D for now
@@ -193,8 +199,9 @@ class PureConv2D(ONNXForward):
         if W.shape[1] != num_channels // groups:
             return False
 
-        if node.dilations is not None and (not all(d == 1
-                                                   for d in node.dilations) or len(node.dilations) != image_dims):
+        if node.dilations is not None and (
+            not all(d == 1 for d in node.dilations) or len(node.dilations) != image_dims
+        ):
             return False
 
         if node.pads is not None and (len(node.pads) != image_dims * 2):
@@ -276,7 +283,8 @@ class PureConv2D(ONNXForward):
         # Generate C++ code for the grouped convolution
         code = f"""
         // Initialize output
-        {f'''
+        {
+            f'''
         // Initialize with bias
         for (int b = 0; b < {batch_size}; b++) {{
             for (int m = 0; m < {num_filters}; m++) {{
@@ -287,7 +295,9 @@ class PureConv2D(ONNXForward):
                 }}
             }}
         }}
-        ''' if B is not None else f'''
+        '''
+            if B is not None
+            else f'''
         // Zero-initialize output
         for (int b = 0; b < {batch_size}; b++) {{
             for (int m = 0; m < {num_filters}; m++) {{
@@ -298,7 +308,8 @@ class PureConv2D(ONNXForward):
                 }}
             }}
         }}
-        '''}
+        '''
+        }
 
         // Main grouped convolution computation
         for (int b = 0; b < {batch_size}; b++) {{
@@ -324,9 +335,15 @@ class PureConv2D(ONNXForward):
                                         if (0 <= sx && sx < {input_size_x} && 0 <= sy && sy < {input_size_y}) {{
                                             // Note: Weight tensor layout for grouped conv:
                                             // [num_filters, channels_per_group, filter_hx, filter_hy]
-                                            float filter = __W[out_channel * {W.strides[0]} + c * {W.strides[1]} + hx * {W.strides[2]} + hy * {W.strides[3]}];
-                                            float image = __X[b * {X.strides[0]} + in_channel * {X.strides[1]} + sx * {X.strides[2]} + sy * {X.strides[3]}];
-                                            __Y[b * {Y.strides[0]} + out_channel * {Y.strides[1]} + out_x * {Y.strides[2]} + out_y * {Y.strides[3]}] += filter * image;
+                                            float filter = __W[out_channel * {W.strides[0]} + c * {
+            W.strides[1]
+        } + hx * {W.strides[2]} + hy * {W.strides[3]}];
+                                            float image = __X[b * {X.strides[0]} + in_channel * {X.strides[1]} + sx * {
+            X.strides[2]
+        } + sy * {X.strides[3]}];
+                                            __Y[b * {Y.strides[0]} + out_channel * {Y.strides[1]} + out_x * {
+            Y.strides[2]
+        } + out_y * {Y.strides[3]}] += filter * image;
                                         }}
                                     }}
                                 }}
@@ -339,23 +356,20 @@ class PureConv2D(ONNXForward):
         """
 
         # Create tasklet inputs and outputs
-        tasklet_inputs = {
-            "__X": dace.pointer(X.dtype),
-            "__W": dace.pointer(W.dtype),
-        }
-        tasklet_outputs = {
-            "__Y": dace.pointer(Y.dtype),
-        }
+        tasklet_inputs = {"__X": dace.pointer(X.dtype), "__W": dace.pointer(W.dtype)}
+        tasklet_outputs = {"__Y": dace.pointer(Y.dtype)}
 
         if B is not None:
             tasklet_inputs["__B"] = dace.pointer(B.dtype)
 
         # Create the tasklet
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs=tasklet_inputs,
-                                     outputs=tasklet_outputs,
-                                     code=code,
-                                     language=dace.Language.CPP)
+        tasklet = nstate.add_tasklet(
+            name=node.label + "_tasklet",
+            inputs=tasklet_inputs,
+            outputs=tasklet_outputs,
+            code=code,
+            language=dace.Language.CPP,
+        )
 
         # Connect the tasklet with memlets
         nstate.add_edge(X_read, None, tasklet, "__X", dace.Memlet.from_array("X", X))
@@ -457,13 +471,21 @@ class PureBatchNormalization(ONNXForward):
             # Keep your "write-back" edges as-is
             new_state = sdfg.add_state_after(sdfg.nodes()[0])
             rm_name = out_edge_with_name(node, state, "running_mean").data.data
-            new_state.add_edge(new_state.add_read(rm_name), None,
-                               new_state.add_read(in_edge_with_name(node, state, "input_mean").data.data), None,
-                               sdfg.make_array_memlet(rm_name))
+            new_state.add_edge(
+                new_state.add_read(rm_name),
+                None,
+                new_state.add_read(in_edge_with_name(node, state, "input_mean").data.data),
+                None,
+                sdfg.make_array_memlet(rm_name),
+            )
             rv_name = out_edge_with_name(node, state, "running_var").data.data
-            new_state.add_edge(new_state.add_read(rv_name), None,
-                               new_state.add_read(in_edge_with_name(node, state, "input_var").data.data), None,
-                               sdfg.make_array_memlet(rv_name))
+            new_state.add_edge(
+                new_state.add_read(rv_name),
+                None,
+                new_state.add_read(in_edge_with_name(node, state, "input_var").data.data),
+                None,
+                sdfg.make_array_memlet(rv_name),
+            )
         else:
             # EVAL: use provided running statistics; DO NOT recompute mean/var
             def prog(input_mean, scale, input_var, B, X, Y):
@@ -539,11 +561,13 @@ class PureGlobalAveragePool(ONNXForward):
         axes_node = nstate.add_access(axes_name)
 
         # Add a tasklet to initialize the axes array
-        axes_init_tasklet = nstate.add_tasklet("init_axes",
-                                               set(), {"out": dace.pointer(axes_arr_dtype)},
-                                               "\n".join(
-                                                   [f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                                               language=dace.Language.CPP)
+        axes_init_tasklet = nstate.add_tasklet(
+            "init_axes",
+            set(),
+            {"out": dace.pointer(axes_arr_dtype)},
+            "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
+            language=dace.Language.CPP,
+        )
         nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
         # Create ONNXReduceMean node
