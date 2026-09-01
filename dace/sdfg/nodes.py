@@ -1042,6 +1042,10 @@ class Map(object):
                               default=0,
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_simd = Property(dtype=bool,
+                        default=False,
+                        desc="Vectorize the innermost loop with an OpenMP simd clause",
+                        serialize_if=lambda m: m.omp_simd)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,

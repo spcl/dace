@@ -1908,6 +1908,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
 
+            # ``MarkSIMDMaps`` decided this; stamp the clause onto the existing pragma.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
+                head, sep, rest = map_header.partition(' for')
+                map_header = f'{head}{sep} simd{rest}'
+
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
@@ -1955,6 +1960,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+                elif (node.map.omp_simd and node.map.schedule == dtypes.ScheduleType.Sequential
+                      and i == len(node.map.range) - 1):
+                    # Innermost dimension only: the pragma must precede the ``for`` it vectorizes.
+                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
