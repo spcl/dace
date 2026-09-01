@@ -1043,6 +1043,7 @@ def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[M
     :return: The memlets to use as border candidates for this edge.
     """
     # We import late to avoid cyclic imports here.
+    from dace.sdfg import utils as sdutil
     from dace.transformation.helpers import unsqueeze_memlet
 
     if direction == 'in':
@@ -1051,7 +1052,16 @@ def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[M
         view_node, is_binding = edge.src, edge.src_conn == 'views'
     if not is_binding or not isinstance(view_node, nodes.AccessNode):
         return [edge.data]
-    if not isinstance(view_node.desc(state.sdfg), data.View):
+    view_desc = view_node.desc(state.sdfg)
+    if not isinstance(view_desc, data.View):
+        return [edge.data]
+
+    # Only a view that is a plain slice of the container can have its accesses restated in the
+    # container's coordinates by unsqueezing them. A view that reshapes or permutes -- a
+    # transpose, say -- has no such correspondence, and unsqueezing produces a subset in the
+    # view's own axis order that does not fit the container at all.
+    mapping = sdutil.map_view_to_array(view_desc, state.sdfg.arrays[edge.data.data], edge.data.subset)
+    if mapping is None or mapping[1]:
         return [edge.data]
 
     inner_edges = state.out_edges(view_node) if direction == 'in' else state.in_edges(view_node)
