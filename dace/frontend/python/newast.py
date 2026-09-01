@@ -3324,8 +3324,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 # own four. Provenance is unavailable here -- a sliced operand arrives as the name
                 # of an already-materialized transient, indistinguishable from a reshape.
                 wdropped = [i for i in range(len(wtarget_subset)) if i not in wsqz]
-                shift = len(wtarget_subset) - len(op_subset)
-                op_drop = {i - shift for i in wdropped if 0 <= i - shift < len(op_subset)}
+                # Which target rank the operand is written against decides that mapping. numpy aligns
+                # an operand with the RESULT of the indexing, and an integer index has already removed
+                # its axis from that result: ``pf[:, corners, 0]`` is rank 2, so ``area[:, None]``'s
+                # trailing 1 broadcasts against the length-4 axis. Right-aligning against the UNINDEXED
+                # rank instead charged the operand for that removed axis and squeezed its declared 1
+                # away, refusing a legal scatter-add with "could not broadcast [N] into [N, 4]". An
+                # operand already carrying the squeezed rank is aligned as numpy left it: drop nothing.
+                if len(op_subset) == len(sqz_wsub) < len(wtarget_subset):
+                    op_drop: Set[int] = set()
+                else:
+                    shift = len(wtarget_subset) - len(op_subset)
+                    op_drop = {i - shift for i in wdropped if 0 <= i - shift < len(op_subset)}
                 sqz_osub = copy.deepcopy(op_subset)
                 osqz = sqz_osub.squeeze([i for i in range(len(op_subset)) if i not in op_drop])
                 sqz_rsub = copy.deepcopy(rtarget_subset)
