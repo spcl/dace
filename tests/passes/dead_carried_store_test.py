@@ -173,6 +173,31 @@ def test_a_kill_by_a_lower_offset_is_still_a_kill():
     assert np.allclose(got, want_a), 'the rewrite changed the result'
 
 
+@dace.program
+def sibling_reads_the_store(A: dace.float64[N], B: dace.float64[N], E: dace.float64[N], D: dace.float64[N]):
+    for i in range(1, N - 2):
+        A[i] = B[i]
+        A[i + 1] = E[i]
+        D[i] = A[i + 1] * 2.0  # consumes what the candidate store just wrote, THIS iteration
+
+
+def test_a_sibling_consuming_the_store_refuses():
+    """The store looks killed by ``A[i]`` next iteration, but ``D`` reads it first.
+
+    Caught by ``strengthen_split_statements``, not by this file -- the window test ``d < r < c``
+    cannot see a read at ``r == c``, and reachability cannot either, because the consumer hangs off
+    a different access node for the same array. Dropping the store silently gave D the stale value.
+    """
+    sdfg, applied = run(sibling_reads_the_store)
+    assert not applied, 'the store is consumed in the same iteration'
+
+
+def test_a_sibling_reading_BEFORE_the_store_is_still_dead():
+    """The mirror case: a read at the same offset that happens EARLIER cannot observe the store."""
+    sdfg, applied = run(s244)
+    assert applied, "s244's own read-modify-write read precedes its store and must stay liftable"
+
+
 if __name__ == '__main__':
     test_s244_is_rewritten_and_still_computes()
     test_s244_parallelizes_through_the_pipeline()
@@ -182,3 +207,5 @@ if __name__ == '__main__':
     test_an_accumulating_kill_refuses()
     test_a_lone_store_refuses()
     test_a_kill_by_a_lower_offset_is_still_a_kill()
+    test_a_sibling_consuming_the_store_refuses()
+    test_a_sibling_reading_BEFORE_the_store_is_still_dead()

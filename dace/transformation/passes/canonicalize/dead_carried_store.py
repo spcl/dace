@@ -219,7 +219,41 @@ def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loo
                     # iteration -- the value is folded in, not replaced. Refuse rather than order
                     # the two: being wrong here drops a store the program needed.
                     return False
-    # Every state after the store's own: a read there is a read-after-write within the iteration.
+    # A read at the dead store's OWN offset is only safe when it is that store's read-modify-write
+    # input -- the value flowing into the producer that makes the store. Any other consumer at that
+    # offset reads what the store just wrote, in the same iteration, and the store is not dead:
+    #
+    #     A[i]     = B[i]           kill,  offset 0
+    #     A[i + 1] = E[i]           the candidate, offset 1
+    #     D[i]     = A[i + 1] * 2   reads offset 1 -- the value just written
+    #
+    # The window test ``d < r < c`` cannot see this (``r == c``), and reachability from the store's
+    # access node cannot either: this consumer hangs off a DIFFERENT access node for the same array,
+    # so no edge joins them even though the read plainly observes the write. Demanding that every
+    # offset-c read feed the producer is what makes it decidable from the graph alone -- and it is
+    # what ``s244`` satisfies, where the only such read is the ``a[i + 1] * d[i]`` the store itself
+    # consumes.
+    producer = dead_edge.src
+    for state in body:
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data != name:
+                continue
+            for edge in state.out_edges(node):
+                if edge.data.subset is None:
+                    return False
+                spot = constant_offset_on_axis(edge.data.subset, loop_var)
+                if spot is None or spot[0] != axis or spot[1] != dead_off:
+                    continue
+                order = body.index(state) - body.index(dead_state)
+                if order < 0:
+                    # Strictly BEFORE the store: it reads what was there on entry. Nothing in the
+                    # loop has touched ``a[i + c]`` yet -- the dead store of this iteration is still
+                    # ahead of it, and the kill that covers that location belongs to iteration
+                    # ``i + distance``, which is further ahead still.
+                    continue
+                if order > 0 or not reaches(state, edge.dst, producer):
+                    return False
+    # Any later state reading the array at all is a read-after-write within the iteration.
     for state in body[body.index(dead_state) + 1:]:
         if any(isinstance(n, nodes.AccessNode) and n.data == name and state.out_degree(n) > 0 for n in state.nodes()):
             return False
@@ -230,6 +264,20 @@ def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loo
                 downstream.add(out.dst)
                 frontier.append(out.dst)
     return not any(isinstance(n, nodes.AccessNode) and n.data == name for n in downstream)
+
+
+def reaches(state: SDFGState, start, target) -> bool:
+    """``True`` iff ``target`` is ``start`` or lies downstream of it inside ``state``."""
+    seen, frontier = {id(start)}, [start]
+    while frontier:
+        node = frontier.pop()
+        if node is target:
+            return True
+        for edge in state.out_edges(node):
+            if id(edge.dst) not in seen:
+                seen.add(id(edge.dst))
+                frontier.append(edge.dst)
+    return False
 
 
 def drop_store(state: SDFGState, edge) -> None:
