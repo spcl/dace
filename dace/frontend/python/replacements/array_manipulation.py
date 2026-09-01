@@ -1094,7 +1094,19 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
 @oprepo.replaces_method('Array', 'astype')
 @oprepo.replaces_method('Scalar', 'astype')
 @oprepo.replaces_method('View', 'astype')
-def _ndarray_astype(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype: dtypes.typeclass) -> str:
+def _ndarray_astype(pv: ProgramVisitor,
+                    sdfg: SDFG,
+                    state: SDFGState,
+                    arr: str,
+                    dtype: dtypes.typeclass,
+                    copy: bool = True) -> str:
+    # The copy is FORCED, whichever value is passed. ``copy`` is a permission in numpy rather than
+    # an instruction -- ``copy=False`` allows eliding a copy, never forbids one -- so always
+    # materialising is a legal reading of both. It is also the only one available: the elision
+    # numpy performs returns the operand ITSELF when the dtype already matches, and an SDFG has no
+    # way to hand back an alias in place of a converted array. Accepting the keyword and copying
+    # anyway is therefore the honest behaviour; without the parameter at all the call raised
+    # TypeError and refused the program outright.
     if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
         dtype = dtypes.typeclass(dtype)
     return _datatype_converter(sdfg, state, arr, dtype, pv.get_target_name())[0]
