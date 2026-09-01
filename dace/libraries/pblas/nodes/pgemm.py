@@ -139,6 +139,10 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                         std::fprintf(stderr, "[PGEMM-DBG] rank=%d p{lapack_dtype_str}gemm_ from %s\\n",
                                      __state->__scalapack_rank, dbg_dl.dli_fname);
                 }}
+                std::fprintf(stderr,
+                    "[PGEMM-DBG] rank=%d a[0..3]=%a,%a,%a,%a b[0..3]=%a,%a,%a,%a ptr(a=%p b=%p c=%p)\\n",
+                    __state->__scalapack_rank, _a[0], _a[1], _a[2], _a[3], _b[0], _b[1], _b[2], _b[3],
+                    (const void *)_a, (const void *)_b, (const void *)_c);
                 std::fflush(stderr);
             }}
             p{lapack_dtype_str}gemm_(
@@ -147,9 +151,24 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
             {{
                 double dbg_sc = 0.0;
                 for (int dbg_i = 0; dbg_i < lc_rows * lc_cols; ++dbg_i) dbg_sc += _c[dbg_i];
-                std::fprintf(stderr, "[PGEMM-DBG] rank=%d sum_c=%.17g first_c=%.17g\\n",
-                             __state->__scalapack_rank, dbg_sc, _c[0]);
+                std::fprintf(stderr, "[PGEMM-DBG] rank=%d sum_c=%.17g c[0..5]=%a,%a,%a,%a,%a,%a\\n",
+                             __state->__scalapack_rank, dbg_sc, _c[0], _c[1], _c[2], _c[3], _c[4], _c[5]);
                 std::fflush(stderr);
+                {dtype.ctype} *dbg_c2 = new {dtype.ctype}[(size_t)lc_rows * (size_t)lc_cols];
+                p{lapack_dtype_str}gemm_(
+                    &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
+                    _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, dbg_c2, &__state->__int_one, &__state->__int_one, _c_ldesc);
+                double dbg_sc2 = 0.0, dbg_maxdiff = 0.0;
+                for (int dbg_i = 0; dbg_i < lc_rows * lc_cols; ++dbg_i) {{
+                    dbg_sc2 += dbg_c2[dbg_i];
+                    double dbg_d = dbg_c2[dbg_i] - _c[dbg_i];
+                    if (dbg_d < 0) dbg_d = -dbg_d;
+                    if (dbg_d > dbg_maxdiff) dbg_maxdiff = dbg_d;
+                }}
+                std::fprintf(stderr, "[PGEMM-DBG] rank=%d repeat sum_c2=%.17g maxdiff=%.17g\\n",
+                             __state->__scalapack_rank, dbg_sc2, dbg_maxdiff);
+                std::fflush(stderr);
+                delete[] dbg_c2;
             }}
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

@@ -91,6 +91,15 @@ jobs:
         # TEMPORARY [WIP] diagnostics for the grid-[2,1] pgemm red; remove with the pgemm instrumentation.
         uv run python -c "import dace, sys; print('dace', dace.__file__, dace.__version__, sys.version)"
         dpkg -l | grep -Ei 'scalapack|lapack|blas|openmpi|libc6 |^ii  gcc' || true
+        rm -rf /tmp/pblas_dbg_cache
+        DACE_cache=name DACE_default_build_folder=/tmp/pblas_dbg_cache mpirun -n 2 --oversubscribe uv run python -m pytest -x -s --with-mpi --tb=line -m scalapack tests/library/pblas/pgemm_test.py || true
+        find /tmp/pblas_dbg_cache \( -name '*.cpp' -o -name '*.h' -o -name 'CMakeLists.txt' \) | sort | xargs md5sum || true
+        echo '===== BEGIN pdgemm.cpp ====='
+        cat /tmp/pblas_dbg_cache/pdgemm/src/cpu/pdgemm.cpp || true
+        echo '===== END pdgemm.cpp ====='
+        echo '===== BEGIN pdgemm CMakeLists.txt ====='
+        cat /tmp/pblas_dbg_cache/pdgemm/CMakeLists.txt || true
+        echo '===== END pdgemm CMakeLists.txt ====='
         for i in {1..4}
         do
           mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x -s --with-mpi --tb=long --timeout_method thread --timeout=300 -m "scalapack"
