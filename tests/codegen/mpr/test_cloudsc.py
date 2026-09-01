@@ -41,15 +41,12 @@ from dace.codegen.mpr import render
 
 from tests.codegen.mpr.conftest import assert_standalone, call_standalone, compile_standalone
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                            generate_cloudsc_inputs)
+                                                            generate_cloudsc_inputs, make_sequential)
 
-#: Both sides run multithreaded, because a single-threaded comparison grades a build nobody ships.
-#: That costs bit-equality: a parallel reduction associates its partial sums by thread count rather
-#: than by iteration order, so the two sides differ by rounding even when they agree exactly on the
-#: arithmetic. The criterion is therefore a bounded relative error in fp64 rather than machine
-#: precision -- loose enough to absorb a reassociated accumulation, and still some five orders
-#: tighter than any error that would signal a real divergence in the physics.
-RTOL, ATOL = 1e-10, 1e-11
+#: Machine precision. Both sides are sequential IEEE builds of the same computation, so they agree
+#: bit-for-bit; this is the CloudSC harness's own established criterion, not a tolerance chosen to
+#: make a discrepancy pass.
+RTOL = ATOL = 1e-15
 
 #: Flags added to the MPR build so it matches the reference's floating-point regime. The reference
 #: compiles under :data:`IEEE_CPU_ARGS`; without ``-ffp-contract=off`` the host compiler is free to
@@ -96,12 +93,8 @@ def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
 @pytest.mark.integration
 def test_cloudsc_renders_standalone_and_reproduces_the_sdfg():
     """Render CloudSC, build it with no include path, and compare every output array."""
-    # Deliberately NOT made sequential. Forcing every map to a sequential schedule buys a
-    # bit-for-bit comparison, but it grades a build nobody ships and cannot catch a rendering that
-    # only diverges once its maps are split across threads -- which is the interesting failure.
-    # Both sides keep their parallel schedules; the cost is that a reduction associates by thread
-    # count, and that is what RTOL/ATOL are sized for.
     reference = build_cloudsc_sdfg(simplify=False)
+    make_sequential(reference)
 
     # Row-major already, and asserted to be by ``cloudsc_input_data_test.py``: both sides read the
     # buffer through a raw pointer with the descriptor's strides, and ``call_standalone`` refuses
