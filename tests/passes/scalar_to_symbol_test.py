@@ -783,6 +783,37 @@ def test_scalar_index_regression(memlet_volume_n):
     assert np.allclose(a, ref)
 
 
+def test_promote_copy_from_array_element():
+    """ Promote a scalar written by a copy whose memlet names its destination. """
+    # Create SDFG: i <- idx (memlet names the destination scalar), then B <- i
+    sdfg = dace.SDFG('promote_copy_from_array_element')
+    sdfg.add_array('idx', [1], dace.int64)
+    sdfg.add_array('B', [1], dace.int64)
+    sdfg.add_scalar('i', dace.int64, transient=True)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read('idx'), state.add_write('i'), dace.Memlet('i'))
+    state = sdfg.add_state_after(state)
+    state.add_nedge(state.add_read('i'), state.add_write('B'), dace.Memlet('B[0]'))
+
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+    # 'i' is now a symbol read out of 'idx'. The subset belongs to the source, so it must index 'idx';
+    # assigning the bare name would assign a pointer to an integer.
+    assert 'i' in sdfg.symbols
+    assert 'i' not in sdfg.arrays
+    assignments = {k: v for e in sdfg.all_interstate_edges() for k, v in e.data.assignments.items()}
+    assert assignments['i'] == 'idx[0]'
+
+    code = sdfg.generate_code()[0].clean_code
+    assert 'i = idx[0];' in code
+
+    idx = np.array([7], dtype=np.int64)
+    B = np.zeros([1], dtype=np.int64)
+    sdfg(idx=idx, B=B)
+    assert B[0] == 7
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -810,3 +841,4 @@ if __name__ == '__main__':
     test_reversed_order()
     test_scalar_index_regression(False)
     test_scalar_index_regression(True)
+    test_promote_copy_from_array_element()

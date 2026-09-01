@@ -548,6 +548,32 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             _handle_connectors(state, node, out_mapping, do_not_remove, False)
 
 
+def source_read_expression(source: nodes.AccessNode, edge: gr.MultiConnectorEdge, state: sd.SDFGState,
+                           sdfg: sd.SDFG) -> str:
+    """
+    Returns the expression that reads the single element an edge carries, out of the container it is read from.
+
+    A memlet may name either of its endpoints, so neither the name nor the subset may be taken from
+    ``Memlet.data``: a memlet naming its destination would yield the destination's subset applied to the
+    source's name. The name therefore comes from the source node and the subset from the source side. A
+    memlet naming its destination has no source subset, in which case the read covers the whole source.
+
+    :param source: The access node the edge reads from.
+    :param edge: The edge carrying the read.
+    :param state: The state the edge resides in.
+    :param sdfg: The SDFG holding the data descriptors.
+    :return: An expression string that reads the source container.
+    """
+    desc = sdfg.arrays[source.data]
+    if isinstance(desc, dt.Scalar):
+        return source.data
+
+    subset = edge.data.get_src_subset(edge, state)
+    if subset is None:
+        subset = subsets.Range.from_array(desc)
+    return '%s[%s]' % (source.data, subset)
+
+
 def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     """
     Removes all instances of a promoted symbol's read accesses in an SDFG.
@@ -726,18 +752,13 @@ class ScalarToSymbolPromotion(passes.Pass):
 
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):
-                        memlet_str: str = e.data.data
-                        if (e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
-                            memlet_str += '[%s]' % e.data.subset
+                        memlet_str = source_read_expression(e.src, e, new_state, sdfg)
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
-                    memlet: mm.Memlet = in_edge.data
-                    if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
-                    else:
-                        new_isedge.data.assignments[node.data] = input.data
+                    new_in_edge = new_state.in_edges(node)[0]
+                    new_isedge.data.assignments[node.data] = source_read_expression(input, new_in_edge, new_state, sdfg)
 
                 # Clean up all nodes after assignment was transferred
                 new_state.remove_nodes_from(new_state.nodes())
