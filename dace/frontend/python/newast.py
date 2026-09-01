@@ -3571,8 +3571,14 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                                 Memlet.from_array(
                                                                                     result, self.sdfg.arrays[result])):
                         continue
-                    else:
-                        raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
+                    # Re-viewing the same slice of the same array is a no-op. ``col = a[0:2]`` twice
+                    # builds a second anonymous view, so the two results differ by name while the
+                    # data they see does not; compare what each one views instead.
+                    viewed, viewed_memlet = self.views[true_name]
+                    if (viewed in self.views and result in self.views and self.views[viewed] == self.views[result]
+                            and viewed_memlet == Memlet.from_array(viewed, self.sdfg.arrays[viewed])):
+                        continue
+                    raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
                 if (isinstance(result, str) and result in self.sdfg.arrays
                         and self.sdfg.arrays[result].is_equivalent(true_array)):
                     # Skip error if the arrays are defined exactly in the same way.
