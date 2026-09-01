@@ -2,7 +2,7 @@
 """
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import SDFG
@@ -11,6 +11,33 @@ from dace.transformation.helpers import unsqueeze_memlet
 from typing import Dict, List, Optional, Set, Tuple
 import ast
 import copy
+
+
+def names_in_subtree(sdfg: SDFG) -> Set[str]:
+    """
+    Collects every name that means something in an SDFG or in the SDFGs nested within it.
+
+    A name minted for a container has to avoid all of them. Scope parameters and the symbols that
+    control flow defines share a namespace with the containers once code is generated, and under
+    the nested SDFG contract a descendant's non-transient names are the parent's names, so a name
+    that is free here but taken further down still collides.
+
+    :param sdfg: The SDFG at the root of the subtree to inspect.
+    :return: The set of names that are already spoken for.
+    """
+    names: Set[str] = set()
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        names |= set(nsdfg.arrays.keys())
+        names |= set(nsdfg.symbols.keys())
+        names |= set(nsdfg.constants_prop.keys())
+        for state in nsdfg.states():
+            for node in state.nodes():
+                names.update(map(str, node.new_symbols(nsdfg, state, {}).keys()))
+        for edge in nsdfg.all_interstate_edges():
+            names |= set(edge.data.assignments.keys())
+        for region in nsdfg.all_control_flow_regions():
+            names.update(map(str, region.new_symbols({}).keys()))
+    return names
 
 
 def dealias_sdfg_recursive(sdfg: SDFG):
@@ -303,7 +330,10 @@ def integrate_nested_sdfg(sdfg: SDFG):
         introduced = symbols_to_add - set(to_add_and_view.keys())
         remove_symbol_aliases(sdfg, {sym: sym for sym in introduced})
 
-    # Process each data container that needs to be integrated
+    # Process each data container that needs to be integrated. The names already spoken for in the
+    # subtree are collected once and extended as names are minted, rather than re-walking the tree
+    # for every container.
+    taken_names = names_in_subtree(sdfg)
     visited: Set[str] = set()
     for inner_name, (parent_name, parent_desc, parent_memlet) in to_add_and_view.items():
         if inner_name in visited:
@@ -321,8 +351,12 @@ def integrate_nested_sdfg(sdfg: SDFG):
             parent_desc = copy.deepcopy(parent_desc)
         parent_desc.transient = False
 
-        # Add the parent data descriptor to the nested SDFG
-        new_parent_name = sdfg.add_datadesc(parent_name, parent_desc, find_new_name=True)
+        # Add the parent data descriptor to the nested SDFG. ``find_new_name`` would only avoid
+        # this SDFG's own containers, symbols and constants, so a fallback name could still land
+        # on a map parameter or on a name a descendant already uses.
+        new_parent_name = utils.find_new_name(parent_name, taken_names)
+        new_parent_name = sdfg.add_datadesc(new_parent_name, parent_desc, find_new_name=True)
+        taken_names.add(new_parent_name)
         parent_mapping[inner_name] = new_parent_name
         if new_parent_name != parent_name:
             new_memlet = copy.deepcopy(parent_memlet)
@@ -559,8 +593,10 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
     if not clashing:
         return {}
 
-    taken_names = (used_symbols | defined_symbols | target_symbols | sdfg.arrays.keys() | sdfg.constants_prop.keys()
-                   | symbol_mapping.keys())
+    # A rename target must also avoid every name that is spoken for further down the tree: a
+    # grandchild's map parameter is as much of a clash as one in this SDFG.
+    taken_names = (used_symbols | defined_symbols | target_symbols | set(sdfg.arrays.keys())
+                   | set(sdfg.constants_prop.keys()) | set(symbol_mapping.keys()) | names_in_subtree(sdfg))
     repl_dict: Dict[str, str] = {}
     for sym in clashing:
         new_name = data.find_new_name(sym, taken_names)

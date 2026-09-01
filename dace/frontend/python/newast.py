@@ -1637,20 +1637,29 @@ class ProgramVisitor(ExtNodeVisitor):
             nested_sdfg, nested_inputs, nested_outputs, nested_symbols = pv.parse_program(node, is_tasklet)
             # Add inputs and outputs to nested inputs/outputs
             cached_defined = self.defined
+
+            def _container_root(name: str) -> Optional[str]:
+                # A structure member is reached by its dotted path, but it is the structure itself
+                # that is a container of the enclosing scope and therefore the connector to pass in.
+                if name in cached_defined:
+                    return name
+                root = name.split('.')[0]
+                return root if root in cached_defined else None
+
             for s in nested_sdfg.all_states():
                 for n in s.data_nodes():
-                    if n.data not in cached_defined:
+                    root = _container_root(n.data)
+                    if root is None:
                         continue
-                    if s.in_degree(n) > 0 and n.data not in nested_outputs:
-                        nested_outputs[n.data] = (s, Memlet.from_array(n.data, nested_sdfg.arrays[n.data]), [])
-                    if s.out_degree(n) > 0 and n.data not in nested_inputs:
-                        nested_inputs[n.data] = (s, Memlet.from_array(n.data, nested_sdfg.arrays[n.data]), [])
+                    if s.in_degree(n) > 0 and root not in nested_outputs:
+                        nested_outputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
+                    if s.out_degree(n) > 0 and root not in nested_inputs:
+                        nested_inputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
             for e in nested_sdfg.all_interstate_edges():
                 for memlet in e.data.get_read_memlets(nested_sdfg.arrays):
-                    if memlet.data not in nested_inputs:
-                        nested_inputs[memlet.data] = (e.dst,
-                                                      Memlet.from_array(memlet.data,
-                                                                        nested_sdfg.arrays[memlet.data]), [])
+                    root = memlet.data.split('.')[0]
+                    if root not in nested_inputs:
+                        nested_inputs[root] = (e.dst, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
 
             # Remove unused non-transients from nested SDFG
             used = set(nested_inputs.keys()).union(set(nested_outputs.keys()))

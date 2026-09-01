@@ -1110,6 +1110,24 @@ class Structure(Data):
     def optional(self) -> bool:
         return False
 
+    def is_equivalent(self, other):
+        """
+        Checks whether two structures describe the same data.
+
+        Two structures are equivalent when they have the same member names and each pair of
+        members is itself equivalent. The structure type name is deliberately not compared: it
+        names the generated C type, not the data, and the same layout reached through different
+        declarations still describes the same memory.
+
+        :param other: The other data descriptor to compare against.
+        :return: True if the two descriptors are equivalent.
+        """
+        if not isinstance(other, Structure):
+            return False
+        if self.members.keys() != other.members.keys():
+            return False
+        return all(v.is_equivalent(other.members[k]) for k, v in self.members.items())
+
     def keys(self):
         result = self.members.keys()
         for k, v in self.members.items():
