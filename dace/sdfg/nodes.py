@@ -1112,10 +1112,13 @@ class Map(object):
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
-    omp_chunk_size = Property(dtype=int,
-                              default=0,
-                              desc="OpenMP schedule chunk size",
-                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_chunk_size = SymbolicProperty(default=0,
+                                      desc="OpenMP schedule chunk size; 0 emits no chunk clause. May be "
+                                      "SYMBOLIC: OpenMP evaluates chunk_size as an integer expression at "
+                                      "run time, so a chunk derived from the map's own trip count and "
+                                      "omp_get_max_threads() adapts to the problem and the team instead of "
+                                      "baking one machine's constant into the graph",
+                                      serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_simd = Property(dtype=bool,
                         default=False,
                         desc="Vectorize the innermost loop with an OpenMP simd clause",

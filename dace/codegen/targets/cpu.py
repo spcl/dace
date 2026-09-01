@@ -3302,8 +3302,14 @@ class CPUCodeGen(TargetCodeGenerator):
                         schedule += "guided"
                     else:
                         raise ValueError("Unknown OpenMP schedule type")
-                    if node.map.omp_chunk_size > 0:
-                        schedule += f", {node.map.omp_chunk_size}"
+                    # A symbolic chunk has no truth value, so the "is there a chunk" test is
+                    # whether it is the literal 0 that means "no chunk clause" -- never ``> 0``,
+                    # which raises on an expression. Everything else goes through sym2cpp, which is
+                    # what lets a chunk derived from the trip count and the team size reach the
+                    # pragma; OpenMP evaluates chunk_size as an integer expression at run time.
+                    chunk = node.map.omp_chunk_size
+                    if symbolic.issymbolic(chunk) or int(chunk) > 0:
+                        schedule += f", {sym2cpp(chunk)}"
                     schedule += ")"
                     map_header += schedule
 
