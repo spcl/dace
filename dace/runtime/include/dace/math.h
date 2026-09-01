@@ -532,32 +532,46 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+        template<typename T, typename U,
+                 typename std::enable_if<!(std::is_integral<T>::value &&
+                                           std::is_integral<U>::value)>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
+        // Every integral width, not just int/unsigned int: std::pow returns a floating-point
+        // type, which cannot bound an OpenMP loop or offset a pointer.
+        template<typename T, typename U,
+                 typename std::enable_if<std::is_integral<T>::value &&
+                                         std::is_integral<U>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b)
         {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
+            if constexpr (std::is_signed<U>::value)
+            {
+                if (b < 0) return T(0);
+            }
+            T result = 1;
+            for (U i = 0; i < b; ++i)
                 result *= a;
             return result;
         }
 
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
-        {
-            unsigned int result = 1;
+        // Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
+        template<typename T,
+                 typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
+        DACE_HDFI T ipow(const T a, const unsigned int b) {
+            T result = T(1);
             for (unsigned int i = 0; i < b; ++i)
                 result *= a;
             return result;
         }
 
-        template<typename T>
-        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+        // Vector types have no scalar constructor, so seed at ``a``. Only ever reached with a
+        // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
+        template<typename T,
+                 typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
+        DACE_HDFI T ipow(const T a, const unsigned int b) {
             T result = a;
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
@@ -756,5 +770,17 @@ namespace dace
 
 }
 
+// Global-scope wrapper (like ``min`` / ``max`` / ``int_ceil``) so codegen can emit the
+// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``.
+// A signed exponent reaches the unsigned parameter below as a huge value, so -1 would spin
+// rather than return. Matches pow(int, int), which has always answered 0.
+template <typename T, typename U>
+static DACE_HDFI T ipow(const T& a, const U& b) {
+    if constexpr (std::is_signed<U>::value && std::is_arithmetic<T>::value)
+    {
+        if (b < 0) return T(0);
+    }
+    return dace::math::ipow(a, static_cast<unsigned int>(b));
+}
 
 #endif  // __DACE_MATH_H
