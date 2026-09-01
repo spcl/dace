@@ -254,6 +254,16 @@ def scope_misses(state: SDFGState,
             for e in state.out_edges(node):
                 if isinstance(e.dst, nd.AccessNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
                     scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+            # Data moved between the outside of the scope and a local buffer reaches the access node
+            # straight from the scope entry (or leaves through its exit) with no tasklet on the edge,
+            # so the tasklet case does not see those touches either. The memlet still names the outer
+            # container, which is what is actually read from or written to memory.
+            for e in state.in_edges(node):
+                if isinstance(e.src, nd.EntryNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+            for e in state.out_edges(node):
+                if isinstance(e.dst, nd.ExitNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
             # Account each tasklet memory access.

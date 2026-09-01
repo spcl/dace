@@ -433,6 +433,15 @@ def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Meml
     internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
     external_array = parent_sdfg.arrays[external_memlet.data]
 
+    if external_array.is_equivalent(internal_array):
+        # The nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) makes the
+        # connector's descriptor identical to the outer container, so the internal memlet is
+        # already expressed in the outer coordinate system. Unsqueezing it would offset it by the
+        # external memlet a second time, turning a write to ``A[i]`` into one to ``A[2 * i]``.
+        result = copy.deepcopy(internal_memlet)
+        result.data = external_memlet.data
+        return result
+
     for j, subset in enumerate(_subsets):
         if subset is None:
             continue
