@@ -1132,7 +1132,8 @@ class ProgramVisitor(ExtNodeVisitor):
                  annotated_types: Dict[str, data.Data] = None,
                  closure: SDFGClosure = None,
                  nested: bool = False,
-                 simplify: Optional[bool] = None):
+                 simplify: Optional[bool] = None,
+                 subprogram: bool = False):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1187,9 +1188,14 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg = SDFG(self.name)
         if not self.nested:
             for k, v in scope_arrays.items():
-                nested_v = copy.deepcopy(v)
-                nested_v.transient = False
-                self.sdfg.add_datadesc(k, nested_v)
+                scope_v = copy.deepcopy(v)
+                if subprogram:
+                    # A container reaching a subprogram is owned by the caller and passed in, so
+                    # it is not this SDFG's to allocate. The top-level program has no caller: a
+                    # container of its closure that is transient stays transient, or it turns into
+                    # an argument the program never had.
+                    scope_v.transient = False
+                self.sdfg.add_datadesc(k, scope_v)
             for arr in self.sdfg.arrays.values():
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
@@ -1631,7 +1637,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             map_symbols=map_symbols,
                             annotated_types=self.annotated_types,
                             closure=self.closure,
-                            nested=False)
+                            nested=False,
+                            subprogram=True)
 
         try:
             nested_sdfg, nested_inputs, nested_outputs, nested_symbols = pv.parse_program(node, is_tasklet)
