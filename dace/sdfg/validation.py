@@ -1011,9 +1011,11 @@ class InvalidSDFGError(Exception):
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.state(self.state_id)
-            locinfo = self._getlineinfo(state)
-            suffix = f' (at state {state.label})'
+            # The id may name a control flow block that is not a state, such as a conditional
+            # block, in which case only its label is available.
+            block = self.sdfg.node(self.state_id)
+            locinfo = self._getlineinfo(block)
+            suffix = f' (at state {block.label})'
         else:
             suffix = ''
             if self.sdfg.number_of_nodes() >= 1:
@@ -1096,6 +1098,11 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         except NodeNotFoundError:
             state = None
             state_label = '<unknown>'
+        except TypeError:
+            # The id names a control flow block that is not a state, such as a conditional
+            # block. It has a label worth reporting but no nodes or edges to index into.
+            state = None
+            state_label = getattr(self.sdfg.node(self.state_id), 'label', '<unknown>')
         locinfo = ''
 
         if state is not None and self.node_id is not None:
@@ -1147,6 +1154,11 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         except NodeNotFoundError:
             state = None
             state_label = '<unknown>'
+        except TypeError:
+            # The id names a control flow block that is not a state, such as a conditional
+            # block. It has a label worth reporting but no nodes or edges to index into.
+            state = None
+            state_label = getattr(self.sdfg.node(self.state_id), 'label', '<unknown>')
 
         if state is not None and self.edge_id is not None:
             e = state.edges()[self.edge_id]
