@@ -143,6 +143,20 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                     "[PGEMM-DBG] rank=%d a[0..3]=%a,%a,%a,%a b[0..3]=%a,%a,%a,%a ptr(a=%p b=%p c=%p)\\n",
                     __state->__scalapack_rank, _a[0], _a[1], _a[2], _a[3], _b[0], _b[1], _b[2], _b[3],
                     (const void *)_a, (const void *)_b, (const void *)_c);
+                int dbg_mrank = -1, dbg_msize = -1, dbg_minit = 0, dbg_mthread = -1;
+                MPI_Initialized(&dbg_minit);
+                MPI_Query_thread(&dbg_mthread);
+                MPI_Comm_rank(MPI_COMM_WORLD, &dbg_mrank);
+                MPI_Comm_size(MPI_COMM_WORLD, &dbg_msize);
+                double dbg_glob = -1.0;
+                MPI_Allreduce(&dbg_sa, &dbg_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                const char *dbg_omp = std::getenv("OMP_NUM_THREADS");
+                const char *dbg_obl = std::getenv("OPENBLAS_NUM_THREADS");
+                std::fprintf(stderr,
+                    "[PGEMM-DBG] rank=%d mpi(rank=%d size=%d init=%d thread=%d) allreduce_sum_a=%.17g "
+                    "OMP_NUM_THREADS=%s OPENBLAS_NUM_THREADS=%s\\n",
+                    __state->__scalapack_rank, dbg_mrank, dbg_msize, dbg_minit, dbg_mthread, dbg_glob,
+                    dbg_omp ? dbg_omp : "(unset)", dbg_obl ? dbg_obl : "(unset)");
                 std::fflush(stderr);
             }}
             p{lapack_dtype_str}gemm_(
