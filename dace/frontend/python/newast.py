@@ -1187,11 +1187,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg = SDFG(self.name)
         if not self.nested:
             for k, v in scope_arrays.items():
-                scope_v = copy.deepcopy(v)
-                # A container that is transient in the enclosing scope stays transient here: it is
-                # allocated by this SDFG rather than passed in. The ones that do get passed in are
-                # made non-transient when they become connectors, by integration.
-                self.sdfg.add_datadesc(k, scope_v)
+                nested_v = copy.deepcopy(v)
+                nested_v.transient = False
+                self.sdfg.add_datadesc(k, nested_v)
             for arr in self.sdfg.arrays.values():
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
@@ -1663,18 +1661,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     if root not in nested_inputs:
                         nested_inputs[root] = (e.dst, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
 
-            # Remove unused non-transients from nested SDFG. A container an access node still
-            # refers to is not unused, whatever it is called: the frontend mints a fresh name per
-            # access for a global it reads more than once, and those names are not containers of
-            # the enclosing scope, so they never appear among the inputs or outputs above.
-            connectors = set(nested_inputs.keys()).union(set(nested_outputs.keys()))
-            # Whatever is passed in through a connector is owned by the caller, so it is not
-            # transient here however it was declared in the enclosing scope.
-            for cname in connectors:
-                if cname in nested_sdfg.arrays:
-                    nested_sdfg.arrays[cname].transient = False
-            used = set(connectors)
-            used |= {n.data.split('.')[0] for s in nested_sdfg.all_states() for n in s.data_nodes()}
+            # Remove unused non-transients from nested SDFG
+            used = set(nested_inputs.keys()).union(set(nested_outputs.keys()))
             to_remove = [aname for aname, arr in nested_sdfg.arrays.items() if not arr.transient and aname not in used]
             for aname in to_remove:
                 nested_sdfg.remove_data(aname, validate=False)
