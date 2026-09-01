@@ -1,0 +1,5 @@
+# Mechanical reformats. Configure git to skip these in blame:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Apply ruff-format to the whole tree
+e3da1e8be2e346250a88f6d39c367565ed7c2c22
