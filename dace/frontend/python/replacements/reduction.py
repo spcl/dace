@@ -81,8 +81,8 @@ def reduce(pv: ProgramVisitor,
     inpnode = state.add_read(inarr)
     rednode = state.add_reduce(redfunction, axis, identity)
     outnode = state.add_write(outarr)
-    state.add_nedge(inpnode, rednode, input_memlet)
-    state.add_nedge(rednode, outnode, output_memlet)
+    state.add_edge(inpnode, None, rednode, '_in', input_memlet)
+    state.add_edge(rednode, '_out', outnode, None, output_memlet)
 
     if out_array is None:
         return outarr

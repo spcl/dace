@@ -38,10 +38,10 @@ def _build_block_atomic_sum_sdfg():
     state.add_edge(A, None, me, None, Memlet.simple(A, '0:128'))
     state.add_edge(me, None, mei, None, Memlet.simple(A, '(64*bi):(64*bi+64)'))
     state.add_edge(mei, None, tA, None, Memlet.simple('A', '(64*bi+i)'))
-    state.add_edge(tA, None, red, None, Memlet.simple(tA, '0'))
+    state.add_edge(tA, None, red, '_in', Memlet.simple(tA, '0'))
     # The atomic lives inside the expansion; the block sum drains to the single
     # global element B[0] (dynamic: exactly one atomic per block, from thread 0).
-    e_out = state.add_edge(red, None, mxi, None, Memlet.simple('B', '0', num_accesses=-1))
+    e_out = state.add_edge(red, '_out', mxi, None, Memlet.simple('B', '0', num_accesses=-1))
     state.add_edge(mxi, None, mx, None, Memlet.simple('B', '0', num_accesses=-1))
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0'))
     sdfg.fill_scope_connectors()

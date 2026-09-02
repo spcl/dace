@@ -330,10 +330,11 @@ def _create_einsum_internal(sdfg: SDFG,
 
         c = state.add_write(output)
         inode = next(iter(input_nodes.values()))
-        state.add_nedge(
-            inode, rnode,
+        state.add_edge(
+            inode, None, rnode, '_in',
             dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])))
-        state.add_nedge(rnode, c, dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
+        state.add_edge(rnode, '_out', c, None,
+                       dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
 
     elif not einsum.is_bmm():
         # Fall back to "pure" SDFG einsum with conflict resolution

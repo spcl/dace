@@ -45,8 +45,8 @@ def create_test_sdfg():
 
     beta_max_reduce = state.add_reduce(wcr="lambda a, b: max(a, b)", axes=(0, ), identity=-999999)
     beta_max_reduce.implementation = 'CUDA (device)'
-    state.add_edge(BETA, None, beta_max_reduce, None, dace.memlet.Memlet.simple(BETA.data, '0:10'))
-    state.add_edge(beta_max_reduce, None, BETA_MAX, None, dace.memlet.Memlet.simple(BETA_MAX.data, '0:1'))
+    state.add_edge(BETA, None, beta_max_reduce, '_in', dace.memlet.Memlet.simple(BETA.data, '0:10'))
+    state.add_edge(beta_max_reduce, '_out', BETA_MAX, None, dace.memlet.Memlet.simple(BETA_MAX.data, '0:1'))
 
     return sdfg
 

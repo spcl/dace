@@ -30,8 +30,8 @@ def test_strided_reduce(implementation):
     node_b = state.add_write('B')
     red = state.add_reduce('lambda a,b: a+b', [0], 0)
     red.implementation = implementation
-    state.add_nedge(node_a, red, dace.Memlet.simple('A', '0:50:2, 0:50:2'))
-    state.add_nedge(red, node_b, dace.Memlet.simple('B', '0:25'))
+    state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '0:50:2, 0:50:2'))
+    state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '0:25'))
     reduce_with_strides(A=A, B=B)
 
     assert np.allclose(B, np.sum(A[::2, ::2], axis=0))
