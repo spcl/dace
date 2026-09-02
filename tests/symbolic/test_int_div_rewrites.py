@@ -12,7 +12,8 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.symbolic import (int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix)
+from dace.symbolic import (deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr,
+                           sympy_intdiv_fix)
 
 N = pystr_to_symbolic('N')
 M = pystr_to_symbolic('M')
@@ -87,6 +88,22 @@ def test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating():
     """
     n = symbol('n', dtype=dtypes.int64)
     assert symstr(sympy.ceiling(sympy.sin(n)), cpp_mode=True) == '(ceil(sin(n)))'
+
+
+def test_ceiling_of_an_integer_prints_as_its_argument():
+    """A ``ceiling`` over a known-integer argument must print as the argument itself.
+
+    Deserialization rebuilds an application through ``Basic.__new__`` and bypasses the
+    ``eval`` that would have folded the wrapper, so a stored ``ceiling`` reaches the
+    printer unevaluated. Neither call is acceptable there: libm ``ceil`` returns a
+    ``double``, and the runtime's ``ceiling`` is only overloaded for ``int``, ``float``
+    and ``double``, which leaves a 64-bit or unsigned argument ambiguous.
+    """
+    stored = deserialize_symbolic('ceiling(__int_floor($N, 2))')
+    assert isinstance(stored, sympy.ceiling)
+    assert stored.args[0].is_integer
+
+    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
 
 
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
