@@ -20,16 +20,12 @@ GM, GN, GK, GR, GS, GT = (dace.symbol(s, positive=True) for s in ('GM', 'GN', 'G
 LMx, LMy, LNx, LNy, LKx, LKy = (dace.symbol(s, positive=True) for s in ('LMx', 'LMy', 'LNx', 'LNy', 'LKx', 'LKy'))
 LRx, LRy, LSx, LSy, LTx, LTy = (dace.symbol(s, positive=True) for s in ('LRx', 'LRy', 'LSx', 'LSy', 'LTx', 'LTy'))
 
-grids = {
-    1: [(1, 1)],
-    2: [(2, 1), (1, 2)],
-    3: [(3, 1), (1, 3)],
-    4: [(4, 1), (2, 2), (1, 4)],
-    5: [(5, 1), (1, 5)],
-    6: [(6, 1), (3, 2), (2, 3), (1, 6)],
-    7: [(7, 1), (1, 7)],
-    8: [(8, 1), (4, 2), (2, 4), (1, 8)]
-}
+
+def process_grids(size):
+    """Every (NPx, NPy) with NPx * NPy == size, tall to wide."""
+    # Both extents divide size, so a problem size that is a multiple of size splits evenly.
+    return [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]
+
 
 rng = np.random.default_rng(42)
 
@@ -43,9 +39,6 @@ def test_pgemm():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-
-    if size not in grids:
-        raise NotImplementedError("Please run this test with 1-8 MPI processes.")
 
     # DaCe programs
     @dace.program
@@ -85,7 +78,7 @@ def test_pgemm():
         sdfgs.append(optimize(prog))
 
     # Test for different grids possible with the given number of MPI processes.
-    grid_dims = grids[size]
+    grid_dims = process_grids(size)
     for NPx, NPy in grid_dims:
 
         cart_comm = commworld.Create_cart((NPx, NPy))
@@ -325,33 +318,39 @@ def test_pgemm_named_block_sizes():
     rank = commworld.Get_rank()
     size = commworld.Get_size()
 
-    if size != 2:
-        raise NotImplementedError("Please run this test with 2 MPI processes.")
-
-    NPx, NPy = 2, 1
-    cart_comm = commworld.Create_cart((NPx, NPy))
-    i, j = cart_comm.Get_coords(rank)
-
     if rank == 0:
         sdfg = _make_named_block_sizes_sdfg()
         sdfg.expand_library_nodes()
     else:
         sdfg = None
-    func = utils.distributed_compile(sdfg, commworld)
-
-    M, N, K = 8, 12, 10
+    # Multiples of size: the block sizes the node is handed ARE the local shape, so a grid that
+    # left a remainder would hand ScaLAPACK a descriptor for a block the rank does not own.
+    # At two ranks these are the (8, 12, 10) this regression test was first written against.
+    M, N, K = size * 4, size * 6, size * 5
     A = rng.random((M, K), dtype=np.float64)
     B = rng.random((K, N), dtype=np.float64)
     C = A @ B
 
-    ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
-    lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
-    lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
-    lC = np.zeros((ti, tj), dtype=np.float64)
+    # Test for different grids possible with the given number of MPI processes.
+    for NPx, NPy in process_grids(size):
 
-    func(A=lA, B=lB, C=lC, LMx=ti, LKy=tkj, LKx=tki, LNy=tj, GK=K, Px=NPx, Py=NPy)
-    ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
-    assert (np.allclose(lC, ref))
+        cart_comm = commworld.Create_cart((NPx, NPy))
+        i, j = cart_comm.Get_coords(rank)
+
+        # Px/Py reach __dace_init_, which is what builds the BLACS grid, and a CompiledSDFG
+        # initializes once -- so each grid needs its own, exactly as test_pgemm does above.
+        func = utils.distributed_compile(sdfg, commworld)
+
+        ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
+        lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+        lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
+        lC = np.zeros((ti, tj), dtype=np.float64)
+
+        func(A=lA, B=lB, C=lC, LMx=ti, LKy=tkj, LKx=tki, LNy=tj, GK=K, Px=NPx, Py=NPy)
+        ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
+        assert (np.allclose(lC, ref))
+
+        commworld.Barrier()
 
 
 if __name__ == '__main__':

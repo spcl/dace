@@ -17,16 +17,12 @@ GM, GN = (dace.symbol(s, positive=True) for s in ('GM', 'GN'))
 # Local sizes
 LMx, LMy, LNx, LNy = (dace.symbol(s, positive=True) for s in ('LMx', 'LMy', 'LNx', 'LNy'))
 
-grids = {
-    1: [(1, 1)],
-    2: [(2, 1), (1, 2)],
-    3: [(3, 1), (1, 3)],
-    4: [(4, 1), (2, 2), (1, 4)],
-    5: [(5, 1), (1, 5)],
-    6: [(6, 1), (3, 2), (2, 3), (1, 6)],
-    7: [(7, 1), (1, 7)],
-    8: [(8, 1), (4, 2), (2, 4), (1, 8)]
-}
+
+def process_grids(size):
+    """Every (NPx, NPy) with NPx * NPy == size, tall to wide."""
+    # Both extents divide size, so a problem size that is a multiple of size splits evenly.
+    return [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]
+
 
 rng = np.random.default_rng(42)
 
@@ -39,9 +35,6 @@ def test_pgemv():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-
-    if size not in grids:
-        raise NotImplementedError("Please run this test with 1-8 MPI processes.")
 
     # DaCe programs
     @dace.program
@@ -95,7 +88,7 @@ def test_pgemv():
         sdfgs.append(optimize(prog))
 
     # Test for different grids possible with the given number of MPI processes.
-    grid_dims = grids[size]
+    grid_dims = process_grids(size)
     for NPx, NPy in grid_dims:
 
         cart_comm = commworld.Create_cart((NPx, NPy))
