@@ -702,14 +702,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         state_id = state.parent_graph.node_id(state)
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
-        # A connector carries a type only when someone set one; ``Reduce`` declares ``_out``
-        # untyped, so the array is the answer in the ordinary case. This branch was UNREACHABLE
-        # while Reduce declared no connectors at all, which is how ``next(dict.values())`` -- a
-        # TypeError, ``values()`` is not an iterator -- sat here undetected.
-        out_conn_type = next(iter(node.out_connectors.values()), None)
-        dtype = out_conn_type if out_conn_type is not None else sdfg.arrays[output_memlet.data].dtype
-
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -954,13 +949,10 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         input_memlet = input_edge.data
         output_memlet = output_edge.data
 
-        # A connector carries a type only when someone set one; ``Reduce`` declares ``_out``
-        # untyped, so the array is the answer in the ordinary case. This branch was UNREACHABLE
-        # while Reduce declared no connectors at all, which is how ``next(dict.values())`` -- a
-        # TypeError, ``values()`` is not an iterator -- sat here undetected.
-        out_conn_type = next(iter(node.out_connectors.values()), None)
-        dtype = out_conn_type if out_conn_type is not None else sdfg.arrays[output_memlet.data].dtype
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer. It is the
+        # OUTPUT descriptor's -- a reduction accumulates at the type it was asked to produce.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -977,12 +969,6 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
                 {contents}
             }}
         }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), state.parent_graph, state_id, node_id)
-            reduce_op = ', __reduce_' + idstr + '(), ' + symstr(node.identity)
-        elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
-            reduce_op = ''
-        else:
-            credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
-            reduce_op = ((', dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)) + ', ' + symstr(node.identity))
 
         # Try to obtain the number of threads in the block, or use the default
         # configuration
@@ -1016,7 +1002,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         localcode.write("""
         typedef gpucub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
         __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
-            """.format(id=idstr, type=output_data.dtype.ctype, numthreads=block_threads))
+            """.format(id=idstr, type=output_type, numthreads=block_threads))
 
         input = (input_memlet.data + ' + ' + cpp_array_expr(sdfg, input_memlet, with_brackets=False))
         output = cpp_array_expr(sdfg, output_memlet)
@@ -1171,13 +1157,10 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
         output_memlet = output_edge.data
-        # A connector carries a type only when someone set one; ``Reduce`` declares ``_out``
-        # untyped, so the array is the answer in the ordinary case. This branch was UNREACHABLE
-        # while Reduce declared no connectors at all, which is how ``next(dict.values())`` -- a
-        # TypeError, ``values()`` is not an iterator -- sat here undetected.
-        out_conn_type = next(iter(node.out_connectors.values()), None)
-        dtype = out_conn_type if out_conn_type is not None else sdfg.arrays[output_memlet.data].dtype
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer. It is the
+        # OUTPUT descriptor's -- both the CUB fold and the atomic it feeds work at that type.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For block-atomic reduce nodes, the initial value (identity) must be specified')
