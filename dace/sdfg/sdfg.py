@@ -181,9 +181,14 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
         # saving space and potentially build time
         return os.path.join(base_folder, 'single_cache')
     elif cache_config == 'hash':
-        # Any change to the SDFG will result in a new cache folder
-        md5_hash = md5(str(sdfg.to_json()).encode('utf-8')).hexdigest()
-        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+        # Any change to the SDFG will result in a new cache folder. `hash_sdfg()`, not raw
+        # `to_json()`: every SDFG/state/node/edge gets a fresh `uuid4` `guid` at construction
+        # (`generate_element_id`), so `str(sdfg.to_json())` differs on every build of the SAME
+        # program and the folder name -- thus the cache -- would never hit. `hash_sdfg()` strips
+        # `guid` along with the other derived/non-identity keys (name, transformation history,
+        # instrumentation) before hashing, so it is stable across identical builds while still
+        # covering everything that can change the generated code (dataflow, symbols, constants).
+        return os.path.join(base_folder, f'{sdfg.name}_{sdfg.hash_sdfg()}')
     elif cache_config == 'unique':
         # Base name on location in memory, so no caching is possible between
         # processes or subsequent invocations
