@@ -236,7 +236,13 @@ class UntileLoopsAndBlocks(ppl.Pass):
             match = _match_inner_case(candidate, outer.loop_variable, K_expr, K_const)
             if match is None:
                 continue
-            cand_case, cand_stride, cand_needs_div = match
+            cand_case, cand_stride, cand_needs_div, cand_clamped = match
+            # ``_match_inner_case`` only reports a clamped inner bound when handed an
+            # ``outer_limit``; this call site passes none, so the clamp branch is unreachable and
+            # the unconditional round-up below is the right union. Assert rather than assume:
+            # honouring a clamp here would also have to shrink the unblocked dimension to the
+            # remainder tile, which this pass does not do.
+            assert not cand_clamped, 'clamped inner bound without an outer_limit'
             audit = self._audit_case(candidate, outer.loop_variable, candidate.loop_variable, cand_case, K_expr,
                                      K_const, sdfg)
             if audit is None:
