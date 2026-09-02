@@ -1269,22 +1269,15 @@ class CPPUnparser:
     # C++ name, then the (single) argument list.  This is the tasklet-body
     # spelling for a complex's components, mirroring how ``int_floor`` maps to
     # ``dace::math::ifloor``.
-    # ``fma``/``sqrt``/``exp``/``log`` go the same way: bare, each binds to its ``std::`` name,
-    # whose float/double/long double overloads are all equally good for a 16-bit float -- the
-    # type's many non-explicit conversion operators (``dace::float16`` IS CUDA's native ``half``)
-    # each reach a different overload through a different conversion, so nvcc calls it ambiguous
-    # and rejects the whole translation unit.  ``dace::math::{fma,sqrt,exp,log}`` each carry a
-    # non-template ``dace::float16``/``dace::bfloat16`` overload (dace/math.h) that is an exact
-    # type match and so wins outright; qualifying the call is what actually reaches it. Every
-    # other unary math name (sin, cos, ...) has no such overload and stays bare -- qualifying it
-    # would only move the same ambiguity one call frame down, into dace::math's own template body.
+    # The math names come from ``mpr_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
+    # must be qualified (a bare call binds to ``std::``, whose overloads are ambiguous for a 16-bit
+    # float). It is shared with ``dace.symbolic``'s printer on purpose: the same expression reaches
+    # C++ through a tasklet body here and through a memlet subset there, and a name qualified by
+    # only one of the two builds in one place and fails in the other.
     _renamed_funcs = {
         're': 'dace::math::re',
         'im': 'dace::math::im',
-        'fma': 'dace::math::fma',
-        'sqrt': 'dace::math::sqrt',
-        'exp': 'dace::math::exp',
-        'log': 'dace::math::log',
+        **mpr_lowering.RUNTIME_QUALIFIED_MATH,
     }
 
     def _Call(self, t: ast.Call):

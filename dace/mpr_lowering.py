@@ -687,6 +687,30 @@ BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>
 #: would produce a translation unit that does not build.
 UNSUPPORTED: Dict[str, str] = {}
 
+#: Math functions a RUNTIME-dialect printer must qualify as ``dace::math::``, rather than leave
+#: bare for unqualified lookup to resolve.
+#:
+#: A bare ``sqrt(x)`` binds to ``std::sqrt``, whose ``float`` / ``double`` / ``long double``
+#: overloads are all equally good for a 16-bit float: ``dace::float16`` IS CUDA's ``half``, and its
+#: many non-explicit conversion operators each reach a different overload through a different
+#: conversion, so nvcc calls the call ambiguous and rejects the translation unit. Each name here
+#: carries a non-template ``dace::float16`` / ``dace::bfloat16`` overload in ``dace/math.h``, an
+#: exact type match that wins outright -- qualifying the call is what reaches it. A math name with
+#: no such overload (``sin``, ``cos``, ...) is deliberately absent: qualifying it would move the
+#: same ambiguity one frame down, into ``dace::math``'s own template body.
+#:
+#: Shared because the SAME expression reaches C++ through two printers -- a tasklet body through
+#: ``cppunparse``, a memlet subset or interstate assignment through ``dace.symbolic`` -- and a name
+#: qualified by only one of them builds in one place and is ambiguous in the other. This table has
+#: nothing to say about the standalone dialects, which resolve these names through
+#: :data:`STD_RENAMES` before any of this applies.
+RUNTIME_QUALIFIED_MATH: Dict[str, str] = {
+    'fma': 'dace::math::fma',
+    'sqrt': 'dace::math::sqrt',
+    'exp': 'dace::math::exp',
+    'log': 'dace::math::log',
+}
+
 #: Every runtime function this module knows about, in any lane.
 KNOWN: Set[str] = (set(STD_RENAMES) | set(REWRITES) | set(INLINE_DEFINITIONS) | set(VARIADIC_MINMAX) | set(UNSUPPORTED))
 

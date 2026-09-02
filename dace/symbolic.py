@@ -3672,6 +3672,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         lowered = self._mpr_call(name, [self._print(a) for a in expr.args])
         if lowered is not None:
             return lowered
+        # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
+        # must be qualified for the same reason a tasklet body's are (mpr_lowering states it): bare,
+        # they bind to ``std::``, whose overloads are ambiguous for a 16-bit float. The Pow path
+        # above already emits ``dace::math::sqrt`` for ``x**Rational(1, 2)``; this covers the same
+        # function arriving as a CALL -- ``math.sqrt(x)``, or a sympy ``exp`` from a substitution --
+        # which the base printer would otherwise write out under its bare sympy name.
+        qualified = mpr_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
+        if qualified is not None:
+            return '%s(%s)' % (qualified, ', '.join(self._print(a) for a in expr.args))
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
