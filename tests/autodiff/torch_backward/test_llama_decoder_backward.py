@@ -28,19 +28,15 @@ class LlamaDecoderLayerWrapper(nn.Module):
         # Generate position embeddings
         cos, sin = self.rotary_emb(hidden_states, position_ids)
 
-        # Call the decoder layer
-        outputs = self.decoder_layer(
+        # Call the decoder layer, which returns the hidden states directly
+        return self.decoder_layer(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             position_embeddings=(cos, sin),
-            past_key_value=None,
-            output_attentions=False,
+            past_key_values=None,
             use_cache=False,
         )
-
-        # transformers >= 5 returns the hidden states directly, < 5 a tuple
-        return outputs[0] if isinstance(outputs, tuple) else outputs
 
 
 @pytest.mark.xdist_group("large_ML_models")
