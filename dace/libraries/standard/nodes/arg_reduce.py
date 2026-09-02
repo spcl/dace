@@ -204,6 +204,28 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
                              language=dace.dtypes.Language.CPP)
 
 
+def cuda_refusal(node: "ArgReduce", state: dace.SDFGState) -> Optional[str]:
+    """Why :class:`ExpandArgReduceCUDA` cannot lower ``node`` as wired in ``state``, else ``None``.
+
+    ``gpucub::DeviceReduce::ArgMax`` reads a plain contiguous pointer, so neither a strided ``_in``
+    nor a per-element :attr:`ArgReduce.transform` has a CUB form here. The expansion raises this
+    text, and a caller CHOOSING an implementation asks the same question first -- one rule, so a
+    selector cannot pick a lowering the expansion then refuses.
+    """
+    in_edge = next(e for e in state.in_edges(node) if e.dst_conn == '_in')
+    sub = in_edge.data.subset
+    step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+    if symbolic.equal(step, 1) is not True:
+        return (f"ArgReduce CUDA reads a slice of stride {step}; gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a "
+                "contiguous pointer. Lower this one through 'pure' or 'OpenMP', or wrap the input in a "
+                "gpucub::TransformInputIterator over a CountingInputIterator first.")
+    if node.transform:
+        return (f"ArgReduce CUDA reads through the transform {node.transform!r}; "
+                f"gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a plain pointer. Lower this one through 'pure' or "
+                "'OpenMP', or wrap the input in a gpucub::TransformInputIterator first.")
+    return None
+
+
 @library.expansion
 class ExpandArgReduceCUDA(ExpandTransformation):
     """Device lowering: ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin``, split into the two outputs.
@@ -233,18 +255,9 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
         idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
 
-        sub = in_edge.data.subset
-        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
-        if symbolic.equal(step, 1) is not True:
-            raise NotImplementedError(
-                f"ArgReduce CUDA reads a slice of stride {step}; gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a "
-                "contiguous pointer. Lower this one through 'pure' or 'OpenMP', or wrap the input in a "
-                "gpucub::TransformInputIterator over a CountingInputIterator first.")
-        if node.transform:
-            raise NotImplementedError(
-                f"ArgReduce CUDA reads through the transform {node.transform!r}; "
-                f"gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a plain pointer. Lower this one through 'pure' or "
-                "'OpenMP', or wrap the input in a gpucub::TransformInputIterator first.")
+        refusal = cuda_refusal(node, parent_state)
+        if refusal is not None:
+            raise NotImplementedError(refusal)
 
         state_id = parent_state.parent_graph.node_id(parent_state)
         idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'

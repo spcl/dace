@@ -11,6 +11,7 @@ therefore decides from the enclosing scopes instead, which is what the cases bel
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.dot import Dot
+from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
@@ -146,8 +147,65 @@ def test_a_pure_only_node_in_a_host_loop_becomes_a_kernel():
     assert all(m.schedule == dtypes.ScheduleType.GPU_Device for m in maps), [str(m.schedule) for m in maps]
 
 
+def arg_reduce_at_host_level(stride: int = 1, transform: str = ''):
+    """An ``ArgReduce`` nobody encloses, reading ``a[0:N:stride]`` through ``transform``."""
+    sdfg = dace.SDFG(f'arg_reduce_{stride}_{transform or "id"}')
+    sdfg.add_array('a', [768], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    # Host scalars, per ``ArgReduce.host_connectors``: every expansion answers on the host.
+    sdfg.add_array('val', [1], dace.float64)
+    sdfg.add_array('idx', [1], dace.int64)
+    state = sdfg.add_state()
+    node = ArgReduce('argmax', op='max', transform=transform)
+    node.schedule = dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet(f'a[0:768:{stride}]'))
+    state.add_edge(node, '_out_val', state.add_write('val'), None, dace.Memlet('val[0]'))
+    state.add_edge(node, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+    sdfg.validate()
+    return sdfg, node
+
+
+def test_a_contiguous_arg_reduce_takes_the_cub_expansion():
+    # Unit stride and no transform is exactly what gpucub::DeviceReduce::ArgMax reads, so the
+    # host-level node takes the device library call like any other.
+    sdfg, node = arg_reduce_at_host_level()
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'CUDA', node.implementation
+
+
+def test_a_strided_arg_reduce_has_no_device_expansion_and_becomes_a_kernel():
+    """CUB takes a contiguous pointer, so a strided ``_in`` has no device lowering at all.
+
+    Selecting ``CUDA`` here is not a slow choice but an impossible one: ``ExpandArgReduceCUDA``
+    raises at expansion time, which is how tsvc s318 (``argmax |a[inc*i]|``) failed. The node takes
+    the route of one that never had a device expansion -- the ``pure`` scan, scheduled
+    ``GPU_Device`` so codegen wraps it in a kernel instead of leaving host code over ``GPU_Global``.
+    """
+    sdfg, node = arg_reduce_at_host_level(stride=3)
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'pure', node.implementation
+    assert node.schedule == dtypes.ScheduleType.GPU_Device, node.schedule
+    # And the choice survives codegen, which is what selecting ``CUDA`` did not: the scan is emitted
+    # into the device unit, reading ``a`` where it lives.
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        device_code = '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+    assert '__ar_best' in device_code, device_code
+
+
+def test_a_transformed_arg_reduce_has_no_device_expansion_either():
+    # The transform is read per element, which CUB's plain pointer cannot express any more than the
+    # stride can -- same verdict, and it must not depend on the stride being the thing that is odd.
+    sdfg, node = arg_reduce_at_host_level(transform='abs')
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'pure', node.implementation
+    assert node.schedule == dtypes.ScheduleType.GPU_Device, node.schedule
+
+
 if __name__ == '__main__':
     test_a_sequential_node_at_a_host_level_calls_the_device_library()
+    test_a_contiguous_arg_reduce_takes_the_cub_expansion()
+    test_a_strided_arg_reduce_has_no_device_expansion_and_becomes_a_kernel()
+    test_a_transformed_arg_reduce_has_no_device_expansion_either()
     test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion()
     test_a_loop_does_not_make_its_body_device_code()
     test_a_pure_only_node_in_a_host_loop_becomes_a_kernel()

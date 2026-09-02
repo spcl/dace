@@ -178,6 +178,72 @@ def test_config_default_block_size_is_128():
     assert dace.Config.get('compiler', 'cuda', 'default_block_size') == '128,1,1'
 
 
+def build_kernel_over_inner_map(inner_schedule, warp_tile=False):
+    """A ``GPU_Device`` map over ``i`` wrapping a second map over ``t`` -- the shape a kernel has
+    once something below it owns, or is about to own, the thread-block level."""
+    sdfg = dace.SDFG('kernel_over_tile')
+    sdfg.add_array('A', [64, 64], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_access('A')
+    outer_entry, outer_exit = state.add_map('kernel', {'i': '0:64'}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner_entry, inner_exit = state.add_map('tile', {'t': '0:64'}, schedule=inner_schedule)
+    inner_entry.map.is_warp_tile = warp_tile
+    tasklet = state.add_tasklet('write', {}, {'o'}, 'o = 1.0')
+    # Empty memlets down the entry chain: the tasklet reads nothing, so these edges carry no data
+    # and only place it inside both scopes.
+    state.add_nedge(outer_entry, inner_entry, dace.Memlet())
+    state.add_nedge(inner_entry, tasklet, dace.Memlet())
+    state.add_memlet_path(tasklet, inner_exit, outer_exit, a, src_conn='o', memlet=dace.Memlet('A[i, t]'))
+    sdfg.validate()
+    return sdfg, outer_entry.map, inner_entry.map
+
+
+def test_pass_skips_a_kernel_that_already_has_a_thread_block_map():
+    # The kernel takes its block from the inner map. A declared size on top of that is the pair
+    # codegen refuses.
+    sdfg, kernel, _ = build_kernel_over_inner_map(dtypes.ScheduleType.GPU_ThreadBlock)
+    assert select_gpu_device_block_size(sdfg) == {}
+    assert kernel.gpu_block_size is None
+
+
+def test_pass_skips_a_kernel_whose_warp_tile_is_not_promoted_yet():
+    # ``is_warp_tile`` on a sequentialized map is a thread-block map ``PromoteWarpTiles`` has not
+    # created yet -- it runs in codegen preprocessing, after this pass. Sizing the kernel now is the
+    # same conflict, deferred until the promotion happens.
+    sdfg, kernel, tile = build_kernel_over_inner_map(dtypes.ScheduleType.Sequential, warp_tile=True)
+    assert select_gpu_device_block_size(sdfg) == {}
+    assert kernel.gpu_block_size is None
+    # The skip is all this pass does about the tag; promoting is not its job.
+    assert tile.schedule == dtypes.ScheduleType.Sequential
+
+
+def test_pass_still_sizes_a_kernel_over_an_untagged_sequential_map():
+    # No tag and no thread-block schedule: nothing under the kernel will ever own the block, so the
+    # 1-D domain takes the ordinary default.
+    sdfg, kernel, _ = build_kernel_over_inner_map(dtypes.ScheduleType.Sequential)
+    assert select_gpu_device_block_size(sdfg) == {'kernel': [128, 1, 1]}
+    assert kernel.gpu_block_size == [128, 1, 1]
+
+
+def test_a_pending_warp_tile_reaches_codegen_without_a_block_size_conflict():
+    """End to end: size the kernel, then let codegen preprocessing promote the warp tile.
+
+    ``PromoteWarpTiles`` runs inside ``GPUCodegenPreprocessPipeline``, so the thread-block map
+    appears after this pass has already run. While the pass also claimed such a kernel, the two
+    sizes disagreed and ``InferGPUGridAndBlockSize`` refused the pair -- rightly, because the kernel
+    would have launched 128 threads and indexed 64.
+    """
+    sdfg, kernel, _ = build_kernel_over_inner_map(dtypes.ScheduleType.Sequential, warp_tile=True)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    select_gpu_device_block_size(sdfg)
+    assert kernel.gpu_block_size is None
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    # The tile is what sizes the block: 64 threads on x, and the launch dimensions say so.
+    assert 'dim3(64, 1, 1)' in code, code
+
+
 def test_pass_is_idempotent():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     select_gpu_device_block_size(sdfg)
@@ -201,6 +267,10 @@ if __name__ == '__main__':
     test_gpu_transform_1d_end_to_end()
     test_config_default_block_size_is_128()
     test_pass_is_idempotent()
+    test_pass_skips_a_kernel_that_already_has_a_thread_block_map()
+    test_pass_skips_a_kernel_whose_warp_tile_is_not_promoted_yet()
+    test_pass_still_sizes_a_kernel_over_an_untagged_sequential_map()
+    test_a_pending_warp_tile_reaches_codegen_without_a_block_size_conflict()
     test_tree_reduction_wcr_map_gets_deep_block()
     test_wcr_map_uses_default_block_when_tree_reduction_off()
     test_experimental_codegen_gets_deep_block_with_the_flag_off()
