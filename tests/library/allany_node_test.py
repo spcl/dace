@@ -15,19 +15,11 @@ Covered (both nodes):
     ``sequential`` (short-circuit ``break`` loop) -- both numeric, plus
     the ``sequential`` dim-wise fall-back-to-reduction contract.
 """
-import ctypes
-
 import numpy as np
 import pytest
 
 import dace
 from dace.libraries.standard.nodes import AllNode, AnyNode
-
-# DaCe-compiled SOs link against libgomp; preload with RTLD_GLOBAL.
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 def _build_allany_sdfg(tag,

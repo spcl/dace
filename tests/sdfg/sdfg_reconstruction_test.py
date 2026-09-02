@@ -7,7 +7,6 @@ that the rebuilt SDFG validates and (where runnable) produces the same
 output as the original.
 """
 
-import ctypes
 import pathlib
 import textwrap
 
@@ -25,31 +24,6 @@ from dace.sdfg.state import (
 from dace.sdfg.to_python import sdfg_to_python
 
 _DATA_DIR = pathlib.Path(__file__).parent / "data" / "sdfg_reconstruction"
-
-
-def _ensure_libgomp_loaded():
-    """Pre-load libgomp into the process so generated SDFG ``.so``s, which
-    don't directly link it on this system's CMake/OpenMP setup, can resolve
-    ``omp_get_max_threads`` via the global symbol table.
-
-    This is a host-build-environment workaround, not a correctness bug in
-    the emitter. Skips silently if libgomp can't be located.
-    """
-    candidates = (
-        "libgomp.so.1",
-        "/usr/lib/x86_64-linux-gnu/libgomp.so.1",
-        "/lib/x86_64-linux-gnu/libgomp.so.1",
-    )
-    for cand in candidates:
-        try:
-            ctypes.CDLL(cand, mode=ctypes.RTLD_GLOBAL)
-            return True
-        except OSError:
-            continue
-    return False
-
-
-_ensure_libgomp_loaded()
 
 
 def _exec_emitted(src: str) -> SDFG:

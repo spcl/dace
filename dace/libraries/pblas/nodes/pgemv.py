@@ -43,11 +43,17 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
             MKL_INT n_lx_rows = numroc_( &gx_rows, &lx_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
             // MKL_INT n_lx_cols = numroc_( &gx_cols, &lx_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
             MKL_INT x_lld = max(n_lx_rows, 1);
-            MKL_INT info;
+            MKL_INT info_y, info_a, info_x;
             MKL_INT _y_ldesc[9], _a_ldesc[9],  _x_ldesc[9];
-            descinit_(_y_ldesc, &gy_rows, &gy_cols, &ly_rows, &ly_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &y_lld, &info);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);
-            descinit_(_x_ldesc, &gx_rows, &gx_cols, &lx_rows, &lx_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &x_lld, &info);
+            descinit_(_y_ldesc, &gy_rows, &gy_cols, &ly_rows, &ly_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &y_lld, &info_y);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info_a);
+            descinit_(_x_ldesc, &gx_rows, &gx_cols, &lx_rows, &lx_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &x_lld, &info_x);
+            if (info_y != 0 || info_a != 0 || info_x != 0) {{
+                fprintf(stderr, "descinit_ refused a PGEMV descriptor: info(y=%d a=%d x=%d). A negative value is "
+                                "minus the index of the argument it refused; the call would otherwise "
+                                "return wrong numbers rather than fail.\\n", info_y, info_a, info_x);
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }}
             MKL_INT _m = ga_rows, _n = ga_cols;
             p{lapack_dtype_str}gemv_(
                 &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc,
@@ -107,11 +113,17 @@ class ExpandPgemvReferenceMPICH(ExpandTransformation):
             int n_lx_rows = numroc_( &gx_rows, &lx_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
             // int n_lx_cols = numroc_( &gx_cols, &lx_cols, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
             int x_lld = max(n_lx_rows, 1);
-            int info;
+            int info_y, info_a, info_x;
             int _y_ldesc[9], _a_ldesc[9],  _x_ldesc[9];
-            descinit_(_y_ldesc, &gy_rows, &gy_cols, &ly_rows, &ly_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &y_lld, &info);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
-            descinit_(_x_ldesc, &gx_rows, &gx_cols, &lx_rows, &lx_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &x_lld, &info);
+            descinit_(_y_ldesc, &gy_rows, &gy_cols, &ly_rows, &ly_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &y_lld, &info_y);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info_a);
+            descinit_(_x_ldesc, &gx_rows, &gx_cols, &lx_rows, &lx_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &x_lld, &info_x);
+            if (info_y != 0 || info_a != 0 || info_x != 0) {{
+                fprintf(stderr, "descinit_ refused a PGEMV descriptor: info(y=%d a=%d x=%d). A negative value is "
+                                "minus the index of the argument it refused; the call would otherwise "
+                                "return wrong numbers rather than fail.\\n", info_y, info_a, info_x);
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }}
             int _m = ga_rows, _n = ga_cols;
             p{lapack_dtype_str}gemv_(
                 &trans, &_m, &_n, &one, _a, &__state->__int_one, &__state->__int_one, _a_ldesc,

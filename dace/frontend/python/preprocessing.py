@@ -1602,6 +1602,13 @@ def ensure_mpi_initialized() -> None:
     ``mpi4py.rc`` is not the state to test: the environment switch is read inside the ``MPI``
     submodule as it loads, never mirrored back into ``rc``, so ``rc.initialize`` stays True while
     MPI is left down. Only ``MPI_Initialized`` knows.
+
+    The bring-up asks for ``MPI_THREAD_MULTIPLE``, which is what mpi4py's own automatic bring-up
+    asks for, so a rank that took this path is indistinguishable from one that did not. Bare
+    ``MPI_Init`` instead promises ``MPI_THREAD_SINGLE`` -- that the process has exactly one thread
+    -- and no DaCe process keeps that promise: its maps are OpenMP regions and its BLAS calls spawn
+    a pool. Which of the two paths a rank took should not be observable, and with ``MPI_Init`` it
+    was: the level differed by whether some earlier import had set ``MPI4PY_RC_INITIALIZE``.
     """
     if not any(os.environ.get(var) for var in MPI_RANK_VARS):
         return  # no launcher: honour the switch, a singleton bring-up is what it guards against
@@ -1610,7 +1617,7 @@ def ensure_mpi_initialized() -> None:
     except Exception:  # noqa: BLE001 -- as in mpi4py_is_usable: no reachable MPI, nothing to bring up
         return
     if not MPI.Is_initialized():
-        MPI.Init()
+        MPI.Init_thread(MPI.THREAD_MULTIPLE)
         atexit.register(finalize_mpi, MPI)
 
 

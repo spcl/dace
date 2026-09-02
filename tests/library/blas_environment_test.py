@@ -8,6 +8,7 @@ reference-BLAS libraries via ``ctypes.util.find_library``, so ``is_installed()``
 ``False`` and no BLAS lane was available even after ``spack load openblas``.
 """
 import ctypes.util
+import functools
 import os
 import warnings
 
@@ -30,6 +31,7 @@ def _system_has_a_blas():
     return any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1'))
 
 
+@functools.lru_cache(maxsize=1, typed=True)
 def _openmp_runtime_loadable():
     """True if the OpenMP runtime can actually be dlopen'd. DaCe's CMake build always links
     OpenMP, so *any* DaCe-compiled .so needs it at load time; if the toolchain's libomp/
@@ -111,12 +113,14 @@ def test_openblas_threading_flavor_is_probed_and_never_fatal():
 
 
 @pytest.mark.skipif(not OpenBLAS.is_installed(), reason='OpenBLAS not installed on this machine')
-@pytest.mark.skipif(not _openmp_runtime_loadable(),
-                    reason='OpenMP runtime (libomp/libgomp) not loadable -- DaCe-compiled .so '
-                    'cannot be loaded; set up LD_LIBRARY_PATH/rpath for the toolchain first')
 def test_gemm_compiles_and_runs_through_openblas():
     """End-to-end: a GEMM library node compiles and runs via the OpenBLAS implementation
     (finding + including + linking libopenblas) and matches numpy."""
+    # Probed here, not in a ``skipif``: that argument runs at COLLECTION, and dlopening an OpenMP
+    # runtime there leaves it mapped for every later test in the interpreter.
+    if not _openmp_runtime_loadable():
+        pytest.skip('OpenMP runtime (libomp/libgomp) not loadable -- DaCe-compiled .so cannot be '
+                    'loaded; set up LD_LIBRARY_PATH/rpath for the toolchain first')
     prev = Gemm.default_implementation
     Gemm.default_implementation = 'OpenBLAS'
     try:
