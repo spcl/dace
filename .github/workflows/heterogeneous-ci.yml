@@ -89,36 +89,39 @@ jobs:
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
         # TEMPORARY [WIP] probe for the grid-[2,1] pgemm red; delete with the finding.
-        # Rounds 1-2: the environment is cleared (thread counts, BTL list; a one-BLAS-thread run
-        # still fails), and tests/library, tests/passes and tests/sdfg each poison it alone while
-        # tests/blas, tests/codegen and tests/transformations do not. Every variant also built a
-        # DIFFERENT pdgemm SDFG, so this captures the generated program and diffs it.
+        # Rounds 1-3: the environment is cleared, and tests/library, tests/passes and tests/sdfg
+        # each poison it alone while ten other directories do not. The differing build-folder hash
+        # is NOT a differing program -- that name is md5(to_json()), which is unstable run to run;
+        # hash_sdfg and the emitted C++ are byte-identical across all of them. What DOES track the
+        # three failures exactly, measured locally, is that each loads libgomp into the pytest
+        # process and the passing ones do not. So: does loading libgomp alone do it.
         export DACE_cache=hash
         export DACE_default_build_folder=$RUNNER_TEMP/pblasprobe
         rm -rf "$DACE_default_build_folder"*
-        newest_cpp () { ls -td "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_*/ 2>/dev/null | head -1; }
+        GOMP=$(ls /usr/lib/x86_64-linux-gnu/libgomp.so.1* 2>/dev/null | head -1)
+        echo "libgomp=$GOMP"
         probe () {
           local label="$1"; shift
           local verdict=FAIL
-          if mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
+          if env "$@" mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
               -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
-              tests/library/pblas/pgemm_test.py "$@" > "/tmp/probe_$label.log" 2>&1; then
+              tests/library/pblas/pgemm_test.py $EXTRA > "/tmp/probe_$label.log" 2>&1; then
             verdict=PASS
           fi
-          local dir; dir=$(newest_cpp)
-          cp "$dir/src/cpu/pgemm_test_pdgemm.cpp" "/tmp/cpp_$label.cpp" 2>/dev/null || true
-          echo "PROBE $label $verdict sdfg=$(basename "$dir" | sed 's#.*pdgemm_##') lines=$(wc -l < "/tmp/cpp_$label.cpp" 2>/dev/null || echo 0)"
+          echo "PROBE $label $verdict"
         }
+        EXTRA=""
         probe base
-        probe library tests/library
-        probe passes tests/passes
-        probe sdfg tests/sdfg
-        probe lib_a_l "tests/library/[a-l]*"
-        probe lib_m_z "tests/library/[m-z]*"
-        echo '===== diff base vs library ====='
-        diff -u /tmp/cpp_base.cpp /tmp/cpp_library.cpp | head -200 || true
-        echo '===== diff base vs passes ====='
-        diff -u /tmp/cpp_base.cpp /tmp/cpp_passes.cpp | head -80 || true
+        probe base_gomp LD_PRELOAD="$GOMP"
+        probe base_gomp_omp1 LD_PRELOAD="$GOMP" OMP_NUM_THREADS=1
+        EXTRA="tests/sdfg"
+        probe sdfg
+        probe sdfg_ob1 OPENBLAS_NUM_THREADS=1
+        probe sdfg_omp1 OMP_NUM_THREADS=1
+        EXTRA="tests/sdfg/[a-m]*"
+        probe sdfg_a_m
+        EXTRA="tests/sdfg/[n-z]*"
+        probe sdfg_n_z
         echo '===== PROBES DONE ====='
 
     - name: Report overall coverage
