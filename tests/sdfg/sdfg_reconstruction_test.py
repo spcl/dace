@@ -312,8 +312,8 @@ def _build_reduce_sum() -> SDFG:
     a = state.add_access("A")
     b = state.add_access("B")
     red = state.add_reduce("lambda x, y: x + y", None, 0)
-    state.add_edge(a, None, red, None, dace.Memlet("A[0:16]"))
-    state.add_edge(red, None, b, None, dace.Memlet("B[0]"))
+    state.add_edge(a, None, red, '_in', dace.Memlet("A[0:16]"))
+    state.add_edge(red, '_out', b, None, dace.Memlet("B[0]"))
     return sdfg
 
 
