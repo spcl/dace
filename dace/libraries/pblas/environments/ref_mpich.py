@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
+from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUARD
 
 
 @dace.library.environment
@@ -17,13 +18,14 @@ class ScaLAPACKMPICH:
     cmake_libraries = ['libscalapack-mpich.so']
     cmake_files = []
 
-    headers = ["mpi.h", "../include/scalapack.h"]
+    headers = ["mpi.h", "cstdio", "../include/scalapack.h"]
     state_fields = [
         "int __scalapack_context;", "int __scalapack_rank, __scalapack_size;",
         "int __scalapack_prows = 0, __scalapack_pcols = 0;", "int __scalapack_myprow = 0, __scalapack_mypcol = 0;",
         "int __int_zero = 0, __int_one = 1, __int_negone = -1;", "bool __scalapack_grid_init = false;"
     ]
     init_code = """
+    """ + MPI_THREAD_LEVEL_GUARD + """
     Cblacs_pinfo(&__state->__scalapack_rank, &__state->__scalapack_size);
     Cblacs_get(__state->__int_negone, __state->__int_zero, &__state->__scalapack_context);
     if (!__state->__scalapack_grid_init) {{\n

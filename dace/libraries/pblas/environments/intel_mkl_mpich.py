@@ -4,6 +4,7 @@ from dace.config import Config
 import dace.library
 import ctypes.util
 import warnings
+from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUARD
 
 
 @dace.library.environment
@@ -22,7 +23,7 @@ class IntelMKLScaLAPACKMPICH:
     cmake_libraries = []
     cmake_files = []
 
-    headers = ["mpi.h", "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
+    headers = ["mpi.h", "cstdio", "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
     state_fields = [
         "MKL_INT __mkl_scalapack_context;", "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
         "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
@@ -31,6 +32,7 @@ class IntelMKLScaLAPACKMPICH:
         "bool __mkl_scalapack_grid_init = false;"
     ]
     init_code = """
+    """ + MPI_THREAD_LEVEL_GUARD + """
     blacs_pinfo(&__state->__mkl_scalapack_rank, &__state->__mkl_scalapack_size);
     blacs_get(&__state->__mkl_int_negone, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context);
     if (!__state->__mkl_scalapack_grid_init) {{\n
