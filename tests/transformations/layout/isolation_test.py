@@ -11,7 +11,8 @@ import pytest
 
 import dace
 from dace.transformation.layout.brute_force import best, sweep
-from dace.transformation.layout.isolation import OMP_PAUSE_MODES, pause_openmp_pools, run_isolated
+from dace.transformation.layout.isolation import (OMP_PAUSE_MODES, OMP_RUNTIME_SONAMES, pause_openmp_pools,
+                                                  run_isolated, set_openmp_thread_count)
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.timing import compute_region_stats_timer
 
@@ -55,6 +56,55 @@ def test_pause_openmp_pools_is_a_safe_noop_and_accepts_modes():
     pause_openmp_pools()  # must never raise, whatever is or is not loaded
     for mode in OMP_PAUSE_MODES.values():
         pause_openmp_pools(mode)
+
+
+def omp_probe():
+    """In a forked child: bring a runtime up at 4 threads, show the environment write is ignored,
+    then pin it. Forked so the parent's own thread count is left where the root conftest put it."""
+    import ctypes
+    import os
+    for soname in OMP_RUNTIME_SONAMES:
+        try:
+            lib = ctypes.CDLL(soname)  # a plain load, not RTLD_NOLOAD: bring one up if none is
+        except OSError:
+            continue
+        break
+    else:
+        return {"runtime": None}
+    lib.omp_get_max_threads.restype = ctypes.c_int
+    lib.omp_set_num_threads.argtypes = [ctypes.c_int]
+    lib.omp_set_num_threads.restype = None
+    lib.omp_set_num_threads(4)
+    os.environ["OMP_NUM_THREADS"] = "1"
+    ignored = lib.omp_get_max_threads()  # the runtime never re-reads the variable
+    return {
+        "runtime": soname,
+        "ignored": ignored,
+        "pinned": set_openmp_thread_count(1),
+        "after": lib.omp_get_max_threads(),
+        "env": os.environ["OMP_NUM_THREADS"],
+    }
+
+
+def test_set_openmp_thread_count_pins_a_runtime_that_already_read_the_environment():
+    """Writing OMP_NUM_THREADS does not move a runtime that is already up: libgomp parses the
+    variable in its initialiser and caches the count, so a later write reaches nobody.
+
+    This is not academic. It is what made ``polybench/lu`` diverge between the legacy and the
+    experimental CPU generator: a full-tree collection maps libgomp before
+    ``tests/codegen/readable/conftest.py`` sets the variable, the 4-thread team survived, and the
+    two generators then accumulated the same dot product in two different orders -- a 6.6e-04
+    spread on a float32 factorisation whose emitted arithmetic is character-for-character equal.
+    """
+    out = run_isolated(omp_probe)
+    assert "error" not in out, out
+    if out["runtime"] is None:
+        pytest.skip("no OpenMP runtime on this machine, so there is no thread count to pin")
+    assert out["ignored"] == 4, (f"{out['runtime']}: expected the environment write to be ignored and the "
+                                 f"count to stay 4, got {out['ignored']}")
+    assert out["pinned"] is True, f"{out['runtime']}: set_openmp_thread_count reported the pin did not take"
+    assert out["after"] == 1, f"{out['runtime']}: still at {out['after']} threads after the pin"
+    assert out["env"] == "1", "the environment must also be set, for a runtime dlopened afterwards"
 
 
 # --------------------------------------------------------------------------- #
