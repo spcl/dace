@@ -88,41 +88,25 @@ jobs:
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
-        # TEMPORARY [WIP] probe for the grid-[2,1] pgemm red; delete with the finding.
-        # Rounds 1-3: the environment is cleared, and tests/library, tests/passes and tests/sdfg
-        # each poison it alone while ten other directories do not. The differing build-folder hash
-        # is NOT a differing program -- that name is md5(to_json()), which is unstable run to run;
-        # hash_sdfg and the emitted C++ are byte-identical across all of them. What DOES track the
-        # three failures exactly, measured locally, is that each loads libgomp into the pytest
-        # process and the passing ones do not. So: does loading libgomp alone do it.
-        export DACE_cache=hash
-        export DACE_default_build_folder=$RUNNER_TEMP/pblasprobe
-        rm -rf "$DACE_default_build_folder"*
+        # TEMPORARY [WIP] one probe, removed with the finding: the trigger for the wrong pgemm
+        # numbers is an OpenMP runtime mapped into the process before the ScaLAPACK program runs.
+        # This shows the MPI thread level it happens at, so "raise the required level" can be ruled
+        # in or out on evidence rather than on argument.
         GOMP=$(ls /usr/lib/x86_64-linux-gnu/libgomp.so.1* 2>/dev/null | head -1)
-        echo "libgomp=$GOMP"
-        probe () {
-          local label="$1"; shift
-          local verdict=FAIL
-          if env "$@" mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
-              -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
-              tests/library/pblas/pgemm_test.py $EXTRA > "/tmp/probe_$label.log" 2>&1; then
-            verdict=PASS
-          fi
-          echo "PROBE $label $verdict"
-        }
-        EXTRA=""
-        probe base
-        probe base_gomp LD_PRELOAD="$GOMP"
-        probe base_gomp_omp1 LD_PRELOAD="$GOMP" OMP_NUM_THREADS=1
-        EXTRA="tests/sdfg"
-        probe sdfg
-        probe sdfg_ob1 OPENBLAS_NUM_THREADS=1
-        probe sdfg_omp1 OMP_NUM_THREADS=1
-        EXTRA="tests/sdfg/[a-m]*"
-        probe sdfg_a_m
-        EXTRA="tests/sdfg/[n-z]*"
-        probe sdfg_n_z
-        echo '===== PROBES DONE ====='
+        LD_PRELOAD="$GOMP" mpirun -n 2 --oversubscribe uv run python -c \
+          "import dace; from mpi4py import MPI; print('LEVEL rank', MPI.COMM_WORLD.Get_rank(), 'provided', MPI.Query_thread(), 'MULTIPLE', MPI.THREAD_MULTIPLE)" || true
+        if LD_PRELOAD="$GOMP" mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
+            -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
+            tests/library/pblas/pgemm_test.py > /tmp/probe_gomp.log 2>&1; then
+          echo "PROBE gomp_preloaded PASS"
+        else
+          echo "PROBE gomp_preloaded FAIL"
+        fi
+        # The real thing, whose exit code decides this step.
+        for i in {1..4}
+        do
+          mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
+        done
 
     - name: Report overall coverage
       uses: ./.github/actions/report-coverage
