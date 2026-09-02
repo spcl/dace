@@ -6,13 +6,6 @@ SDFG, and compares the result against a pure-Python reference implementing
 the same computation. This catches both structural regressions and
 semantics-breaking hoists.
 """
-import ctypes
-# OpenMP must be loaded before any DaCe-compiled stub library dlopen()s it.
-try:
-    ctypes.CDLL("libgomp.so.1", mode=ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
-
 import math
 import numpy as np
 import pytest

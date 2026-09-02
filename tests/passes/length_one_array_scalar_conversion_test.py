@@ -8,8 +8,6 @@ into a fresh transient scalar (copy-in in a new start state, copy-out in a new s
 ``ConvertScalarsToLengthOneArrays`` is the inverse. These are pure-SDFG (no Fortran) tests of the Pass
 classes, covering the staging, ``preserve_abi``, ``filter`` gating and ``opaque``/View exemptions.
 """
-import ctypes
-
 import numpy as np
 
 import dace
@@ -20,11 +18,6 @@ from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 def _io_sdfg() -> dace.SDFG:

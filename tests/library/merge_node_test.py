@@ -23,17 +23,10 @@ each test documents one desired-behaviour case.
   * **V5 — t array, f scalar** (``MERGE(t_arr, f_scalar, mask_arr)``):
     Mirror of V4 — ``_f`` broadcast, ``_t`` per-element.
 """
-import ctypes
-
 import dace
 from dace.libraries.standard.nodes import MergeLibraryNode
 
 import numpy as np
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 def _build_merge_sdfg(name_tag: str, t_shape, f_shape, m_shape, out_shape, strides=None):
