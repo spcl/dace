@@ -61,7 +61,7 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
     return None
 
 
-def _symbols_reassigned_within(sdfg: SDFG) -> Set[str]:
+def _symbols_reassigned_within(sdfg: 'SDFG') -> Set[str]:
     """
     Collects the symbols that an SDFG assigns to somewhere inside itself.
 
