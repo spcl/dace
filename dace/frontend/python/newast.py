@@ -1230,6 +1230,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+        # Scalars already promoted to symbols in this SDFG, so that a second promotion of the same
+        # scalar reuses its symbol rather than minting another name for it.
+        self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -5447,14 +5450,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 desc = self.sdfg.arrays[scalar]
                 if isinstance(desc, data.Scalar):
                     if not sym:
-                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
+                        sym = self.promoted_scalars.get(scalar)
+                    if not sym:
+                        # The name a promotion mints must not already mean something else here: a
+                        # symbol the caller passed in under that name would be shadowed, and every
+                        # use of it from here on would read the promoted scalar instead.
+                        symname = f'__sym_{scalar}'
+                        if symname in self.sdfg.symbols:
+                            symname = data.find_new_name(symname,
+                                                         set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
+                        sym = dace.symbol(symname, dtype=desc.dtype)
+                        self.sdfg.add_symbol(symname, desc.dtype)
+                        self.promoted_scalars[scalar] = sym
                         self.indirections[node_str] = sym
-                        try:
-                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
-                        except FileExistsError:
-                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
-                            # `not sym` returns True. This exception is benign.
-                            pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = state.parent_graph.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}

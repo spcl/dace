@@ -1504,6 +1504,14 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                             if fall_back:
                                 subset[i] = fallback_subset[i]
 
+                # The volume is counted in the nested SDFG's own terms as well, and a symbol only
+                # defined inside it means nothing out here -- it would leak into every consumer that
+                # asks the parent for its free symbols. Fall back on what the subset covers.
+                if any(str(s) not in outer_symbols for s in symbolic.symlist(border_memlet.volume)):
+                    border_memlet.volume = (border_memlet.subset.num_elements()
+                                            if border_memlet.subset is not None else 0)
+                    border_memlet.dynamic = True
+
     # Propagate the inside 'border' memlets outside the SDFG by
     # offsetting, and unsqueezing if necessary.
     for iedge in parent_state.in_edges(nsdfg_node):

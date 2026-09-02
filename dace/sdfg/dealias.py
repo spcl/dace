@@ -6,7 +6,7 @@ from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.transformation.helpers import unsqueeze_memlet
 from typing import Dict, List, Optional, Set, Tuple
 import ast
@@ -109,6 +109,13 @@ def _compose_through_views(state, node, memlet: Memlet):
         viewed = sdutil.get_view_node(state, node)
         if view_edge is None or viewed is None:
             break
+        # Only a view that is a plain slice of the container can have its accesses restated in the
+        # container's coordinates. One that reshapes or permutes -- ``a`` seen as ``(4, 5, 10)``,
+        # say -- has no such correspondence, and unsqueezing yields a subset in the view's own axis
+        # order that does not fit the container.
+        mapping = sdutil.map_view_to_array(node.desc(state.sdfg), viewed.desc(state.sdfg), view_edge.data.subset)
+        if mapping is None or mapping[1]:
+            break
         try:
             composed = unsqueeze_memlet(result, view_edge.data)
         except (ValueError, NotImplementedError):
@@ -201,15 +208,21 @@ def dealias_sdfg(sdfg: SDFG):
             # The names coinciding does not mean there is nothing to do: a connector can carry
             # the container's name while still describing a narrower window of it, in which case
             # the memlets inside are in the window's coordinates and still have to be unsqueezed.
-            if name != parent_name or not parent_sdfg.arrays[parent_name].is_equivalent(sdfg.arrays[name]):
+            equivalent = parent_sdfg.arrays[parent_name].is_equivalent(sdfg.arrays[name])
+            if name != parent_name or not equivalent:
                 if name != parent_name:
                     replacements[name] = parent_name
-                parent_edges[name] = edge
-                to_unsqueeze.add(parent_name)
-                if parent_name in inv_replacements:
-                    inv_replacements[parent_name].append(name)
-                else:
-                    inv_replacements[parent_name] = [name]
+                # A connector whose descriptor is the container itself -- what the nested SDFG
+                # contract asks for -- already has its memlets in the container's coordinates, so
+                # only its name changes. One that describes a narrower window has them in the
+                # window's coordinates and has to be unsqueezed into the container's.
+                if not equivalent:
+                    parent_edges[name] = edge
+                    to_unsqueeze.add(parent_name)
+                    if parent_name in inv_replacements:
+                        inv_replacements[parent_name].append(name)
+                    else:
+                        inv_replacements[parent_name] = [name]
                 break
 
     if to_unsqueeze:
@@ -355,6 +368,43 @@ def dealias_sdfg(sdfg: SDFG):
                     parent_state.remove_memlet_path(edge)
 
 
+def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_symbols: Set[str],
+                    parent_node: nd.NestedSDFG) -> bool:
+    """
+    Says whether a connector's descriptor already describes the container it is connected to.
+
+    A connector's shape and strides are written in the nested SDFG's own symbols, which the symbol
+    mapping binds to expressions of the parent's. Read as written, ``(M, K)`` is not ``(20, 20)``
+    even when ``M`` and ``K`` are mapped to exactly that, and the connector would be replaced by a
+    view of a window it does not describe -- the memlets inside address the whole container, not the
+    part the outer memlet selects.
+
+    :param parent_desc: The descriptor of the container the connector is connected to.
+    :param inner_desc: The connector's descriptor, in the nested SDFG's symbols.
+    :param available_symbols: The symbols the nested SDFG has, or will be given by integration.
+    :param parent_node: The nested SDFG node, for its symbol mapping.
+    :return: True if the two describe the same container.
+    """
+    if parent_desc.is_equivalent(inner_desc):
+        return True
+
+    # Adopting the parent's descriptor is only possible when the nested SDFG knows the symbols it is
+    # written in; otherwise it would be left referring to names that mean nothing inside.
+    if {str(s) for s in parent_desc.free_symbols} - available_symbols:
+        return False
+
+    symrepl = {
+        symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+        for k, v in parent_node.symbol_mapping.items() if str(k) != str(v)
+    }
+    if not symrepl:
+        return False
+
+    mapped = copy.deepcopy(inner_desc)
+    replace_properties_dict(mapped, {}, symrepl)
+    return parent_desc.is_equivalent(mapped)
+
+
 def integrate_nested_sdfg(sdfg: SDFG):
     """
     Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
@@ -385,6 +435,10 @@ def integrate_nested_sdfg(sdfg: SDFG):
                                 data.Data]] = {}  # Maps connector name -> (parent data name, parent data descriptor)
     parent_mapping: Dict[str, str] = {}  # Maps connector name to parent data name
 
+    # A descriptor adopted from the parent may be written in symbols the nested SDFG does not hold
+    # yet; the loop at the end of this function gives it the ones the parent defines here.
+    available_symbols = set(sdfg.symbols.keys()) | set(parent_state.symbols_defined_at(parent_node).keys())
+
     # Collect all edges connected to the nested SDFG node
     for edge in parent_state.all_edges(parent_node):
         if edge.data.data in parent_sdfg.arrays:
@@ -396,7 +450,8 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 # Only process non-transient arrays
                 if not sdfg.arrays[connector].transient:
                     # If the parent data descriptor is equivalent to the inner data descriptor, simply copy it
-                    if parent_sdfg.arrays[edge.data.data].is_equivalent(sdfg.arrays[connector]):
+                    if _same_container(parent_sdfg.arrays[edge.data.data], sdfg.arrays[connector], available_symbols,
+                                       parent_node):
                         # ``offset`` names the origin of the index space the memlets inside are
                         # written in -- the Fortran frontend uses it to keep one-based indices --
                         # and equivalence deliberately does not compare it. Adopting the parent's
@@ -593,7 +648,11 @@ def integrate_nested_sdfg(sdfg: SDFG):
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping
             sdfg.add_symbol(sym_name, sym_type)
-        parent_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
+        # A symbol the mapping already binds carries a meaning of its own -- the parent may have
+        # renamed the symbol this one stands for, for instance -- so only the ones with no entry
+        # yet are bound to the parent's symbol of the same name.
+        if sym_name not in parent_node.symbol_mapping:
+            parent_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
     # Containers read only by meta code never receive a ``views`` edge above, so redirect those
     # accesses to the parent container they alias.

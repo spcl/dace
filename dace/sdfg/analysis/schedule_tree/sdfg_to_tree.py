@@ -174,15 +174,27 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
         if not parent_node:
             do_not_replace = True
 
+        # A fresh name has to avoid every name this SDFG already holds, not only the ones seen so
+        # far: the loops below have not reached the rest of them yet, and renaming onto one of those
+        # silently overwrites it.
+        taken_names = set(identifiers_seen)
+        taken_names |= set(nsdfg.arrays.keys())
+        taken_names |= set(nsdfg.get_all_toplevel_symbols())
+        taken_names |= set(nsdfg.constants_prop.keys())
+
+        def _mint(name: str) -> str:
+            new_name = data.find_new_name(name, taken_names)
+            taken_names.add(new_name)
+            replacements[name] = new_name
+            return new_name
+
         # Rename duplicate data containers
         for name, desc in nsdfg.arrays.items():
             if name in identifiers_seen:
                 if not desc.transient or do_not_replace:
                     continue
 
-                new_name = data.find_new_name(name, identifiers_seen)
-                replacements[name] = new_name
-                name = new_name
+                name = _mint(name)
             identifiers_seen.add(name)
 
         # Rename duplicate top-level symbols
@@ -192,17 +204,13 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
                 continue
 
             if name in identifiers_seen and not do_not_replace:
-                new_name = data.find_new_name(name, identifiers_seen)
-                replacements[name] = new_name
-                name = new_name
+                name = _mint(name)
             identifiers_seen.add(name)
 
         # Rename duplicate constants
         for name in nsdfg.constants_prop.keys():
             if name in identifiers_seen and not do_not_replace:
-                new_name = data.find_new_name(name, identifiers_seen)
-                replacements[name] = new_name
-                name = new_name
+                name = _mint(name)
             identifiers_seen.add(name)
 
         # If there is a name collision, replace all uses of the old names with the new names
