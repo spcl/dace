@@ -9,6 +9,7 @@ import networkx as nx
 from dace import SDFG, dtypes, properties
 from dace.frontend import operations
 from dace.sdfg import nodes
+from dace.sdfg.infer_types import map_scope_carries_dependency
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import MapExpansion
@@ -168,6 +169,11 @@ class MarkSIMDMaps(ppl.Pass):
             # short: a ``[0:2, 0:1000000]`` nest goes from 2,000,000-way to 2-way. So an explicit
             # hint wins and this map keeps its collapsed, unvectorized form. Nothing in DaCe sets
             # the property (``Map.collapse`` defaults to 1), so this is the hand-written case only.
+            return False
+        if map_scope_carries_dependency(state, map_entry):
+            # The clause asserts the iterations are independent. A loop-carried dependency the body
+            # spells out WITHOUT a WCR -- an accumulator read and written at the same index every
+            # iteration -- makes that assertion false just as a WCR does.
             return False
         if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             # A conflicted WCR write lowers through ``wcr_fixed::reduce_atomic``, which composes

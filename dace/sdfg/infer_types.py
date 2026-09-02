@@ -284,6 +284,32 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     return child_schedule
 
 
+def map_scope_carries_dependency(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether ``entry``'s scope reads a container it also writes at an index that does not move with
+    every map parameter -- a loop-carried dependency, which no parallel schedule preserves.
+
+    Only the edges INSIDE the scope are read. The ones outside it are propagated, so a per-iteration
+    write ``B[i]`` reads back as the whole ``B[0:N]`` and every map would look conflicted. A write
+    that carries write-conflict resolution is a reduction the code generator already makes atomic,
+    and a parameter with a single iteration cannot carry anything.
+    """
+    varying = {param for param, size in zip(entry.map.params, entry.map.range.size()) if size != 1}
+    if not varying:
+        return False
+    try:
+        exit_node = state.exit_node(entry)
+    except (KeyError, StopIteration):  # scope without an exit: undecidable, so refuse the schedule
+        return True
+    read = {e.data.data for e in state.out_edges(entry) if not e.data.is_empty()}
+    for edge in state.in_edges(exit_node):
+        memlet = edge.data
+        if memlet.is_empty() or memlet.wcr is not None or memlet.data not in read:
+            continue
+        if memlet.subset is not None and varying - {str(s) for s in memlet.subset.free_symbols}:
+            return True
+    return False
+
+
 def _set_default_schedule_in_scope(state: SDFGState,
                                    parent_node: nodes.Node,
                                    parent_schedules: List[dtypes.ScheduleType],
@@ -315,6 +341,12 @@ def _set_default_schedule_in_scope(state: SDFGState,
                     local_child_schedule = _determine_schedule_from_storage(state, node)
                 else:
                     local_child_schedule = child_schedule
+                # An OpenMP team over a loop-carried dependency is a data race, and the wrong answer
+                # it gives is silent. Never CHOOSE that schedule here; an explicit one is the
+                # author's to defend.
+                if (local_child_schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+                        and isinstance(node, nodes.MapEntry) and map_scope_carries_dependency(state, node)):
+                    local_child_schedule = dtypes.ScheduleType.Sequential
                 node.schedule = local_child_schedule
         elif isinstance(node, nodes.LibraryNode):
             if node.schedule == dtypes.ScheduleType.Default:
