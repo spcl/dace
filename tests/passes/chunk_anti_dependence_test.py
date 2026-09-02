@@ -8,6 +8,7 @@ import contextlib
 import os
 
 import numpy as np
+import sympy
 
 import dace
 from dace import dtypes
@@ -113,7 +114,7 @@ def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
     just overwritten. Only the CHUNKS are parallel, so only they are a map.
     """
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 
     bodies = _chunk_bodies(sdfg)
@@ -126,7 +127,7 @@ def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
 def test_chunk_rewrite_is_bit_exact():
     """Sequential order inside a chunk satisfies the read-ahead; only the seam needs the snapshot."""
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 
     n = 40
@@ -141,7 +142,7 @@ def test_chunk_rewrite_is_bit_exact():
 def test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide():
     """The last chunk is short and its seam is the final read, which no boundary lands on."""
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=7).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
 
     n = 33
     rng = np.random.default_rng(32)
@@ -152,34 +153,37 @@ def test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide():
     assert np.array_equal(got, _ref_shift(a, b))
 
 
-def test_chunk_rewrite_copies_one_element_per_chunk():
-    """The whole-window copy becomes a stride-C copy plus the one trailing read."""
+def test_chunk_rewrite_copies_one_element_per_thread_plus_one():
+    """The whole-window copy becomes a strided gather of one element per chunk, plus the trailing
+    read. The point of the pass is the SIZE of that copy, so bind both symbols and count it."""
     sdfg = _canonical(_shift)
     before = _snapshot_copies(sdfg)
     assert len(before) == 1 and before[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic('N - 1')
 
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     after = _seam_copies(sdfg)
-    assert len(after) == 2
-    steps = sorted(str(m.subset[0][2]) for m in after)
-    assert steps == ['1', '8'], steps
-    total = sum(m.subset.num_elements() for m in after)
-    at_n = int(dace.symbolic.evaluate(total, {'N': 1000}))
-    assert at_n == 126, at_n  # (N - 2) / 8 chunks + the trailing read, not N - 1
+    assert len(after) == 2, 'the strided gather and the trailing read'
+
+    threads = 8
+    binding = {'N': 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
+    total = int(dace.symbolic.evaluate(sum(m.subset.num_elements() for m in after), binding))
+    assert total == threads + 1, total  # one boundary element per thread, not N - 1
 
 
 def test_seam_buffer_is_compact():
-    """The buffer is indexed by chunk, so it holds one slot per chunk, not one per iteration."""
+    """The buffer is indexed by chunk, so it holds one slot per thread, not one per iteration."""
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
 
+    threads = 8
+    binding = {'N': 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
     shape, = _seam_buffer(sdfg).shape
-    assert int(dace.symbolic.evaluate(shape, {'N': 1000})) == 126, shape
+    assert int(dace.symbolic.evaluate(shape, binding)) == threads + 1, shape
     assert not any(n.endswith('_antidep_snap') for n in sdfg.arrays), 'the whole-window snapshot must be gone'
 
     # The gather is strided in the array and contiguous in the buffer; that pairing is the
     # whole point, and only ``other_subset`` expresses it.
-    strided, = [m for m in _seam_copies(sdfg) if str(m.subset[0][2]) == '8']
+    strided, = [m for m in _seam_copies(sdfg) if str(m.subset[0][2]) != '1']
     assert str(strided.other_subset[0][2]) == '1'
     assert strided.subset.num_elements() == strided.other_subset.num_elements()
 
@@ -187,7 +191,7 @@ def test_seam_buffer_is_compact():
 def test_seam_reads_are_chunk_indexed():
     """The prologue reads slot 0; every seam iteration indexes off the outer chunk parameter."""
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     buf, = [n for n in sdfg.arrays if n.endswith('_antidep_seam')]
 
     reads = {}
@@ -205,36 +209,47 @@ def test_seam_reads_are_chunk_indexed():
     assert 'i' not in free, 'a seam slot must not be recomputed from the array index'
 
 
-def test_short_constant_extent_is_split_into_many_chunks():
-    """Without a floor on the chunk count, a short extent lands in one chunk and one thread."""
+def test_the_chunk_count_follows_the_thread_count():
+    """The chunk stride is an even split of the extent over the threads, not a fixed size.
+
+    Fixing the SIZE makes the seam grow with the array -- at a 4096-element chunk an XL extent of
+    5.2e8 still buys 127,000 chunks and a 127,001-element copy. Fixing the COUNT at the thread
+    count makes the seam thread-sized however long the array is: one boundary element per thread.
+    """
     sdfg = _canonical(_shift_fixed)
-    assert ChunkAntiDependence(min_chunks=1).apply_pass(sdfg, {}) == 1
-    unbounded = _chunk_maps(sdfg)
-    assert unbounded and all(m.range.num_elements() == 1 for m in unbounded)
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
 
-    sdfg = _canonical(_shift_fixed)
-    assert ChunkAntiDependence(min_chunks=64).apply_pass(sdfg, {}) == 1
-    # extent 298 over 64 chunks rounds the chunk up to 5, which leaves 60 of them.
-    bounded = _chunk_maps(sdfg)
-    assert bounded and all(str(m.range[0][2]) == '5' for m in bounded)
-    assert all(m.range.num_elements() == 60 for m in bounded)
-    assert int(_seam_buffer(sdfg).shape[0]) == 61
-
-
-def test_symbolic_extent_keeps_the_configured_chunk():
-    """A symbolic extent is assumed big, so it already has chunks to spare -- do not shrink."""
-    sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=4096, min_chunks=64).apply_pass(sdfg, {}) == 1
     maps = _chunk_maps(sdfg)
-    assert maps and all(str(m.range[0][2]) == '4096' for m in maps)
+    assert maps, 'the pass did not introduce a chunk map'
     for m in maps:
-        assert not m.range[0][2].free_symbols, 'a symbolic stride would defeat downstream analysis'
+        stride = str(m.range[0][2])
+        assert 'int_ceil' in stride and dace.symbolic.NUM_THREADS_SYMBOL in stride, stride
+        assert 'ceil(' not in stride.replace('int_ceil(', ''), f'a raw ceiling truncates in C++: {stride}'
+
+
+def test_the_seam_holds_exactly_one_slot_per_thread_plus_one():
+    """``__dace_num_threads + 1``: one boundary element per thread, plus the trailing read.
+
+    The count is the whole point of the rewrite -- the pass exists to avoid copying the window --
+    so the shape is asserted literally. It must also stay a plain sum: a nested rounding here is
+    what previously reached C++ as ``ceil()`` around a truncating integer division.
+    """
+    sdfg = _canonical(_shift)
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    shape = _seam_buffer(sdfg).shape
+    assert len(shape) == 1, shape
+    expected = dace.symbolic.pystr_to_symbolic(f'{dace.symbolic.NUM_THREADS_SYMBOL} + 1')
+    assert dace.symbolic.equal(shape[0], expected) is not False, f'{shape[0]} != {expected}'
+    assert not sympy.sympify(shape[0]).find(sympy.ceiling), f'a raw ceiling survived: {shape[0]}'
 
 
 def test_short_constant_extent_stays_bit_exact():
     """The shrunk chunk still lands its seams where the reads cross, at a size that does not divide."""
     sdfg = _canonical(_shift_fixed)
-    assert ChunkAntiDependence(min_chunks=64).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 
     rng = np.random.default_rng(33)
@@ -251,7 +266,7 @@ def test_chunk_rewrite_never_matches_a_gpu_scheduled_map():
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, nodes.MapEntry):
             n.map.schedule = dtypes.ScheduleType.GPU_Device
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) is None
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) is None
     assert len(_snapshot_copies(sdfg)) == 1
 
 
@@ -259,15 +274,15 @@ def test_chunk_rewrite_refuses_a_wider_read_ahead_offset():
     """``a[i] = a[i+2]`` needs a run of seam elements per chunk, not a point; keep the snapshot."""
     sdfg = _canonical(_shift_two)
     assert _snapshot_copies(sdfg), 'the canonical snapshot form is the precondition'
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) is None
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) is None
 
 
 def test_chunk_rewrite_is_idempotent():
     """After the rewrite no state holds a snapshot copy feeding a map, so nothing matches again."""
     sdfg = _canonical(_shift)
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) == 1
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     before = sdfg.hash_sdfg()
-    assert ChunkAntiDependence(chunk_size=8).apply_pass(sdfg, {}) is None
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) is None
     assert sdfg.hash_sdfg() == before
 
 
@@ -275,11 +290,11 @@ if __name__ == '__main__':
     test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
     test_chunk_rewrite_is_bit_exact()
     test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide()
-    test_chunk_rewrite_copies_one_element_per_chunk()
+    test_chunk_rewrite_copies_one_element_per_thread_plus_one()
     test_seam_buffer_is_compact()
     test_seam_reads_are_chunk_indexed()
-    test_short_constant_extent_is_split_into_many_chunks()
-    test_symbolic_extent_keeps_the_configured_chunk()
+    test_the_chunk_count_follows_the_thread_count()
+    test_the_seam_holds_exactly_one_slot_per_thread_plus_one()
     test_short_constant_extent_stays_bit_exact()
     test_chunk_rewrite_never_matches_a_gpu_scheduled_map()
     test_chunk_rewrite_refuses_a_wider_read_ahead_offset()

@@ -121,22 +121,6 @@ class ChunkAntiDependence(ppl.Pass):
 
     CATEGORY: str = 'Device Specialization'
 
-    chunk_size = properties.Property(dtype=int,
-                                     default=4096,
-                                     desc='Iterations per chunk. Large enough that the per-chunk seam element is '
-                                     'negligible, small enough to leave many chunks for the thread pool.')
-
-    min_chunks = properties.Property(dtype=int,
-                                     default=64,
-                                     desc='Chunk count to aim for when the extent is a compile-time constant. Enough '
-                                     'chunks to fill a wide machine and still leave the scheduler slack for load '
-                                     'balance; each extra chunk costs one seam slot. 1 disables the cap.')
-
-    def __init__(self, chunk_size: int = 4096, min_chunks: int = 64) -> None:
-        super().__init__()
-        self.chunk_size = chunk_size
-        self.min_chunks = min_chunks
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
@@ -154,7 +138,11 @@ class ChunkAntiDependence(ppl.Pass):
             if not (desc.transient and isinstance(desc, data.Array) and len(desc.shape) == 1):
                 continue
             in_edges = state.in_edges(snap_node)
-            out_edges = state.out_edges(snap_node)
+            # An EMPTY out-edge is an ORDERING edge, not a reader: it names no data at all, so it
+            # cannot be the one thing this guard is looking for -- a consumer that would still need
+            # the whole window the rewrite stops copying. Counting one as a reader is what left
+            # s1244 (whose snapshot carries two, a_split_snap -> b and -> c) on the full-length copy.
+            out_edges = [e for e in state.out_edges(snap_node) if e.data is not None and not e.data.is_empty()]
             if len(in_edges) != 1 or not out_edges:
                 continue
             src = in_edges[0].src
@@ -219,22 +207,21 @@ class ChunkAntiDependence(ppl.Pass):
                 return False
         return seen_snap
 
-    def _effective_chunk_size(self, extent) -> int:
-        """``chunk_size``, capped at an even split of ``extent`` over ``min_chunks`` chunks.
+    def _chunk_stride(self, extent):
+        """The per-chunk iteration count, so the chunk COUNT lands on the thread count.
 
-        A chunk map has ``ceil(extent / C)`` iterations, so the configured C leaves most of a
-        thread pool idle on anything shorter than ``C * threads`` -- at the default it takes
-        262144 iterations before 64 chunks exist at all. The cap rounds up, so the count lands
-        near ``min_chunks`` rather than exactly on it (extent 298 gives C = 5 and 60 chunks);
-        rounding down instead would reach C = 1 on a short extent, which is the whole-window
-        snapshot again. Only a compile-time-constant extent is capped: a symbolic one is assumed
-        big (house rule). The result stays constant either way, so the chunk map never picks up
-        a symbolic stride.
+        The seam holds one slot per chunk, so whichever of (size, count) is fixed decides how much
+        this pass copies. Fixing the SIZE makes the seam grow with the array -- at 4096 an XL
+        extent of 5.2e8 still buys 127,000 chunks and a 127,001-element copy. Fixing the COUNT at
+        the thread count makes the seam thread-sized no matter how long the array is: one boundary
+        element per thread, which is the least a chunked anti-dependence break can copy.
+
+        ``__dace_num_threads`` is defined by frame code and excluded from the ABI, so the stride is
+        symbolic but the allocation is a couple of dozen elements. ``int_ceil``, never ``/``: the
+        last chunk is short and a floor would drop its iterations.
         """
-        if symbolic.issymbolic(extent):
-            return self.chunk_size
-        extent = int(extent)
-        return min(self.chunk_size, max(1, (extent + self.min_chunks - 1) // self.min_chunks))
+        threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
+        return symbolic.int_ceil(symbolic.pystr_to_symbolic(str(extent)), threads)
 
     def _redirect_to_seam(self, state: SDFGState, snap: str, seam: str, slot, outer: Optional[Tuple]) -> None:
         """Repoint every ``snap`` read in ``state`` at seam slot ``slot``.
@@ -256,7 +243,7 @@ class ChunkAntiDependence(ppl.Pass):
             e.data.subset = copy.deepcopy(sub)
             e.data.volume = sub.num_elements()
 
-    def _tile(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry, chunk_size: int) -> nodes.MapEntry:
+    def _tile(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry, chunk_size) -> nodes.MapEntry:
         """Wrap ``me`` in an outer chunk map and return the outer entry.
 
         ``MapTiling`` is the existing orthogonal-tiling transformation; it leaves ``me`` as
@@ -304,14 +291,19 @@ class ChunkAntiDependence(ppl.Pass):
         snap_node, arr, me, lo, hi = match
         snap = snap_node.data
         parent = state.parent_graph
-        chunk_size = self._effective_chunk_size(_diff(hi, lo))
-        chunk = symbolic.pystr_to_symbolic(str(chunk_size))
+        chunk = self._chunk_stride(_diff(hi, lo))
         # Read the chunk count off the gather range itself rather than spelling the same
         # ceiling a second way: validation compares the two forms syntactically, and DaCe's
         # ``Range.size`` builds a sympy ``ceiling`` that never matches a fresh ``int_ceil``
         # (both print as ``int_ceil`` in C++, so this costs nothing downstream).
         gather = subsets.Range([(lo + 1, hi, chunk)])
         nchunks = gather.num_elements()
+        # The seam is sized by the THREAD COUNT, not by the chunk count it happens to produce:
+        # ``nchunks`` is ``int_ceil(E, int_ceil(E, T))``, which is never above ``T`` and equals it
+        # for any extent worth chunking. Sizing on ``T`` keeps the allocation one slot per thread
+        # plus the trailing read -- the least a chunked anti-dependence break can copy -- and keeps
+        # the shape a plain sum instead of a nested rounding.
+        threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
 
         # Drop the whole-window snapshot copy; the seam state replaces it.
         copy_edge = state.in_edges(snap_node)[0]
@@ -330,10 +322,15 @@ class ChunkAntiDependence(ppl.Pass):
 
         # Seam elements: each chunk's first element, gathered into consecutive slots, plus the
         # final read that no chunk boundary lands on. Strided source, contiguous destination.
-        buf, _ = sdfg.add_transient(f'{arr}_antidep_seam', [nchunks + 1],
-                                    sdfg.arrays[snap].dtype,
-                                    storage=sdfg.arrays[snap].storage,
-                                    find_new_name=True)
+        # SCOPE lifetime, not the default. The size names ``__dace_num_threads``, which a graph
+        # tasklet supplies once the program is running -- a persistent buffer is allocated in
+        # ``__dace_init``, where that symbol does not yet exist and the C++ does not compile. The
+        # seam is a couple of dozen elements, so allocating it per call costs nothing.
+        buf, desc = sdfg.add_transient(f'{arr}_antidep_seam', [threads + 1],
+                                       sdfg.arrays[snap].dtype,
+                                       storage=sdfg.arrays[snap].storage,
+                                       lifetime=dtypes.AllocationLifetime.State,
+                                       find_new_name=True)
         gathered = (gather, subsets.Range([(0, nchunks - 1, 1)]))
         trailing = (subsets.Range([(hi + 1, hi + 1, 1)]), subsets.Range([(nchunks, nchunks, 1)]))
         for src_sub, dst_sub in (gathered, trailing):
@@ -349,7 +346,7 @@ class ChunkAntiDependence(ppl.Pass):
         # Chunk body: sequential inside a chunk, so every read-ahead that stays inside the
         # chunk sees the value the sequential loop would have seen -- read the live array.
         me.map.range = subsets.Range([(lo + 1, hi, 1)])
-        self._tile(state, sdfg, me, chunk_size)
+        self._tile(state, sdfg, me, chunk)
         inner_lo, inner_hi, _ = me.map.range[0]
         me.map.range = subsets.Range([(_exact(inner_lo), _exact(inner_hi) - 1, 1)])
         for n in state.data_nodes():
@@ -364,7 +361,7 @@ class ChunkAntiDependence(ppl.Pass):
         # next chunk and must come from the buffer -- chunk ``k`` reads slot ``k + 1``.
         tail_entry = next(n for n in tail.nodes() if isinstance(n, nodes.MapEntry) and tail.entry_node(n) is None)
         tail_entry.map.range = subsets.Range([(lo + 1, hi, 1)])
-        tail_outer = self._tile(tail, sdfg, tail_entry, chunk_size)
+        tail_outer = self._tile(tail, sdfg, tail_entry, chunk)
         t_lo, t_hi, _ = tail_entry.map.range[0]
         seam_idx = _exact(t_hi)
         tail_entry.map.range = subsets.Range([(seam_idx, seam_idx, 1)])
