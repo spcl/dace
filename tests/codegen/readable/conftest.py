@@ -172,6 +172,21 @@ def max_abs_diff(legacy, experimental):
         return float("nan")
 
 
+#: Kernels whose two runs legitimately differ by more than the dtype's default tolerance, with the
+#: measured relative difference that sizes each entry. A factorization amplifies a last-ulp
+#: reassociation by its own growth: unpivoted fp32 LU on random data at N=13 produced max|diff| of
+#: 1.03e-04 and 3.43e-04 across two runs against values reaching 18.6, i.e. ~1.9e-5 relative, and the
+#: LEGACY output moved between runs too -- so this compares two nondeterministic results and no fixed
+#: tolerance at the dtype default can hold.
+#:
+#: This is for REASSOCIATION only. A divergence that is a lost or reordered WRITE does not belong
+#: here: it shows up as a whole value, not a trailing digit, and widening a tolerance to cover one
+#: hides the defect instead of measuring it.
+RELAXED_KERNELS = {
+    'polybench/lu': (1e-4, 1e-6),
+}
+
+
 def assert_outputs_equivalent(legacy, experimental, target, label=""):
     """Assert the readable generator reproduced the legacy outputs (dtype-aware tolerance; exact for ints)."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
@@ -181,7 +196,7 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
     for name, lv in legacy.items():
         ev = experimental[name]
         assert lv.shape == ev.shape, f"{label}/{name}: shape {lv.shape} vs {ev.shape}"
-        rtol, atol = tolerance_for(lv.dtype)
+        rtol, atol = RELAXED_KERNELS.get(label, tolerance_for(lv.dtype))
         assert np.allclose(lv, ev, rtol=rtol, atol=atol,
                            equal_nan=True), (f"{label}/{name}: experimental {target} codegen diverges from legacy, "
                                              f"max|diff|={max_abs_diff(lv, ev):.3e}")
