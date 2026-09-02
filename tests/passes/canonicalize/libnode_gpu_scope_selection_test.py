@@ -25,8 +25,8 @@ def toplevel_sequential_reduce() -> dace.SDFG:
     node = Reduce('reduce_sum', wcr='lambda a, b: a + b', axes=None, identity=0.0)
     node.schedule = dtypes.ScheduleType.Sequential
     state.add_node(node)
-    state.add_edge(state.add_access('A'), None, node, None, dace.Memlet('A[0:256]'))
-    state.add_edge(node, None, state.add_access('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(state.add_access('A'), None, node, '_in', dace.Memlet('A[0:256]'))
+    state.add_edge(node, '_out', state.add_access('out'), None, dace.Memlet('out[0]'))
     sdfg.validate()
     return sdfg, node
 
@@ -43,8 +43,8 @@ def in_kernel_sequential_reduce() -> dace.SDFG:
     node.schedule = dtypes.ScheduleType.Sequential
     row = state.add_access('row')
     state.add_memlet_path(state.add_read('A'), entry, row, memlet=dace.Memlet('A[i, 0:256]', other_subset='0:256'))
-    state.add_edge(row, None, node, None, dace.Memlet('row[0:256]'))
-    state.add_memlet_path(node, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'))
+    state.add_edge(row, None, node, '_in', dace.Memlet('row[0:256]'))
+    state.add_memlet_path(node, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'), src_conn='_out')
     sdfg.validate()
     return sdfg, node
 

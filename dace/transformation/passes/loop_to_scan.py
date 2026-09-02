@@ -668,7 +668,13 @@ def _fuse_body_states(loop: LoopRegion) -> int:
                 accepts = xform.can_be_applied(loop, expr_index=0, sdfg=owner_sdfg)
             except Exception:
                 accepts = False
-            if not accepts:
+            # A verdict of True can be CONDITIONAL: the matcher records the WAR / WAW /
+            # seed-before-accumulate orderings its own ``apply`` would then wire as empty
+            # happens-before edges. ``_merge_state_into`` below is a plain node-gluing merge that
+            # wires none of them, so honouring only the boolean would drop exactly the ordering
+            # the verdict was conditioned on -- and gluing a seed write onto the accumulate that
+            # reads it back leaves one AccessNode with two unordered writers.
+            if not accepts or xform.connections_to_make:
                 continue
             cand = (s1, s2, e)
             break

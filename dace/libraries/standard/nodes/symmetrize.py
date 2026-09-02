@@ -149,9 +149,12 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
         rows, cols = desc.shape
         # The window bounds are STRING properties; ``pystr_to_symbolic`` is what turns them into
         # comparable expressions (sympy refuses a bare str).
-        row_lo = symbolic.pystr_to_symbolic(node.row_lo)
-        row_hi = symbolic.pystr_to_symbolic(node.row_hi)
-        col_hi = symbolic.pystr_to_symbolic(node.col_hi)
+        # Reparsing loses the assumptions and dtype the shape carries, so the window bound and the
+        # extent become two sympy instances of one name that ``equal`` then calls undecidable.
+        row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(node.row_lo),
+                                                                              symbolic.pystr_to_symbolic(node.row_hi),
+                                                                              symbolic.pystr_to_symbolic(node.col_hi),
+                                                                              rows, cols)
         return (symbolic.equal(rows, cols) is True and symbolic.equal(row_lo, 0) is True
                 and symbolic.equal(col_hi, cols) is True and symbolic.equal(row_hi, cols - node.col_offset) is True)
 

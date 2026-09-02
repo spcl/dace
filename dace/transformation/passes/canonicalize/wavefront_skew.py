@@ -72,7 +72,7 @@ import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -88,6 +88,29 @@ _SKEW_P_PREFIX = '_skew_p_'
 #: 0.17-0.18x for the element-granularity diagonal it replaces. Bigger ``Bj`` is
 #: NOT better -- 256 leaves 3 tile columns at N=768, fewer than the thread count.
 DEFAULT_TILE_SIZE = 64
+
+#: Default extent of a skewed tile on each axis for the GPU lowering. A tile diagonal replaces one
+#: kernel launch per ELEMENT anti-diagonal with one per TILE anti-diagonal: at N = 16746 that is
+#: 523 launches instead of 33,491, and it restores unit stride to the innermost access, which the
+#: element diagonal walks N-1 elements (131 KB) apart -- a separate memory transaction per lane.
+#: 128 makes the intra-tile anti-diagonal at most 128 wide -- two CDNA wavefronts, the low end of
+#: the 2-4 warps a thread block wants. One wavefront per block leaves nothing for the scheduler to
+#: overlap against a memory stall; more than four buys nothing here, because the anti-diagonal
+#: ramps and the extra lanes are masked off for most of the tile.
+#:
+#: What the size actually trades, at N = 16746 (the campaign size):
+#:
+#:   B     launches   peak blocks   block width   CUs touched
+#:   64         523           262            64           262
+#:  128         261           131           128           131
+#:  256         131            66           256            66
+#:
+#: ``peak blocks * block width`` is ~N for every row, and so is the total barrier count: the
+#: dependence caps instantaneous parallelism at N however the nest is tiled, and tiling only
+#: changes the KIND of barrier. A bigger tile converts kernel launches into ``__syncthreads``,
+#: which are far cheaper; it also concentrates the work on fewer CUs, and this is a memory-bound
+#: stencil, so aggregate bandwidth pulls the other way. 128 sits between the two.
+DEFAULT_GPU_TILE_SIZE = 64
 
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
 #: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
@@ -1196,6 +1219,17 @@ class WavefrontSkew(ppl.Pass):
                                  desc='Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one '
                                  'tile row of it at unit stride. CPU only.')
 
+    gpu_tile_i = properties.Property(dtype=int,
+                                     default=DEFAULT_GPU_TILE_SIZE,
+                                     desc='Skewed-tile extent on the outer (u) axis for the GPU lowering. Separate '
+                                     'from tile_i because the two targets are sized against different things: a CPU '
+                                     'tile is sized to a cache, a GPU tile trades grid width (tiles per diagonal, '
+                                     'which must cover the CUs) against block width (the intra-tile anti-diagonal, '
+                                     'which must cover a wavefront).')
+    gpu_tile_j = properties.Property(dtype=int,
+                                     default=DEFAULT_GPU_TILE_SIZE,
+                                     desc='Skewed-tile extent on the inner (v) axis for the GPU lowering.')
+
     def __init__(self, target: str = 'cpu'):
         super().__init__()
         self.target = target
@@ -1358,10 +1392,15 @@ class WavefrontSkew(ppl.Pass):
         ``v -> bj*J``, so ``poly.skew_bounds`` projects it with no changes: it is
         handed a rectangle over ``(I, J)`` and returns the diagonal ``T`` range plus
         the parametric tile-column ``P`` range at fixed ``T``."""
-        # Cache blocking, so the target owns the choice (see the class docstring).
-        if self.target != 'cpu':
+        # Both targets block, for different reasons and at different sizes (see the class
+        # docstring): a CPU tile is cache blocking, a GPU tile is what turns one kernel launch per
+        # element anti-diagonal into one per tile anti-diagonal.
+        if self.target == 'cpu':
+            bi, bj = int(self.tile_i), int(self.tile_j)
+        elif self.target == 'gpu':
+            bi, bj = int(self.gpu_tile_i), int(self.gpu_tile_j)
+        else:
             return None
-        bi, bj = int(self.tile_i), int(self.tile_j)
         if bi < 1 or bj < 1 or not tiling_legal(deps, tau, bi, bj):
             return None
         ti, tj = sym(_TILE_I_PROBE), sym(_TILE_J_PROBE)
@@ -1519,7 +1558,146 @@ class WavefrontSkew(ppl.Pass):
         inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
         inner.pinned_sequential = True
 
+        # On a GPU the tile INTERIOR is the thread block, so it is skewed too (see
+        # :meth:`_skew_within_tile`). Done before the tile-column lift because both steps run
+        # LoopToMap, and it is far simpler to rewrite loops while they are still loops.
+        if self.target == 'gpu':
+            self._skew_within_tile(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, ub, vb)
+
         self._convert_inner_to_map(outer, p_loop, sdfg)
+
+    def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
+                          plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
+        """Turn a tile's two sequential interior loops into a diagonal over a PARALLEL Map.
+
+        The tile interior is the same shape as the nest that contains it -- a 2-D nest whose
+        dependences the same ``tau`` orders -- so this is :meth:`_rewrite` applied a second time,
+        one level down, and nothing new has to be proven. Legality carries over for free: ISL
+        decided ``tau`` over the WHOLE domain, and the tile interior is a subset of it, so a
+        schedule with no violating pair in the whole domain has none in a part of it.
+
+        What it buys is the reason the GPU lowering tiles at all. The tile-column Map is the grid,
+        one block per tile; without this the block would run its tile on a single thread. With it,
+        the block's threads walk the intra-tile anti-diagonal together, and that anti-diagonal is
+        at most ``min(Bi, Bj)`` wide -- one wavefront at the default 64. The Map carries
+        ``is_warp_tile``, which is a REQUEST, not a schedule: the device offload assigns every
+        nested scope ``Sequential`` (correctly -- a kernel launch inside a kernel is not
+        expressible) and ``PromoteWarpTiles`` reads the tag afterwards to give it
+        ``GPU_ThreadBlock``.
+
+        The clip is what makes this ISL's job rather than arithmetic. A boundary tile is partial,
+        and a triangular domain clips ``v`` against ``u`` itself, so the anti-diagonal's extent is
+        not ``min(Bi, Bj)`` at the edges. Both clips go in as plain affine constraints and the
+        projection returns exact bounds, which is why no guard is emitted inside the body.
+
+        Falls back to leaving the interior sequential -- correct, just narrow -- whenever the
+        projection is not renderable.
+        """
+        u_sym, v_sym = sym(u), sym(v)
+        # Every ``min``/``max`` in the interior bounds is a CONJUNCTION of affine constraints, which
+        # is the form ISL wants. Each entry is constrained non-negative.
+        interior = [
+            u_sym - i_lo,
+            symbolic.simplify(ub[1] - u_sym),
+            symbolic.simplify(i_lo + plan.bi - 1 - u_sym),
+            symbolic.simplify(v_sym - vb[0]),
+            v_sym - j_lo,
+            symbolic.simplify(vb[1] - v_sym),
+            symbolic.simplify(j_lo + plan.bj - 1 - v_sym),
+        ]
+        dims = (u, v)
+        # The diagonal runs over the enclosing RECTANGLE, not the clipped region: its exact extent
+        # is piecewise (interior tile / last row / last column / corner) and renders as no single
+        # loop bound. A superset is free here because the parallel range at each diagonal is read
+        # exactly, so a diagonal past the real edge runs an empty Map. It also makes the count a
+        # compile-time constant, ``bi + bj - 1``.
+        a, b = tau
+        corner = a * i_lo + b * j_lo
+        d_lo = corner + min(a * (plan.bi - 1), 0) + min(b * (plan.bj - 1), 0)
+        d_hi = corner + max(a * (plan.bi - 1), 0) + max(b * (plan.bj - 1), 0)
+        try:
+            bounds = poly.skew_bounds(dims,
+                                      params_of(interior, list(dims)),
+                                      interior,
+                                      tau,
+                                      f'{_SKEW_T_PREFIX}probe',
+                                      f'{_SKEW_P_PREFIX}probe',
+                                      t_range=(symbolic.simplify(d_lo), symbolic.simplify(d_hi)))
+        except ValueError:
+            return  # not renderable for ISL -> the interior stays sequential
+        if bounds is None:
+            return
+        self._emit_tile_interior(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, bounds, (d_lo, d_hi))
+
+    def _emit_tile_interior(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str,
+                            tau: Tuple[int, int], plan: TilePlan, i_lo, j_lo, bounds, d_range) -> None:
+        """Diagonal over a CONSTANT-width parallel Map, with the real extent as a guard.
+
+        This is :meth:`_rewrite` with one difference, and the difference is forced by the hardware.
+        A thread block's width is fixed for the whole launch, but the intra-tile anti-diagonal
+        RAMPS -- one point at the tile's corner, ``min(Bi, Bj)`` across its middle, back to one.
+        Giving the Map the exact projected extent therefore emits a block dimension built from
+        ``_skew_p_0`` and the intra-tile diagonal, both of which exist only INSIDE the kernel:
+
+            dim3(-Max(64*_skew_p_0 + 1, ...) + Min(N - 1, ...) + 1, 1, 1)   // will not compile
+
+        So the Map runs the full tile width, a compile-time constant, and the projected bounds
+        become a predicate on the body. Lanes outside the current anti-diagonal are masked off,
+        which is what a fixed block over a ramping wavefront costs and the only way to pay it.
+        """
+        a, b = tau
+        nid = _next_id(sdfg)
+        d_var = f'{_SKEW_T_PREFIX}{nid}'
+        k_var = f'{_SKEW_P_PREFIX}{nid}'
+        sdfg.add_symbol(d_var, dace.int64)
+        sdfg.add_symbol(k_var, dace.int64)
+        subs = {f'{_SKEW_T_PREFIX}probe': sym(d_var), f'{_SKEW_P_PREFIX}probe': sym(k_var)}
+        p_lo = bound_expr(bounds.p_lo_terms, subs, 'max')
+        p_hi = bound_expr(bounds.p_hi_terms, subs, 'min')
+
+        i_loop.loop_variable = d_var
+        i_loop.init_statement = properties.CodeBlock(f'{d_var} = ({symbolic.symstr(d_range[0])})')
+        i_loop.loop_condition = properties.CodeBlock(f'{d_var} <= ({symbolic.symstr(d_range[1])})')
+        i_loop.update_statement = properties.CodeBlock(f'{d_var} = {d_var} + 1')
+        i_loop.pinned_sequential = True
+
+        # ``k`` indexes the block's threads: 0 .. width-1, the tile extent on the parallel axis.
+        width = plan.bj if abs(a) == 1 else plan.bi
+        inner.loop_variable = k_var
+        inner.init_statement = properties.CodeBlock(f'{k_var} = 0')
+        inner.loop_condition = properties.CodeBlock(f'{k_var} <= {width - 1}')
+        inner.update_statement = properties.CodeBlock(f'{k_var} = {k_var} + 1')
+
+        # The projected axis is an absolute coordinate; a thread holds it at ``origin + k``.
+        origin = j_lo if abs(a) == 1 else i_lo
+        coord = symbolic.simplify(origin + sym(k_var))
+        if abs(a) == 1:
+            inner.replace_dict({u: symbolic.symstr(a * (sym(d_var) - b * coord)), v: symbolic.symstr(coord)})
+        else:
+            inner.replace_dict({u: symbolic.symstr(coord), v: symbolic.symstr(b * (sym(d_var) - a * coord))})
+
+        here = symbolic.symstr(coord)
+        self._guard_body(inner, sdfg, f'({here}) >= ({p_lo}) and ({here}) <= ({p_hi})')
+        self._convert_inner_to_map(i_loop, inner, sdfg)
+        for node, _ in i_loop.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry):
+                node.map.is_warp_tile = True
+
+    def _guard_body(self, loop: LoopRegion, sdfg: SDFG, condition: str) -> None:
+        """Move ``loop``'s body under a single-branch ConditionalBlock testing ``condition``."""
+        branch = ControlFlowRegion(f'{loop.label}_active', sdfg=sdfg)
+        # Snapshot before moving: ``add_node`` re-homes each block's ``parent_graph``, so the edge
+        # list has to be read off the loop while it still owns them.
+        start, blocks, edges = loop.start_block, list(loop.nodes()), list(loop.edges())
+        for blk in blocks:
+            branch.add_node(blk, is_start_block=blk is start)
+        for e in edges:
+            branch.add_edge(e.src, e.dst, e.data)
+        for blk in blocks:
+            loop.remove_node(blk)
+        guard = ConditionalBlock(f'{loop.label}_lane', sdfg=sdfg)
+        guard.add_branch(condition, branch)
+        loop.add_node(guard, is_start_block=True)
 
     def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> None:
         """Lift the skewed inner ``p``-loop to a Map via ``LoopToMap.apply``,

@@ -99,10 +99,11 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 
 
 #: The terminal band, in order: the reclaimers, then the inline that leads every cleanup site, then
-#: the three units of :func:`_structural_cleanup`. Spelled out so the A/B below cannot silently start
+#: the four units of :func:`_structural_cleanup`. Spelled out so the A/B below cannot silently start
 #: skipping the wrong passes if the band is reordered.
 _TERMINAL_BAND = ('FixedPointPipeline', 'PatternMatchAndApplyRepeated', 'PatternMatchAndApplyRepeated',
-                  'EmptyStateElimination', 'DeadStateElimination', 'PruneEmptyConditionalBranches')
+                  'EmptyStateElimination', 'DeadStateElimination', 'RedundantOrderingEdgeElimination',
+                  'PruneEmptyConditionalBranches')
 
 
 def _band_start() -> int:
@@ -153,11 +154,21 @@ def _maps(sdfg: dace.SDFG) -> int:
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
+def _units_of(unit) -> List[object]:
+    """``unit`` and the passes it composes, so a nested ``SimplifyPass`` is not invisible here."""
+    if isinstance(unit, canon_pipeline.IvSubstitutionFissionFixpoint):
+        return [unit, *unit.round_units()]
+    return [unit]
+
+
 def test_the_terminal_band_is_wired_in_once_and_holds_no_simplify():
     stages = canon_pipeline._build_stages()
     labels = [label for label, unit in stages if _is_reclaim_stage(unit)]
     assert labels == ['end'], labels
-    simplifies = [label for label, unit in stages if isinstance(unit, SimplifyPass)]
+    # Look INSIDE a composite stage as well: the IV/fission fixpoint owns a ``SimplifyPass`` of
+    # its own, and counting only top-level entries would let a simplify move into the terminal
+    # band inside a wrapper without this noticing -- which is the whole property under test.
+    simplifies = [label for label, unit in stages for _p in _units_of(unit) if isinstance(_p, SimplifyPass)]
     assert simplifies == ['clean', 'reduce', 'reduce'], simplifies
 
     start = _band_start()
@@ -202,30 +213,27 @@ _DEAD_REPLICA_TASKLETS = {
 _LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice_plus_x_slice'}
 
 
-def test_fission_replica_dead_chain_is_removed():
-    """The orphaned ``SplitStatements`` replica -- arrays, access nodes, and tasklets.
+def test_fission_replica_is_absent_from_the_canonical_form():
+    """No orphaned ``SplitStatements`` replica survives -- and the live half is untouched.
 
-    Named exactly, not by prefix, and paired with ``_LIVE_TRANSIENTS``: the assertion is that the
-    reclaimers take the whole dead chain and nothing beside it. The two staging descriptors go with
-    the array now -- ``DeadDataflowElimination`` deletes the chain's nodes but leaves the
-    descriptors standing, ``ArrayElimination`` skips a ``Scalar`` outright, so it is the terminal
-    ``PruneUnreferencedTransients`` that collects them.
+    This used to assert that the reclaim band REMOVED the replica, with the un-reclaimed reference
+    carrying it as the precondition. The split no longer emits it: the reference now holds exactly
+    ``_LIVE_TRANSIENTS`` and none of the dead names, so the reclaimers have nothing to take here
+    and the old precondition is unreachable. The property worth pinning is the end state, asserted
+    on BOTH arms so it holds whether the chain is never created or created and collected -- and
+    paired with the live set so it cannot pass by deleting everything. The reclaim band keeps its
+    own coverage in ``test_fused_diamond_loses_the_duplicate_map_fusion_carrier``, where a
+    duplicate carrier IS still produced.
     """
-    reference = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=False)
-    assert _DEAD_REPLICA_TRANSIENTS <= set(_transients(reference)), \
-        f'expected the orphaned replica in the reference, got {_transients(reference)}'
-    assert _DEAD_REPLICA_ARRAY in _access_nodes(reference)
-    assert _DEAD_REPLICA_TASKLETS <= set(_tasklets(reference)), _tasklets(reference)
-
-    cleaned = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=True)
-    assert not (_DEAD_REPLICA_TRANSIENTS & set(_transients(cleaned))), _transients(cleaned)
-    assert _DEAD_REPLICA_ARRAY not in _access_nodes(cleaned)
-    assert not (_DEAD_REPLICA_TASKLETS & set(_tasklets(cleaned))), _tasklets(cleaned)
-    # Only the dead chain goes: the live half of the split is untouched.
-    assert set(_transients(reference)) - set(_transients(cleaned)) == _DEAD_REPLICA_TRANSIENTS
-    assert set(_transients(cleaned)) == _LIVE_TRANSIENTS, _transients(cleaned)
-    assert set(_tasklets(reference)) - set(_tasklets(cleaned)) == _DEAD_REPLICA_TASKLETS
-    assert _maps(cleaned) == _maps(reference), 'reclaiming must not change the map structure'
+    for with_reclaim in (False, True):
+        sdfg = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=with_reclaim)
+        transients, nodes_, tasklets = set(_transients(sdfg)), _access_nodes(sdfg), set(_tasklets(sdfg))
+        assert not (_DEAD_REPLICA_TRANSIENTS & transients), (with_reclaim, sorted(transients))
+        assert _DEAD_REPLICA_ARRAY not in nodes_, (with_reclaim, nodes_)
+        assert not (_DEAD_REPLICA_TASKLETS & tasklets), (with_reclaim, sorted(tasklets))
+        assert _LIVE_TRANSIENTS <= transients, (with_reclaim, sorted(transients))
+    # Exact, not a subset: the canonical form is the live half and nothing else.
+    assert set(_transients(sdfg)) == _LIVE_TRANSIENTS, sorted(_transients(sdfg))
 
 
 def _states(sdfg: dace.SDFG) -> List[str]:

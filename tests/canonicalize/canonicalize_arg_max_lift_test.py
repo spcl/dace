@@ -721,10 +721,11 @@ def test_symbol_carrier_min_inline_all_positive():
 # Strided transform+index argmax/argmin (TSVC s318): ``maxv = max(|a[k]|)`` over
 # a strided gather ``k = inc*i`` with an index carrier. After
 # ``InductionVariableSubstitution`` closes the secondary IV ``k``, the gather is
-# an affine ``a[base + coeff*i]``; ArgMaxLift materialises ``buf[j] = |a[...]|``
-# then ArgReduces it (value + slice-local index). Built manually (mirrors the
-# post-IV-subst frontend shape; ``a`` is given its own length symbol ``AL`` so
-# the strided positions ``coeff*j`` stay in bounds).
+# an affine ``a[base + coeff*i]``, which ArgMaxLift hands to an ArgReduce as a
+# strided slice with ``transform='abs'`` -- one streaming pass, no staged copy
+# (value + slice-local index). Built manually (mirrors the post-IV-subst frontend
+# shape; ``a`` is given its own length symbol ``AL`` so the strided positions
+# ``coeff*j`` stay in bounds).
 # -----------------------------------------------------------------------------
 
 _AL = dace.symbol('AL')
@@ -785,10 +786,10 @@ def _build_strided_abs_argmax_index_sdfg(label: str, op: str = '>', gather_form:
 @pytest.mark.parametrize('op,reducer', [('>', np.argmax), ('<', np.argmin)])
 @pytest.mark.parametrize('gather_form', ['closed', 'iv'])
 def test_strided_abs_argmax_with_index_s318(op, reducer, gather_form):
-    """``if |a[inc*i]| OP maxv: maxv = |a[inc*i]|; index = i`` lifts to an
-    ``ArgReduce`` over a materialised ``buf[j] = |a[inc*j]|``. Verifies BOTH the
-    extreme |value| and its iteration index, for the clean closed form and the
-    exact ``InductionVariableSubstitution`` output, max and min."""
+    """``if |a[inc*i]| OP maxv: maxv = |a[inc*i]|; index = i`` lifts to one
+    ``ArgReduce`` reading ``a`` strided, with the abs applied as it reads. Verifies
+    BOTH the extreme |value| and its iteration index, for the clean closed form and
+    the exact ``InductionVariableSubstitution`` output, max and min."""
     from dace.libraries.standard.nodes import ArgReduce
     sdfg = _build_strided_abs_argmax_index_sdfg(f's318_{gather_form}_{"max" if op == ">" else "min"}',
                                                 op=op,
@@ -812,6 +813,66 @@ def test_strided_abs_argmax_with_index_s318(op, reducer, gather_form):
     ej = int(reducer(strided))
     assert np.isclose(val[0], strided[ej]), f"value: got {val[0]}, expected {strided[ej]}"
     assert idx[0] == ej, f"index: got {idx[0]}, expected {ej}"
+
+
+def _scaling_transients(sdfg):
+    """Transients whose allocation grows with a program symbol -- i.e. a copy of the input."""
+    return sorted(name for name, desc in sdfg.arrays.items()
+                  if desc.transient and dace.symbolic.symlist(desc.total_size))
+
+
+@pytest.mark.parametrize('gather_form', ['closed', 'iv'])
+def test_s318_lift_streams_the_gather_rather_than_staging_it(gather_form):
+    """The lift must not stage ``|a[inc*j]|`` into a transient the arg-reduction reads back.
+
+    This is a property of the canonical FORM, not a speed knob: the staged copy is a full extra
+    write plus a full extra read of the input to hold a value the scan computes in a register
+    (4.2 GB each way at the corpus's XL size). So the assertions are that nothing of problem size
+    is allocated, that the producing map is gone, and that the ArgReduce reads ``a`` itself with
+    the abs as its own operand transform.
+    """
+    from dace.libraries.standard.nodes import ArgReduce
+    sdfg = _build_strided_abs_argmax_index_sdfg(f's318_stream_{gather_form}', gather_form=gather_form)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    assert _scaling_transients(sdfg) == [], 'the lift allocated a problem-sized buffer'
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)], \
+        'the producing map must be fused into the arg-reduction, not left beside it'
+    node, state = next((n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce))
+    assert node.transform == 'abs', 'the abs must be the arg-reduction\'s own transform'
+    in_edge = next(e for e in state.in_edges(node) if e.dst_conn == '_in')
+    assert in_edge.data.data == 'a', f'the arg-reduction must read the input array, not {in_edge.data.data!r}'
+
+
+@pytest.mark.parametrize('op,reducer', [('>', np.argmax), ('<', np.argmin)])
+def test_s318_streamed_lift_keeps_the_first_extreme_on_ties(op, reducer):
+    """Fusing the gather in must not move which occurrence of a repeated extreme wins.
+
+    The guard is strict, so the sequential loop never updates on a tie and the FIRST |extreme|
+    stands. Inputs are rounded so equal extremes actually occur -- random draws would never
+    exercise the rule.
+    """
+    inc, n = 2, 12
+    al = inc * (n - 1) + 4
+    sdfg = _build_strided_abs_argmax_index_sdfg(f's318_ties_{"max" if op == ">" else "min"}',
+                                                op=op,
+                                                gather_form='closed')
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    a = np.zeros(al)
+    for j, v in enumerate([3.0, -1.0, 3.0, 1.0, -3.0, 1.0, 2.0, -2.0, 3.0, 1.0, -1.0, 2.0]):
+        a[inc * j] = v
+    strided = np.abs(a[[inc * j for j in range(n)]])
+    expected = int(reducer(strided))  # numpy also returns the FIRST occurrence
+    assert sum(strided == strided[expected]) > 1, 'the fixture must actually contain a tie'
+
+    val = np.zeros(1)
+    idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), result=val, idx_result=idx, N=n, inc=inc, AL=al)
+    assert val[0] == strided[expected], f'value: got {val[0]}, expected {strided[expected]}'
+    assert idx[0] == expected, f'index: got {idx[0]}, expected the first extreme at {expected}'
 
 
 # -----------------------------------------------------------------------------

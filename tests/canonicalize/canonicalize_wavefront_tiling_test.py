@@ -155,22 +155,40 @@ def test_dependence_outrunning_the_tile_falls_back_to_the_untiled_lowering():
 
 
 @pytest.mark.parametrize('prog', ALL_SHAPES, ids=lambda p: p.name)
-def test_only_the_cpu_target_blocks_the_wavefront(prog):
-    """Blocking is locality tuning, so it is the target's call: ``target='cpu'`` emits the tiled
-    four-level shape, ``target='gpu'`` keeps the element-granularity diagonal, which exposes the
-    whole anti-diagonal instead of one tile column. The pair is what makes this a test of the
-    target gate rather than of the nest -- both targets must still skew, and to the same answer."""
+def test_both_targets_block_and_the_gpu_also_skews_the_tile(prog):
+    """Both targets block, and they block for different reasons, so they emit different shapes.
+
+    A CPU tile is cache blocking: a parallel tile-column Map over two SEQUENTIAL interior loops,
+    the innermost at unit stride. Three loops, one Map.
+
+    A GPU tile is what turns one kernel launch per element anti-diagonal into one per TILE
+    anti-diagonal. That alone would leave each block running its whole tile on one thread, so the
+    interior is skewed a second time: a sequential intra-tile diagonal over a parallel Map across
+    the block's threads. Two loops, two Maps -- and the inner Map carries ``is_warp_tile``, the
+    request :class:`PromoteWarpTiles` redeems after the device offload has sequentialized it.
+
+    The pair is what makes this a test of the target gate rather than of the nest: both targets
+    must still skew, and to the SAME answer, which the numeric check below pins."""
     cpu, cpu_fired = skewed(prog, target='cpu')
     gpu, gpu_fired = skewed(prog, target='gpu')
     assert cpu_fired == 1 and gpu_fired == 1, f'{prog.name}: the wavefront must be skewed on both targets'
 
     assert len(loops(cpu)) == 3, f'{prog.name}: cpu tiles; got {[l.loop_variable for l in loops(cpu)]}'
-    assert len(loops(gpu)) == 1 and loops(gpu)[0].loop_variable.startswith(_SKEW_T_PREFIX), \
-        f'{prog.name}: gpu keeps the untiled diagonal; got {[l.loop_variable for l in loops(gpu)]}'
+    cpu_maps = [n.map for n, _ in cpu.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(cpu_maps) == 1 and not cpu_maps[0].is_warp_tile, \
+        f'{prog.name}: the cpu interior stays sequential; got {[m.params for m in cpu_maps]}'
+
+    gpu_loops = loops(gpu)
+    assert len(gpu_loops) == 2 and all(l.loop_variable.startswith(_SKEW_T_PREFIX) for l in gpu_loops), \
+        f'{prog.name}: gpu runs a tile diagonal over an intra-tile diagonal; ' \
+        f'got {[l.loop_variable for l in gpu_loops]}'
 
     gpu_maps = [n.map for n, _ in gpu.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert len(gpu_maps) == 1 and gpu_maps[0].params[0].startswith(_SKEW_P_PREFIX), \
-        f'{prog.name}: the diagonal still carries one parallel Map; got {[m.params for m in gpu_maps]}'
+    assert len(gpu_maps) == 2, f'{prog.name}: grid Map over thread-block Map; got {[m.params for m in gpu_maps]}'
+    assert all(m.params[0].startswith(_SKEW_P_PREFIX) for m in gpu_maps), \
+        f'{prog.name}: both Maps are skewed parallel axes; got {[m.params for m in gpu_maps]}'
+    assert sum(m.is_warp_tile for m in gpu_maps) == 1, \
+        f'{prog.name}: exactly the interior Map is tagged; got {[(m.params, m.is_warp_tile) for m in gpu_maps]}'
 
     n = 96
     rng = np.random.default_rng(20260824)

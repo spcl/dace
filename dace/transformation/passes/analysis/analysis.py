@@ -1054,7 +1054,10 @@ def covers_full_extent(subset: Optional[Range], desc: dt.Data) -> bool:
             return False
         if symbolic.simplify(rb) != 0:
             return False
-        if symbolic.simplify(re - (size - 1)) != 0:
+        # The subset is reparsed from strings while the shape carries the declared assumptions, so the
+        # same name arrives as two sympy instances that never cancel and coverage is silently refused.
+        end, extent = symbolic.equalize_symbols_across(re, size)
+        if symbolic.simplify(end - (extent - 1)) != 0:
             return False
     return True
 

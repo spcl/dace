@@ -458,7 +458,10 @@ def covers_full_array(memlet, desc) -> bool:
     for (begin, end, step), size in zip(ranges, desc.shape):
         if dace.symbolic.simplify(begin) != 0:
             return False
-        if dace.symbolic.simplify(end - (size - 1)) != 0:
+        # A memlet bound reparsed from a string and a shape carrying the declared assumptions are two
+        # sympy instances of one name, and subtracting them never cancels.
+        hi, extent = dace.symbolic.equalize_symbols_across(end, size)
+        if dace.symbolic.simplify(hi - (extent - 1)) != 0:
             return False
         if dace.symbolic.simplify(step - 1) != 0:
             return False

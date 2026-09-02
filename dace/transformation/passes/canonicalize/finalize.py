@@ -21,7 +21,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 """
 import os
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import SDFGState
@@ -29,8 +29,12 @@ from dace.libraries.blas.environments import openblas
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
+from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
+from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
+from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
+from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -252,6 +256,11 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     :param sdfg: SDFG whose transient storage is finalized in place.
     :param device: codegen device type (selects GPU WCR-reset / storage rules).
     """
+    # Post-canonicalization cleanup: bind call-bearing loop ranges to symbols. The analysis passes
+    # need ``int_ceil`` in the range to reason about a chunked stride; codegen cannot emit a call in
+    # an OpenMP loop header. This is the seam between the two, so it runs after everything that
+    # reads the range and before anything that emits it.
+    HoistLoopRangeCalls().apply_pass(sdfg, {})
     ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
@@ -263,9 +272,21 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             continue
         for name in names:
             desc = sd.arrays.get(name)
-            if desc is not None and desc.total_size == 1:
-                desc.lifetime = dtypes.AllocationLifetime.Scope
+            if desc is None:
+                continue
+            if desc.total_size == 1:
+                desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register
+                continue
+            # A shape naming a RUNTIME-SUPPLIED symbol cannot be allocated in ``__dace_init``:
+            # that runs before any state, and ``__dace_num_threads`` is defined by a graph tasklet
+            # once the program is running. Promoting such a buffer emits an init that references an
+            # undeclared name and does not compile. Scope lifetime instead -- these are per-thread
+            # seams of a few dozen elements, so a per-call allocation costs nothing.
+            if any(symbolic.NUM_THREADS_SYMBOL in {str(x)
+                                                   for x in symbolic.pystr_to_symbolic(str(dim)).free_symbols}
+                   for dim in desc.shape):
+                desc.lifetime = dtypes.AllocationLifetime.State
     sdfg.reset_cfg_list()
 
 
@@ -301,20 +322,28 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     ``canonicalize(s, target='gpu')`` -> *(any passes the caller needs on a device-agnostic graph)*
     -> ``offload_to_gpu(s)`` -> ``finalize_for_target(s, 'gpu')``. Callers with their own offload
     recipe (CloudSC schedules the inner maps and keeps the nblocks map sequential) substitute it
-    here and never call this function. Three steps, mirroring ``auto_optimize``'s GPU tail:
+    here and never call this function. Four steps, mirroring ``auto_optimize``'s GPU tail:
 
-    0. **Recompute-fuse** (:func:`recompute_fuse_for_gpu`): collapse producer chains into one map
+    0. **Structural cleanup** (:func:`~dace.transformation.passes.canonicalize.pipeline.
+       run_structural_cleanup`): state fusion, empty/dead state elimination and redundant-ordering-
+       edge removal, so the device move sees the reduced graph -- fewer states is fewer kernel
+       launches and fewer host<->device copies, and a redundant ordering edge inside a state is one
+       more thing the stream serialization would have to honour. It belongs HERE and not in the
+       caller's recipe because the documented pipeline lets a caller run its own passes between
+       ``canonicalize`` and this call, so the pipeline's own trailing cleanup is already stale by
+       the time the offload starts; inside the function is the only place that can guarantee it.
+    1. **Recompute-fuse** (:func:`recompute_fuse_for_gpu`): collapse producer chains into one map
        before the device move, so the single fused map is what lands on the device (register
        recompute beats the global-memory round-trip of materialized intermediates). CPU keeps the
        materialized maps, which is why this lives here and not in ``finalize_for_target``.
-    1. **Full offload** (unconditional): put non-transient arrays in GPU global storage
+    2. **Full offload** (unconditional): put non-transient arrays in GPU global storage
        (:func:`apply_gpu_storage`) and run ``apply_gpu_transformations`` (host<->device copies +
        ``GPU_Device`` schedules on every eligible map). Run unconditionally -- a partially-offloaded
        input (some maps already ``GPU_Device``, others not) is COMPLETED rather than skipped;
        ``apply_gpu_transformations`` leaves already-device maps alone and offloads the rest. No extra
        ``simplify`` is run here (the canonicalized SDFG is already simplified; ``apply_gpu_storage`` +
        ``apply_gpu_transformations`` are the only offload steps needed).
-    2. **Block size** (:func:`select_gpu_device_block_size`): pick a thread-block matching the
+    3. **Block size** (:func:`select_gpu_device_block_size`): pick a thread-block matching the
        iteration domain (``N x N`` -> ``16x16`` / ``32x16``; 1-D -> the ``128,1,1`` default, and a
        tree-reduction map a deep ``512,1,1``) on every ``GPU_Device`` map, run AFTER offload so
        each kernel map's final dimensionality is known.
@@ -330,9 +359,16 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     (which reads the value) emits the single-stream form.
     """
     Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
+    run_structural_cleanup(sdfg)
     recompute_fuse_for_gpu(sdfg)
     apply_gpu_storage(sdfg)
     sdfg.apply_gpu_transformations()
+    # Between the offload and the block-size choice, and it has to be exactly here. The offload
+    # assigns every nested scope ``Sequential``, so a map tagged ``is_warp_tile`` cannot become a
+    # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that
+    # already contains a thread-block map, so promoting after it would leave the kernel carrying
+    # BOTH a declared block size and a thread-block map -- which is the conflict codegen refuses.
+    PromoteWarpTiles().apply_pass(sdfg, {})
     select_gpu_device_block_size(sdfg)
 
 
@@ -478,6 +514,17 @@ def finalize_for_target(sdfg: SDFG,
     # until codegen is the invariant every downstream pass relies on.
     infer_types.infer_connector_types(sdfg)
     finalize_transient_storage(sdfg, device)
+
+    # Open the OpenMP team once per sequential loop rather than once per trip. It runs HERE, at the
+    # very end, and not in the ``cpu_specialize`` band, because the step above is what decides which
+    # transients live in the state struct: ``make_transients_persistent`` skips anything inside a
+    # parallel map body (it would be a per-thread buffer), so a loop hoisted before it keeps a
+    # scope-lifetime scratch array and pays a malloc per trip. Deciding storage first, then the
+    # team, gets both. Connector types are re-inferred because the hoist outlines the loop into a
+    # nested SDFG, whose boundary connectors are new.
+    if device == dtypes.DeviceType.CPU:
+        if HoistParallelRegion().apply_pass(sdfg, {}):
+            infer_types.infer_connector_types(sdfg)
 
     if validate:
         assert_no_nested_parallel_maps(sdfg, device)

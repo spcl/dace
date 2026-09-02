@@ -26,6 +26,10 @@ This pass operationalises that contract end-to-end:
    the three: see :func:`joint_scatter_writes_for_loop`, which keys it across all of its
    dimensions instead, because per-array guards ask each index to be a permutation on its own and
    that is stronger than the loop needs.
+
+   An indirect write carrying a WCR is skipped by all four (see
+   :func:`indirect_write_needs_injectivity`): an accumulation is correct under colliding indices,
+   so demanding a permutation of it would abort on inputs the program computes correctly.
 2. **Guard** each detected ``idx`` array via
    :func:`~dace.transformation.passes.scatter_conflict_guard.insert_scatter_guard`,
    which inserts an ``IntegerSort`` + adjacent-equal-pair check + ``std::abort()``
@@ -329,6 +333,40 @@ def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
     return targets
 
 
+def indirect_write_needs_injectivity(write: mm.Memlet) -> bool:
+    """Whether an indirect write has to be proven collision-free before its loop may be lifted.
+
+    A plain write does: two iterations landing on the same slot race, and which one survives is
+    undefined. A WCR write does NOT. It is a read-modify-write the codegen lowers to an atomic
+    combine, so colliding iterations fold into the slot one after another and the reducer's
+    associativity makes the order immaterial -- ``bins[ip[i]] (+)= src[i]`` is correct for any
+    ``ip`` whatever. Guarding one would demand a permutation the program never needed and abort
+    on inputs it computes correctly.
+
+    :param write: The write memlet.
+    :returns: True for a plain write, False for an accumulation.
+    """
+    return write.wcr is None
+
+
+def nested_write_is_accumulation(nsdfg_node: nodes.NestedSDFG, out_conn: str) -> bool:
+    """Whether every write to ``out_conn`` INSIDE ``nsdfg_node`` carries a WCR.
+
+    A ``dace.map`` scatter ``hist[bin[i]] += w[i]`` lowers to a NestedSDFG holding the WCR write
+    against a write-only output connector while the connector's own outer edge stays plain, so
+    the outer memlet alone does not say whether the write accumulates.
+
+    :param nsdfg_node: The nested SDFG performing the write.
+    :param out_conn: The output connector carrying it.
+    :returns: True iff ``out_conn`` is written at least once and every such write is a WCR.
+    """
+    writes = [
+        e.data for st in nsdfg_node.sdfg.all_states() for dn in st.data_nodes() if dn.data == out_conn
+        for e in st.in_edges(dn) if e.data is not None and not e.data.is_empty()
+    ]
+    return bool(writes) and all(not indirect_write_needs_injectivity(m) for m in writes)
+
+
 def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
     """Return the scatter index-array names driving an indirect WRITE in ``region``.
 
@@ -381,7 +419,7 @@ def _scatter_idx_targets_for_loop(region: LoopRegion,
             if desc is None or desc.transient:
                 continue
             for e in state.in_edges(node):
-                if e.data is None or e.data.subset is None:
+                if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
                     continue
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:
@@ -706,7 +744,7 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[Li
             if not isinstance(desc, data.Array) or len(desc.shape) < 2:
                 continue
             for e in state.in_edges(node):
-                if e.data is None or e.data.is_empty():
+                if e.data is None or e.data.is_empty() or not indirect_write_needs_injectivity(e.data):
                     continue
                 subset = e.data.dst_subset if e.data.dst_subset is not None else e.data.subset
                 if subset is None or len(subset) != len(desc.shape):
@@ -1095,6 +1133,10 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict
             # Data-dependent write: fewer accesses (volume) than the subset spans.
             if m.volume == m.subset.num_elements():
                 continue
+            # An accumulation is collision-safe by construction; the WCR may sit on either side
+            # of the connector (see :func:`nested_write_is_accumulation`).
+            if not indirect_write_needs_injectivity(m) or nested_write_is_accumulation(e.src, e.src_conn):
+                continue
             idx_conns = _write_index_input_connectors(e.src, e.src_conn)
             for ie in state.in_edges(e.src):
                 if ie.dst_conn not in idx_conns or not isinstance(ie.src, nodes.AccessNode):
@@ -1200,5 +1242,6 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
 
 
 __all__ = [
-    'ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays', 'scatter_target_arrays'
+    'ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays',
+    'indirect_write_needs_injectivity', 'nested_write_is_accumulation', 'scatter_target_arrays'
 ]

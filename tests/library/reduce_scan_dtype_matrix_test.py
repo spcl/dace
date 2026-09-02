@@ -125,8 +125,8 @@ def _parallel_sdfg(dtype, op):
     red = state.add_reduce(_OPS[op][0], None, _identity(op, dtype.as_numpy_dtype()))
     red.implementation = 'OpenMP'
     red.schedule = dace.ScheduleType.CPU_Multicore
-    state.add_edge(state.add_read('A'), None, red, None, mm.Memlet('A[0:N]'))
-    state.add_edge(red, None, state.add_write('B'), None, mm.Memlet('B[0]'))
+    state.add_edge(state.add_read('A'), None, red, '_in', mm.Memlet('A[0:N]'))
+    state.add_edge(red, '_out', state.add_write('B'), None, mm.Memlet('B[0]'))
     sdfg.validate()
     return sdfg
 
@@ -140,8 +140,8 @@ def _sequential_sdfg(dtype, op):
     istate = inner.add_state()
     red = istate.add_reduce(_OPS[op][0], None, _identity(op, dtype.as_numpy_dtype()))
     red.implementation = 'OpenMP'
-    istate.add_edge(istate.add_read('ri'), None, red, None, mm.Memlet('ri[0:N]'))
-    istate.add_edge(red, None, istate.add_write('ro'), None, mm.Memlet('ro[0]'))
+    istate.add_edge(istate.add_read('ri'), None, red, '_in', mm.Memlet('ri[0:N]'))
+    istate.add_edge(red, '_out', istate.add_write('ro'), None, mm.Memlet('ro[0]'))
 
     sdfg = dace.SDFG('red_seq_%s_%s' % (op, dtype.to_string()))
     sdfg.add_array('A', [2, N], dtype)
@@ -316,8 +316,8 @@ def test_reduce_accumulates_in_the_output_dtype(dtype):
     red = state.add_reduce(_OPS['sum'][0], None, 0.0)
     red.implementation = 'OpenMP'
     red.schedule = dace.ScheduleType.CPU_Multicore
-    state.add_edge(state.add_read('A'), None, red, None, mm.Memlet('A[0:N]'))
-    state.add_edge(red, None, state.add_write('B'), None, mm.Memlet('B[0]'))
+    state.add_edge(state.add_read('A'), None, red, '_in', mm.Memlet('A[0:N]'))
+    state.add_edge(red, '_out', state.add_write('B'), None, mm.Memlet('B[0]'))
     sdfg.validate()
     wide_out = np.zeros(1, wide_t.as_numpy_dtype())
     sdfg(A=ones, B=wide_out, N=n)

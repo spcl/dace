@@ -7,6 +7,7 @@ in order; it is a separate stage from canonicalization and runs after it.
 """
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeOversizedIntermediates)
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import SequentializeUnprofitableParallelScopes

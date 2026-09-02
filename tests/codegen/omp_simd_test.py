@@ -230,8 +230,8 @@ def test_unexpanded_library_node_withholds_the_clause():
     state = sdfg.add_state('main', is_start_block=True)
     entry, exit_node = state.add_map('outer', {'i': '0:8'}, schedule=dtypes.ScheduleType.CPU_Multicore)
     red = state.add_reduce('lambda x, y: x + y', None, 0)
-    state.add_memlet_path(state.add_read('a'), entry, red, memlet=dace.Memlet('a[i, 0:16]'))
-    state.add_memlet_path(red, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'))
+    state.add_memlet_path(state.add_read('a'), entry, red, memlet=dace.Memlet('a[i, 0:16]'), dst_conn='_in')
+    state.add_memlet_path(red, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'), src_conn='_out')
     sdfg.validate()
 
     mark(sdfg)

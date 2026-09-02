@@ -225,6 +225,35 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     return True
 
 
+def step_is_loop_invariant(step_names, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
+    """Whether a candidate IV STEP, built from ``step_names``, is loop-invariant.
+
+    THIS is the test that separates an induction variable from a REDUCTION, and it is the only
+    thing that does: ``k = k + 1`` and ``sum = sum + a[i]`` are the same shape to a structural
+    matcher. A step that is a literal, or an expression over enclosing symbols alone, has the
+    closed form ``k0 + step * trip``. A DATA-DEPENDENT step (``a[i]``, ``a[i] * b[ip[i]]``) reads
+    memory that changes every iteration, so no closed form exists; that shape is a reduction and
+    belongs to ``LoopToReduce`` / ``LoopToScan``. Substituting a closed form for one would be a
+    silent miscompile, not a missed optimization -- so this predicate must stay a WHITELIST.
+
+    Data dependence is excluded structurally rather than sniffed for: such a step reaches a
+    tasklet through a second input CONNECTOR, and a connector name is never an SDFG symbol, so it
+    fails :func:`_is_loop_invariant_symbol` on the membership test. TSVC ``s3112`` / ``s4115``
+    are the guarded cases.
+
+    A step that varies with the LOOP VARIABLE is refused here too, and deliberately stays refused
+    (user ruling 2026-09-01). TSVC ``s141`` (``k = k + j + 1``, ``j`` the inner loop variable) does
+    have a closed form -- sum an arithmetic series -- but it is QUADRATIC in ``j``, and the point
+    of closing an IV in canonicalization is to hand downstream an AFFINE subscript for semantic
+    lifting and the SMT contract checks. A quadratic subscript buys none of that, and ``s141``
+    already parallelizes fully with ``k`` surviving only as a symbol, so the closed-form engine is
+    not extended to reach it.
+
+    :param step_names: the names occurring in the step expression.
+    """
+    return all(_is_loop_invariant_symbol(str(s), loop, sdfg, sdfg_free_symbols) for s in step_names)
+
+
 class TaskletIV(NamedTuple):
     """One tasklet's ``__out = __in OP const`` induction-variable shape.
 
@@ -311,6 +340,10 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     def _is_carrier(node):
         return isinstance(node, ast.Name) and node.id in in_connector_names
 
+    # EXACTLY one side may be a connector. Two connectors is ``__out = __in1 + __in2``, where the
+    # second one carries a per-iteration VALUE -- the reduction shape (``sum = sum + a[i]``,
+    # TSVC s3112 / s4115). It has no closed form, so it is refused here rather than approximated;
+    # reduction lifting claims it later. This is the dataflow half of ``step_is_loop_invariant``.
     if _is_carrier(rhs.left) and not _is_carrier(rhs.right):
         var_conn, other = rhs.left.id, rhs.right
     elif _is_carrier(rhs.right) and not _is_carrier(rhs.left):
@@ -327,17 +360,12 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
         const_val = other.value
     else:
         for sub in ast.walk(other):
-            if isinstance(sub, ast.Name):
-                if sub.id == loop.loop_variable:
-                    return None
-                # Allow SDFG symbols / constants / known dtype-cast roots; reject
-                # any other name (which would imply a connector or loop-local var).
-                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants and sub.id not in sdfg_free_symbols
-                        and sub.id != 'dace' and sub.id not in SPLICEABLE_BUILTINS):
-                    return None
-                if (sub.id in sdfg.symbols or sub.id in sdfg.constants or sub.id
-                        in sdfg_free_symbols) and not _is_loop_invariant_symbol(sub.id, loop, sdfg, sdfg_free_symbols):
-                    return None
+            if not isinstance(sub, ast.Name) or sub.id == 'dace' or sub.id in SPLICEABLE_BUILTINS:
+                continue  # a dtype-cast root, not an operand
+            # Every remaining name must be a loop-invariant symbol. A CONNECTOR name reaches here
+            # and fails, which is what refuses the reduction shape ``sum = sum + a[i]``.
+            if not step_is_loop_invariant([sub.id], loop, sdfg, sdfg_free_symbols):
+                return None
         # Render the expression back to a source string for the closed form. The
         # later tasklet body splices it directly, so ``dace.float64(step)`` stays
         # ``dace.float64(step)`` and codegen resolves ``step`` via the symbol-binding path.
@@ -1141,12 +1169,10 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             # other non-arithmetic expression on which ``-`` raises
             # ``TypeError`` -- the assignment is not an arithmetic IV.
             continue
-        # Step must be loop-invariant: a numeric literal, or a symbolic
-        # expression whose free symbols are all loop-invariant (e.g. a stride
-        # argument ``inc`` promoted to a symbol). A varying step has no closed form.
+        # A numeric literal is always admissible; anything else must pass the IV-vs-reduction
+        # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
         if not diff.is_number:
-            if not diff.free_symbols or not all(
-                    _is_loop_invariant_symbol(str(s), loop, sdfg, sdfg_free_symbols) for s in diff.free_symbols):
+            if not diff.free_symbols or not step_is_loop_invariant(diff.free_symbols, loop, sdfg, sdfg_free_symbols):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
@@ -1253,7 +1279,25 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     #      runs once per containing-loop iteration before the body restarts.
     import dace
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    post_loop_value = symbolic.symstr(symbolic.simplify(sym_sym + trip_count * step))
+    post_loop_expr = symbolic.simplify(sym_sym + trip_count * step)
+    post_loop_value = symbolic.symstr(post_loop_expr)
+
+    # When the enclosing loop's own step already sits on ``loop``'s exit edge (a two-level counter
+    # -- TSVC ``s126``, ``k`` stepped per inner iteration AND once per outer one), splicing
+    # ``iv_post`` in front of it would leave that loop with TWO iedges writing ``sym``, which step
+    # 1's uniqueness gate refuses: the pass would defeat itself one level up, and
+    # ``_symbol_updated_in_other_loop``'s promise that the enclosing loop is left "with a single
+    # step per iteration for the next round" would be false. Compose instead --
+    # the spliced assignment runs first and iedge assignments are emitted in order
+    # (``codegen/control_flow.py``), so this is that sequence written once. Only for a lone
+    # unconditional exit edge assigning nothing but ``sym``, where no ordering question arises.
+    exit_edges = list(parent.out_edges(loop))
+    if (len(exit_edges) == 1 and exit_edges[0].data.is_unconditional() and list(
+        (exit_edges[0].data.assignments or {}).keys()) == [sym_name]):
+        exit_data = exit_edges[0].data
+        composed = symbolic.pystr_to_symbolic(exit_data.assignments[sym_name]).subs(sym_sym, post_loop_expr)
+        exit_data.assignments[sym_name] = symbolic.symstr(symbolic.simplify(composed))
+        return True
 
     iv_post = parent.add_state(loop.label + '_iv_post')
     existing_out = list(parent.out_edges(loop))
@@ -1338,24 +1382,39 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 #   accepted producer language is one ``__out = <arithmetic over the input connectors>`` assignment
 #   -- no calls at all (a call may be a dace callback), no side effects, one output connector, and
 #   no reference to the iteration variable in the code (which the clone would have to rewrite);
-# * the clone reads its inputs LATE, so any container the body itself writes would be re-read after
-#   the overwrite -- ``b[i] = ...; t = b[i] * c[i]`` does not rematerialize to ``b[i-1] * c[i-1]``.
-#   Every producer input container must therefore be unwritten in the whole body, which is also what
-#   refuses a producer fed by the carry itself (``t = t + s`` is a REDUCTION: ``t`` is written in the
-#   body, so its own producer input is rejected) or by another carried scalar.
+# * the clone reads its inputs LATE, so a container the body itself writes cannot simply be re-read
+#   after the overwrite -- ``b[i] = ...; t = b[i] * c[i]`` does not rematerialize to
+#   ``b[i-1] * c[i-1]``. A body-written input is instead RECOMPUTED in turn when it is a transient
+#   whose own single writer is one more pure tasklet, so the clone becomes a chain: the emitter form
+#   of s252 stages the product through ``t = s + 0.0``, and only the leaves of that chain are read
+#   from memory. Every level re-proves purity, single-writer and ordering, and the leaves are all
+#   containers the body never writes -- which is what still refuses a producer fed by the carry
+#   itself (``t = t + s`` is a REDUCTION: the read of ``t`` sees a write that comes LATER in the
+#   body) or by another carried scalar.
 #
-# Only a one-level staging chain rematerializes (update <- transient <- producer tasklet); a deeper
-# one dead-ends here exactly as it dead-ends in the shifted-read chase.
+# Every level of that chain executes in the SAME iteration as the update -- that is exactly what the
+# ordering gate proves -- so one shift by ``stride`` at the leaves closes the whole tree.
 
 #: How far the update's stored value may be chased back through staging transients before giving up.
+#: Bounds both the shifted-read chase and the rematerialization chain; the corpus shapes are one or
+#: two stages deep, and an unbounded walk on a cyclic body would not terminate.
 _ROTATION_CHASE_LIMIT = 4
+
+
+class RematInput(NamedTuple):
+    """One input connector of a cloned producer: a shifted read, or another clone."""
+    conn: str  #: connector on the producer this input feeds
+    container: str | None  #: array to read, when the value comes straight from memory
+    subset: subsets.Subset | None  #: the element to read, ALREADY shifted back by one stride
+    source: 'RematSource | None'  #: producer to clone instead, when the body writes the container
+    moved: bool  #: whether the shift actually changed the subset
 
 
 class RematSource(NamedTuple):
     """A pure producer tasklet to re-evaluate at ``i - stride`` in place of the carried read."""
     producer: nodes.Tasklet  #: tasklet that computed the value the update stored
     out_conn: str  #: its single output connector
-    inputs: list[tuple[str, str, subsets.Subset]]  #: (connector, container, subset ALREADY shifted back)
+    inputs: list[RematInput]  #: one entry per input connector, in producer edge order
     dtype: dtypes.typeclass  #: element type the clone's result is stored as
     stage: nodes.AccessNode | None  #: transient version the update read from, when it dies with the update
 
@@ -1517,6 +1576,86 @@ def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop
     return True
 
 
+def staged_write(sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
+                 reader_sub: subsets.Subset):
+    """The body write whose value the read of ``reader_node[reader_sub]`` provably sees.
+
+    Returns ``(chain index, state, node, edge)`` for that write, or ``None`` when the read cannot be
+    tied to a write of THIS iteration -- which is the whole ordering argument of rematerialization,
+    applied identically at every level of the clone chain. A read that sees an earlier iteration's
+    write is a CARRY, and recomputing it from this iteration's inputs would be a silent miscompile.
+    """
+    desc = sdfg.arrays.get(reader_node.data)
+    if desc is None or not desc.transient:
+        return None  # a non-transient may also be written from outside the body's dataflow
+    staged = _body_writes(chain, reader_node.data)
+    if len(staged) != 1:
+        return None
+    ssi, sstate, snode, sedge = staged[0]
+    if ssi > reader_si:
+        return None  # produced LATER in the body -> the read took a CARRIED value, not this one
+    if ssi == reader_si and snode is not reader_node and not reaches(sstate, snode, reader_node):
+        return None  # two versions in one state, and no dataflow path proves the producer's write ran
+    write_sub = _subset_at(sedge, snode)
+    if write_sub is None or _one_elem(write_sub) != 1 or str(write_sub) != str(reader_sub):
+        return None  # a different element -> that write says nothing about the value read here
+    if not isinstance(sedge.src, nodes.Tasklet):
+        return None
+    return ssi, sstate, snode, sedge
+
+
+def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var, stride, reader_si: int, reader_node: nodes.AccessNode,
+                 reader_sub: subsets.Subset, depth: int) -> RematSource | None:
+    """The clone chain that recomputes, at ``i - stride``, the value read at ``reader_node``.
+
+    Recursive over the producer's own inputs: one the body writes is recomputed in turn rather than
+    re-read, because the clone runs LATE and would otherwise see the overwritten version. Descending
+    re-applies :func:`staged_write` and :func:`pure_producer` at every level, so nothing is inherited
+    from the level above. ``depth`` is bounded by ``_ROTATION_CHASE_LIMIT``: refusing a long chain
+    costs a parallelization, guessing at one costs correctness. Mutates nothing.
+    """
+    if depth >= _ROTATION_CHASE_LIMIT:
+        return None
+    found = staged_write(sdfg, chain, reader_si, reader_node, reader_sub)
+    if found is None:
+        return None
+    ssi, sstate, snode, sedge = found
+    producer = sedge.src
+    if not pure_producer(sdfg, producer, sedge.src_conn, loop_var):
+        return None
+
+    inputs: List[RematInput] = []
+    for e in sstate.in_edges(producer):
+        if e.data is None or e.data.is_empty():
+            return None  # an ordering edge into the producer has no home on the clone
+        src = e.src
+        if not isinstance(src, nodes.AccessNode) or e.dst_conn is None:
+            return None
+        sub = _subset_at(e, src)
+        if sub is None or _one_elem(sub) != 1:
+            return None
+        if _body_writes(chain, src.data):
+            # Re-reading this container late would read the overwrite, so recompute it instead. The
+            # recursion refuses unless the value is itself this iteration's, produced purely -- which
+            # is how the carry itself, and any other carried scalar, still dead-ends here.
+            nested = remat_source(sdfg, chain, loop_var, stride, ssi, src, sub, depth + 1)
+            if nested is None:
+                return None
+            inputs.append(RematInput(e.dst_conn, None, None, nested, False))
+            continue
+        shifted: subsets.Subset = copy.deepcopy(sub)
+        shifted.replace({loop_var: loop_var - stride})
+        inputs.append(RematInput(e.dst_conn, src.data, shifted, None, str(shifted) != str(sub)))
+    if sorted(inp.conn for inp in inputs) != sorted(producer.in_connectors):
+        return None  # a connector reads nothing, so the clone would evaluate an undefined name
+    return RematSource(producer, sedge.src_conn, inputs, sdfg.arrays[reader_node.data].dtype, None)
+
+
+def remat_shifts(source: RematSource) -> int:
+    """Leaf reads in the clone chain that actually move with the iteration variable."""
+    return sum(int(inp.moved) + (remat_shifts(inp.source) if inp.source is not None else 0) for inp in source.inputs)
+
+
 def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var, stride, wsi: int,
                               write_edge) -> RematSource | None:
     """The producer whose re-evaluation at ``i - stride`` equals the value ``write_edge`` stores.
@@ -1537,50 +1676,15 @@ def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, lo
         return None  # a subset moving with i is the DIRECT shifted read, which the chase handles
     if sdesc.dtype != sdfg.arrays[accum].dtype:
         return None  # the copy into the carry CONVERTS; a clone feeding the reads would skip that
-    staged = _body_writes(chain, stage.data)
-    if len(staged) != 1:
-        return None
-    ssi, sstate, snode, sedge = staged[0]
-    producer = sedge.src
-    if not isinstance(producer, nodes.Tasklet) or _one_elem(_subset_at(sedge, snode)) != 1:
-        return None
-    if ssi > wsi:
-        return None  # produced LATER in the body -> the update stored a CARRIED value, not this one
-    if ssi == wsi and snode is not stage and not reaches(sstate, snode, stage):
-        return None  # two versions in one state, and no dataflow path proves the producer's write ran
-    if not pure_producer(sdfg, producer, sedge.src_conn, loop_var):
-        return None
-
-    inputs: list[tuple[str, str, subsets.Subset]] = []
-    shifts = 0
-    for e in sstate.in_edges(producer):
-        if e.data is None or e.data.is_empty():
-            return None  # an ordering edge into the producer has no home on the clone
-        src = e.src
-        if not isinstance(src, nodes.AccessNode) or e.dst_conn is None:
-            return None
-        sub = _subset_at(e, src)
-        if sub is None or _one_elem(sub) != 1:
-            return None
-        # The clone reads LATE. Any body write to the container -- by this iteration or an earlier
-        # one -- means ``src[i - stride]`` no longer holds what iteration ``i - stride`` read. This is
-        # also what refuses a producer fed by the carry itself, or by any other carried scalar.
-        container: str = src.data
-        if _body_writes(chain, container):
-            return None
-        shifted: subsets.Subset = copy.deepcopy(sub)
-        shifted.replace({loop_var: loop_var - stride})
-        if str(shifted) != str(sub):
-            shifts += 1
-        inputs.append((e.dst_conn, container, shifted))
-    if not shifts or sorted(conn for conn, _, _ in inputs) != sorted(producer.in_connectors):
-        return None  # nothing moves with i (no delay to remove), or a connector reads nothing
+    source = remat_source(sdfg, chain, loop_var, stride, wsi, stage, stage_sub, 0)
+    if source is None or not remat_shifts(source):
+        return None  # nothing in the chain moves with i, so there is no delay to remove
 
     # The staging version dies with the update only when the update is its sole consumer and it holds
     # no value of its own; otherwise it stays and the update's write edge alone goes.
     write_state = chain[wsi]
     dies = write_state.out_degree(stage) == 1 and not _data_edges(write_state.in_edges(stage))
-    return RematSource(producer, sedge.src_conn, inputs, sdesc.dtype, stage if dies else None)
+    return source._replace(stage=stage if dies else None)
 
 
 def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
@@ -1751,35 +1855,51 @@ def shift_rotation_reads(plan: RotationPlan) -> None:
         st.remove_node(n)
 
 
+def emit_remat_clone(sdfg: SDFG, st: SDFGState, source: RematSource, hint: str) -> nodes.AccessNode:
+    """Build one fresh evaluation of ``source`` in ``st`` and return the access node holding its result.
+
+    Recurses input-first, so a staging chain becomes a chain of clones whose leaves read memory. Each
+    clone is BUILT rather than deep-copied so it carries only the code and the connector types -- no
+    guid, no debug info, nothing that would make two nodes claim to be one.
+    """
+    from dace import memlet as mm
+
+    producer = source.producer
+    clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
+                          producer.code.as_string, producer.code.language)
+    st.add_node(clone)
+    for inp in source.inputs:
+        if inp.source is None:
+            assert inp.container is not None and inp.subset is not None  # the matcher fills one or the other
+            st.add_edge(st.add_access(inp.container), None, clone, inp.conn,
+                        mm.Memlet(data=inp.container, subset=copy.deepcopy(inp.subset)))
+        else:
+            nested = emit_remat_clone(sdfg, st, inp.source, hint)
+            st.add_edge(nested, None, clone, inp.conn, mm.Memlet(data=nested.data, subset='0'))
+    name, _ = sdfg.add_scalar(f'{hint}_remat', source.dtype, transient=True, find_new_name=True)
+    value = st.add_access(name)
+    st.add_edge(clone, source.out_conn, value, None, mm.Memlet(data=name, subset='0'))
+    return value
+
+
 def rematerialize_rotation_reads(sdfg: SDFG, plan: RotationPlan) -> None:
     """Replace every read of the carried scalar by a fresh evaluation of its producer at ``i - stride``.
 
-    One clone per read site, each with its own result scalar: the producer is pure
-    (:func:`pure_producer`) so a second evaluation yields the same value, and every input container it
-    reads was proven unwritten in the body, so reading them late reads the same bytes. The clone is
-    BUILT rather than deep-copied so it carries only the code and the connector types -- no guid, no
-    debug info, nothing that would make two nodes claim to be one.
+    One clone chain per read, each with its own result scalars: every producer in the chain is pure
+    (:func:`pure_producer`) so a second evaluation yields the same value, and every container the
+    chain reads from memory was proven unwritten in the body, so reading it late reads the same bytes.
     """
     from dace import memlet as mm
 
     remat = plan.remat
     assert remat is not None  # the caller dispatches on plan.remat
-    producer = remat.producer
     for st, n in plan.reads:
-        name, _ = sdfg.add_scalar(f'{plan.accum}_remat', remat.dtype, transient=True, find_new_name=True)
-        clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
-                              producer.code.as_string, producer.code.language)
-        st.add_node(clone)
-        for conn, container, subset in remat.inputs:
-            st.add_edge(st.add_access(container), None, clone, conn,
-                        mm.Memlet(data=container, subset=copy.deepcopy(subset)))
-        value = st.add_access(name)
-        st.add_edge(clone, remat.out_conn, value, None, mm.Memlet(data=name, subset='0'))
+        value = emit_remat_clone(sdfg, st, remat, plan.accum)
         for e in list(st.out_edges(n)):
             if isinstance(e.dst, nodes.AccessNode):
-                memlet = mm.Memlet(data=name, subset='0', other_subset=copy.deepcopy(_subset_at(e, e.dst)))
+                memlet = mm.Memlet(data=value.data, subset='0', other_subset=copy.deepcopy(_subset_at(e, e.dst)))
             else:
-                memlet = mm.Memlet(data=name, subset='0')
+                memlet = mm.Memlet(data=value.data, subset='0')
             st.remove_edge(e)
             st.add_edge(value, None, e.dst, e.dst_conn, memlet)
         st.remove_node(n)

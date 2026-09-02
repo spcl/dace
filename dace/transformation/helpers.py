@@ -1391,16 +1391,32 @@ def wrap_code_node_in_unit_gpu_map(state: SDFGState, node: nodes.CodeNode) -> Tu
     Wraps a free (top-level) code node in a one-iteration ``GPU_Device`` map, so that it executes
     as a single-thread GPU kernel instead of host code.
 
+    :param state: The state in which the code node resides.
+    :param node: The code node to wrap. Must be at the top level of the state.
+    :return: The new map entry and exit nodes.
+    """
+    return wrap_code_node_in_unit_map(state, node, dtypes.ScheduleType.GPU_Device, '_gmap')
+
+
+def wrap_code_node_in_unit_map(state: SDFGState,
+                               node: nodes.CodeNode,
+                               schedule: dtypes.ScheduleType,
+                               suffix: str = '_umap') -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    """
+    Wraps a free (top-level) code node in a one-iteration map of the given schedule, so that the
+    node executes inside that scope instead of at the state's top level.
+
     All edges of the node are rerouted through the new map entry/exit. Edges without connectors
     (empty dependency memlets, common in autodiff-generated graphs) are rerouted without
     connectors instead of being turned into ``IN_None``/``OUT_None`` connector names.
 
     :param state: The state in which the code node resides.
     :param node: The code node to wrap. Must be at the top level of the state.
+    :param schedule: The schedule of the new map.
+    :param suffix: Appended to the node's label to name the map and its parameter.
     :return: The new map entry and exit nodes.
     """
-    me, mx = state.add_map(node.label + '_gmap', {node.label + '__gmapi': '0:1'},
-                           schedule=dtypes.ScheduleType.GPU_Device)
+    me, mx = state.add_map(node.label + suffix, {node.label + suffix + 'i': '0:1'}, schedule=schedule)
     in_edges = list(state.in_edges(node))
     out_edges = list(state.out_edges(node))
     me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}

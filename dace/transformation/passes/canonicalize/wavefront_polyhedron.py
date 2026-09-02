@@ -97,8 +97,13 @@ class SkewBounds:
         self.p_hi_terms = p_hi_terms
 
 
-def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints, tau: Tuple[int, int], t_name: str,
-                p_name: str) -> Optional[SkewBounds]:
+def skew_bounds(dims: Tuple[str, str],
+                params: Sequence[str],
+                domain_constraints,
+                tau: Tuple[int, int],
+                t_name: str,
+                p_name: str,
+                t_range: Optional[Tuple[object, object]] = None) -> Optional[SkewBounds]:
     """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
     back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
     ``p`` is the coordinate whose complement inverts over the integers:
@@ -111,7 +116,14 @@ def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints
     When both hold either works; when neither does (``(2, 3)``) there is no
     single-coordinate unimodular complement and the skew is refused. Returns a
     :class:`SkewBounds` or ``None`` if a bound is not expressible as a simple
-    (possibly int-division) loop bound."""
+    (possibly int-division) loop bound.
+
+    ``t_range`` supplies the diagonal range instead of projecting for it, and may be any SUPERSET
+    of the true one. The projection is exact but not always renderable -- a tiled interior's
+    diagonal extent is genuinely piecewise (interior tile / last row / last column / corner), which
+    is four affine pieces and no single loop bound. Handing in the enclosing rectangle's diagonal
+    range costs nothing, because the ``p`` range at fixed ``t`` is read exactly: a diagonal outside
+    the real region comes out EMPTY and runs no iterations."""
     u, v = dims
     a, b = tau
     tsym = symbolic.pystr_to_symbolic(t_name)
@@ -156,13 +168,16 @@ def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints
     # projecting p out of a slanted (non-unit-scaled) domain leaves an ISL
     # existential (a divisibility on t) that ``classify_dim`` cannot read -- so
     # ``dim_min`` / ``dim_max`` resolve the integer shadow exactly.
-    t_set = s_set.project_out(isl.dim_type.set, 1, 1).coalesce()
-    t_lo = pwaff_bound(t_set.dim_min(0), inv)
-    t_hi = pwaff_bound(t_set.dim_max(0), inv)
-    if t_lo is None or t_hi is None:
-        return None
-    t_lo_terms = [t_lo]
-    t_hi_terms = [t_hi]
+    if t_range is not None:
+        t_lo_terms, t_hi_terms = [t_range[0]], [t_range[1]]
+    else:
+        t_set = s_set.project_out(isl.dim_type.set, 1, 1).coalesce()
+        t_lo = pwaff_bound(t_set.dim_min(0), inv)
+        t_hi = pwaff_bound(t_set.dim_max(0), inv)
+        if t_lo is None or t_hi is None:
+            return None
+        t_lo_terms = [t_lo]
+        t_hi_terms = [t_hi]
 
     p_lo_terms = dedupe_terms(p_lo_terms)
     p_hi_terms = dedupe_terms(p_hi_terms)

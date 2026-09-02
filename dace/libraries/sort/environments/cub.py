@@ -123,6 +123,34 @@ class ScanScratch:
 
 
 @dace.library.environment
+class BlockCollectives:
+    """Headers only: the in-kernel block collectives (``dace::cuda_scan::detail``) need no scratch.
+
+    A block-wide scan or reduce runs entirely in ``__shared__`` storage declared inside the
+    collective, so unlike :class:`ScanScratch` / :class:`ReduceScratch` there is no device pool to
+    pre-allocate and nothing to release. Those environments would still work, but each costs a
+    128 MB allocation at SDFG init that this path never reads.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    #: CUDA unit only, for the same reason ScanScratch gives: the header includes ``cub/cub.cuh``,
+    #: which the host compiler cannot parse.
+    headers = {'frame': [], 'cuda': ['dace/cuda/scan.cuh']}
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = [CUB]
+
+
+@dace.library.environment
 class ReduceScratch:
     """Pre-allocate (128 MB on the default stream) and release the ``Reduce`` CUB scratch pool.
 

@@ -47,8 +47,8 @@ def _build_nested_reduce_in_parallel_map():
     reduce_node = Reduce('reduce_sum', wcr='lambda a, b: a + b', axes=None, identity=0.0)
     reduce_node.schedule = dtypes.ScheduleType.CPU_Multicore
     istate.add_node(reduce_node)
-    istate.add_edge(row_access, None, reduce_node, None, dace.Memlet('row[0:8]'))
-    istate.add_edge(reduce_node, None, acc_access, None, dace.Memlet('acc[0]'))
+    istate.add_edge(row_access, None, reduce_node, '_in', dace.Memlet('row[0:8]'))
+    istate.add_edge(reduce_node, '_out', acc_access, None, dace.Memlet('acc[0]'))
 
     nsdfg_node = state.add_nested_sdfg(inner, {'row'}, {'acc'})
     map_entry, map_exit = state.add_map('outer', dict(i='0:4096'), schedule=dtypes.ScheduleType.CPU_Multicore)

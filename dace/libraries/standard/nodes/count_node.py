@@ -142,7 +142,7 @@ class ExpandPure(ExpandTransformation):
         reduce_state.add_node(red)
         mask_in = reduce_state.add_access("_mask_int")
         out_w = reduce_state.add_access(out_name)
-        reduce_state.add_edge(mask_in, None, red, "_in_data",
+        reduce_state.add_edge(mask_in, None, red, "_in",
                               dace.memlet.Memlet.from_array("_mask_int", sdfg.arrays["_mask_int"]))
         reduce_state.add_edge(red, "_out", out_w, None, dace.memlet.Memlet.from_array(out_name, sdfg.arrays[out_name]))
 

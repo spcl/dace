@@ -53,9 +53,9 @@ def build_reduce(out_storage, impl, wcr='lambda a, b: a + b', identity=0.0):
     red = st.add_reduce(wcr, axes=None, identity=identity)
     red.implementation = impl
     red.schedule = dtypes.ScheduleType.GPU_Device
-    st.add_nedge(st.add_read('A'), red, dace.Memlet('A[0:N]'))
+    st.add_edge(st.add_read('A'), None, red, '_in', dace.Memlet('A[0:N]'))
     w = st.add_write('out')
-    st.add_nedge(red, w, dace.Memlet('out[0]'))
+    st.add_edge(red, '_out', w, None, dace.Memlet('out[0]'))
     if not device_out:
         st.add_nedge(w, st.add_write('sink'), dace.Memlet('sink[0]'))
     sdfg.validate()

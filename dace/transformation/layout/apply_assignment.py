@@ -73,8 +73,11 @@ def state_touches(state: dace.SDFGState, array: str) -> bool:
 
 def covers_dimension(begin, end, step, extent) -> bool:
     """True iff the range ``begin:end:step`` spans dimension ``0..extent-1`` whole."""
+    # `end` is reparsed from a memlet/loop string while `extent` carries the descriptor's declared
+    # assumptions, so the same name arrives as two sympy instances that never cancel.
+    hi, size = dace.symbolic.equalize_symbols_across(end, extent)
     return (dace.symbolic.simplify(begin) == 0 and dace.symbolic.simplify(step - 1) == 0
-            and dace.symbolic.simplify(end - (extent - 1)) == 0)
+            and dace.symbolic.simplify(hi - (size - 1)) == 0)
 
 
 def covers_full_array(memlet, desc) -> bool:
@@ -122,8 +125,9 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
                 break
             used.add(param)
             range_begin, range_end, range_step = param_ranges[param]
+            hi, size = dace.symbolic.equalize_symbols_across(range_end, desc.shape[d])
             if (dace.symbolic.simplify(range_begin) != 0 or dace.symbolic.simplify(range_step - 1) != 0
-                    or dace.symbolic.simplify(range_end - (desc.shape[d] - 1)) != 0):
+                    or dace.symbolic.simplify(hi - (size - 1)) != 0):
                 proven = False
                 break
         if proven and not used:

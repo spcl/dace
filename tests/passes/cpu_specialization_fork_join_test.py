@@ -228,8 +228,8 @@ def reduce_in_loop(name, loop_end):
     node = Reduce('reduce_sum', wcr='lambda a, b: a + b', axes=None, identity=0.0)
     node.schedule = dtypes.ScheduleType.CPU_Multicore
     state.add_node(node)
-    state.add_edge(state.add_access('row'), None, node, None, dace.Memlet('row[0:N]'))
-    state.add_edge(node, None, state.add_access('acc'), None, dace.Memlet('acc[0]'))
+    state.add_edge(state.add_access('row'), None, node, '_in', dace.Memlet('row[0:N]'))
+    state.add_edge(node, '_out', state.add_access('acc'), None, dace.Memlet('acc[0]'))
     sdfg.validate()
     return sdfg, node
 

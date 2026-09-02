@@ -159,6 +159,16 @@ class MarkSIMDMaps(ppl.Pass):
         """ Whether this map's innermost loop can carry the clause. """
         if map_entry.map.unroll:  # its own pragma, and an unrolled body is not a loop to vectorize
             return False
+        if map_entry.map.collapse > 1:
+            # HONOURED, not overridden. ``collapse(k)`` fuses k dimensions into one iteration space,
+            # which is a request for their COMBINED trip count as thread parallelism, and it is the
+            # opposite of what the clause needs -- fusing the loops leaves no inner loop to
+            # vectorize. Taking the nest apart to vectorize would silently answer a different
+            # question than the one asked, and it costs real parallelism when the outer dimension is
+            # short: a ``[0:2, 0:1000000]`` nest goes from 2,000,000-way to 2-way. So an explicit
+            # hint wins and this map keeps its collapsed, unvectorized form. Nothing in DaCe sets
+            # the property (``Map.collapse`` defaults to 1), so this is the hand-written case only.
+            return False
         if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             # A conflicted WCR write lowers through ``wcr_fixed::reduce_atomic``, which composes
             # with ``simd``, so only the min/max combine withholds the clause here.

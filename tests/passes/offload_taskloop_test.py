@@ -67,8 +67,8 @@ def map_over_reduce() -> dace.SDFG:
     reduce_node = state.add_reduce('lambda a, b: a + b', None, 0.0)
     row = state.add_access('row')
     state.add_memlet_path(state.add_read('A'), entry, row, memlet=dace.Memlet('A[i, 0:16]', other_subset='0:16'))
-    state.add_edge(row, None, reduce_node, None, dace.Memlet('row[0:16]'))
-    state.add_memlet_path(reduce_node, exit_node, state.add_write('B'), memlet=dace.Memlet('B[i]'))
+    state.add_edge(row, None, reduce_node, '_in', dace.Memlet('row[0:16]'))
+    state.add_memlet_path(reduce_node, exit_node, state.add_write('B'), memlet=dace.Memlet('B[i]'), src_conn='_out')
     sdfg.validate()
     return sdfg
 
@@ -419,8 +419,8 @@ def rows_over_a_libnode_body() -> tuple:
     compute = inner.add_state('compute')
     inner.add_edge(pick, compute, dace.InterstateEdge(assignments=dict(stop='bounds[1]')))
     reduce_node = compute.add_reduce('lambda a, b: a + b', None, 0.0)
-    compute.add_edge(compute.add_read('a'), None, reduce_node, None, dace.Memlet('a[0:stop]'))
-    compute.add_edge(reduce_node, None, compute.add_write('res'), None, dace.Memlet('res[0]'))
+    compute.add_edge(compute.add_read('a'), None, reduce_node, '_in', dace.Memlet('a[0:stop]'))
+    compute.add_edge(reduce_node, '_out', compute.add_write('res'), None, dace.Memlet('res[0]'))
 
     sdfg = dace.SDFG('rows_over_a_libnode_body')
     sdfg.add_array('A', [8, 16], dace.float64)

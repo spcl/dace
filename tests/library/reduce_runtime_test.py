@@ -343,8 +343,8 @@ def _row_reduce_sdfg(schedule):
     inner.add_array('ro', [1], dace.float64)
     ist = inner.add_state()
     red = ist.add_reduce('lambda x, y: x + y', None, 0.0)
-    ist.add_edge(ist.add_read('ri'), None, red, None, mm.Memlet('ri[0:16]'))
-    ist.add_edge(red, None, ist.add_write('ro'), None, mm.Memlet('ro[0]'))
+    ist.add_edge(ist.add_read('ri'), None, red, '_in', mm.Memlet('ri[0:16]'))
+    ist.add_edge(red, '_out', ist.add_write('ro'), None, mm.Memlet('ro[0]'))
     sdfg = dace.SDFG('row_reduce')
     sdfg.add_array('A', [8, 16], dace.float64)
     sdfg.add_array('B', [8], dace.float64)
@@ -389,8 +389,8 @@ def test_sequential_expansion_connectors_survive_inlining_beside_same_named_arra
     sdfg.add_array('o', [1], dace.float64)
     state = sdfg.add_state()
     red = state.add_reduce('lambda x, y: x + y', None, 0.0)
-    state.add_edge(state.add_read('a'), None, red, None, mm.Memlet(f'a[0:{_NELEM}]'))
-    state.add_edge(red, None, state.add_write('b'), None, mm.Memlet('b[0]'))
+    state.add_edge(state.add_read('a'), None, red, '_in', mm.Memlet(f'a[0:{_NELEM}]'))
+    state.add_edge(red, '_out', state.add_write('b'), None, mm.Memlet('b[0]'))
     sdfg.validate()
     red.schedule = dace.ScheduleType.Sequential
 

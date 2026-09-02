@@ -1148,6 +1148,19 @@ class Map(object):
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    is_warp_tile = Property(dtype=bool,
+                            default=False,
+                            desc="This map's iterations are meant to be spread across the threads of one GPU "
+                            "thread block. It is a REQUEST carried through the device offload, not a schedule: "
+                            "the offload assigns every nested scope Sequential (a kernel launch inside a kernel "
+                            "is not expressible), which is correct and stays that way, so a pass that wants a "
+                            "thread-block schedule cannot ask for one before the offload runs -- a GPU schedule "
+                            "set that early is rejected outright. PromoteWarpTiles reads this afterwards and "
+                            "gives the map GPU_ThreadBlock. Only set it on a map proven data-parallel: it is a "
+                            "promise about the map, and the promotion trusts it.",
+                            serialize_if=lambda m: m.is_warp_tile)
+
     vectorize = Property(dtype=bool, default=False)
 
     def __init__(self,

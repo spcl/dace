@@ -40,8 +40,8 @@ def _sum_sdfg(schedule):
     rnode.implementation = "vectorized"
     rnode.schedule = schedule
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, None, dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, None, st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -78,8 +78,8 @@ def test_unsupported_reduction_operator_raises():
     rnode.implementation = "vectorized"
     rnode.schedule = dtypes.ScheduleType.Sequential
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, None, dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, None, st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
     with pytest.raises(NotImplementedError, match="no associative"):
         ExpandReduceVectorized.expansion(rnode, st, sdfg)
 
@@ -99,8 +99,8 @@ def _reduce_sdfg(wcr, identity, dtype, schedule=dtypes.ScheduleType.Sequential, 
     rnode.implementation = "vectorized"
     rnode.schedule = schedule
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, None, dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, None, st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -169,8 +169,8 @@ def test_2d_partial_reduction_falls_back_to_pure():
     rnode.implementation = "vectorized"
     rnode.schedule = dtypes.ScheduleType.Sequential
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, None, dace.Memlet("A[0:M, 0:N]"))
-    st.add_edge(rnode, None, st.add_write("out"), None, dace.Memlet("out[0:M]"))
+    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:M, 0:N]"))
+    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0:M]"))
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert not any("horizontal_reduce" in c for c in codes), \

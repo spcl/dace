@@ -18,6 +18,8 @@ the statement next to it (so it is neither eliminable nor fissionable), and
 import numpy as np
 import pytest
 
+import dace
+from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -93,9 +95,11 @@ def test_s318_staged_counter_iv_lifts_to_an_arg_reduction():
     per-iteration tasklet and the lift refuses the body outright.
     """
     from dace.libraries.standard.nodes import ArgReduce
-    nloops, nmaps, sdfg = _canonicalize_counts('s318_d_single')
-    assert nloops == 0 and nmaps >= 1, \
-        f"s318 (staged counter IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+    nloops, _nmaps, sdfg = _canonicalize_counts('s318_d_single')
+    # A map count is the wrong proxy for "parallelized" here: the lift now folds the gather into
+    # the ArgReduce's own strided _in memlet, so the correct answer has ZERO maps. What has to hold
+    # is that no sequential loop survives and the strided argmax became one library node.
+    assert nloops == 0, f"s318 (staged counter IV) should leave no sequential loop, got loops={nloops}"
     assert sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, ArgReduce)) == 1, \
         "the strided argmax must lift to a single ArgReduce, not to a value-only reduction"
 
@@ -111,6 +115,89 @@ def test_s126_two_level_counter_closes_one_loop_at_a_time():
     nloops, nmaps, _sdfg = _canonicalize_counts('s126_d_single')
     assert nloops <= 1 and nmaps >= 2, \
         f"s126 (two-level counter) should leave at most the j recurrence, got loops={nloops} maps={nmaps}"
+
+
+def test_s126_two_level_counter_leaves_no_k_and_an_affine_subset():
+    """s126: after both levels close, ``k`` is gone and the gather is affine in (i, j).
+
+    The closed form is ``k(i, j) = i*LEN_2D + j``, so the read ``flat_2d_array[k - 1]`` must land
+    on ``i*LEN_2D + j - 1``. The row stride is ``LEN_2D`` and not ``LEN_2D - 1`` because of the
+    trailing ``k += 1`` in the outer body, which skips one element per row -- getting that wrong
+    still parallelizes, so the loop/map counts above cannot catch it and this subset can.
+
+    The two indices are pinned by the ranges of the maps that ENCLOSE the read (``i`` from 0,
+    ``j`` from 1), not by name, and the comparison is symbolic: the symbols are taken from the
+    expression itself so both sides carry the same assumptions (two ``LEN_2D`` objects that
+    differ only in assumptions do not cancel).
+    """
+    _nloops, _nmaps, sdfg = _canonicalize_counts('s126_d_single')
+
+    for sd in sdfg.all_sdfgs_recursive():
+        leftovers = ({'k'} & set(sd.symbols)) | ({'k'} & set(sd.arrays)) | ({'k'} & {str(s) for s in sd.free_symbols})
+        assert not leftovers, f"the counter survived canonicalization in {sd.label} as {leftovers}"
+
+    reads = [(state, e) for state in sdfg.all_states() for e in state.edges() if e.data is not None
+             and not e.data.is_empty() and e.data.data == 'flat_2d_array' and e.data.subset.num_elements() == 1]
+    assert len(reads) == 1, f"expected one single-element flat_2d_array read, got {len(reads)}"
+    state, edge = reads[0]
+    (expr, ) = edge.data.subset.min_element()
+
+    scope = state.scope_dict()
+    enclosing, node = {}, edge.dst
+    while node is not None:
+        node = scope[node]
+        if isinstance(node, nodes.MapEntry):
+            enclosing.update(zip(node.map.params, node.map.range))
+    (outer, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 0]
+    (inner, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 1]
+
+    by_name = {str(s): s for s in expr.free_symbols}
+    i, j, n = by_name[outer], by_name[inner], by_name['LEN_2D']
+    assert symbolic.simplify(expr - (i * n + j - 1)) == 0, \
+        f"s126 gather must be i*LEN_2D + j - 1, got {expr} (i={outer}, j={inner})"
+
+
+def test_two_level_counter_exit_value_is_exact():
+    """The value a two-level counter LEAVES BEHIND must survive the substitution exactly.
+
+    Closing the inner loop folds its whole contribution into the enclosing loop's exit
+    assignment rather than splicing a separate state (that is what lets the outer level close in
+    turn). This is the composed arithmetic, so it needs its own check: everything else about
+    s126 would still pass if the exit value were wrong, because s126 never reads ``k`` again.
+
+    ``k`` starts at 1 and advances ``LEN`` per outer iteration (``LEN - 1`` inner steps plus the
+    trailing one), so after ``LEN`` outer iterations it is ``1 + LEN*LEN``.
+    """
+    LEN = dace.symbol('LEN', dtype=dace.int64, positive=True)
+
+    @dace.program
+    def two_level_counter_exit(out: dace.int64[1], flat: dace.float64[LEN * LEN], src: dace.float64[LEN]):
+        k = 1
+        for i in range(LEN):
+            for j in range(1, LEN):
+                flat[k - 1] = src[j]
+                k = k + 1
+            k = k + 1
+        out[0] = k
+
+    sdfg = two_level_counter_exit.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
+
+    for n in (3, 5, 8):
+        out = np.zeros(1, dtype=np.int64)
+        flat = np.zeros(n * n)
+        src = np.copy(np.arange(n, dtype=np.float64)) + 1.0
+        sdfg(out=out, flat=flat, src=src, LEN=n)
+        assert out[0] == 1 + n * n, f"post-loop counter must be 1 + LEN*LEN; LEN={n} gave {out[0]}"
+        # and the gather the closed form drives must still have hit the right slots
+        want = np.zeros(n * n)
+        k = 1
+        for i in range(n):
+            for j in range(1, n):
+                want[k - 1] = src[j]
+                k += 1
+            k += 1
+        assert np.allclose(flat, want), f"LEN={n}: gather landed on the wrong elements"
 
 
 if __name__ == '__main__':

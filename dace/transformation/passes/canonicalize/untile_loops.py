@@ -324,9 +324,48 @@ def count_loops(sdfg: SDFG) -> int:
                if isinstance(r, LoopRegion) and r.loop_variable)
 
 
-def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.SymbolicType,
-                      K_const: Optional[int]) -> Optional[Tuple[str, symbolic.SymbolicType, bool]]:
-    """Classify the inner loop shape and return ``(case, inner_stride, needs_div_assumption)``.
+def clamp_is_the_parent_limit(end_plus_one, outer_sym, K_expr, outer_limit) -> bool:
+    """``True`` iff ``end_plus_one`` is ``Min(parent limit, i + K)`` -- the remainder clamp.
+
+    A strip-mined nest whose last tile would overrun writes its inner bound as
+    ``min(i + K, <the parent's own limit>)``, and that clamp is exactly what makes the union of
+    the tiles equal the original range rather than exceed it. Untiling is therefore EXACT here,
+    which is the whole reason the clamp may be accepted.
+
+    The clamp has to be the parent's limit and nothing else. ``min(i + K, something_smaller)``
+    would visit fewer points than the flat loop, so collapsing it would invent iterations; the
+    check refuses anything it cannot match to ``outer_limit`` term for term.
+    """
+    if not isinstance(end_plus_one, sympy.Min):
+        return False
+    tile_reach = symbolic.simplify(outer_sym + K_expr)
+    rest = []
+    saw_tile_reach = False
+    for arg in end_plus_one.args:
+        if not saw_tile_reach and _diff_is_zero(arg, tile_reach):
+            saw_tile_reach = True
+            continue
+        rest.append(arg)
+    if not saw_tile_reach or not rest:
+        return False
+    # The remaining terms are compared TOGETHER, not one by one. A correctly strip-mined cascade
+    # clamps each level to every window enclosing it -- ``min(i3 + W3, i2 + W2, i1 + W1, N - 1)``
+    # -- so no single term equals the parent's limit; their Min does, and that is the parent's
+    # limit spelled out. Term-by-term comparison would refuse exactly the well-formed nest.
+    return _diff_is_zero(sympy.Min(*rest), outer_limit)
+
+
+def _match_inner_case(inner: LoopRegion,
+                      outer_var: str,
+                      K_expr: symbolic.SymbolicType,
+                      K_const: Optional[int],
+                      outer_limit=None) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
+    """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)``.
+
+    ``clamped`` says the inner bound carried the remainder clamp. The caller MUST honour it:
+    an unclamped tile overshoots its last span and the collapsed bound has to round up to the
+    tile boundary, while a clamped one covers the parent range exactly and rounding up walks
+    off the end of the array.
 
     * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``),
     * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``),
@@ -395,12 +434,16 @@ def _match_inner_case(inner: LoopRegion, outer_var: str, K_expr: symbolic.Symbol
     # Case A: start == 0, end == K - 1.
     if _is_zero(s_sym):
         if _diff_is_zero(e_sym, K_expr - 1):
-            return ('A', inner_stride, needs_div_assumption)
+            return ('A', inner_stride, needs_div_assumption, False)
         return None
-    # Case B: start == i, end == i + K - 1.
+    # Case B: start == i, end == i + K - 1 -- or the same with the remainder clamp,
+    # end == min(<parent limit>, i + K) - 1, which every hand-tiled stencil writes.
     if _diff_is_zero(s_sym, outer_sym):
         if _diff_is_zero(e_sym, outer_sym + K_expr - 1):
-            return ('B', inner_stride, needs_div_assumption)
+            return ('B', inner_stride, needs_div_assumption, False)
+        if outer_limit is not None and clamp_is_the_parent_limit(symbolic.simplify(e_sym + 1), outer_sym, K_expr,
+                                                                 outer_limit):
+            return ('B', inner_stride, needs_div_assumption, True)
     return None
 
 
@@ -410,6 +453,10 @@ def _diff_is_zero(a, b) -> bool:
     ``TypeError`` SymPy raises when an unresolved expression is coerced
     to ``int``."""
     try:
+        # Sides reach here from different sources -- a memlet bound, a reparsed loop expression, a
+        # descriptor shape -- so one name arrives as several sympy instances that never cancel.
+        if isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic):
+            a, b = symbolic.equalize_symbols_across(a, b)
         diff = symbolic.simplify(a - b)
     except Exception:
         return False
@@ -610,7 +657,13 @@ class UntileLoops(ppl.Pass):
         for _ in range(max_iters):
             rewritten_this_pass = 0
             for sd in sdfg.all_sdfgs_recursive():
-                for cfg in list(sd.all_control_flow_regions()):
+                # INNERMOST FIRST. A cascade is collapsed one rung at a time, and the rung nearest
+                # the body is the one whose partner is unambiguous: an outer tile loop in a
+                # multi-level nest has every deeper loop as a candidate, and matching it against
+                # the wrong rung fixes a pairing the levels below then cannot undo. Working up
+                # from the body, each level meets a nest that has already been flattened beneath
+                # it, so the next pair to collapse is the only pair left.
+                for cfg in reversed(list(sd.all_control_flow_regions())):
                     if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                         continue
                     if self._try_untile(cfg, sd):
@@ -690,14 +743,19 @@ class UntileLoops(ppl.Pass):
         case: Optional[str] = None
         inner_stride: symbolic.SymbolicType = None
         needs_div_assumption = False
+        clamped = False
         inner: Optional[LoopRegion] = None
         for candidate in _iter_candidate_inners(outer):
             if not candidate.loop_variable:
                 continue
-            match = _match_inner_case(candidate, outer.loop_variable, K_expr, K_const)
+            match = _match_inner_case(candidate,
+                                      outer.loop_variable,
+                                      K_expr,
+                                      K_const,
+                                      outer_limit=symbolic.simplify(outer_end + 1))
             if match is None:
                 continue
-            cand_case, cand_stride, cand_needs_div = match
+            cand_case, cand_stride, cand_needs_div, cand_clamped = match
             if not _audit_combined_access(candidate, outer.loop_variable, candidate.loop_variable, cand_case):
                 continue
             # Multi-dim sanity: any intermediate LoopRegion between outer
@@ -711,6 +769,7 @@ class UntileLoops(ppl.Pass):
             case = cand_case
             inner_stride = cand_stride
             needs_div_assumption = cand_needs_div
+            clamped = cand_clamped
             break
         if inner is None:
             return False
@@ -760,13 +819,19 @@ class UntileLoops(ppl.Pass):
         # record the divisibility, same contract as the stride rung.
         stop_excl = symbolic.simplify(outer_end + 1)
         span = symbolic.simplify(stop_excl - outer_start_sym)
-        tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
-        if _diff_is_zero(tiles_end,
-                         span) or tiles_end.is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
-            N_excl = symbolic.simplify(outer_start_sym + tiles_end)
-        else:
-            record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))
+        if clamped:
+            # ``min(i + K, stop)`` is precisely what stops the last tile overshooting, so the union
+            # IS ``stop`` and there is nothing to round up. Rounding up anyway walks the collapsed
+            # loop past the end of the array -- an out-of-bounds write, not a slow kernel.
             N_excl = stop_excl
+        else:
+            tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
+            if _diff_is_zero(tiles_end,
+                             span) or tiles_end.is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
+                N_excl = symbolic.simplify(outer_start_sym + tiles_end)
+            else:
+                record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))
+                N_excl = stop_excl
 
         # Body substitution: ``i + ii`` -> ``k`` (case A) or ``ii`` -> ``k`` (case B).
         i_sym = outer.loop_variable

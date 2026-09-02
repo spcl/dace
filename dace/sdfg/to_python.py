@@ -853,12 +853,15 @@ class PythonEmitter:
         buf.line(f"{state_var}.add_node({var})")
         self._var_for[id(node)] = var
 
+        # A bare-name connector (e.g. Reduce's ``_in``/``_out``) carries a typeclass with
+        # `.type is None` ("void"), not a plain None -- DictProperty's setter wraps whatever
+        # isn't already a typeclass. Treat both as untyped like _emit_extra_connectors does.
         for cname, cdtype in node.in_connectors.items():
-            buf.line(f"{var}.add_in_connector({_pyrepr(cname)}, "
-                     f"dtype={_emit_dtype_optional(cdtype)})")
+            dt_arg = "None" if _is_void_dtype(cdtype) else _emit_dtype(cdtype)
+            buf.line(f"{var}.add_in_connector({_pyrepr(cname)}, dtype={dt_arg})")
         for cname, cdtype in node.out_connectors.items():
-            buf.line(f"{var}.add_out_connector({_pyrepr(cname)}, "
-                     f"dtype={_emit_dtype_optional(cdtype)})")
+            dt_arg = "None" if _is_void_dtype(cdtype) else _emit_dtype(cdtype)
+            buf.line(f"{var}.add_out_connector({_pyrepr(cname)}, dtype={dt_arg})")
 
         # Properties not covered by __init__ — set imperatively via attribute
         # assignment if they differ from their declared default.
@@ -968,12 +971,6 @@ def _emit_dtype(dtype) -> str:
         if hasattr(dtypes, name):
             return f"dtypes.{name}"
     raise NotImplementedError(f"Cannot emit dtype {dtype!r} ({type(dtype).__name__}) imperatively")
-
-
-def _emit_dtype_optional(dtype) -> str:
-    if dtype is None:
-        return "None"
-    return _emit_dtype(dtype)
 
 
 def _emit_storage(storage) -> str:

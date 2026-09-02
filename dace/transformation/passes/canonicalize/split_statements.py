@@ -532,8 +532,22 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
                     for dst in succs:
                         state.add_nedge(src, dst, Memlet())
                 removed = True
-            for producer in [n for n in state.nodes() if isinstance(n, nodes.CodeNode) and state.out_degree(n) == 0]:
+            # A CodeNode whose out-edges are all EMPTY computes a value nobody reads: the node is
+            # dead but its ORDERING is not, so it is spliced like an access node rather than
+            # dropped. Keeping it is not an option -- the store that used its out-connector is what
+            # was just cut, so the connector is left dangling and validation rejects the clone
+            # (the frontend leaves exactly this edge between the two chains of
+            # ``a[i] = a[i-1] + s1; b[i] = y[i] * 2``). Deleting the computation is sound because
+            # :func:`has_opaque_code` already barred anything whose effect is not its out-memlets.
+            for producer in [
+                    n for n in state.nodes() if isinstance(n, nodes.CodeNode) and not value_edges(state.out_edges(n))
+            ]:
+                preds = [e.src for e in state.in_edges(producer) if e.data is not None and e.data.is_empty()]
+                succs = [e.dst for e in state.out_edges(producer)]
                 state.remove_node(producer)
+                for src in preds:
+                    for dst in succs:
+                        state.add_nedge(src, dst, Memlet())
                 removed = True
         if not removed:
             return
@@ -880,13 +894,25 @@ class SplitStatements(ppl.Pass):
         return result
 
     @staticmethod
-    def _split(parent_sdfg: SDFG, state, node: nodes.NestedSDFG, groups, simplify_cls, rmw_read_is_dead: bool = False):
+    def _split(parent_sdfg: SDFG,
+               state,
+               node: nodes.NestedSDFG,
+               groups,
+               simplify_cls,
+               rmw_read_is_dead: bool = False,
+               cut_other_stores: bool = False):
         """Clone ``node`` once per group, prune each, rewire, drop original.
 
         :param rmw_read_is_dead: The caller established (via :func:`rmw_stays_in_writer_group`) that a
                                  read-modify-write array is read ONLY by the group that writes it. Only
                                  then may a non-writing group drop the connector; without that proof the
                                  array is a real dependency between the clones and must stay one.
+        :param cut_other_stores: Delete the other groups' STORES before simplifying, the way
+                                 :meth:`_split_ordered` does. Flipping their array to a transient is
+                                 not enough to make dead-code elimination take a recurrence away: the
+                                 store to ``a[i]`` is what the read of ``a[i - 1]`` consumes, so the
+                                 pair keeps each other live and the clone that owns neither still
+                                 carries the whole chain -- and stays sequential for it.
         """
         in_edges = list(state.in_edges(node))
         out_edges = list(state.out_edges(node))
@@ -899,6 +925,30 @@ class SplitStatements(ppl.Pass):
             else:
                 kept_in = list(node.in_connectors)
             clone_sdfg = copy.deepcopy(node.sdfg)
+            # COMPENSATES FOR AN ATTACHMENT GAP, and is not the root fix. ``SDFG.__deepcopy__``
+            # leaves a NESTED sdfg's cfg list empty, and ``add_nested_sdfg`` only propagates to the
+            # regions that list already holds -- it never walks a subtree it has not seen. So a
+            # deep-copied ``LoopRegion`` is never registered and the next ``parent_graph.cfg_id``
+            # dies on it, arbitrarily far away (the vectorizer's re-run of canonicalize on polybench
+            # ``deriche``). Rebuilding here is the cheapest place to restore the invariant from this
+            # side; once ``add_nested_sdfg`` REGISTERS an unseen subtree rather than only
+            # propagating, this call goes away.
+            clone_sdfg.reset_cfg_list()
+            if cut_other_stores:
+                for other in [c for c in node.out_connectors if c not in grp]:
+                    suppress_writes(clone_sdfg, other)
+                drop_dataless_access_nodes(clone_sdfg)
+                simplify_cls().apply_pass(clone_sdfg, {})
+                # Cutting a store leaves the inputs only that statement read with no reader, and an
+                # input connector nothing reads makes the inliner materialise an access node the next
+                # pass to derive read sets from memlets does not know about (``LoopToMap`` on TSVC
+                # ``s211``). Keep exactly what the clone still moves a value through.
+                used = {
+                    n.data
+                    for st in clone_sdfg.all_states()
+                    for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
+                }
+                kept_in = [c for c in kept_in if c in clone_sdfg.arrays and c in used]
             # dicts/sorted, not sets: these become the clone's connector dicts, which are
             # observable in validation and codegen order.
             clone = state.add_nested_sdfg(clone_sdfg,
@@ -1216,7 +1266,13 @@ class SplitStatements(ppl.Pass):
             # read-modify-write array is read by nobody but its writer, so the read is dead in
             # every other clone. The ordered split makes no such claim -- there the read is real
             # and the order is what keeps it correct -- so it keeps every input connector.
-            SplitStatements._split(sdfg, outer, node, groups, simplify_cls, rmw_read_is_dead=True)
+            SplitStatements._split(sdfg,
+                                   outer,
+                                   node,
+                                   groups,
+                                   simplify_cls,
+                                   rmw_read_is_dead=True,
+                                   cut_other_stores=True)
             clones = [n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]
         for clone in clones:
             inline_cls.apply_to(sdfg, nested_sdfg=clone, save=False, verify=False)
