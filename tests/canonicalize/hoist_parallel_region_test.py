@@ -249,7 +249,8 @@ def test_top_level_library_node_in_the_loop_is_refused():
     fill_state = outer.add_state('fill')
     node = FillLibraryNode('fill_b', value=0.0)
     fill_state.add_node(node)
-    fill_state.add_edge(node, '_fill_out', fill_state.add_access('b'), None, dace.Memlet('b[0:N]'))
+    fill_state.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access('b'), None,
+                        dace.Memlet('b[0:N]'))
     outer.add_edge(outer.nodes()[0], fill_state, dace.InterstateEdge())
     sdfg.validate()
     assert_declined(sdfg, 'a top-level library node breaks replication-freedom (H)')
