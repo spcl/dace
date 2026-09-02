@@ -4,8 +4,10 @@ Red-green tests for name clashes between symbols and data containers when nestin
 (``add_nested_sdfg`` / ``dace.sdfg.dealias``), including deeply nested SDFGs.
 """
 
+import numpy as np
+
 import dace
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg.state import LoopRegion
 
 
@@ -390,6 +392,101 @@ def test_free_symbol_shared_with_mapping_value_is_not_renamed():
     # No new symbol may have leaked into the parent
     assert sdfg.free_symbols == {'H'}
     sdfg.validate()
+
+
+def _connector_clash_sdfg(connector: str, outer_memlet: str, shape):
+    """Nested SDFG whose input connector is called ``connector``, reading ``outer_memlet`` of ``A``."""
+    sdfg = dace.SDFG('parent')
+    sdfg.add_array('A', shape, dace.float64)
+    sdfg.add_array('C', [10], dace.float64)
+    state = sdfg.add_state()
+
+    inner = dace.SDFG('inner')
+    inner.add_array(connector, [10], dace.float64)
+    inner.add_array('o', [10], dace.float64)
+    istate = inner.add_state()
+    r, w = istate.add_read(connector), istate.add_write('o')
+    me, mx = istate.add_map('m', {'k': '0:10'})
+    t = istate.add_tasklet('t', {'a'}, {'b'}, 'b = a * 2')
+    istate.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet(f'{connector}[k]'))
+    istate.add_memlet_path(t, mx, w, src_conn='b', memlet=dace.Memlet('o[k]'))
+
+    node = state.add_nested_sdfg(inner, {connector}, {'o'}, {})
+    state.add_edge(state.add_read('A'), None, node, connector, dace.Memlet(outer_memlet))
+    state.add_edge(node, 'o', state.add_write('C'), None, dace.Memlet('C[0:10]'))
+    return sdfg, state, node
+
+
+def test_connector_clash_with_outer_memlet_symbol():
+    """The connector is named after a symbol the outer memlet is written in.
+
+    Integration expresses the memlets inside in the parent's coordinates, so that symbol has to be
+    usable within the nested SDFG. A connector of the same name shadows it: the view that replaces
+    the connector keeps the name, so the symbol has nowhere to live and code generation emits the
+    view's pointer where the symbol was meant.
+    """
+    sdfg, state, node = _connector_clash_sdfg('s', 'A[s:s + 10]', [20])
+    sdfg.add_symbol('s', dace.int64)
+
+    dealias.integrate_nested_sdfg(node.sdfg)
+
+    assert 's' in node.sdfg.symbols
+    assert 's' not in node.sdfg.arrays
+    sdfg.validate()
+
+    A = np.arange(20, dtype=np.float64)
+    C = np.zeros(10, dtype=np.float64)
+    sdfg(A=A, C=C, s=5)
+    assert np.allclose(C, A[5:15] * 2)
+
+
+def test_connector_clash_with_parent_shape_symbol():
+    """The connector is named after a symbol in the shape of the container being integrated."""
+    N = dace.symbol('N')
+    sdfg, state, node = _connector_clash_sdfg('N', 'A[0:10]', [N])
+
+    dealias.integrate_nested_sdfg(node.sdfg)
+
+    assert 'N' not in node.sdfg.arrays
+    sdfg.validate()
+
+    A = np.arange(10, dtype=np.float64)
+    C = np.zeros(10, dtype=np.float64)
+    sdfg(A=A, C=C, N=10)
+    assert np.allclose(C, A * 2)
+
+
+def test_connector_clash_with_enclosing_map_parameter():
+    """The connector is named after the parameter of the map the nested SDFG sits in."""
+    sdfg = dace.SDFG('parent')
+    sdfg.add_array('A', [4, 10], dace.float64)
+    sdfg.add_array('C', [4, 10], dace.float64)
+    state = sdfg.add_state()
+
+    inner = dace.SDFG('inner')
+    inner.add_array('i', [10], dace.float64)
+    inner.add_array('o', [10], dace.float64)
+    istate = inner.add_state()
+    r, w = istate.add_read('i'), istate.add_write('o')
+    me, mx = istate.add_map('m', {'k': '0:10'})
+    t = istate.add_tasklet('t', {'a'}, {'b'}, 'b = a * 2')
+    istate.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet('i[k]'))
+    istate.add_memlet_path(t, mx, w, src_conn='b', memlet=dace.Memlet('o[k]'))
+
+    node = state.add_nested_sdfg(inner, {'i'}, {'o'}, {})
+    entry, exit_ = state.add_map('outer', {'i': '0:4'})
+    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='i', memlet=dace.Memlet('A[i, 0:10]'))
+    state.add_memlet_path(node, exit_, state.add_write('C'), src_conn='o', memlet=dace.Memlet('C[i, 0:10]'))
+
+    dealias.integrate_nested_sdfg(node.sdfg)
+
+    assert 'i' not in node.sdfg.arrays
+    sdfg.validate()
+
+    A = np.arange(40, dtype=np.float64).reshape(4, 10).copy()
+    C = np.zeros((4, 10), dtype=np.float64)
+    sdfg(A=A, C=C)
+    assert np.allclose(C, A * 2)
 
 
 if __name__ == '__main__':

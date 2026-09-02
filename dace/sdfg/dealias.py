@@ -421,22 +421,39 @@ def integrate_nested_sdfg(sdfg: SDFG):
                         continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
-    symbols_to_add: Set[symbolic.SymbolicType] = set()
-    # Collect all symbols that need to be added to the nested SDFG
+    parent_names: Set[str] = set()  # The names of the parent containers being integrated
+    parent_symbols: Set[str] = set()  # The symbols their descriptors and memlets are written in
     for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
         # The parent data name itself may not alias internally-defined names
-        symbols_to_add.add(parent_name)
+        parent_names.add(parent_name)
         for sym in parent_desc.used_symbols(all_symbols=True):
-            symbols_to_add.add(str(sym))
+            parent_symbols.add(str(sym))
         for sym in parent_memlet.used_symbols(all_symbols=True):
-            symbols_to_add.add(str(sym))
+            parent_symbols.add(str(sym))
 
-    if symbols_to_add:
+    if parent_names or parent_symbols:
         # Rename internal names that would clash with the symbols introduced from the parent. Since the mapping is
-        # the identity, free symbols used inside are considered the same symbol and are not renamed. Connector arrays
-        # that are about to be integrated are excluded, as they are replaced with views below.
-        introduced = symbols_to_add - set(to_add_and_view.keys())
-        remove_symbol_aliases(sdfg, {sym: sym for sym in introduced})
+        # the identity, free symbols used inside are considered the same symbol and are not renamed. A connector
+        # about to be integrated keeps its name for the view that replaces it, so a fresh name only has to be
+        # minted for the container behind it -- but a connector named like one of the symbols still shadows that
+        # symbol, and is renamed like any other container that clashes with it.
+        introduced = (parent_names - set(to_add_and_view.keys())) | parent_symbols
+        renamed = remove_symbol_aliases(sdfg, {sym: sym for sym in introduced})
+
+        # ``remove_symbol_aliases`` renames the containers inside the nested SDFG. A connector among
+        # them is also the name of a connector on the node and of the edges reaching it, so those
+        # have to follow it.
+        conn_renames = {old: new for old, new in renamed.items() if old in to_add_and_view}
+        if conn_renames:
+            for old, new in conn_renames.items():
+                to_add_and_view[new] = to_add_and_view.pop(old)
+            parent_node.in_connectors = {conn_renames.get(c, c): t for c, t in parent_node.in_connectors.items()}
+            parent_node.out_connectors = {conn_renames.get(c, c): t for c, t in parent_node.out_connectors.items()}
+            for edge in parent_state.all_edges(parent_node):
+                if edge.dst is parent_node and edge.dst_conn in conn_renames:
+                    edge._dst_conn = conn_renames[edge.dst_conn]
+                if edge.src is parent_node and edge.src_conn in conn_renames:
+                    edge._src_conn = conn_renames[edge.src_conn]
 
     # Process each data container that needs to be integrated. The names already spoken for in the
     # subtree are collected once and extended as names are minted, rather than re-walking the tree
