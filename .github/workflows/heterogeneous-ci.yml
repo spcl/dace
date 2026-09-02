@@ -88,21 +88,6 @@ jobs:
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
-        # TEMPORARY [WIP] one probe, removed with the finding: the trigger for the wrong pgemm
-        # numbers is an OpenMP runtime mapped into the process before the ScaLAPACK program runs.
-        # This shows the MPI thread level it happens at, so "raise the required level" can be ruled
-        # in or out on evidence rather than on argument.
-        GOMP=$(ls /usr/lib/x86_64-linux-gnu/libgomp.so.1* 2>/dev/null | head -1)
-        LD_PRELOAD="$GOMP" mpirun -n 2 --oversubscribe uv run python -c \
-          "import dace; from mpi4py import MPI; print('LEVEL rank', MPI.COMM_WORLD.Get_rank(), 'provided', MPI.Query_thread(), 'MULTIPLE', MPI.THREAD_MULTIPLE)" || true
-        if LD_PRELOAD="$GOMP" mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
-            -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
-            tests/library/pblas/pgemm_test.py > /tmp/probe_gomp.log 2>&1; then
-          echo "PROBE gomp_preloaded PASS"
-        else
-          echo "PROBE gomp_preloaded FAIL"
-        fi
-        # The real thing, whose exit code decides this step.
         for i in {1..4}
         do
           mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"

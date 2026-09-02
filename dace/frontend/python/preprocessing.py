@@ -1605,12 +1605,10 @@ def ensure_mpi_initialized() -> None:
 
     The bring-up asks for ``MPI_THREAD_MULTIPLE``, which is what mpi4py's own automatic bring-up
     asks for, so a rank that took this path is indistinguishable from one that did not. Bare
-    ``MPI_Init`` would instead promise ``MPI_THREAD_SINGLE`` -- that the process has exactly one
-    thread -- and no DaCe process does: its maps are OpenMP regions and its BLAS calls spawn a pool.
-    Open MPI takes the promise: below ``MPI_THREAD_FUNNELED`` it drops the internal locking around
-    its shared-memory transport, and those other threads' allocations then race it. What comes out
-    is not an error but wrong numbers -- ScaLAPACK's panel broadcasts deliver corrupted operands,
-    so the same ``pdgemm`` on the same inputs returns a different answer each time it is called.
+    ``MPI_Init`` instead promises ``MPI_THREAD_SINGLE`` -- that the process has exactly one thread
+    -- and no DaCe process keeps that promise: its maps are OpenMP regions and its BLAS calls spawn
+    a pool. Which of the two paths a rank took should not be observable, and with ``MPI_Init`` it
+    was: the level differed by whether some earlier import had set ``MPI4PY_RC_INITIALIZE``.
     """
     if not any(os.environ.get(var) for var in MPI_RANK_VARS):
         return  # no launcher: honour the switch, a singleton bring-up is what it guards against
