@@ -6,7 +6,7 @@ import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 import dace
-from dace import config, data, dtypes, mpr_lowering
+from dace import config, data, dtypes, mpr_lowering, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -21,6 +21,32 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.canonicalize import supply_num_threads
+
+#: Guarded so a build without OpenMP still compiles; ``1`` is the honest count there, not a guess.
+#: ``omp_get_max_threads`` reports the POOL size outside a parallel region, which is where this is
+#: emitted -- the top of the program function, before any region opens and before any allocation.
+NUM_THREADS_DECL = """#ifdef _OPENMP
+    const {ctype} {name} = omp_get_max_threads();
+#else
+    const {ctype} {name} = 1;
+#endif"""
+
+NUM_THREADS_INCLUDE = """#ifdef _OPENMP
+#include <omp.h>
+#endif"""
+
+
+def num_threads_is_used(sdfg: SDFG) -> bool:
+    """Whether anything in ``sdfg`` or its nested SDFGs reads the reserved thread-count symbol.
+
+    ``all_symbols=False`` is the load-bearing argument: ``free_symbols`` counts every name in
+    ``sdfg.symbols``, so a symbol that is merely DECLARED reads as used and every program would pay
+    for a definition it never names. The narrower set covers descriptor sizes, which is the use that
+    has no other spelling -- a per-thread buffer is read by the ALLOCATION, not by an edge, a memlet
+    or a tasklet.
+    """
+    return symbolic.NUM_THREADS_SYMBOL in {str(sym) for sym in sdfg.used_symbols(all_symbols=False)}
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -1164,6 +1190,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
+        # ORDER IS THE POINT: a per-thread buffer's size names this symbol and allocations are
+        # emitted at program entry, ahead of every state, so nothing the graph runs can define it in
+        # time. Only the top level declares it -- nested SDFGs inline into this same function.
+        if is_top_level and num_threads_is_used(sdfg):
+            global_stream.write(NUM_THREADS_INCLUDE, sdfg)
+            callsite_stream.write(
+                NUM_THREADS_DECL.format(ctype=supply_num_threads.symbol_dtype(sdfg).ctype,
+                                        name=symbolic.NUM_THREADS_SYMBOL), sdfg)
+
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
@@ -1189,9 +1224,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_end = loop_analysis.get_loop_end(cfr)
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
-                        sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                         infer_expr_type(l_step, global_symbols),
-                                                         infer_expr_type(l_end, global_symbols))
+                        # Only the readable parts: ``get_loop_end`` is None for any condition that
+                        # is not ``i <op> X``. See ``LoopRegion.new_symbols``, which carries the
+                        # same guard -- this is the second place the same three expressions are
+                        # inferred from, and it crashed for the same reason.
+                        parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
+                        if not parts:
+                            continue
+                        sym_type = dtypes.result_type_of(*(infer_expr_type(part, global_symbols) for part in parts))
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]

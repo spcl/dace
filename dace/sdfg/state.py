@@ -3902,8 +3902,17 @@ class LoopRegion(ControlFlowRegion):
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)
-            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes), infer_expr_type(l_step, alltypes),
-                                                  infer_expr_type(l_end, alltypes))
+            # Infer from the parts that are actually readable. ``get_loop_end`` returns None for any
+            # condition that is not ``i <op> X`` -- a compound test like ``i <= N - 2 and i * i < N``
+            # is one -- and passing that to ``infer_expr_type`` raised ``Cannot convert type
+            # <class 'NoneType'> to a Python AST``, from inside codegen, for a loop that is otherwise
+            # perfectly well formed. The iterator's TYPE comes from the statements that define it,
+            # its init and its update; the end bound only ever participates through a comparison, so
+            # dropping it when unreadable narrows nothing.
+            parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
+            if not parts:
+                return {}
+            inferred_type = dtypes.result_type_of(*(infer_expr_type(part, alltypes) for part in parts))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
                 return {self.loop_variable: inferred_type}
