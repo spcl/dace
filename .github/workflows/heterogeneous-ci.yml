@@ -89,36 +89,32 @@ jobs:
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
         # TEMPORARY [WIP] probe for the grid-[2,1] pgemm red; delete with the finding.
-        # Builds are shared (cache=hash) so a variant costs its run, not its build.
+        # Round 1 ruled out the environment (OPENBLAS/OMP/MKL/BLIS thread counts, the BTL list) and
+        # OpenBLAS threading (a run pinned to one thread still fails). Both halves of tests/ poison
+        # it on their own, so this asks which single directory does, and whether the SDFG that is
+        # built differs at all -- the build folder is named after its hash.
         export DACE_cache=hash
+        export DACE_default_build_folder=$RUNNER_TEMP/pblasprobe
+        rm -rf "$DACE_default_build_folder"*
         probe () {
           local label="$1"; shift
-          if env "$@" mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
+          if mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
               -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
-              tests/library/pblas/pgemm_test.py $EXTRA > "/tmp/probe_$label.log" 2>&1; then
-            echo "PROBE $label PASS"
+              tests/library/pblas/pgemm_test.py "$@" > "/tmp/probe_$label.log" 2>&1; then
+            echo "PROBE $label PASS  sdfg=$(ls -d "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_* 2>/dev/null | sed 's#.*pdgemm_##' | tr '\n' ',')"
           else
-            echo "PROBE $label FAIL"
+            echo "PROBE $label FAIL  sdfg=$(ls -d "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_* 2>/dev/null | sed 's#.*pdgemm_##' | tr '\n' ',')"
           fi
+          cp "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_*/src/cpu/pgemm_test_pdgemm.cpp "/tmp/cpp_$label.cpp" 2>/dev/null || true
         }
-        EXTRA=""
         probe base
-        probe openblas4 OPENBLAS_NUM_THREADS=4
-        probe omp8 OMP_NUM_THREADS=8
-        probe btltcp OMPI_MCA_btl=self,vader,tcp
-        probe allenv OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 BLIS_NUM_THREADS=4 OMP_NUM_THREADS=8 OMPI_MCA_btl=self,vader,tcp
-        EXTRA="tests"
-        probe collect_tests
-        EXTRA="canon_perf_jobs"
-        probe collect_canonperf
-        EXTRA="tests/a* tests/b* tests/c* tests/d* tests/e* tests/f* tests/g* tests/h* tests/i* tests/j* tests/k* tests/l*"
-        probe collect_a_l
-        EXTRA="tests/m* tests/n* tests/o* tests/p* tests/q* tests/r* tests/s* tests/t* tests/u* tests/v* tests/w* tests/x* tests/y* tests/z*"
-        probe collect_m_z
-        EXTRA="tests"
-        probe collect_tests_ob1 OPENBLAS_NUM_THREADS=1
+        for d in ab_perf autodiff blas canonicalize codegen corpus library npbench passes python_frontend sdfg transformations
+        do
+          probe "$d" "tests/$d"
+        done
+        echo '===== cpp diff base vs the first failing directory ====='
+        for f in /tmp/cpp_*.cpp; do echo "$f $(md5sum < "$f")"; done
         echo '===== PROBES DONE ====='
-        DACE_cache=unique mpirun -n 1 --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
 
     - name: Report overall coverage
       uses: ./.github/actions/report-coverage
