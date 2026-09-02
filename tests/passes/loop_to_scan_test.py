@@ -2139,60 +2139,104 @@ def _misowned_memlet_data(sdfg):
     return bad
 
 
+def _scan_owners(sdfg):
+    """``[(scan.label, owner.name)]`` for every Scan libnode, paired with the SDFG holding it."""
+    return [(n.label, sd.name) for sd in sdfg.all_sdfgs_recursive() for state in sd.states() for n in state.nodes()
+            if isinstance(n, Scan)]
+
+
+def _nest_carry_loop_in_a_wrapper(inner, name):
+    """Outer SDFG whose whole body is one NestedSDFG running ``inner`` over ``out``/``delta``.
+
+    Hand-built on purpose. The nesting used to be a by-product of canonicalization -- its first
+    pass happened to wrap the loop body in a NestedSDFG, and the second pass then found the carry
+    loop inside it. That made the fixture hostage to a shape no pass promises: canonicalization
+    now leaves the carry loop at top level with the parallel dimension as a Map beside it (a
+    better result, and numerically identical), so nothing was nested any more and the test covered
+    nothing. A nesting the test builds itself cannot be taken away by a pass.
+    """
+    outer = dace.SDFG(name)
+    outer.add_array('out', [N + 1], dace.float64)
+    outer.add_array('delta', [N], dace.float64)
+    state = outer.add_state('call_inner')
+    nsdfg = state.add_nested_sdfg(inner, {'out': None, 'delta': None}, {'out': None}, symbol_mapping={'N': N})
+    state.add_edge(state.add_access('out'), None, nsdfg, 'out', dace.Memlet.from_array('out', outer.arrays['out']))
+    state.add_edge(state.add_access('delta'), None, nsdfg, 'delta',
+                   dace.Memlet.from_array('delta', outer.arrays['delta']))
+    state.add_edge(nsdfg, 'out', state.add_access('out'), None, dace.Memlet.from_array('out', outer.arrays['out']))
+    outer.validate()
+    return outer
+
+
 def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
-    """Canonicalizing an ALREADY-canonicalized SDFG must be a fixed point, not a crash.
+    """A carry loop inside a NestedSDFG must lift into THAT SDFG's descriptor repository.
 
-    The first canonicalize wraps the ``aa[i, j] = aa[i-1, j] + bb[i, j]`` body in a
-    NestedSDFG; the second then finds a liftable carry loop INSIDE it. ``LoopToScan``
-    used to hand every matcher and rewrite the top-level SDFG regardless of where the
-    loop lived, so ``_scan_out_aa`` was minted in the outer descriptor repository while
-    the scan/apply states went into the inner one -- ``KeyError: Data descriptor (Array,
-    Stream) "_scan_out_aa" not defined in SDFG`` out of ``propagate_memlet``.
+    ``LoopToScan`` used to hand every matcher and rewrite the top-level SDFG regardless of where
+    the loop lived, so ``_scan_out_out`` was minted in the outer descriptor repository while the
+    scan/apply states went into the inner one -- ``KeyError: Data descriptor (Array, Stream)
+    "_scan_out_out" not defined in SDFG`` out of ``propagate_memlet``.
 
-    Pins the PROPERTY (second canonicalize is a fixed point, every memlet names its own
-    SDFG's data) rather than "one kernel stopped throwing", and checks numerics both
-    times -- a lift into the wrong SDFG that merely stopped raising would still be wrong.
+    Pins the PROPERTY -- the Scan lands in the nested SDFG, the parent gains no scan buffer, every
+    memlet names its own SDFG's data, and canonicalizing such an SDFG twice is a fixed point --
+    rather than "one kernel stopped throwing", and checks numerics after each step: a lift into the
+    wrong SDFG that merely stopped raising would still be wrong.
     """
     from dace.transformation.passes.canonicalize import canonicalize
 
-    L = dace.symbol('L')
-
     @dace.program
-    def rowscan(aa: dace.float64[L, L], bb: dace.float64[L, L]):
-        for i in range(1, L):
-            for j in range(L):
-                aa[i, j] = aa[i - 1, j] + bb[i, j]
+    def carry(out: dace.float64[N + 1], delta: dace.float64[N]):
+        for i in range(N):
+            out[i + 1] = out[i] + delta[i]
 
-    n = 24
+    n = 64
     rng = np.random.default_rng(1119)
-    aa0 = rng.standard_normal((n, n))
-    bb = rng.standard_normal((n, n))
-    expected = aa0.copy()
-    for i in range(1, n):
-        for j in range(n):
-            expected[i, j] = expected[i - 1, j] + bb[i, j]
+    delta = rng.standard_normal(n)
+    expected = np.zeros(n + 1)
+    for i in range(n):
+        expected[i + 1] = expected[i] + delta[i]
 
-    sdfg = rowscan.to_sdfg(simplify=True)
+    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), 'lift_inside_nested_sdfg')
+    # The nesting is built above rather than waited for, but assert it anyway: an add_nested_sdfg
+    # that flattened the wrapper would empty this test out just as quietly as the pass did.
+    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the carry loop -- the ownership bug cannot be hit'
+
+    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    owners = _scan_owners(sdfg)
+    assert len(owners) == 1, f'expected exactly one lifted Scan, got {owners}'
+    scan_owner = owners[0][1]
+    assert scan_owner != sdfg.name, (f'the carry loop lives in the NestedSDFG but its Scan landed in the parent: '
+                                     f'{owners}')
+    assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
+                                             f'{_misowned_memlet_data(sdfg)}')
+    stray = [a for a in sdfg.arrays if a.startswith('_scan_')]
+    assert not stray, f"the lift minted its scan buffers in the parent's descriptor repository: {stray}"
+
+    out = np.zeros(n + 1)
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), 'the lifted scan diverged from the sequential oracle'
+
+    # Same nesting through the full pipeline, twice: the vectorizer runs a canonicalize at its own
+    # entry, so any caller that already canonicalized canonicalizes twice. This used to raise.
+    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), 'canonicalize_nested_carry')
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
-    # Guard against a vacuous fixture: the whole point is a loop the SECOND pass finds
-    # inside a NestedSDFG. If canonicalization stops producing one, this test proves nothing.
-    nested = _loops_inside_nested_sdfgs(sdfg)
-    assert nested, 'fixture no longer nests the carry loop -- the ownership bug cannot be hit'
+    assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
+                                             f'{_misowned_memlet_data(sdfg)}')
+    out = np.zeros(n + 1)
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), 'first canonicalize diverged from the sequential oracle'
 
-    aa = aa0.copy()
-    sdfg(aa=aa, bb=bb, L=n)
-    assert np.allclose(aa, expected), 'first canonicalize diverged from the sequential oracle'
-
-    # Second canonicalize: the vectorizer runs one at its own entry, so any caller that
-    # already canonicalized canonicalizes twice. This used to raise.
     canonicalize(sdfg, semantic_lifting=False, target='cpu')
     sdfg.validate()
     assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
                                              f'{_misowned_memlet_data(sdfg)}')
 
-    aa = aa0.copy()
-    sdfg(aa=aa, bb=bb, L=n)
-    assert np.allclose(aa, expected), 'second canonicalize diverged from the sequential oracle'
+    out = np.zeros(n + 1)
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected), 'second canonicalize diverged from the sequential oracle'
 
 
 def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
