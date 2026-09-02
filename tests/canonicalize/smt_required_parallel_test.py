@@ -32,10 +32,13 @@ runtime trap emitted by ``AssumeSymbolConstraints``, the same way ``ScatterToGua
 (``assume_no_conflicts``) and ``ParallelizeUnderConstraint`` (``assume_constraint``) already
 turn an unprovable precondition into a checked one.
 """
+import re
+
 import numpy as np
 import pytest
 
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize import canonicalize
@@ -128,6 +131,20 @@ def unique_scatter(A: dace.float64[N], B: dace.float64[N], IDX: dace.int64[N]):
         A[IDX[k]] = A[IDX[k]] + B[k]
 
 
+@dace.program
+def overwriting_scatter(A: dace.float64[N], B: dace.float64[N], IDX: dace.int64[N]):
+    """The same indirect write with no accumulation, which is what the runtime contract is about.
+
+    ``forward_store_to_load`` rewrites the accumulating form above into a WCR that lowers to
+    ``reduce_atomic``, and an atomic combine is order-independent -- so duplicates in IDX are
+    correct there and the guard rightly exempts it. This form defines the element instead of
+    combining into it, so two iterations landing on one index is a genuine race and the guard has
+    something to catch.
+    """
+    for k in range(N):
+        A[IDX[k]] = B[k]
+
+
 def test_unique_scatter_is_value_preserving():
     n = 12
     rng = np.random.default_rng(2)
@@ -155,12 +172,18 @@ def test_unique_scatter_already_parallelizes_under_a_runtime_contract():
 def test_unique_scatter_guard_rejects_duplicate_indices():
     """The other half of the contract: feed indices that VIOLATE uniqueness and the emitted
     guard must stop the program rather than race. The trap aborts the process, so this runs in
-    a child -- an uncaught SIGILL/abort here is the guard doing its job."""
+    a child -- an uncaught SIGILL/abort here is the guard doing its job.
+
+    Runs the OVERWRITING scatter. The accumulating form this used to use is exempt now, and
+    correctly so: ``forward_store_to_load`` turns it into a WCR that lowers to ``reduce_atomic``,
+    which gives the sequential answer under duplicates at any thread count (measured). Asking the
+    guard to abort on it would mean aborting a program that computes the right numbers.
+    """
     import subprocess
     import sys
     src = ('import numpy as np\n'
            'from tests.canonicalize import smt_required_parallel_test as T\n'
-           'sdfg = T.cpu_canon(T.unique_scatter.to_sdfg(simplify=True))\n'
+           'sdfg = T.cpu_canon(T.overwriting_scatter.to_sdfg(simplify=True))\n'
            'idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)\n'
            'print("BUILT", flush=True)\n'
            'sdfg(A=np.zeros(8), B=np.arange(1.0, 9.0), IDX=idx, N=8)\n'
@@ -171,6 +194,68 @@ def test_unique_scatter_guard_rejects_duplicate_indices():
     # NO_TRAP check passes, so the test could never fail.
     assert 'BUILT' in proc.stdout, f'child died before the guarded call {ctx}'
     assert 'NO_TRAP' not in proc.stdout, f'duplicate indices must trip the guard, not run silently {ctx}'
+
+
+def guard_check_nodes(sdfg: dace.SDFG) -> list:
+    """Every ``ScatterConflictCheck`` libnode in the tree -- the guard's compute half."""
+    from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+    return [
+        n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+        if isinstance(n, ScatterConflictCheck)
+    ]
+
+
+def guard_trap_tasklets(sdfg: dace.SDFG) -> list:
+    """Every trap tasklet -- the guard's abort half, keyed on the count symbol it reads.
+
+    Matched on the count symbol rather than on ``std::abort``, which the unrelated
+    nonnegative-symbol assumption tasklet also emits."""
+    return [
+        n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and '__scatter_guard_check_' in n.code.as_string
+    ]
+
+
+def test_overwriting_scatter_keeps_the_whole_guard():
+    """A plain indirect overwrite keeps check libnode, trap tasklet and abort in the emitted C++.
+
+    The trap reads its count through an interstate binding, which AccessNode-based analysis
+    cannot see, so ``side_effects`` is the only thing holding the tasklet against
+    DeadDataflowElimination -- pinned rather than trusted."""
+    sdfg = cpu_canon(overwriting_scatter.to_sdfg(simplify=True))
+    assert residual_loops(sdfg) == 0, 'a scatter left sequential would make the guard vacuous'
+    checks, traps = guard_check_nodes(sdfg), guard_trap_tasklets(sdfg)
+    assert len(checks) == 1, f'expected one conflict check, got {[n.label for n in checks]}'
+    assert len(traps) == 1, f'expected one trap tasklet, got {[n.label for n in traps]}'
+    assert traps[0].side_effects, 'the trap must be immune to dead-code elimination'
+    code = '\n'.join(c.code for c in sdfg.generate_code())
+    assert re.search(r'if \(__scatter_guard_check_\w+ > 0\) \{ std::abort\(\); \}', code), \
+        'the trap must survive to codegen, not just to the SDFG'
+
+
+def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
+    """The exempt side. ``A[IDX[k]] = A[IDX[k]] + B[k]`` reaches codegen as an atomic WCR
+    accumulate, which is correct for ANY index array, so a guard here would abort on inputs the
+    program computes right.
+
+    The atomic is asserted in the emitted text because it IS the exemption's premise: drop the
+    atomic and the same unguarded Map becomes a race. The numbers are asserted against the
+    duplicate-index reference so the exemption can never be widened into a wrong answer."""
+    sdfg = cpu_canon(unique_scatter.to_sdfg(simplify=True))
+    assert not guard_check_nodes(sdfg), 'an accumulation must not pay for a conflict check'
+    assert not guard_trap_tasklets(sdfg), 'an accumulation must not be able to abort'
+    code = '\n'.join(c.code for c in sdfg.generate_code())
+    assert 'reduce_atomic' in code, 'the exemption is sound only while the combine is atomic'
+
+    n = 8
+    idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)  # deliberately NOT a permutation
+    b = np.arange(1.0, 9.0)
+    expected = np.zeros(n)
+    for k in range(n):
+        expected[idx[k]] += b[k]
+    got = np.zeros(n)
+    sdfg(A=got, B=b.copy(), IDX=idx.copy(), N=n)
+    assert np.allclose(got, expected), 'every duplicate must still fold into its slot'
 
 
 # --------------------------------------------------------------------------- #
