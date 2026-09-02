@@ -52,6 +52,14 @@ def expanded_tasklet_code(program, implementation):
                      if isinstance(node, dace.sdfg.nodes.Tasklet))
 
 
+def assert_every_descinit_is_read(code, descriptors):
+    """Each ``descinit_`` writes its own ``info``, and each ``info`` is read before the call runs."""
+    for descriptor in descriptors:
+        assert f'&info_{descriptor}' in code, f'descinit_ writes info_{descriptor} nowhere'
+        assert f'info_{descriptor} != 0' in code, f'info_{descriptor} is never read'
+    assert 'MPI_Abort' in code
+
+
 @pytest.mark.parametrize('implementation', ('MKLMPICH', 'MKLOpenMPI', 'ReferenceMPICH', 'ReferenceOpenMPI'))
 def test_pgemm_checks_every_descinit_info(implementation):
     """A descriptor ``descinit_`` rejected must stop the multiply, not feed it."""
@@ -64,10 +72,21 @@ def test_pgemm_checks_every_descinit_info(implementation):
 
     code = expanded_tasklet_code(pdgemm, implementation)
 
-    for descriptor in ('c', 'a', 'b'):
-        assert f'&info_{descriptor}' in code, f'descinit_ writes info_{descriptor} nowhere'
-        assert f'info_{descriptor} != 0' in code, f'info_{descriptor} is never read'
-    assert 'MPI_Abort' in code
+    assert_every_descinit_is_read(code, ('c', 'a', 'b'))
+
+
+@pytest.mark.parametrize('implementation', ('MKLMPICH', 'MKLOpenMPI', 'ReferenceMPICH', 'ReferenceOpenMPI'))
+def test_pgemv_checks_every_descinit_info(implementation):
+    """Same for the matrix-vector node, which dropped ``info`` the same way."""
+    LMx, LNy, Px, Py, GM, GN = (dace.symbol(s, positive=True) for s in ('LMx', 'LNy', 'Px', 'Py', 'GM', 'GN'))
+
+    @dace.program
+    def pdgemv(A: dace.float64[LMx, LNy], x: dace.float64[GN]):
+        return dace.distr.MatMult(A, x, (Px * LMx, Py * LNy), c_block_sizes=(GM, 1))
+
+    code = expanded_tasklet_code(pdgemv, implementation)
+
+    assert_every_descinit_is_read(code, ('y', 'a', 'x'))
 
 
 if __name__ == '__main__':
