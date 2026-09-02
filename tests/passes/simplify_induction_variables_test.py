@@ -12,29 +12,6 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import SimplifyInductionVariables
 
 
-def _compile_and_run_works() -> bool:
-    """Probe whether this DaCe install can actually compile-and-run a trivial
-    SDFG. On some installs the dacestub shared library references
-    ``omp_get_max_threads`` without linking libgomp, breaking runtime loading.
-    That's an environment problem, not a pass problem — skip the e2e check.
-    """
-    try:
-        probe = dace.SDFG('_probe')
-        probe.add_array('x', [1], dace.float64)
-        st = probe.add_state('s')
-        an = st.add_access('x')
-        t = st.add_tasklet('w', {}, {'o'}, 'o = 1.0')
-        st.add_edge(t, 'o', an, None, dace.Memlet('x[0]'))
-        arr = np.zeros(1)
-        probe(x=arr)
-        return True
-    except Exception:
-        return False
-
-
-_COMPILE_RUN_OK = _compile_and_run_works()
-
-
 def _build_derived_iv_sdfg(name='t'):
     """Build an SDFG with a derived IV assignment ``j = 2*i + 1`` on an
     interstate edge, then a body state that reads ``A[j]`` and writes ``B[i]``.
@@ -224,7 +201,6 @@ def test_llmr_interaction_unlocks_derived_iv_pattern():
     assert found_i_only, 'Derived-IV folding did not substitute j into the read memlet'
 
 
-@pytest.mark.skipif(not _COMPILE_RUN_OK, reason='dace compile-and-run is broken in this environment')
 def test_end_to_end_numerical_preservation():
     """Compile and run an SDFG before and after simplification, compare results.
 
