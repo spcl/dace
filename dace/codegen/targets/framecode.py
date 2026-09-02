@@ -3,7 +3,7 @@ import collections
 import copy
 import pathlib
 import re
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import config, data, dtypes, mpr_lowering, symbolic
@@ -15,6 +15,7 @@ from dace.transformation.passes.analysis.scopes import (AccessInstances, Allocat
                                                         SymbolScopes)
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
+from dace.ordered import OrderedSet
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
@@ -67,7 +68,9 @@ class DaCeCodeGenerator(object):
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
         self.environments: List[Any] = []
-        self.targets: Set[TargetCodeGenerator] = set()
+        # OrderedSet for the same reason as used_targets: codegen.py iterates this to order
+        # the preprocess() calls, and a TargetCodeGenerator hashes by id().
+        self.targets: Set[TargetCodeGenerator] = OrderedSet()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
                                                  bool]]] = collections.defaultdict(list)
@@ -77,7 +80,10 @@ class DaCeCodeGenerator(object):
         # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
         # of the same name, and only one of them may qualify. Empty under the default ``eager``.
         self.loop_local_counters: Dict[Tuple[int, str], str] = {}
-        self.fsyms: Dict[int, Set[str]] = {}
+        # id(obj) -> (obj, result). The object itself is kept alive here so its address
+        # cannot be recycled by a later, unrelated object for as long as the entry lives
+        # (a WeakValueDictionary would not do this: it lets obj die and the id go stale).
+        self.fsyms: Dict[int, Tuple[Any, FrozenSet[str]]] = {}
         # Filled by determine_allocation_lifetime; targets read it through symbol_scopes.defined_at,
         # which falls back to symbols_defined_at for anything built after the pass ran.
         self.symbol_scopes: Dict = {}
@@ -117,15 +123,20 @@ class DaCeCodeGenerator(object):
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
+    def free_symbols(self, obj: Any) -> FrozenSet[str]:
         k = id(obj)
-        if k in self.fsyms:
-            return self.fsyms[k]
+        cached = self.fsyms.get(k)
+        if cached is not None and cached[0] is obj:
+            return cached[1]
         if hasattr(obj, 'used_symbols'):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
-        self.fsyms[k] = result
+        # Frozen so a caller's `fsyms |= ...` rebinds its own local name instead of
+        # mutating the shared cache entry (frozenset has no __ior__, so `|=` falls
+        # back to `fsyms = fsyms | ...`, which creates a new object).
+        result = frozenset(result)
+        self.fsyms[k] = (obj, result)
         return result
 
     ##################################################################
@@ -214,13 +225,18 @@ class DaCeCodeGenerator(object):
 
         #########################################################
         # Custom types
-        datatypes = set()
+        # OrderedSet, not set: typeclass.__hash__ folds in hash(self.type), which for a struct is
+        # the default id()-based hash of ctypes.Structure -- that id() moves with ASLR run to run,
+        # so a plain set() emitted these definitions in a different order every process even under
+        # a fixed PYTHONHASHSEED. Insertion order here is first-occurrence order in the SDFG, which
+        # is deterministic.
+        datatypes = OrderedSet()
         # Types of this SDFG
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted = set()
+        emitted = OrderedSet()
 
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if isinstance(dtype, dtypes.pointer):

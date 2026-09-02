@@ -3727,6 +3727,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         lowered = self._mpr_call(name, [self._print(a) for a in expr.args])
         if lowered is not None:
             return lowered
+        # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
+        # must be qualified for the same reason a tasklet body's are (mpr_lowering states it): bare,
+        # they bind to ``std::``, whose overloads are ambiguous for a 16-bit float. The Pow path
+        # above already emits ``dace::math::sqrt`` for ``x**Rational(1, 2)``; this covers the same
+        # function arriving as a CALL -- ``math.sqrt(x)``, or a sympy ``exp`` from a substitution --
+        # which the base printer would otherwise write out under its bare sympy name.
+        qualified = mpr_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
+        if qualified is not None:
+            return '%s(%s)' % (qualified, ', '.join(self._print(a) for a in expr.args))
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
@@ -4000,37 +4009,18 @@ def infer_fp_ctype(expr) -> Optional[str]:
 
 
 @lru_cache(maxsize=16384, typed=True)
-def symstr(sym,
-           arrayexprs: Optional[FrozenSet[str]] = None,
-           cpp_mode=False,
-           dialect: Optional[mpr_lowering.Dialect] = None,
-           fp_ctype: Optional[str] = None) -> str:
-    """
-    Convert a symbolic expression to a compilable expression.
-
-    :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy
-                       user-functions back to array expressions.
-    :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
-                     returns a Python expression.
-    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
-                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved here and handed to the
-                    memoized printer as an argument: it has to reach the cache key or one dialect
-                    would serve the other's cached answer.
-    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
-                     becomes a division of THAT type rather than a truncating integer division
-                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
-                     integer division, which index arithmetic needs. In the cache key for the
-                     same reason ``dialect`` is.
-    :return: Expression in string format depending on the value of ``cpp_mode``.
-    """
+def _symstr(sym,
+            arrayexprs: Optional[FrozenSet[str]] = None,
+            cpp_mode=False,
+            dialect: Optional[mpr_lowering.Dialect] = None,
+            fp_ctype: Optional[str] = None) -> str:
+    """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
+    included, so nothing here may read an ambient value."""
 
     # Inferred, not required from the caller: every consumer of a symbolic expression would
     # otherwise have to thread a dtype down, and the one that forgot would silently emit a
     # truncating integer division. An explicit fp_ctype still wins, for a caller that knows the
     # surrounding type better than the expression does (a float32 accumulator over int operands).
-    if dialect is None:
-        dialect = mpr_lowering.active_dialect()
     if cpp_mode and fp_ctype is None:
         fp_ctype = infer_fp_ctype(sym)
 
@@ -4066,6 +4056,43 @@ def symstr(sym,
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
         return '(' + sstr + ')'
+
+
+def symstr(sym,
+           arrayexprs: Optional[FrozenSet[str]] = None,
+           cpp_mode=False,
+           dialect: Optional[mpr_lowering.Dialect] = None,
+           fp_ctype: Optional[str] = None) -> str:
+    """
+    Convert a symbolic expression to a compilable expression.
+
+    :param sym: Symbolic expression to convert.
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
+                       user-functions back to array expressions.
+    :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
+                     returns a Python expression.
+    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
+                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved HERE, in front of the
+                    memoized body, because the cache key is the ARGUMENTS: an omitted dialect
+                    resolved inside would give every ambient-dialect caller one shared entry, and
+                    a standalone render would then serve ``std::exp`` back to the runtime printer.
+                    This is the same shape ``dace.codegen.common.sym2cpp`` already has.
+    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
+                     becomes a division of THAT type rather than a truncating integer division
+                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
+                     integer division, which index arithmetic needs. In the cache key for the
+                     same reason ``dialect`` is.
+    :return: Expression in string format depending on the value of ``cpp_mode``.
+    """
+    if dialect is None:
+        dialect = mpr_lowering.active_dialect()
+    return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype)
+
+
+#: The wrapper is what callers hold, so the cache controls have to live on it too -- clearing
+#: ``symstr``'s cache is what a dialect test does between primings.
+symstr.cache_clear = _symstr.cache_clear
+symstr.cache_info = _symstr.cache_info
 
 
 def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str, str],

@@ -1,12 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Union
-from dace import config, dtypes, registry
+from typing import Optional, Union
+from dace import config, dtypes, registry, subsets
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+
+
+def _point_index(subset: subsets.Subset) -> Optional[int]:
+    """Integer index named by a one-dimensional, single-point subset.
+
+    ``gpu_streams[i]`` in/out-edges (``stream_lowering_helpers._build_chain``
+    and friends) are always built from ``dace.Memlet(f"gpu_streams[{i}]")``,
+    a bare integer index. The memlet parser turns that into a one-element
+    ``Range``, not a plain scalar, so it cannot be handed to ``int()``
+    directly. A subset that is not exactly one point in one dimension cannot
+    name a single stream slot; return ``None`` instead of guessing.
+    """
+    if subset.dims() != 1 or subset.num_elements() != 1:
+        return None
+    return int(subset.min_element()[0])
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
@@ -190,6 +205,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         -------
         int
             The assigned GPU stream ID, or ``-1`` if none could be determined.
+            ``-1`` is not a scope to skip: ``_record_event`` maps it (and any
+            stream when ``max_concurrent_streams`` is negative) to ``nullptr``,
+            the backend's default stream, so the event is always recorded.
         """
         if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
             stream = getattr(node, '_cuda_stream', -1)
@@ -200,7 +218,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                 src = in_edge.src
                 if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t
                         and not in_edge.data.is_empty()):
-                    return int(in_edge.data.subset)
+                    idx = _point_index(in_edge.data.subset)
+                    if idx is not None:
+                        return idx
             return -1
 
         stream = _stream_from_in_edges(node)
@@ -220,7 +240,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                 dst = out_edge.dst
                 if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t
                         and not out_edge.data.is_empty()):
-                    stream = int(out_edge.data.subset)
-                    break
+                    idx = _point_index(out_edge.data.subset)
+                    if idx is not None:
+                        stream = idx
+                        break
 
         return stream

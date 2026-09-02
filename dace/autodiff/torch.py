@@ -97,8 +97,11 @@ def make_backward_function(
             fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
                                     dace.Memlet(name + "[0]"))
 
+            # Name the source array, so that the memlet has a defined source subset. Naming the scalar
+            # destination instead leaves it undefined, and ScalarToSymbolPromotion then reads the array
+            # without an index.
             bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_arr_name), None, bwd_copy_state.add_write(name), None,
-                                    dace.Memlet(name + "[0]"))
+                                    dace.Memlet(bwd_arr_name + "[0]"))
             replaced_scalars[name] = (bwd_arr_name, bwd_desc)
         else:
             forward_sdfg.arrays[name].transient = False

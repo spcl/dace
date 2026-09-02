@@ -86,6 +86,34 @@ def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
     return out_conn, arm_conns
 
 
+def _ite_arm_slots(rhs: ast.expr) -> Optional[list]:
+    """The two ``(node, setter)`` pairs addressing an ITE ``rhs``'s then/else arm slots --
+    ``IfExp.body`` / ``IfExp.orelse``, or ``Call.args[1]`` / ``Call.args[2]`` for the
+    ``ITE(cond, t, e)`` form -- so a caller can read the current arm node and, for a
+    literal/Symbol one, replace it in place with a cast. ``None`` when ``rhs`` is not a
+    recognised ITE form.
+    """
+    if isinstance(rhs, ast.IfExp):
+
+        def _set_body(n: ast.expr) -> None:
+            rhs.body = n
+
+        def _set_orelse(n: ast.expr) -> None:
+            rhs.orelse = n
+
+        return [(rhs.body, _set_body), (rhs.orelse, _set_orelse)]
+    if isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "ITE" and len(rhs.args) == 3:
+
+        def _set_t(n: ast.expr) -> None:
+            rhs.args[1] = n
+
+        def _set_e(n: ast.expr) -> None:
+            rhs.args[2] = n
+
+        return [(rhs.args[1], _set_t), (rhs.args[2], _set_e)]
+    return None
+
+
 def masked_write_operand(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str]]:
     """If ``tasklet`` is the masked write ``_o = IT(_cond, _val)`` (the first-class conditional
     write ``NormalizeMaskedWriteTasklets`` emits), return ``(out_conn, val_conn)`` when ``_val``
@@ -219,13 +247,23 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         (design 6.2, see ``dace.libraries.tileops.nodes.tile_ite``): the pure/ISA expansions
         cast a Symbol or broadcast-Scalar arm to the output dtype, but read a per-lane Tile arm
         RAW, with no cast. An arm whose source differs from the destination dtype must be cast
-        here, before ``ConvertTaskletsToTileOps`` wires it straight into the lib node."""
+        here, before ``ConvertTaskletsToTileOps`` wires it straight into the lib node.
+
+        A literal/Symbol arm (no connector, so the loop below never sees it) is NOT touched
+        here -- it is left for the pure/ISA expansion to cast inline, exactly as today. A
+        tasklet that never reaches that conversion (the untiled remainder of a branched split
+        stays a scalar ``ITE(...)`` tasklet forever) needs the SAME casting for its literal arm,
+        but doing it at this stage would corrupt a would-be ``TileITE`` Symbol arm instead
+        (its ``expr_t`` / ``expr_e`` reaches two different renderers -- the pure expansion's
+        ``pyexpr2cpp`` and the ISA expansion's raw C++ embed -- that disagree on whether the
+        text is Python or already-C++); see ``CastScalarIteLiteralArms`` below, which runs
+        AFTER tile conversion has claimed every arm it will ever claim, so anything it still
+        finds is provably staying scalar.
+        """
         detected = ite_operands(tasklet)
         if detected is None:
             return False
         out_conn, arm_conns = detected
-        if not arm_conns:
-            return False
         sdfg = state.sdfg
         in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
@@ -333,3 +371,82 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         state.add_edge(tmp_an, None, cast, "_ci", dace.Memlet(tmp))
         state.add_edge(cast, "_co", edge.dst, edge.dst_conn, dace.Memlet.from_memlet(edge.data))
         state.remove_edge(edge)
+
+
+class CastScalarIteLiteralArms(ppl.Pass):
+    """Cast a literal/Symbol arm of an ``ITE(...)`` tasklet that STAYS scalar (never becomes a
+    ``TileITE``) to the output dtype, by rewriting the tasklet's own Python source.
+
+    Must run AFTER ``ConvertTaskletsToTileOps``: at that point every ``ITE(...)`` tasklet inside
+    a tiled body has already been converted to a ``TileITE`` lib node, whose pure/ISA expansion
+    casts a Symbol arm to the output dtype on its own (see ``ResolveMixedDtypeBinops.resolve_ite``
+    and ``dace.libraries.tileops.nodes.tile_ite``). Any ``ITE(...)`` tasklet still standing is
+    therefore provably staying scalar -- the untiled remainder of a branched split, most commonly
+    -- and reaches codegen's generic Python-tasklet-to-C++ translation, which has no casting logic
+    of its own: ``ITE(cond, 0.0, x)`` with ``x`` a ``dace::float16`` is emitted as
+    ``ITE(bool, double, dace::float16)`` and fails to deduce ``std::common_type<double,
+    dace::float16>`` (``dace/runtime/include/dace/ITE.h``).
+
+    Running this earlier (inside ``ResolveMixedDtypeBinops.resolve_ite``, before tile conversion)
+    would be unsafe: a literal arm destined to become a ``TileITE`` Symbol arm has its raw Python
+    text read by TWO different renderers that disagree on its language -- the pure expansion's
+    ``pyexpr2cpp`` (Python source) and the CUDA/ISA expansion's ``_isa_codegen.make_ite_tasklet``
+    (embeds the text as-is, already-C++) -- so casting it here would double-cast one of the two
+    and corrupt the other.
+    """
+
+    CATEGORY: str = "Vectorization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        count = 0
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.all_states():
+                for tasklet in list(state.nodes()):
+                    if not isinstance(tasklet, nodes.Tasklet):
+                        continue
+                    if tasklet.code.language != dtypes.Language.Python:
+                        continue
+                    if self._cast_literal_arms(state, tasklet):
+                        count += 1
+        return count or None
+
+    def _cast_literal_arms(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        detected = ite_operands(tasklet)
+        if detected is None:
+            return False
+        out_conn, _arm_conns = detected
+        sdfg = state.sdfg
+        out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
+        if len(out_edges) != 1:
+            return False
+        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        try:
+            tree = ast.parse(tasklet.code.as_string.strip())
+        except SyntaxError:
+            return False
+        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+            return False
+        assign = tree.body[0]
+        slots = _ite_arm_slots(assign.value)
+        if slots is None:
+            return False
+        in_conns = OrderedSet(tasklet.in_connectors)
+        changed = False
+        for arm, set_arm in slots:
+            if isinstance(arm, ast.Name) and arm.id in in_conns:
+                continue
+            # Bare (undotted) spelling -- ``float16(0.0)``, not ``dace.float16(0.0)`` -- the one
+            # form ``cppunparse``'s tasklet-body translator special-cases to ``dace::<type>(...)``
+            # (``_typecast_func_to_cpp``) with no preprocessing step required first.
+            cast_call = ast.parse(f"{_cast_name(out_dt)}({ast.unparse(arm)})", mode="eval").body
+            set_arm(cast_call)
+            changed = True
+        if changed:
+            tasklet.code = CodeBlock(ast.unparse(assign), language=dace.dtypes.Language.Python)
+        return changed

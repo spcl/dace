@@ -22,7 +22,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 
 _TILE = "Tile"
@@ -149,8 +149,10 @@ class ExpandTileUnopPure(ExpandTransformation):
         if node.kind_a == _SYMBOL:
             # Cast to out_dtype so a literal / symbolic int operand resolves
             # cleanly against a typed unop call (mirrors the binop fix).
+            operand_ctype = out_dtype
             operand = f"{_cast}({pyexpr2cpp(node.expr_a)})"
         elif node.kind_a == _TILE:
+            operand_ctype = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
             operand = f"_a[{off}]"
         else:  # Scalar: descriptor-aware reference.
             # A tile-shape Array widened upstream is read per lane ``_a[off]``
@@ -161,7 +163,23 @@ class ExpandTileUnopPure(ExpandTransformation):
             from .tile_binop import scalar_operand_ref
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
             ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
+            operand_ctype = out_dtype if broadcast else desc.dtype.ctype
             operand = f"{_cast}({ref})" if broadcast else ref
+
+        if node.op not in _CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
+            # Every ``_UNOP_CPP`` op other than ``neg``/``not`` lowers to an
+            # overloaded ``std::`` function (``sqrt``, ``exp``, ``abs``, ...)
+            # with NO ``__half`` overload at all -- unlike a mixed-type infix
+            # operator, this is not a "meets a different type" question, it
+            # is unconditional: ``dace::float16`` (CUDA's ``__half`` on GPU)
+            # exposes several simultaneously implicit conversions, so the
+            # overload set can never pick one on its own (confirmed: this is
+            # the exact shape of the ``std::sqrt`` "more than one instance of
+            # overloaded function ... matches" ambiguity). Route through one
+            # explicit, lossless ``(float)`` hop first, same as
+            # ``half_disambiguated`` (see its docstring) and same as the ISA
+            # runtime header's own ``_cuda_to_compute`` (tile_ops/cuda.h).
+            operand = half_disambiguated(operand, operand_ctype, "float")
 
         if node.op in _CAST_OP_TO_CPP:
             # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as

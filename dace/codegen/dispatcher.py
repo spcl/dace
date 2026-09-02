@@ -15,6 +15,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from enum import auto
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
+from dace.ordered import OrderedSet
+
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 
@@ -168,8 +170,13 @@ class TargetDispatcher(object):
         from dace.codegen import instrumentation
 
         self.frame: fc.DaCeCodeGenerator = framecode
-        self._used_targets: Set[target.TargetCodeGenerator] = set()
-        self._used_environments = set()
+        # OrderedSet, not set: these hold TargetCodeGenerator instances and environment
+        # classes, neither of which overrides __hash__, so a plain set orders them by id()
+        # -- which ASLR moves every process. framecode iterates used_targets to emit the
+        # header includes, the __dace_init_/__dace_exit_ declarations AND the order the
+        # __dace_init_<target>() calls are made in, so that ordering reaches the output.
+        self._used_targets: Set[target.TargetCodeGenerator] = OrderedSet()
+        self._used_environments = OrderedSet()
 
         self.instrumentation: Dict[Union[dtypes.InstrumentationType, dtypes.DataInstrumentationType],
                                    instrumentation.InstrumentationProvider] = {}
