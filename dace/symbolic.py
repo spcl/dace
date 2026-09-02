@@ -513,9 +513,9 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr, self.approx // other.approx)
+            return SymExpr(int_floor(self.expr, other.expr), int_floor(self.approx, other.approx))
         if isinstance(other, sympy.Expr):
-            return SymExpr(self.expr // other, self.approx // other)
+            return SymExpr(int_floor(self.expr, other), int_floor(self.approx, other))
         return self // pystr_to_symbolic(other)
 
     def __mod__(self, other):
@@ -1341,7 +1341,7 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
@@ -2419,6 +2419,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
         return super()._print_Function(expr)
+
+    def _print_ceiling(self, expr):
+        if not self.cpp_mode:
+            return super()._print_Function(expr)
+        return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
