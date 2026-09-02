@@ -2279,19 +2279,25 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    # A denominator DaCe can divide by: a symbol, an integer, or a rounding call, which is itself
+    # an integer division and so is just as dividable. Admitting the rounding call here is what
+    # makes ``a / b`` and ``e / b`` cover a rounding over a rounding, of EITHER kind -- the four
+    # arms that used to name one head on both sides only ever matched the matching pair, so
+    # ``ceiling(N / int_floor(M, T))`` fell through all of them and survived.
     # ``b != 1``: a rounding call with nothing to divide by is not an integer division. Without it
     # ``floor(sin(x))`` matches ``floor(e / b)`` with ``b = 1`` and becomes ``int_floor(sin(x), 1)``,
     # which prints as a division by one -- the rounding silently dropped (spcl/dace#2524).
-    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
+    b = sympy.Wild(
+        'b', properties=[lambda k: (k.is_Symbol or k.is_Integer or isinstance(k, (int_ceil, int_floor))) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
-    # The REAL classes, not ``sympy.Function('int_ceil')``. An undefined function of the same name
-    # prints identically and reports the same ``.func`` name, but is a different class, so a pattern
-    # built from it never matches an expression carrying the DaCe one -- every arm below that
-    # mentions a rounding call was dead. A surviving ``ceiling`` prints as C++ ``ceil()`` wrapped
-    # around a TRUNCATING integer division (wrong when inexact, and a non-integer loop predicate
-    # OpenMP rejects), so the miss is a silent miscompile, not a cosmetic one.
+    # Every rounding head named below -- in ``b``'s property and in the arms -- is the REAL class,
+    # never ``sympy.Function('int_ceil')``. An undefined function of the same name prints
+    # identically and reports the same ``.func`` name, but is a different class, so a pattern built
+    # from it matches nothing an SDFG carries. A surviving ``ceiling`` prints as C++ ``ceil()``
+    # wrapped around a TRUNCATING integer division (wrong when inexact, and a non-integer loop
+    # predicate OpenMP rejects), so such a miss is a silent miscompile, not a cosmetic one.
 
     processed = 1
     while processed > 0:
@@ -2324,21 +2330,6 @@ def sympy_intdiv_fix(expr):
             m = ceil.match(sympy.ceiling(int_ceil(c, d) / b))
             if m is not None:
                 nexpr = nexpr.subs(ceil, int_ceil(int_ceil(m[c], m[d]), m[b]))
-                processed += 1
-                continue
-            # Ceiling of ceiling: "ceil(a / ceil(c/d))"
-            m = ceil.match(sympy.ceiling(a / int_ceil(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(ceil, int_ceil(m[a], int_ceil(m[c], m[d])))
-                processed += 1
-                continue
-            # Same, but with a COMPOSITE numerator. ``a`` is Symbol-or-Integer only, and the
-            # composite arm below takes a Symbol-or-Integer denominator, so ``ceil((N - 2) /
-            # int_ceil(N - 2, T))`` -- what a range chunked over the thread count produces -- fell
-            # between them and survived as a raw ``ceiling``.
-            m = ceil.match(sympy.ceiling(e / int_ceil(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(ceil, int_ceil(m[e], int_ceil(m[c], m[d])))
                 processed += 1
                 continue
             # Match ceiling of multiplication with our custom integer functions
@@ -2381,18 +2372,6 @@ def sympy_intdiv_fix(expr):
             m = floor.match(sympy.floor(int_floor(c, d) / b))
             if m is not None:
                 nexpr = nexpr.subs(floor, int_floor(int_floor(m[c], m[d]), m[b]))
-                processed += 1
-                continue
-            # Floor of floor: "floor(a / floor(c/d))"
-            m = floor.match(sympy.floor(a / int_floor(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c], m[d])))
-                processed += 1
-                continue
-            # Composite numerator over a rounding denominator; see the ceiling branch.
-            m = floor.match(sympy.floor(e / int_floor(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[e], int_floor(m[c], m[d])))
                 processed += 1
                 continue
             # floor with composite expression
