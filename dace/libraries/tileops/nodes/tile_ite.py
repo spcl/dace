@@ -32,7 +32,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, scalar_operand_ref
+from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _promotion_ok, scalar_operand_ref
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
 # never installed on CI, so this resolves to ``None`` there (meaning "assume
@@ -307,10 +307,13 @@ class TileITE(nodes.LibraryNode):
         :param sdfg: SDFG that owns ``state``.
         :param state: State that owns ``self``.
         :raises ValueError: If a required connector is unconnected.
-        :raises NotImplementedError: If the output is not tile-shape or the
-            materialised (Tile / Scalar) arm dtypes disagree with ``_o``
-            (a cross-dtype select needs an explicit cast first). Symbol arms
-            are cast to ``_o``'s dtype inline at expansion, so they are exempt.
+        :raises NotImplementedError: If the output is not tile-shape, or a Tile arm's
+            dtype cannot be promoted to ``_o``'s (narrowing). Symbol arms are cast to
+            ``_o``'s dtype inline at expansion, so they are exempt; a widening Tile arm
+            is promoted the same way ``TileBinop`` / ``TileFma`` / ``TileUnop`` promote a
+            Tile operand (design 6.2, ``tile_binop._promotion_ok``) -- not cast here, but
+            left for the pure/ISA expansion's own arithmetic-conversion context, exactly
+            like those siblings.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -335,10 +338,10 @@ class TileITE(nodes.LibraryNode):
                 f"{self.label}: output-kind rule violated -- a Tile input is present but "
                 f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design section 6.2: "
                 f"any Tile input -> Tile output.")
-        arm_dtypes = {o_arr.dtype}
         for conn, kind in (("_t", self.kind_t), ("_e", self.kind_e)):
-            if kind in (_TILE, _SCALAR):
-                arm_dtypes.add(sdfg.arrays[in_e[conn].data.data].dtype)
-        if arm_dtypes != {o_arr.dtype}:
-            raise NotImplementedError(f"{self.label}: TileITE requires uniform dtype across _t, _e and _o "
-                                      f"(got {sorted(str(d) for d in arm_dtypes)}); cast via separate tasklet first.")
+            if kind == _TILE:
+                src = sdfg.arrays[in_e[conn].data.data].dtype
+                if not _promotion_ok(src, o_arr.dtype):
+                    raise NotImplementedError(
+                        f"{self.label}: Tile operand {conn!r} dtype {src} cannot be promoted to output "
+                        f"dtype {o_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

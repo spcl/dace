@@ -22,7 +22,9 @@ Covered:
   * the emitted ``.cu`` has exactly ONE kernel with a clean (split-residue-free) bound + condition,
     and under the default a widened (``Align >= 4``) mask-free load with no scalar tail anywhere;
   * bit-exact vs the NumPy fp16 oracle on the device (elementwise + neighbour-read stencil, W=4/8,
-    and the 2D fp16 stencil under the plain default).
+    and the 2D fp16 stencil under the plain default);
+  * a ``np.where(cond, <literal>, A)`` blend's literal arm is typed fp16 (never a bare ``double``)
+    in BOTH the tiled interior's ``TileITE`` and the non-divisible extent's scalar remainder.
 
 GPU-executing tests fork before any CUDA use so a device fault cannot crash the pytest parent.
 """
@@ -30,10 +32,12 @@ import os
 import shutil
 import traceback
 
+import numpy as np
 import pytest
 
 import dace
 from dace.dtypes import DeviceType
+from dace.libraries.tileops import TileITE
 from dace.transformation.interstate import LoopToMap
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -57,6 +61,16 @@ def _neighbor16(A: dace.float16[N], D: dace.float16[N]):
     # so the NumPy oracle is unambiguous and the comparison is exactly bit-exact.
     for i in dace.map[1:N - 1]:
         D[i] = A[i - 1] + A[i + 1]
+
+
+@dace.program
+def _where16(A: dace.float16[N], C: dace.float16[N]):
+    # ``np.where(cond, <bare Python float literal>, A)``: the literal has no dtype of its own
+    # until NumPy's weak-scalar promotion resolves it against ``A`` (float16 in, float16 out --
+    # the literal must NOT upcast the array). Lowers to a same-write-set if/else -> ITE tasklet ->
+    # TileITE in the vectorized (tiled) interior; the extent is non-divisible (1022 @ W=2), so a
+    # scalar remainder tasklet ALSO carries the same ``ITE(cond, 0.0, A[i])`` shape, unconverted.
+    C[1:N - 1] = np.where(A[1:N - 1] > 0, 0.0, A[1:N - 1])
 
 
 @dace.program
@@ -341,6 +355,59 @@ def test_branched_tail_emits_single_kernel():
     assert "dace::tileops::tile_load<dace::float16, 8" in cu
 
 
+def test_branched_tail_where_literal_arm_typed_not_bare_double():
+    """A ``np.where(cond, 0.0, A)`` blend's Python float literal must be typed to the kernel's
+    fp16 precision before it reaches codegen -- not left as a bare (C++ ``double``) literal.
+
+    Two lowerings see this literal, and both must stay fp16:
+      * the vectorized (tiled) interior converts the blend to a ``TileITE`` lib node, whose
+        Symbol arm is cast to the output dtype INLINE at expansion -- unaffected by this fix,
+        checked here as ``expr_t == '0.0'``: still the bare literal, still exempt (its own
+        expansion casts it, see ``tile_ite.ExpandTileITEPure._ref``);
+      * the non-divisible extent's scalar remainder (1022 @ W=2) leaves an ``ITE(...)`` tasklet
+        that never becomes a ``TileITE`` -- codegen's generic Python-tasklet translation has no
+        casting logic of its own, so a leftover bare literal reaches nvcc as
+        ``ITE(bool, double, dace::float16)``, which fails to deduce
+        ``std::common_type<double, dace::float16>`` (regression guard for
+        ``CastScalarIteLiteralArms``, which runs after tile conversion and casts exactly this).
+
+    A regression that "fixes" the compile failure by promoting the whole computation to double
+    would pass a weaker version of this test (no bare literal, no compile error) but fail the
+    explicit fp16 dtype assertions below.
+    """
+    sdfg = _prep(_where16)
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+
+    ites = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileITE)]
+    assert len(ites) == 1, f"expected exactly one TileITE for the tiled interior; got {len(ites)}"
+    ite = ites[0]
+    assert ite.kind_t == "Symbol" and ite.expr_t == "0.0", (
+        f"tiled-interior TileITE Symbol arm changed unexpectedly: kind_t={ite.kind_t!r} expr_t={ite.expr_t!r} "
+        "-- CastScalarIteLiteralArms must not touch an arm a TileITE will claim")
+
+    # The tiled TileITE's own operand and output descriptors -- the arrays the two fixes are
+    # about -- stay fp16; nothing was widened to make dtype agreement easier.
+    ite_sdfg = next(sd for sd in sdfg.all_sdfgs_recursive() if any(ite in s.nodes() for s in sd.all_states()))
+    ite_state = next(s for s in ite_sdfg.all_states() if ite in s.nodes())
+    e_edge = next(e for e in ite_state.in_edges(ite) if e.dst_conn == "_e")
+    o_edge = next(e for e in ite_state.out_edges(ite) if e.src_conn == "_o")
+    assert ite_sdfg.arrays[e_edge.data.data].dtype == dace.float16, "TileITE '_e' arm was widened"
+    assert ite_sdfg.arrays[o_edge.data.data].dtype == dace.float16, "TileITE '_o' output was widened"
+
+    sdfg.expand_library_nodes()
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
+    ite_calls = [line.strip() for line in cu.splitlines() if "ITE(" in line]
+    assert ite_calls, "expected a scalar-remainder ITE(...) call in the generated CUDA source"
+    for line in ite_calls:
+        assert "dace::float16(0.0)" in line, f"literal ITE arm not typed to fp16: {line!r}"
+        assert "double" not in line, f"a bare/unfixed double literal leaked into the ITE call: {line!r}"
+
+    # The final output array (host-visible ``C``, and its GPU-resident copy) stays fp16 too.
+    for name, desc in sdfg.arrays.items():
+        if name == "C" or name.startswith("C_gpu"):
+            assert desc.dtype == dace.float16, f"output array {name!r} is {desc.dtype}, expected float16"
+
+
 # --------------------------------------------------------------------------------------------------
 # GPU-executing numeric tests (forked; bit-exact vs the NumPy fp16 oracle)
 # --------------------------------------------------------------------------------------------------
@@ -477,6 +544,38 @@ def test_default_masked_tail_stencil_bitexact(width):
     assert _run_in_fork(work) == 0
 
 
+@pytest.mark.gpu
+def test_branched_tail_where_literal_arm_bitexact():
+    """``np.where(A > 0, 0.0, A)`` over interior [1:N-1], N=1024 (extent 1022, non-divisible):
+    the tiled interior AND the scalar remainder both compile and run, bit-exact fp16 vs the
+    NumPy fp16 oracle. Belt-and-braces: success here proves the fix compiles and runs correctly
+    on a real device, but the day-to-day regression guard is the CPU source-text test above
+    (``test_branched_tail_where_literal_arm_typed_not_bare_double``), which needs neither nvcc
+    nor a GPU and so actually runs in CI -- this one only runs under a dispatched GPU CI job."""
+
+    def work():
+        import numpy as np
+        import cupy
+        sdfg = _prep(_where16)
+        sdfg.name = "bt_where16"
+        VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        sdfg.expand_library_nodes()
+        shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+        csr = sdfg.compile()
+        n = 1024
+        rng = np.random.default_rng(0)
+        A = rng.standard_normal(n).astype(np.float16)
+        C = np.zeros(n, np.float16)
+        csr(A=cupy.asarray(A), C=(dC := cupy.asarray(C)), N=n)
+        got = cupy.asnumpy(dC)
+        exp = np.zeros(n, np.float16)
+        exp[1:n - 1] = np.where(A[1:n - 1] > 0, np.float16(0.0), A[1:n - 1])
+        assert got.dtype == np.float16
+        assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
+
+    assert _run_in_fork(work) == 0
+
+
 if __name__ == "__main__":
     test_branched_tail_refused_on_cpu()
     test_assume_even_opts_out_of_branched_tail()
@@ -487,10 +586,12 @@ if __name__ == "__main__":
     test_branched_tail_provably_nondivisible_does_not_raise()
     test_branched_tail_structure_if_vector_else_scalar()
     test_branched_tail_emits_single_kernel()
+    test_branched_tail_where_literal_arm_typed_not_bare_double()
     test_branched_tail_elementwise_bitexact(8)
     test_branched_tail_elementwise_bitexact(4)
     test_branched_tail_neighbor_stencil_bitexact(8)
     test_branched_tail_neighbor_stencil_bitexact(4)
     test_default_masked_tail_stencil_bitexact(2)
     test_default_masked_tail_stencil_bitexact(4)
+    test_branched_tail_where_literal_arm_bitexact()
     print("all branched-remainder tests passed")

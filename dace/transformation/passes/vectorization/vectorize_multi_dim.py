@@ -54,7 +54,8 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import ResolveMixedDtypeBinops
+from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (CastScalarIteLiteralArms,
+                                                                                 ResolveMixedDtypeBinops)
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
@@ -972,6 +973,13 @@ class VectorizeMultiDim(ppl.Pipeline):
             # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
             # that would compile against a pointer (or not compile at all).
             _AssertTileOpsLowered(widths=widths_t),
+            # A ternary blend's literal/Symbol arm survives here only in a tasklet that STAYS
+            # scalar (every tile-bound one was just claimed by ConvertTaskletsToTileOps above,
+            # whose TileITE casts a Symbol arm on its own) -- e.g. the untiled remainder of a
+            # branched split. Cast it now so codegen's generic Python-tasklet translation, which
+            # has no casting logic of its own, never emits a bare literal against a differently
+            # typed sibling arm.
+            CastScalarIteLiteralArms(),
         ]
         # Branched (GPU-only) post-transform: after the tile emitters lowered the ``__tile_main``
         # interior mask-free and prepared the tail (masked tile ops, or left scalar), fuse each pair
