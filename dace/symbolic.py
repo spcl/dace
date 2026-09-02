@@ -25,6 +25,12 @@ from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 # Unreferenced HERE, and `ruff-check --fix` runs in pre-commit -- without the noqa it deletes them.
 from dace.symbolic_engine import Boolean as SymbolicBoolean, Expr as SymbolicExpr  # noqa: F401
 
+#: The OpenMP thread count, defined by frame code rather than passed in. Sizing a per-thread
+#: buffer needs the value at ALLOCATION time, but the count is an OpenMP runtime property and must
+#: not enter the ABI -- ``SDFG.arglist`` drops every ``__dace``-prefixed name, so this is usable in
+#: a shape without appearing in any signature. Always defined, so a pass may use it unconditionally.
+NUM_THREADS_SYMBOL = '__dace_num_threads'
+
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
@@ -2280,8 +2286,12 @@ def sympy_intdiv_fix(expr):
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
-    int_ceil = sympy.Function('int_ceil')
-    int_floor = sympy.Function('int_floor')
+    # The REAL classes, not ``sympy.Function('int_ceil')``. An undefined function of the same name
+    # prints identically and reports the same ``.func`` name, but is a different class, so a pattern
+    # built from it never matches an expression carrying the DaCe one -- every arm below that
+    # mentions a rounding call was dead. A surviving ``ceiling`` prints as C++ ``ceil()`` wrapped
+    # around a TRUNCATING integer division (wrong when inexact, and a non-integer loop predicate
+    # OpenMP rejects), so the miss is a silent miscompile, not a cosmetic one.
 
     processed = 1
     while processed > 0:
@@ -2310,6 +2320,15 @@ def sympy_intdiv_fix(expr):
             m = ceil.match(sympy.ceiling(a / int_ceil(c, d)))
             if m is not None:
                 nexpr = nexpr.subs(ceil, int_ceil(m[a], int_ceil(m[c], m[d])))
+                processed += 1
+                continue
+            # Same, but with a COMPOSITE numerator. ``a`` is Symbol-or-Integer only, and the
+            # composite arm below takes a Symbol-or-Integer denominator, so ``ceil((N - 2) /
+            # int_ceil(N - 2, T))`` -- what a range chunked over the thread count produces -- fell
+            # between them and survived as a raw ``ceiling``.
+            m = ceil.match(sympy.ceiling(e / int_ceil(c, d)))
+            if m is not None:
+                nexpr = nexpr.subs(ceil, int_ceil(m[e], int_ceil(m[c], m[d])))
                 processed += 1
                 continue
             # Match ceiling of multiplication with our custom integer functions
@@ -2353,6 +2372,12 @@ def sympy_intdiv_fix(expr):
             m = floor.match(sympy.floor(a / int_floor(c, d)))
             if m is not None:
                 nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c], m[d])))
+                processed += 1
+                continue
+            # Composite numerator over a rounding denominator; see the ceiling branch.
+            m = floor.match(sympy.floor(e / int_floor(c, d)))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(m[e], int_floor(m[c], m[d])))
                 processed += 1
                 continue
             # floor with composite expression
@@ -4378,6 +4403,14 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
 
     if any([args is None for args in args]):
         return False
+
+    # A NAME denotes one value in an SDFG, but sympy folds dtype and assumptions into symbol
+    # identity, so the same name minted twice (a bound reparsed from a CodeBlock vs a declared
+    # shape extent) yields two symbols that never cancel -- and this returns None, which every
+    # caller reading ``is True`` treats as "not equal" and silently refuses on. Equalize first, so
+    # the answer is about the VALUES rather than about which instance the caller happened to hold.
+    if all(isinstance(arg, sympy.Basic) for arg in args):
+        args = list(equalize_symbols_across(*args))
 
     facts = []
     if is_length:
