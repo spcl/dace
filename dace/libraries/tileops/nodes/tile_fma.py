@@ -26,7 +26,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _is_scalar_shape, scalar_operand_ref,
                          _promotion_ok)
@@ -80,24 +80,57 @@ class ExpandTileFMAPure(ExpandTransformation):
         narrow_operand = any(dt.ctype == operand_dtype and dt.bytes < 4
                              for dt in (dace.float16, dace.bfloat16, dace.int8, dace.uint8, dace.int16, dace.uint16))
 
+        def _effective_ctype(kind, conn):
+            """The C++ type ``conn`` is actually emitted as (post any cast)."""
+            if kind == _SYMBOL:
+                return operand_dtype
+            if kind == _TILE:
+                return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            _, broadcast = scalar_operand_ref(desc, conn, widths, off)
+            return operand_dtype if broadcast else desc.dtype.ctype
+
+        _ctypes = {
+            "_a": _effective_ctype(node.kind_a, "_a"),
+            "_b": _effective_ctype(node.kind_b, "_b"),
+            "_c": _effective_ctype(node.kind_c, "_c"),
+        }
+
+        def _meets_ctype(this_conn):
+            """``dace::float16`` if every OTHER operand is also float16 (native
+            half arithmetic stays safe), else a non-float16 placeholder --
+            :func:`half_disambiguated` only cares about the binary distinction.
+            """
+            others = [c for k, c in _ctypes.items() if k != this_conn]
+            return dace.float16.ctype if all(c == dace.float16.ctype for c in others) else operand_dtype + "?mixed"
+
         def _operand_ref(kind, conn, expr):
             """Return the per-lane C++ reference for one FMA operand.
 
             A ``_SYMBOL`` / broadcast ``_SCALAR`` operand is cast to
             ``operand_dtype`` so ``std::fma`` resolves all three operands at one
             type; a per-lane Tile read (or a tile-shape Scalar widened upstream)
-            keeps the tile dtype uncast, exactly like a Tile operand.
+            keeps the tile dtype uncast -- UNLESS it is ``dace::float16``
+            meeting a differently-typed sibling operand, in which case
+            :func:`half_disambiguated` routes it through one explicit,
+            lossless ``(float)`` hop (``__half`` -- what ``dace::float16`` is
+            on GPU -- exposes several simultaneously implicit conversions, so
+            a bare half handed to ``std::fma`` with mixed-type siblings is a
+            compile-time ambiguity, not a truncation risk).
             """
             if kind == _SYMBOL:
                 return f"{_cast}({pyexpr2cpp(expr)})"
             if kind == _TILE:
-                return f"{conn}[{off}]"
+                src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+                return half_disambiguated(f"{conn}[{off}]", src, _meets_ctype(conn))
             # Scalar operand: descriptor-aware (a tile-shape Array widened upstream
             # is read per lane ``conn[off]``; a by-value Scalar / length-1 Array is
             # broadcast and cast to ``operand_dtype``).
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
-            return f"{_cast}({ref})" if broadcast else ref
+            if broadcast:
+                return f"{_cast}({ref})"
+            return half_disambiguated(ref, desc.dtype.ctype, _meets_ctype(conn))
 
         a_ref = _operand_ref(node.kind_a, "_a", node.expr_a)
         b_ref = _operand_ref(node.kind_b, "_b", node.expr_b)

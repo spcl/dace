@@ -20,7 +20,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 
 
@@ -233,7 +233,20 @@ class ExpandTileBinopPure(ExpandTransformation):
         # which are never bool; so suppress it when the operand dtype is bool.
         _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
 
-        def _operand_ref(kind, conn, expr):
+        def _effective_ctype(kind, conn):
+            """The C++ type ``conn`` is actually emitted as (post any cast)."""
+            if kind == _SYMBOL:
+                return operand_dtype
+            if kind == _TILE:
+                return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+            desc = parent_sdfg.arrays[in_e[conn].data.data]
+            _, broadcast = scalar_operand_ref(desc, conn, widths, off)
+            return operand_dtype if broadcast else desc.dtype.ctype
+
+        ctype_a = _effective_ctype(node.kind_a, "_a")
+        ctype_b = _effective_ctype(node.kind_b, "_b")
+
+        def _operand_ref(kind, conn, expr, meets_ctype):
             """Return the per-lane C++ reference for one operand.
 
             A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``operand_dtype``
@@ -242,11 +255,20 @@ class ExpandTileBinopPure(ExpandTransformation):
             comparison's symbol operand keeps its numeric type rather than
             being truncated to the ``bool`` output. The cast is suppressed when
             the operand dtype is bool (logical ops; no ``(bool)X`` is emitted).
+            A ``_TILE`` / per-lane ``_SCALAR`` operand keeps its own dtype
+            uncast (like before) UNLESS it is ``dace::float16`` meeting a
+            differently-typed sibling operand: ``__half`` (what
+            ``dace::float16`` is on GPU) exposes several simultaneously
+            implicit conversions, so handing it bare to a mixed-type infix
+            operator is a compile-time ambiguity, not a truncation risk --
+            ``half_disambiguated`` routes it through one explicit, lossless
+            ``(float)`` hop first (see its docstring).
             """
             if kind == _SYMBOL:
                 return f"{_cast}({pyexpr2cpp(expr)})"
             if kind == _TILE:
-                return f"{conn}[{off}]"
+                src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
+                return half_disambiguated(f"{conn}[{off}]", src, meets_ctype)
             # Scalar operand. A tile-shape Array widened upstream is a pointer
             # read per lane (``conn[off]``); any volume-1 source (Scalar /
             # length-1 Array / single-element access) is passed by value and
@@ -255,10 +277,12 @@ class ExpandTileBinopPure(ExpandTransformation):
             # ``operand_dtype`` so a typed binop (``std::min`` etc.) resolves.
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
-            return f"{_cast}({ref})" if broadcast else ref
+            if broadcast:
+                return f"{_cast}({ref})"
+            return half_disambiguated(ref, desc.dtype.ctype, meets_ctype)
 
-        lhs = _operand_ref(node.kind_a, "_a", node.expr_a)
-        rhs = _operand_ref(node.kind_b, "_b", node.expr_b)
+        lhs = _operand_ref(node.kind_a, "_a", node.expr_a, ctype_b)
+        rhs = _operand_ref(node.kind_b, "_b", node.expr_b, ctype_a)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
         # Output kind dispatch (design 6.2): when all inputs are non-Tile and ``_c`` is Scalar /
         # length-1, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
