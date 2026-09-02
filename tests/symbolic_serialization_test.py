@@ -651,5 +651,49 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
 
 
+def test_operator_derived_int_floor_roundtrip_preserves_integerness():
+    """The ``__int_floor`` class that Python ``//`` parses to must survive
+    ``serialize_symbolic`` -> ``deserialize_symbolic`` with its ``is_integer``
+    assumption intact, so downstream simplifications and type inferences that
+    rely on the floor being an integer are not silently lost."""
+    expr = symbolic.pystr_to_symbolic('upper_i // 2')
+    assert expr.func.__name__ == '__int_floor'
+    assert expr.is_integer is True
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert restored.func is expr.func
+    assert restored.is_integer is True
+
+
+@pytest.mark.parametrize('expr_str', ['a // b', 'a & b', 'a | b', 'a ^ b', '~a', 'a << b', 'a >> b'])
+def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
+    """Every ``__``-prefixed operator-derived class must round-trip through
+    serialization to the same class (not an opaque ``sympy.Function``),
+    so the printer's ``name.startswith('__')`` check still recognizes them
+    as operators."""
+    expr = symbolic.pystr_to_symbolic(expr_str)
+    assert type(expr).__name__.startswith('__')
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert type(restored) is type(expr)
+
+
+def test_ceiling_of_roundtripped_floor_division_simplifies():
+    """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
+    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
+    because the round-tripped ``__int_floor`` still carries ``is_integer=True``
+    and sympy's ``ceiling._eval`` returns a known-integer argument unchanged."""
+    upper = symbolic.symbol('upper_i')
+    lower = symbolic.symbol('lower_i')
+    expr = -lower + (upper // 2)
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+    ceiling_of_restored = sympy.ceiling(restored)
+
+    assert ceiling_of_restored == restored
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

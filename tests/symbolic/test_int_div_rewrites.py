@@ -58,6 +58,19 @@ def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, 
     assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
 
 
+def test_ceiling_of_integer_lowers_to_dace_noop_not_libm():
+    """A ``ceiling`` that reaches the printer with a known-integer argument
+    (e.g. via ``evaluate=False``) must emit dace's ``ceiling(int)`` no-op so
+    the result keeps integer type, instead of libm ``ceil`` which widens to
+    ``double``."""
+    n = pystr_to_symbolic('n')
+    # ``int_floor`` has ``_eval_is_integer -> True``; force the ceiling past
+    # sympy's own ``ceiling._eval`` simplification.
+    expr = sympy.ceiling(int_floor(n, 2), evaluate=False)
+    assert 'ceiling(' in symstr(expr, cpp_mode=True)
+    assert 'ceil(' not in symstr(expr, cpp_mode=True)
+
+
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
 def test_division_by_an_integer_still_rewrites(rounding, name):
     """The integer-division rewrite is unchanged where a real denominator is present."""
