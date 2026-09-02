@@ -668,16 +668,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (isinstance(inner_edge.dst, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient):
                             matching_edge: MultiConnectorEdge = next(
                                 state.out_edges_by_connector(nsdfg_node, inner_data))
-                            # Create memlet by renaming the data container
-                            in_memlet = inner_edge.data
-                            in_memlet.data = top_edge.data.data
-                            out_memlet = copy.deepcopy(inner_edge.data)
-                            out_memlet.data = matching_edge.data.data
-
-                            new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.subset
-
-                            inner_edge.data = new_memlet
+                            # Create memlet by renaming the data container. The two sides of the
+                            # copy already say what each end covers, so only the name changes.
+                            _rename_copy_memlet(inner_edge, nstate, top_edge.data.data, data_is_src=True)
                             if len(nstate.out_edges(inner_edge.dst)) > 0:
                                 if node.data == inner_edge.dst.data:
                                     new_edges[inner_edge.dst] = top_edge
@@ -694,16 +687,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (isinstance(inner_edge.src, nodes.AccessNode) and not nsdfg.arrays[inner_data].transient):
                             matching_edge: MultiConnectorEdge = next(
                                 state.out_edges_by_connector(nsdfg_node, inner_data))
-                            # Create memlet by renaming the data container
-                            in_memlet = inner_edge.data
-                            in_memlet.data = top_edge.data.data
-                            out_memlet = copy.deepcopy(inner_edge.data)
-                            out_memlet.data = matching_edge.data.data
-
-                            new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.subset
-
-                            inner_edge.data = new_memlet
+                            # Create memlet by renaming the data container. The two sides of the
+                            # copy already say what each end covers, so only the name changes.
+                            _rename_copy_memlet(inner_edge, nstate, top_edge.data.data, data_is_src=False)
                             if len(nstate.out_edges(inner_edge.src)) > 0:
                                 if node.data == inner_edge.src.data:
                                     new_edges[inner_edge.src] = top_edge
@@ -731,10 +717,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for node, top_edge in new_edges.items():
             inner_edges = (nstate.out_edges(node) if inputs else nstate.in_edges(node))
             for inner_edge in inner_edges:
-                if inner_edge in edges_to_ignore:
-                    new_memlet = inner_edge.data
-                else:
-                    new_memlet = inner_edge.data
+                new_memlet = inner_edge.data
+                # Only the connector's own container is renamed to what it is called outside. A
+                # memlet that names the other side of the copy (a transient, already renamed with
+                # the rest of the nested SDFG's containers) describes the same movement from that
+                # side, and renaming it would attach this subset to the wrong descriptor.
+                if inner_edge not in edges_to_ignore and new_memlet.data == node.data:
                     new_memlet.data = top_edge.data.data
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
@@ -754,9 +742,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward
-                def traverse(mtree_node):
+                def traverse(mtree_node, inner_name=node.data, outer_name=top_edge.data.data):
                     result.add(mtree_node.edge)
-                    mtree_node.edge.data.data = top_edge.data.data
+                    if mtree_node.edge.data.data == inner_name:
+                        mtree_node.edge.data.data = outer_name
                     for child in mtree_node.children:
                         traverse(child)
 
@@ -781,6 +770,33 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 state.add_edge(edge.src, edge.src_conn, node, 'views', edge.data)
             else:
                 state.add_edge(node, 'views', edge.dst, edge.dst_conn, edge.data)
+
+
+def _rename_copy_memlet(edge: MultiConnectorEdge, state: SDFGState, new_data: str, data_is_src: bool) -> None:
+    """
+    Renames the container an access-to-access memlet addresses, keeping both ends of the copy.
+
+    The memlet may name either end. Rewriting only the name would leave whichever subset happens to
+    be ``subset`` attached to the other end's descriptor, so the two sides are read off the edge
+    first and put back on the side they belong to.
+
+    :param edge: The edge whose memlet should be renamed.
+    :param state: The state the edge lives in.
+    :param new_data: The name the memlet should address.
+    :param data_is_src: True if ``new_data`` names the source of the copy, False for the destination.
+    :note: This function operates in-place on the edge's memlet.
+    """
+    memlet = edge.data
+    src_subset = memlet.get_src_subset(edge, state)
+    dst_subset = memlet.get_dst_subset(edge, state)
+    memlet.data = new_data
+    if src_subset is None or dst_subset is None:
+        return
+    memlet._is_data_src = data_is_src
+    if data_is_src:
+        memlet.subset, memlet.other_subset = src_subset, dst_subset
+    else:
+        memlet.subset, memlet.other_subset = dst_subset, src_subset
 
 
 @make_properties

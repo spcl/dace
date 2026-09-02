@@ -1232,6 +1232,10 @@ def reduce_integrated_nsdfg_connector(nsdfg: SDFG,
     """
     squeezed_dims = squeezed_dims or []
 
+    # The offset is written in the parent's terms, so the symbols it brings in have to be defined
+    # inside before any memlet is moved by it.
+    _define_offset_symbols(nsdfg, offset)
+
     for state in nsdfg.all_states():
         for edge in state.edges():
             if edge.data.data == connector:
@@ -1269,6 +1273,41 @@ def reduce_integrated_nsdfg_connector(nsdfg: SDFG,
     new_desc = copy.deepcopy(reduced_desc)
     new_desc.transient = False
     nsdfg.arrays[connector] = new_desc
+
+
+def _define_offset_symbols(nsdfg: SDFG, offset: Optional[Union[Subset, List[symbolic.SymbolicType]]]) -> None:
+    """
+    Makes the symbols an offset is expressed in usable inside a nested SDFG.
+
+    The offset a reduction introduces is written in the coordinates of the parent, so it may name
+    symbols -- the parameters of the map the container was compressed under, for instance -- that
+    the nested SDFG has never heard of. Each of them is registered and mapped to itself, since the
+    parent defines it at the nested SDFG node.
+
+    :param nsdfg: The nested SDFG the offset is about to be applied in.
+    :param offset: The offset, or ``None`` if the reduction did not move the container.
+    :note: This function operates in-place.
+    """
+    parent_node = nsdfg.parent_nsdfg_node
+    if offset is None or parent_node is None:
+        return
+
+    if isinstance(offset, Subset):
+        symbols = set(offset.free_symbols)
+    else:
+        symbols = set()
+        for expr in offset:
+            symbols |= set(symbolic.symlist(expr).keys())
+
+    defined = nsdfg.parent.symbols_defined_at(parent_node) if nsdfg.parent is not None else {}
+    for sym in symbols:
+        name = str(sym)
+        if name in nsdfg.arrays or name in nsdfg.constants_prop:
+            continue
+        if name not in nsdfg.symbols:
+            nsdfg.add_symbol(name, defined.get(name, symbolic.DEFAULT_SYMBOL_TYPE))
+        if name not in parent_node.symbol_mapping:
+            parent_node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
 
 
 def _reduce_meta_accesses(nsdfg: SDFG, connector: str, offset: Optional[Union[Subset, List[symbolic.SymbolicType]]],

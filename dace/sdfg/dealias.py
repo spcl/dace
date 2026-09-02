@@ -231,7 +231,7 @@ def dealias_sdfg(sdfg: SDFG):
                 if str(sym) not in sdfg.symbols:
                     symtype = defined_symbols.get(str(sym), parent_sdfg.symbols.get(str(sym), None))
                     sdfg.add_symbol(str(sym), symtype or dtypes.typeclass(int))
-                    parent_node.symbol_mapping[str(sym)] = str(sym)
+                    parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
 
             if isinstance(parent_arr, data.ArrayView):
                 parent_arr = parent_arr.as_array()
@@ -288,16 +288,16 @@ def dealias_sdfg(sdfg: SDFG):
                     if new_src_memlet is not None:
                         new_syms = new_src_memlet.used_symbols(all_symbols=True) - previous_syms
                         for sym in new_syms:
-                            if sym not in sdfg.symbols:
+                            if str(sym) not in sdfg.symbols:
                                 sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
-                                parent_node.symbol_mapping[sym] = sym
+                                parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
                         e.data.src_subset = new_src_memlet.subset
                     if new_dst_memlet is not None:
                         new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
                         for sym in new_syms:
-                            if sym not in sdfg.symbols:
+                            if str(sym) not in sdfg.symbols:
                                 sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
-                                parent_node.symbol_mapping[sym] = sym
+                                parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
                         e.data.dst_subset = new_dst_memlet.subset
                     if e.data.data == src_data:
                         e.data.data = new_src_memlet.data
@@ -389,7 +389,10 @@ def integrate_nested_sdfg(sdfg: SDFG):
     for edge in parent_state.all_edges(parent_node):
         if edge.data.data in parent_sdfg.arrays:
             connector = edge.dst_conn if edge.dst == parent_node else edge.src_conn
-            if connector and connector in sdfg.arrays:
+            # A dotted connector names a member of a structure. The member's descriptor is owned by
+            # the structure that declares it rather than by ``arrays``, so it cannot be replaced or
+            # shadowed by a view of its own; the structure holding it is what gets integrated.
+            if connector and '.' not in connector and connector in sdfg.arrays:
                 # Only process non-transient arrays
                 if not sdfg.arrays[connector].transient:
                     # If the parent data descriptor is equivalent to the inner data descriptor, simply copy it
@@ -573,7 +576,7 @@ def integrate_nested_sdfg(sdfg: SDFG):
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping
             sdfg.add_symbol(sym_name, sym_type)
-        parent_node.symbol_mapping[sym_name] = sym_name
+        parent_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
     # Containers read only by meta code never receive a ``views`` edge above, so redirect those
     # accesses to the parent container they alias.
