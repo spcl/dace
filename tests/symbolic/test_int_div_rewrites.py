@@ -208,3 +208,32 @@ if __name__ == '__main__':
     test_int_floor_truncates_toward_zero_in_the_generated_code()
     test_ceiling_of_index_arithmetic_is_integer_typed()
     test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating()
+
+
+def test_a_stored_rounding_over_an_integer_folds_in_the_normalizer_not_only_the_printer():
+    """``sympy_intdiv_fix`` resolves a known-integer rounding, so consumers see the integer form.
+
+    Deserialization rebuilds an application through ``Basic.__new__``, bypassing the ``eval`` that
+    would have folded the wrapper, so a stored rounding arrives unevaluated. The printer has a
+    backstop for that, but a backstop only helps the emitted C++ -- range propagation, validation
+    and symbol comparison all read the EXPRESSION, and they were seeing a rounding that is the
+    identity. Folding it in the normalizer gives every consumer the same view.
+    """
+    for text in ('ceiling(__int_floor($N, 2) + 1)', 'floor(__int_floor($N, 2) + 1)'):
+        stored = deserialize_symbolic(text)
+        assert stored.args[0].is_integer, text
+        folded = sympy_intdiv_fix(stored)
+        assert not folded.find(sympy.ceiling), f'{text} -> {folded}'
+        assert not folded.find(sympy.floor), f'{text} -> {folded}'
+
+
+def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
+    """The floor counterpart of the ceiling rule: libm ``floor`` returns a double.
+
+    spcl/dace#2550 gave the integer short-circuit to ceilings only, which left this shape emitting
+    ``floor(...)`` -- a double where an integer extent belongs, and the same non-integer loop
+    predicate that makes OpenMP reject an ``omp for``.
+    """
+    emitted = symstr(deserialize_symbolic('floor(__int_floor($N, 2) + 1)'), cpp_mode=True)
+    assert 'floor(' not in emitted, emitted
+    assert '/' in emitted, emitted

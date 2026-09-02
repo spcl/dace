@@ -2297,6 +2297,16 @@ def sympy_intdiv_fix(expr):
     while processed > 0:
         processed = 0
         for ceil in nexpr.find(sympy.ceiling):
+            # A known-integer argument has nothing to round: the call is the identity. Resolving it
+            # HERE rather than only at print time means every consumer of the expression -- range
+            # propagation, validation, symbol comparison -- sees the integer form too, not just the
+            # emitted C++. ``is_integer`` is only trustworthy on a deserialized expression because
+            # the serializer preserves it (spcl/dace#2550); on a freshly built one it is None and
+            # the match arms below do the work instead.
+            if ceil.args[0].is_integer:
+                nexpr = nexpr.subs(ceil, ceil.args[0])
+                processed += 1
+                continue
             # Before matching: a distributed rational sum would otherwise match ``a / b`` with
             # ``b = 1`` and keep its Rationals, which C++ truncates term by term.
             frac = recombined_fraction(ceil.args[0])
@@ -2349,6 +2359,11 @@ def sympy_intdiv_fix(expr):
                 processed += 1
                 continue
         for floor in nexpr.find(sympy.floor):
+            # See the ceiling branch: a known-integer argument makes the rounding the identity.
+            if floor.args[0].is_integer:
+                nexpr = nexpr.subs(floor, floor.args[0])
+                processed += 1
+                continue
             # See the ceiling branch: recombine before matching, or the Rationals survive into the
             # numerator and each truncates on its own in C++.
             frac = recombined_fraction(floor.args[0])
@@ -3807,6 +3822,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         """
         if not self.cpp_mode:
             return super()._print_Function(expr) if hasattr(super(), "_print_Function") else super()._print_floor(expr)
+        # The counterpart of the ceiling short-circuit: libm ``floor`` returns a double just as
+        # ``ceil`` does, so a known-integer argument must stand on its own here too. #2550 gave this
+        # to ceilings only, which left ``floor(int_floor(N, 2) + 1)`` emitting a floating call.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
         arg = expr.args[0]
         # Try to combine to a single ``Rational(num, den)``: when arg is
         # ``a/b + c/d + ...`` sympy's ``.together()`` rewrites to a
