@@ -17,7 +17,7 @@ class ScaLAPACKOpenMPI:
     cmake_libraries = ['libscalapack-openmpi.so']
     cmake_files = []
 
-    headers = ["mpi.h", "dlfcn.h", "cstring", "../include/scalapack.h"]
+    headers = ["mpi.h", "../include/scalapack.h"]
     state_fields = [
         "int __scalapack_context;", "int __scalapack_rank, __scalapack_size;",
         "int __scalapack_prows = 0, __scalapack_pcols = 0;", "int __scalapack_myprow = 0, __scalapack_mypcol = 0;",

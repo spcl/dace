@@ -88,28 +88,9 @@ jobs:
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
-        # TEMPORARY [WIP] diagnostics for the grid-[2,1] pgemm red; remove with the pgemm instrumentation.
-        uv run python -c "import dace, sys; print('dace', dace.__file__, dace.__version__, sys.version)"
-        dpkg -l | grep -Ei 'scalapack|lapack|blas|openmpi|libc6 |^ii  gcc' || true
-        echo '===== BISECT: which collected directory breaks pgemm ====='
-        for d in ab_perf autodiff autooptimize blas canonicalize codegen corpus cpp fortran gpu_specialization graphlib helpers interface layout library lint npbench numpy octave onnx passes perf python_frontend schedule_tree sdfg symbolic tensorflow torch_forward transformation transformations tutorials utils
-        do
-          if mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no -p no:cacheprovider --timeout_method thread --timeout=300 -m "scalapack" tests/library/pblas/pgemm_test.py "tests/$d" > /tmp/bisect_$d.log 2>&1; then
-            echo "BISECT tests/$d PASS"
-          else
-            echo "BISECT tests/$d FAIL"
-          fi
-        done
-        echo '===== BISECT: top-level test modules only ====='
-        if mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no -p no:cacheprovider --timeout_method thread --timeout=300 -m "scalapack" tests/library/pblas/pgemm_test.py tests/*.py > /tmp/bisect_toplevel.log 2>&1; then
-          echo "BISECT tests/*.py PASS"
-        else
-          echo "BISECT tests/*.py FAIL"
-        fi
-        echo '===== VARIANTS DONE ====='
         for i in {1..4}
         do
-          mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x -s --with-mpi --tb=long --timeout_method thread --timeout=300 -m "scalapack"
+          mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
         done
 
     - name: Report overall coverage

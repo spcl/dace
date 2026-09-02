@@ -102,97 +102,15 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
             int n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
             // int n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
             int b_lld = max(n_lb_rows, 1);
-            int info_c, info_a, info_b;
+            int info;
             int _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
-            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info_c);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info_a);
-            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info_b);
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info);
             int _m = gc_rows, _n = gc_cols, _k = ga_rows;
-            {{
-                double dbg_sa = 0.0, dbg_sb = 0.0;
-                for (int dbg_i = 0; dbg_i < la_rows * la_cols; ++dbg_i) dbg_sa += _a[dbg_i];
-                for (int dbg_i = 0; dbg_i < lb_rows * lb_cols; ++dbg_i) dbg_sb += _b[dbg_i];
-                std::fprintf(stderr,
-                    "[PGEMM-DBG] rank=%d size=%d ctx=%d prows=%d pcols=%d myprow=%d mypcol=%d "
-                    "g(c=%dx%d a=%dx%d b=%dx%d) blk(c=%dx%d a=%dx%d b=%dx%d) "
-                    "numroc(c=%d a=%d b=%d) lld(c=%d a=%d b=%d) info(c=%d a=%d b=%d) "
-                    "mnk=(%d,%d,%d) bs_a=(%d,%d) bs_b=(%d,%d) sum_a=%.17g sum_b=%.17g\\n",
-                    __state->__scalapack_rank, __state->__scalapack_size, __state->__scalapack_context,
-                    __state->__scalapack_prows, __state->__scalapack_pcols,
-                    __state->__scalapack_myprow, __state->__scalapack_mypcol,
-                    (int)gc_rows, (int)gc_cols, (int)ga_rows, (int)ga_cols, (int)gb_rows, (int)gb_cols,
-                    (int)lc_rows, (int)lc_cols, (int)la_rows, (int)la_cols, (int)lb_rows, (int)lb_cols,
-                    (int)n_lc_rows, (int)n_la_rows, (int)n_lb_rows, (int)c_lld, (int)a_lld, (int)b_lld,
-                    (int)info_c, (int)info_a, (int)info_b, (int)_m, (int)_n, (int)_k,
-                    (int)_a_block_sizes[0], (int)_a_block_sizes[1],
-                    (int)_b_block_sizes[0], (int)_b_block_sizes[1], dbg_sa, dbg_sb);
-                std::fprintf(stderr,
-                    "[PGEMM-DBG] rank=%d desc_c=[%d %d %d %d %d %d %d %d %d] "
-                    "desc_a=[%d %d %d %d %d %d %d %d %d] desc_b=[%d %d %d %d %d %d %d %d %d]\\n",
-                    __state->__scalapack_rank,
-                    _c_ldesc[0], _c_ldesc[1], _c_ldesc[2], _c_ldesc[3], _c_ldesc[4], _c_ldesc[5], _c_ldesc[6], _c_ldesc[7], _c_ldesc[8],
-                    _a_ldesc[0], _a_ldesc[1], _a_ldesc[2], _a_ldesc[3], _a_ldesc[4], _a_ldesc[5], _a_ldesc[6], _a_ldesc[7], _a_ldesc[8],
-                    _b_ldesc[0], _b_ldesc[1], _b_ldesc[2], _b_ldesc[3], _b_ldesc[4], _b_ldesc[5], _b_ldesc[6], _b_ldesc[7], _b_ldesc[8]);
-                {{
-                    static const char *dbg_syms[] = {{"p{lapack_dtype_str}gemm_", "dgemm_", "Cblacs_gridinit",
-                                                     "Cblacs_pinfo", "numroc_", "descinit_", "MPI_Init",
-                                                     "blacs_gridinit_", "pdgemm", "openblas_get_config"}};
-                    for (unsigned dbg_j = 0; dbg_j < sizeof(dbg_syms) / sizeof(dbg_syms[0]); ++dbg_j) {{
-                        void *dbg_p = dlsym(RTLD_DEFAULT, dbg_syms[dbg_j]);
-                        Dl_info dbg_dl;
-                        const char *dbg_from = "(unresolved)";
-                        if (dbg_p && dladdr(dbg_p, &dbg_dl) && dbg_dl.dli_fname) dbg_from = dbg_dl.dli_fname;
-                        std::fprintf(stderr, "[PGEMM-DBG] rank=%d sym %s -> %s\\n",
-                                     __state->__scalapack_rank, dbg_syms[dbg_j], dbg_from);
-                    }}
-                }}
-                    }}
-                }}
-                std::fprintf(stderr,
-                    "[PGEMM-DBG] rank=%d a[0..3]=%a,%a,%a,%a b[0..3]=%a,%a,%a,%a ptr(a=%p b=%p c=%p)\\n",
-                    __state->__scalapack_rank, _a[0], _a[1], _a[2], _a[3], _b[0], _b[1], _b[2], _b[3],
-                    (const void *)_a, (const void *)_b, (const void *)_c);
-                int dbg_mrank = -1, dbg_msize = -1, dbg_minit = 0, dbg_mthread = -1;
-                MPI_Initialized(&dbg_minit);
-                MPI_Query_thread(&dbg_mthread);
-                MPI_Comm_rank(MPI_COMM_WORLD, &dbg_mrank);
-                MPI_Comm_size(MPI_COMM_WORLD, &dbg_msize);
-                double dbg_glob = -1.0;
-                MPI_Allreduce(&dbg_sa, &dbg_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                const char *dbg_omp = std::getenv("OMP_NUM_THREADS");
-                const char *dbg_obl = std::getenv("OPENBLAS_NUM_THREADS");
-                std::fprintf(stderr,
-                    "[PGEMM-DBG] rank=%d mpi(rank=%d size=%d init=%d thread=%d) allreduce_sum_a=%.17g "
-                    "OMP_NUM_THREADS=%s OPENBLAS_NUM_THREADS=%s\\n",
-                    __state->__scalapack_rank, dbg_mrank, dbg_msize, dbg_minit, dbg_mthread, dbg_glob,
-                    dbg_omp ? dbg_omp : "(unset)", dbg_obl ? dbg_obl : "(unset)");
-                std::fflush(stderr);
-            }}
             p{lapack_dtype_str}gemm_(
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
                 _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
-            {{
-                double dbg_sc = 0.0;
-                for (int dbg_i = 0; dbg_i < lc_rows * lc_cols; ++dbg_i) dbg_sc += _c[dbg_i];
-                std::fprintf(stderr, "[PGEMM-DBG] rank=%d sum_c=%.17g c[0..5]=%a,%a,%a,%a,%a,%a\\n",
-                             __state->__scalapack_rank, dbg_sc, _c[0], _c[1], _c[2], _c[3], _c[4], _c[5]);
-                std::fflush(stderr);
-                {dtype.ctype} *dbg_c2 = new {dtype.ctype}[(size_t)lc_rows * (size_t)lc_cols];
-                p{lapack_dtype_str}gemm_(
-                    &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
-                    _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, dbg_c2, &__state->__int_one, &__state->__int_one, _c_ldesc);
-                double dbg_sc2 = 0.0, dbg_maxdiff = 0.0;
-                for (int dbg_i = 0; dbg_i < lc_rows * lc_cols; ++dbg_i) {{
-                    dbg_sc2 += dbg_c2[dbg_i];
-                    double dbg_d = dbg_c2[dbg_i] - _c[dbg_i];
-                    if (dbg_d < 0) dbg_d = -dbg_d;
-                    if (dbg_d > dbg_maxdiff) dbg_maxdiff = dbg_d;
-                }}
-                std::fprintf(stderr, "[PGEMM-DBG] rank=%d repeat sum_c2=%.17g maxdiff=%.17g\\n",
-                             __state->__scalapack_rank, dbg_sc2, dbg_maxdiff);
-                std::fflush(stderr);
-                delete[] dbg_c2;
-            }}
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
