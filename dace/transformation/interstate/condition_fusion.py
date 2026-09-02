@@ -248,9 +248,12 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
-        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
-        sdutil.set_nested_sdfg_parent_references(sdfg)
+        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
+        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
+        # nested-SDFG back-references when they claim a block, so the blind
+        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
+        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
+        # still do.
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg
@@ -390,9 +393,12 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
-        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
-        sdutil.set_nested_sdfg_parent_references(sdfg)
+        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
+        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
+        # nested-SDFG back-references when they claim a block, so the blind
+        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
+        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
+        # still do.
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg
