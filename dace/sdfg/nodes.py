@@ -46,12 +46,16 @@ class Node(object):
     specialization_hint = Property(dtype=str,
                                    default=None,
                                    allow_none=True,
-                                   desc="A device specialization a canonicalizing pass considered "
-                                   "and did not take, recorded where it applies. Canonicalization "
-                                   "picks the most parallel form; this says what a target-specific "
-                                   "pass could trade it for and on which device the trade pays. "
+                                   desc="A note about how this node got its shape, recorded where "
+                                   "it applies. Two kinds: a device specialization a canonicalizing "
+                                   "pass considered and did not take (canonicalization picks the "
+                                   "most parallel form; the hint says what a target-specific pass "
+                                   "could trade it for and on which device the trade pays), and the "
+                                   "kind of loop a scope is -- parallel, sequential with a proven "
+                                   "carried dependence, or neither proven (AnnotateLoopKinds). "
                                    "Rendered as a comment by the standalone (MPR) rendering and "
-                                   "ignored everywhere else. None when there is no alternative.")
+                                   "ignored everywhere else. Never a directive: nothing in the "
+                                   "pipeline dispatches on it. None when nothing was recorded.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type

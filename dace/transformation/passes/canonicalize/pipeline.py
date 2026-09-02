@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from dace import SDFG, symbolic, properties
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation import pass_pipeline as ppl
@@ -1819,6 +1820,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # which is sympy floor() -- distributed by sympy and then printed WITHOUT the floor, so the
     # index truncates term by term. Normalizing here means nothing reaches codegen holding one.
     s += [('end', NormalizeFloorDivision())]
+
+    # Terminal, and after everything structural for the same reason the two above are: the hints
+    # name the loops the RENDERING will show, so they go on the graph the recipe hands back and
+    # not on an intermediate one a later pass reshapes. Comments only -- no pass reads them, and
+    # the standalone rendering is the one place they are emitted.
+    s += [('end', AnnotateLoopKinds())]
 
     # Pipeline does not propagate `progress` to subpasses, so sweep once here instead of at each call site.
     for _, unit in s:

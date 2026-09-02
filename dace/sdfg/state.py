@@ -1255,11 +1255,13 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     specialization_hint = Property(dtype=str,
                                    default=None,
                                    allow_none=True,
-                                   desc='A device specialization a canonicalizing pass considered and did '
-                                   'not take. Same contract as the node-level property of the same name: '
-                                   'canonicalization picks the most parallel form and records the trade '
-                                   'here, the standalone (MPR) rendering emits it as a comment, and every '
-                                   'other code path ignores it.')
+                                   desc='A note about how this block got its shape: a device '
+                                   'specialization a canonicalizing pass considered and did not take, or '
+                                   'the kind of loop this is -- parallel, sequential with a proven carried '
+                                   'dependence, or neither proven (AnnotateLoopKinds). Same contract as the '
+                                   'node-level property of the same name: the standalone (MPR) rendering '
+                                   'emits it as a comment, every other code path ignores it, and nothing '
+                                   'anywhere dispatches on it.')
 
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')

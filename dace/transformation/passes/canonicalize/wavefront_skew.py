@@ -77,6 +77,9 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
+                                                                         WAVEFRONT_TILE_COLUMN, WAVEFRONT_TILE_DIAGONAL,
+                                                                         WAVEFRONT_TILE_INTERIOR)
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
 
 #: Prefix for the synthesised skewed iterators.
@@ -1449,6 +1452,10 @@ class WavefrontSkew(ppl.Pass):
         # construction (that is why ``p`` is free); pin it so a downstream
         # LoopToMap / LoopToReduce never races it into a parallel map.
         outer.pinned_sequential = True
+        # Labelled here because this pass is the only thing that knows the axis is a wavefront
+        # diagonal: after the rewrite it is an ordinary sequential loop over an ordinary map, and
+        # the terminal ``AnnotateLoopKinds`` would say only that LoopToMap refused it.
+        outer.specialization_hint = WAVEFRONT_DIAGONAL
 
         inner.loop_variable = p_var
         inner.init_statement = properties.CodeBlock(f"{p_var} = ({p_lo})")
@@ -1465,7 +1472,7 @@ class WavefrontSkew(ppl.Pass):
             v_expr = symbolic.symstr(b * (sym(t_var) - a * sym(p_var)))
             inner.replace_dict({u: p_var, v: v_expr})
 
-        self._convert_inner_to_map(outer, inner, sdfg)
+        self._convert_inner_to_map(outer, inner, sdfg, WAVEFRONT_FRONT)
 
     def _rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[object, object],
                        vb: Tuple[object, object], tau: Tuple[int, int], plan: TilePlan) -> None:
@@ -1519,6 +1526,7 @@ class WavefrontSkew(ppl.Pass):
         # The tile diagonal carries every wavefront dependence by construction; pin it
         # so a downstream LoopToMap / LoopToReduce never races it into a parallel map.
         outer.pinned_sequential = True
+        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL
 
         t_sym, p_sym = sym(t_var), sym(p_var)
         if abs(a) == 1:
@@ -1537,6 +1545,7 @@ class WavefrontSkew(ppl.Pass):
         # The intra-tile loops carry the dependences the diagonal spreads apart, so
         # they stay sequential for the same reason the diagonal does.
         i_loop.pinned_sequential = True
+        i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR
 
         # Re-parent: ``inner`` becomes the innermost unit-stride ``v`` loop, wrapped by
         # the new row loop, wrapped by the tile-column loop that replaces it in ``outer``.
@@ -1557,6 +1566,7 @@ class WavefrontSkew(ppl.Pass):
             f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))")
         inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
         inner.pinned_sequential = True
+        inner.specialization_hint = WAVEFRONT_TILE_INTERIOR
 
         # On a GPU the tile INTERIOR is the thread block, so it is skewed too (see
         # :meth:`_skew_within_tile`). Done before the tile-column lift because both steps run
@@ -1564,7 +1574,7 @@ class WavefrontSkew(ppl.Pass):
         if self.target == 'gpu':
             self._skew_within_tile(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, ub, vb)
 
-        self._convert_inner_to_map(outer, p_loop, sdfg)
+        self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN)
 
     def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
                           plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
@@ -1660,6 +1670,8 @@ class WavefrontSkew(ppl.Pass):
         i_loop.loop_condition = properties.CodeBlock(f'{d_var} <= ({symbolic.symstr(d_range[1])})')
         i_loop.update_statement = properties.CodeBlock(f'{d_var} = {d_var} + 1')
         i_loop.pinned_sequential = True
+        # No longer the verbatim interior order: the tile's own anti-diagonal.
+        i_loop.specialization_hint = WAVEFRONT_DIAGONAL
 
         # ``k`` indexes the block's threads: 0 .. width-1, the tile extent on the parallel axis.
         width = plan.bj if abs(a) == 1 else plan.bi
@@ -1678,7 +1690,7 @@ class WavefrontSkew(ppl.Pass):
 
         here = symbolic.symstr(coord)
         self._guard_body(inner, sdfg, f'({here}) >= ({p_lo}) and ({here}) <= ({p_hi})')
-        self._convert_inner_to_map(i_loop, inner, sdfg)
+        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT)
         for node, _ in i_loop.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry):
                 node.map.is_warp_tile = True
@@ -1699,16 +1711,24 @@ class WavefrontSkew(ppl.Pass):
         guard.add_branch(condition, branch)
         loop.add_node(guard, is_start_block=True)
 
-    def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> None:
+    def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, hint: str) -> None:
         """Lift the skewed inner ``p``-loop to a Map via ``LoopToMap.apply``,
         bypassing ``can_be_applied``: independence of the ``p``-iterations at
         fixed ``t`` is guaranteed by the legality proof (``tau.delta < 0`` for
         every dependence => no intra-``t`` dependence). An exception here signals
-        a real upstream bug and is intentionally not swallowed."""
+        a real upstream bug and is intentionally not swallowed.
+
+        ``hint`` names what the fresh Map is -- a wavefront front, a tile column -- on the Map
+        itself, since the lift keeps no record of the loop it consumed. Matched by iteration
+        variable: ``LoopToMap`` names the map after the body, not after the axis."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        itervar = inner.loop_variable
         instance = LoopToMap()
         instance.loop = inner
         instance.apply(outer, sdfg)
+        for node, _ in outer.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
+                node.specialization_hint = hint
 
     def _emit_positive_guard(self, outer: LoopRegion, deps: List[Dependence], guard_syms: List[object]) -> None:
         """Plant a ``std::abort`` before ``outer`` that fires if any distance

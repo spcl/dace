@@ -264,7 +264,7 @@ class RetargetWCRAccumulator(ppl.Pass):
         return count or None
 
 
-def _loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
+def loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
     """True iff a ``LoopToMap.can_be_applied`` refusal was caused by a loop-carried dependence."""
     if reason is None:
         return False
@@ -313,7 +313,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
             probe = LoopToMap()
             probe.loop = node
             applicable = probe.can_be_applied(node.parent_graph, 0, owner, permissive=False)
-            if not applicable and _loop_to_map_refusal_is_carried(probe.last_refusal_reason):
+            if not applicable and loop_to_map_refusal_is_carried(probe.last_refusal_reason):
                 node.pinned_sequential = True
                 pinned += 1
         return pinned or None
