@@ -762,7 +762,7 @@ def get_program_handle(
     """
     library_path = pathlib.Path(library_path)
     if not library_path.is_file():
-        raise FileNotFoundError('Compiled SDFG library not found: ' + library_path)
+        raise FileNotFoundError(f'Compiled SDFG library not found: {library_path}')
     libstub_path = _get_stub_library_path(library_path) if stub_library_path is None else pathlib.Path(
         stub_library_path).resolve()
     assert libstub_path.is_file()
