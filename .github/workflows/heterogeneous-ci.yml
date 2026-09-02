@@ -89,31 +89,36 @@ jobs:
         # See the MPI step above: without this an aborting rank takes its traceback with it.
         export PYTHONUNBUFFERED=1
         # TEMPORARY [WIP] probe for the grid-[2,1] pgemm red; delete with the finding.
-        # Round 1 ruled out the environment (OPENBLAS/OMP/MKL/BLIS thread counts, the BTL list) and
-        # OpenBLAS threading (a run pinned to one thread still fails). Both halves of tests/ poison
-        # it on their own, so this asks which single directory does, and whether the SDFG that is
-        # built differs at all -- the build folder is named after its hash.
+        # Rounds 1-2: the environment is cleared (thread counts, BTL list; a one-BLAS-thread run
+        # still fails), and tests/library, tests/passes and tests/sdfg each poison it alone while
+        # tests/blas, tests/codegen and tests/transformations do not. Every variant also built a
+        # DIFFERENT pdgemm SDFG, so this captures the generated program and diffs it.
         export DACE_cache=hash
         export DACE_default_build_folder=$RUNNER_TEMP/pblasprobe
         rm -rf "$DACE_default_build_folder"*
+        newest_cpp () { ls -td "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_*/ 2>/dev/null | head -1; }
         probe () {
           local label="$1"; shift
+          local verdict=FAIL
           if mpirun -n 2 --oversubscribe uv run python -m pytest -x --with-mpi --tb=no \
               -p no:cacheprovider --timeout_method thread --timeout=600 -m "scalapack" \
               tests/library/pblas/pgemm_test.py "$@" > "/tmp/probe_$label.log" 2>&1; then
-            echo "PROBE $label PASS  sdfg=$(ls -d "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_* 2>/dev/null | sed 's#.*pdgemm_##' | tr '\n' ',')"
-          else
-            echo "PROBE $label FAIL  sdfg=$(ls -d "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_* 2>/dev/null | sed 's#.*pdgemm_##' | tr '\n' ',')"
+            verdict=PASS
           fi
-          cp "$DACE_default_build_folder"_rank0/pgemm_test_pdgemm_*/src/cpu/pgemm_test_pdgemm.cpp "/tmp/cpp_$label.cpp" 2>/dev/null || true
+          local dir; dir=$(newest_cpp)
+          cp "$dir/src/cpu/pgemm_test_pdgemm.cpp" "/tmp/cpp_$label.cpp" 2>/dev/null || true
+          echo "PROBE $label $verdict sdfg=$(basename "$dir" | sed 's#.*pdgemm_##') lines=$(wc -l < "/tmp/cpp_$label.cpp" 2>/dev/null || echo 0)"
         }
         probe base
-        for d in ab_perf autodiff blas canonicalize codegen corpus library npbench passes python_frontend sdfg transformations
-        do
-          probe "$d" "tests/$d"
-        done
-        echo '===== cpp diff base vs the first failing directory ====='
-        for f in /tmp/cpp_*.cpp; do echo "$f $(md5sum < "$f")"; done
+        probe library tests/library
+        probe passes tests/passes
+        probe sdfg tests/sdfg
+        probe lib_a_l "tests/library/[a-l]*"
+        probe lib_m_z "tests/library/[m-z]*"
+        echo '===== diff base vs library ====='
+        diff -u /tmp/cpp_base.cpp /tmp/cpp_library.cpp | head -200 || true
+        echo '===== diff base vs passes ====='
+        diff -u /tmp/cpp_base.cpp /tmp/cpp_passes.cpp | head -80 || true
         echo '===== PROBES DONE ====='
 
     - name: Report overall coverage
