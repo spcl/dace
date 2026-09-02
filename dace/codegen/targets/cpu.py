@@ -3401,7 +3401,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     'assert((%s) > 0 && "Map %s requires a positive step");\n' % (cpp.sym2cpp(_skip), node.map.label),
                     cfg, state_id, node)
 
-
         result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:

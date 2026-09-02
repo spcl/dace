@@ -26,7 +26,7 @@ import sympy
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
