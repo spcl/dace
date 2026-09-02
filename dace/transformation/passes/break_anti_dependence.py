@@ -433,9 +433,11 @@ class BreakAntiDependence(ppl.Pass):
         """The verdict :meth:`_dep_class` could not reach, asked of the SMT oracle.
 
         Only ever consulted where the affine matcher already gave up (``'complex'``), and only
-        ever ANSWERS ``'WAR'`` -- a proof that no iteration up to and including the reader's own
-        writes the element it reads, which is exactly what makes the snapshot-and-redirect
-        rewrite value-preserving. Everything else stays ``'complex'``, i.e. sequential.
+        ever ANSWERS ``'WAR'`` or ``'none'``. ``'WAR'`` is a proof that no iteration up to and
+        including the reader's own writes the element it reads, which is exactly what makes the
+        snapshot-and-redirect rewrite value-preserving; ``'none'`` additionally proves that no
+        LATER iteration writes it either, so the accesses never alias and there is nothing to
+        break. Everything else stays ``'complex'``, i.e. sequential.
 
         Two things must be true before the query means anything, and both are enforced here
         rather than in the oracle:
@@ -468,14 +470,17 @@ class BreakAntiDependence(ppl.Pass):
         stride = loop_analysis.get_loop_stride(loop)
         if start is None or end is None or stride is None:
             return ('complex', None)
-        ahead = smt_dependence.prove_read_ahead(rb,
-                                                wb,
-                                                ivar,
-                                                start,
-                                                end,
-                                                stride,
-                                                read_guard=None if guard is sympy.true else guard)
-        return ('WAR', None) if ahead is True else ('complex', None)
+        read_guard = None if guard is sympy.true else guard
+        ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard)
+        if ahead is not True:
+            return ('complex', None)
+        # Read-ahead only rules out the writes up to and including the reader's own iteration. When
+        # no LATER iteration writes the element either, the two accesses never alias at all -- s115's
+        # ``a[i] -= aa[j, i] * a[j]`` reads a[j] from below an ``i`` range that starts at j + 1. That
+        # is 'none', not 'WAR': snapshotting it would pay a copy to break a dependence that is not
+        # there, and the copy costs the caller an extra transient and an extra (degenerate) map.
+        late = smt_dependence.prove_no_write_after_read(rb, wb, ivar, start, end, stride, read_guard=read_guard)
+        return ('none', None) if late is True else ('WAR', None)
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
