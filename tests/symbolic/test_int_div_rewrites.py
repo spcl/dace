@@ -9,7 +9,7 @@ folded back to ``N``. Both functions now share the unit-denominator and exact-di
 import pytest
 import sympy
 
-from dace.symbolic import int_ceil, int_floor, pystr_to_symbolic, symstr, sympy_intdiv_fix
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symstr, sympy_intdiv_fix
 
 N = pystr_to_symbolic('N')
 M = pystr_to_symbolic('M')
@@ -58,17 +58,20 @@ def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, 
     assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
 
 
-def test_ceiling_of_integer_lowers_to_dace_noop_not_libm():
-    """A ``ceiling`` that reaches the printer with a known-integer argument
-    (e.g. via ``evaluate=False``) must emit dace's ``ceiling(int)`` no-op so
-    the result keeps integer type, instead of libm ``ceil`` which widens to
-    ``double``."""
-    n = pystr_to_symbolic('n')
-    # ``int_floor`` has ``_eval_is_integer -> True``; force the ceiling past
-    # sympy's own ``ceiling._eval`` simplification.
-    expr = sympy.ceiling(int_floor(n, 2), evaluate=False)
-    assert 'ceiling(' in symstr(expr, cpp_mode=True)
-    assert 'ceil(' not in symstr(expr, cpp_mode=True)
+def test_ceiling_of_an_integer_prints_as_its_argument():
+    """A ``ceiling`` over a known-integer argument must print as the argument itself.
+
+    Deserialization rebuilds an application through ``Basic.__new__`` and bypasses the
+    ``eval`` that would have folded the wrapper, so a stored ``ceiling`` reaches the
+    printer unevaluated. Neither call is acceptable there: libm ``ceil`` returns a
+    ``double``, and the runtime's ``ceiling`` is only overloaded for ``int``, ``float``
+    and ``double``, which leaves a 64-bit or unsigned argument ambiguous.
+    """
+    stored = deserialize_symbolic('ceiling(__int_floor($N, 2))')
+    assert isinstance(stored, sympy.ceiling)
+    assert stored.args[0].is_integer
+
+    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
 
 
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])

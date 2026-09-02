@@ -685,14 +685,40 @@ def test_ceiling_of_roundtripped_floor_division_simplifies():
     back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
     because the round-tripped ``__int_floor`` still carries ``is_integer=True``
     and sympy's ``ceiling._eval`` returns a known-integer argument unchanged."""
-    upper = symbolic.symbol('upper_i')
-    lower = symbolic.symbol('lower_i')
-    expr = -lower + (upper // 2)
+    # ``symbol // 2`` is SymPy's ``floor`` (only ``SymExpr`` defines ``__floordiv__``), which is
+    # integer on its own; the operator class only appears when the expression is parsed.
+    expr = symbolic.pystr_to_symbolic('upper_i // 2 - lower_i')
+    assert any(type(f).__name__ == '__int_floor' for f in expr.atoms(sympy.Function))
 
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     ceiling_of_restored = sympy.ceiling(restored)
 
     assert ceiling_of_restored == restored
+
+
+def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():
+    """A stored ``ceiling`` must not reach the loop bound as a call.
+
+    An SDFG saved before the operator classes round-tripped carries ``ceiling(__int_floor(...))``
+    where the live expression had folded it. ``ceil`` breaks OpenMP's canonical loop form by
+    returning ``double``, and the runtime's ``ceiling`` has no overload for 64-bit integers.
+    """
+    sdfg = dace.SDFG('stored_ceiling')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [dace.symbol('N', dace.int64)], dace.float64)
+    state = sdfg.add_state()
+    end = symbolic.deserialize_symbolic('ceiling(__int_floor($N, 2)) - 1')
+    assert end.atoms(sympy.ceiling)
+    me, mx = state.add_map('m', {'i': subsets.Range([(0, end, 1)])})
+    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    state.add_edge(me, None, tasklet, None, dace.Memlet())
+    state.add_edge(tasklet, 'o', mx, None, dace.Memlet('A[i]'))
+    state.add_edge(mx, None, state.add_write('A'), None, dace.Memlet('A[0:N]'))
+
+    code = sdfg.generate_code()[0].clean_code
+    loops = [line.strip() for line in code.splitlines() if 'for (auto i' in line]
+    assert loops
+    assert all('ceil' not in line for line in loops), loops
 
 
 if __name__ == '__main__':

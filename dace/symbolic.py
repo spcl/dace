@@ -2438,11 +2438,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_ceiling(self, expr):
         if not self.cpp_mode:
             return super()._print_Function(expr)
-        # A known-integer argument has nothing to round up: emit dace's
-        # ``ceiling(int)`` no-op (math.h) so the result keeps integer type
-        # instead of widening to ``double`` via libm ``ceil``.
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
         if expr.args[0].is_integer:
-            return 'ceiling(%s)' % self._print(expr.args[0])
+            return self._print(expr.args[0])
         return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
