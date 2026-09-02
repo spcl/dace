@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar fission pass. """
 
+import numpy as np
 import pytest
 
 import dace
@@ -305,3 +306,71 @@ if __name__ == '__main__':
     test_scalar_fission(True)
     test_branch_subscopes_nofission(True)
     test_branch_subscopes_fission(True)
+
+
+def ordering_edge_between_writes_sdfg() -> dace.SDFG:
+    """One real write to ``s``, then a second ``s`` node reached only by ordering edges.
+
+    The empty memlets transfer nothing, so that node is a READ of the preceding write, not a
+    dominating write of its own.
+    """
+    sdfg = dace.SDFG('ordering_edge_between_writes')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_scalar('order', dace.float64, transient=True)
+
+    state = sdfg.add_state('main', is_start_block=True)
+    a_read = state.add_read('A')
+    written = state.add_access('s')
+    ordered = state.add_access('s')
+    order_src = state.add_access('order')
+
+    init = state.add_tasklet('init', {'i'}, {'o'}, 'o = i * 2.0')
+    side = state.add_tasklet('side', {'i'}, {'o'}, 'o = i')
+    consumer = state.add_tasklet('consumer', {'i'}, {'o'}, 'o = i + 1.0')
+
+    state.add_edge(a_read, None, init, 'i', dace.Memlet('A[0]'))
+    state.add_edge(init, 'o', written, None, dace.Memlet('s[0]'))
+    state.add_edge(a_read, None, side, 'i', dace.Memlet('A[0]'))
+    state.add_edge(side, 'o', order_src, None, dace.Memlet('order[0]'))
+    state.add_edge(written, None, ordered, None, dace.Memlet())
+    state.add_edge(order_src, None, ordered, None, dace.Memlet())
+    state.add_edge(ordered, None, consumer, 'i', dace.Memlet('s[0]'))
+    state.add_edge(consumer, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    second = sdfg.add_state_after(state, 'second')
+    tail = second.add_tasklet('tail', {'i'}, {'o'}, 'o = i')
+    second.add_edge(second.add_read('s'), None, tail, 'i', dace.Memlet('s[0]'))
+    second.add_edge(tail, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_ordering_edge_does_not_start_a_version():
+    """An access node reached only by empty memlets is not a dominating write.
+
+    Treating it as one split ``s`` into two versions, left a memlet naming the first while its node
+    carried the second, and versioned the later read onto a container nothing writes.
+    """
+    sdfg = ordering_edge_between_writes_sdfg()
+    sdfg.validate()
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    for state in sdfg.states():
+        for edge in state.edges():
+            if edge.data.data is None:
+                continue
+            endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
+            assert not endpoints or edge.data.data in endpoints, (
+                f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
+
+    minted = set(sdfg.arrays.keys()) - before
+    assert not minted, f'the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}'
+
+    A = np.array([3.0], dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, out=out)
+    assert out[0] == 6.0, f'got {out[0]}'

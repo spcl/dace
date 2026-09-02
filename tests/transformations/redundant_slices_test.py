@@ -148,6 +148,32 @@ def test_view_slice_detect_nonslice():
     assert tuple(sq) == (0, )
 
 
+def test_strided_slice_of_a_slice_keeps_its_step():
+    """A strided slice of a slice must keep its step when the intermediate view is removed.
+
+    ``RemoveSliceView`` composed the two subsets from the inner one's offset and SIZE. That drops
+    its step and re-derives the end as ``offset + size - 1``, so ``image[0:N, 0:N][:, 0:2*h:2]``
+    folded into ``image[0:N, 0:h]`` -- the first half of every row instead of its even columns, an
+    access of the right shape over the wrong elements.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+    H = dace.symbol('H', dtype=dace.int64)
+
+    @dace.program
+    def even_columns_of_a_block(image: dace.float64[N, N], out: dace.float64[N, H]):
+        block = image[0:N, 0:N]
+        out[:] = block[:, 0:2 * H:2]
+
+    sdfg = even_columns_of_a_block.to_sdfg(simplify=True)
+    reads = [
+        e.data.subset for st in sdfg.states() for e in st.edges()
+        if e.data is not None and e.data.data == 'image' and e.data.subset is not None
+    ]
+    assert reads, 'expected at least one read of the viewed array'
+    assert any(r.ranges[1][2] == 2 for r in reads), \
+        f'the composed read must keep step 2, got {[str(r) for r in reads]}'
+
+
 if __name__ == '__main__':
     test_read_slice()
     test_read_slice2()
@@ -158,3 +184,4 @@ if __name__ == '__main__':
     test_view_slice_detect_complex(False)
     test_view_slice_detect_complex(True)
     test_view_slice_detect_nonslice()
+    test_strided_slice_of_a_slice_keeps_its_step()
