@@ -2992,8 +2992,21 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             sdfg = self.sdfg
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
+            # ``all_control_flow_blocks`` stops at nested-SDFG boundaries, so this re-homes the
+            # region's own blocks and the nested SDFGs they hold directly -- the same three
+            # back-references ``SDFGState.add_node`` maintains when a nested SDFG node is added to a
+            # state. Without it a region built by deepcopying a detached one (loop fission,
+            # specialization, unrolling) keeps nested SDFGs whose ``parent_sdfg`` is ``None``, which
+            # validation rejects; deeper nested SDFGs are their own parent's business and are left.
             for n in node.all_control_flow_blocks():
                 n.sdfg = sdfg
+                if not isinstance(n, SDFGState):
+                    continue
+                for nested in n.nodes():
+                    if isinstance(nested, nd.NestedSDFG) and nested.sdfg is not None:
+                        nested.sdfg.parent = n
+                        nested.sdfg.parent_sdfg = sdfg
+                        nested.sdfg.parent_nsdfg_node = nested
             # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
             # reports 0 -- the same id as the root and as every other unregistered region.
             # Appending instead would assign positions in insertion order while this assigns
