@@ -12,7 +12,7 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import dealias, SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
@@ -634,6 +634,15 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
+        # Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a
+        # connector's descriptor is identical to the container it is connected to. The nested SDFGs
+        # writing into the container about to be removed will write into the one behind it, so their
+        # connectors have to be brought back onto that container's descriptor afterwards.
+        to_integrate = [
+            e.src for e in graph.in_edges(in_array) if isinstance(e.src, nodes.NestedSDFG)
+            and e.src_conn in e.src.sdfg.arrays and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
+        ]
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
@@ -800,6 +809,9 @@ class RedundantArray(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
         except ValueError:  # Already in use (e.g., with Views)
             pass
+
+        for nsdfg_node in to_integrate:
+            dealias.integrate_nested_sdfg(nsdfg_node.sdfg)
 
 
 class RedundantSecondArray(pm.SingleStateTransformation):
