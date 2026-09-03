@@ -4985,19 +4985,28 @@ class ProgramVisitor(ExtNodeVisitor):
             src_rng = None
             if src_name not in self.sdfg.arrays:
                 src_name, src_rng = self._add_read_access(src_name, src_expr.subset, None)
+            else:
+                # The container is one of this scope's own, so the expression's subset already
+                # addresses it. Dropping it would leave the memlet naming the whole container and
+                # nothing to say which part of it the copy moves.
+                src_rng = src_expr.subset
             dst_name = dst_expr.name
             dst_rng = None
             if dst_name not in self.sdfg.arrays:
                 dst_name, dst_rng = self._add_write_access(dst_name, dst_expr.subset, None)
+            else:
+                dst_rng = dst_expr.subset
 
             rnode = state.add_read(src_name, debuginfo=self.current_lineinfo)
             wnode = state.add_write(dst_name, debuginfo=self.current_lineinfo)
+            src_rng = src_rng or subsets.Range.from_array(self.sdfg.arrays[src_name])
+            dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
             if isinstance(self.sdfg.arrays[dst_name], data.Stream):
-                dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
                 mem = Memlet.simple(dst_name, dst_rng, num_accesses=dst_expr.accesses, wcr_str=dst_expr.wcr)
+                mem.other_subset = src_rng
             else:
-                src_rng = src_rng or subsets.Range.from_array(self.sdfg.arrays[src_name])
                 mem = Memlet.simple(src_name, src_rng, num_accesses=src_expr.accesses, wcr_str=dst_expr.wcr)
+                mem.other_subset = dst_rng
             state.add_nedge(rnode, wnode, mem)
             return
 

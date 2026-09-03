@@ -820,11 +820,21 @@ class CPUCodeGen(TargetCodeGenerator):
                             [src_node, dst_node],
                         )
                     else:
-                        copysize = " * ".join([cpp.sym2cpp(s) for s in memlet.subset.size()])
+                        # The memlet says which part of the array is pushed, so the pointer has to
+                        # start there: under the nested SDFG contract the connector is the whole
+                        # container and only the memlet narrows it to the element being pushed.
+                        push_subset = memlet.subset
+                        if memlet.data != src_node.data and memlet.other_subset:
+                            push_subset = memlet.other_subset
+                        if push_subset is None:
+                            push_subset = subsets.Range.from_array(src_nodedesc)
+                        copysize = " * ".join([cpp.sym2cpp(s) for s in push_subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                              arr=self.ptr(src_node.data, src_nodedesc, sdfg),
-                                                              size=copysize),
+                            "{s}.push(&{arr}[{off}], {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
+                                                                      arr=self.ptr(src_node.data, src_nodedesc, sdfg),
+                                                                      off=cpp.cpp_offset_expr(
+                                                                          src_nodedesc, push_subset),
+                                                                      size=copysize),
                             cfg,
                             state_id,
                             [src_node, dst_node],

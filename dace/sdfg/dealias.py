@@ -438,6 +438,41 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     return parent_desc.is_equivalent(mapped)
 
 
+def _rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data) -> None:
+    """
+    Restates the descriptor of every connector below that stands for one of this SDFG's containers.
+
+    A connector that described the container as it was written before describes the same container
+    still: only the symbols the shape is written in have changed. Leaving it as it was would make it
+    disagree with the container it is connected to, which the nested SDFG contract does not allow.
+
+    :param sdfg: The SDFG whose container was restated.
+    :param name: The name of that container.
+    :param old_desc: How the container was described before.
+    :param new_desc: How it is described now.
+    :note: This function operates in-place, and recurses into the whole subtree.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nd.NestedSDFG):
+                continue
+            for edge in state.all_edges(node):
+                far = edge.src if edge.dst is node else edge.dst
+                names = {edge.data.data, far.data if isinstance(far, nd.AccessNode) else None}
+                if name not in names:
+                    continue
+                connector = edge.dst_conn if edge.dst is node else edge.src_conn
+                if connector is None or '.' in connector or connector not in node.sdfg.arrays:
+                    continue
+                inner_desc = node.sdfg.arrays[connector]
+                if not inner_desc.is_equivalent(old_desc):
+                    continue
+                replacement = copy.deepcopy(new_desc)
+                replacement.transient = False
+                node.sdfg.arrays[connector] = replacement
+                _rebase_descendants(node.sdfg, connector, inner_desc, replacement)
+
+
 def integrate_nested_sdfg(sdfg: SDFG):
     """
     Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
@@ -506,6 +541,12 @@ def integrate_nested_sdfg(sdfg: SDFG):
                             sdfg.arrays[connector] = sdfg.arrays[connector].as_structure()
 
                         sdfg.arrays[connector].transient = False
+
+                        # A nested SDFG below is connected to this container and described it the way
+                        # it was written before. Nothing about the container changed -- the shape is
+                        # only stated in the parent's symbols now -- so those connectors adopt it as
+                        # well, or they are left describing something the contract says they are not.
+                        _rebase_descendants(sdfg, connector, old_desc, sdfg.arrays[connector])
                         continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
