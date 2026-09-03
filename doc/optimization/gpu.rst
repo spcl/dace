@@ -180,7 +180,7 @@ Multi-chiplet AMD GPUs, such as the MI300 series, are partitioned into chiplets 
 Thread-blocks are dispatched to them in a round-robin fashion, so consecutive blocks of a kernel land on different
 chiplets and the data they share has to be replicated in every L2 cache.
 
-Setting ``compiler.cuda.chiplet_number`` to the number of chiplets of the GPU (6 on MI300A) makes the code generator
+``compiler.cuda.chiplet_number``, the number of chiplets of the GPU (6 on MI300A), makes the code generator
 distribute the first dimension of the grid over the chiplets instead: that dimension is padded to a multiple of the
 number of chiplets, so the grid becomes ``(ceil(grid_x / chiplets) * chiplets, grid_y, grid_z)``. Since the flattened
 block index is ``blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y``, a ``gridDim.x`` that is a
@@ -188,7 +188,16 @@ multiple of the number of chiplets reduces the chiplet a block is dispatched to 
 its other two indices are. The blocks of the first dimension are then permuted to
 ``(blockIdx.x % chiplets) * ceil(grid_x / chiplets) + blockIdx.x / chiplets``, so that every chiplet works on a
 contiguous chunk of that dimension, together with the whole of the other two. The blocks that the padding adds beyond
-the range of the map are masked out. The default value of 1 leaves the grid untouched.
+the range of the map are masked out. Setting the entry to 1 leaves the grid untouched.
+
+The entry is left at 0 by default, which makes the code generator determine the number of chiplets of the GPU of this
+machine when targeting HIP, through the ``amdsmi`` module that ships with ROCm, so that the distribution applies to a
+multi-chiplet AMD GPU without any configuration. The number is that of the first GPU ``amdsmi`` reports, which is
+accurate on nodes whose GPUs are all of the same model. If it cannot be determined, when generating code on a machine
+without ROCm for instance, a warning is issued once and the grids are left untouched.
+
+The detected number can be overridden, which is what generating code for a GPU other than the one of this machine
+calls for:
 
 .. code-block:: yaml
 
@@ -216,9 +225,6 @@ to ``False``, in which case its grid is left untouched and no warning is issued 
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.MapEntry) and node.map.label == 'my_kernel':
             node.map.allow_chiplet_threadblock_distribution = False
-
-Conversely, when a map allows the distribution but ``compiler.cuda.chiplet_number`` is left at 1 while targeting HIP,
-a warning naming the kernel points out that the number of chiplets has not been configured.
 
 Optimizing GPU SDFGs
 --------------------

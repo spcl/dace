@@ -2,6 +2,8 @@
 """ Tests the distribution of the thread-blocks of a kernel over the chiplets of a GPU. """
 
 import re
+import sys
+import types
 import warnings
 
 import pytest
@@ -48,10 +50,30 @@ def explicit_threadblock(a: dace.float64[N, M] @ dace.StorageType.GPU_Global):
             a[i + bi, j + bj] = 1.0
 
 
+def _fake_amdsmi(chiplets, handles=(object(), )):
+    """
+    Returns a stand-in for the ``amdsmi`` module that reports GPUs with ``chiplets`` chiplets.
+
+    The module records the calls that initialize and shut it down in its ``calls`` attribute, so that
+    a test can check that the query leaves it shut down again.
+
+    :param handles: Processor handles the module reports, empty to mimic a machine without a GPU.
+    """
+    module = types.ModuleType('amdsmi')
+    module.calls = []
+    module.amdsmi_init = lambda: module.calls.append('init')
+    module.amdsmi_shut_down = lambda: module.calls.append('shut_down')
+    module.amdsmi_get_processor_handles = lambda: list(handles)
+    module.amdsmi_get_gpu_xcd_counter = lambda handle: chiplets
+    return module
+
+
 def _generate(program, chiplets=None, allow_distribution=None):
     """
     Generates the GPU code of ``program``, targeting HIP with the given number of chiplets.
 
+    :param chiplets: If not None, the value the ``compiler.cuda.chiplet_number`` configuration entry
+                     is set to. Left at its default of 0, the number of chiplets is detected instead.
     :param allow_distribution: If not None, the value the ``allow_chiplet_threadblock_distribution``
                                property of every device map of the program is set to.
     """
@@ -64,7 +86,10 @@ def _generate(program, chiplets=None, allow_distribution=None):
         # `get_gpu_backend` caches its result for the whole process, so the backend set above only
         # reaches the code generator if that cache is cleared first. It is cleared again afterwards,
         # so that these tests do not force "hip" onto whatever runs next in the same process.
+        # `get_gpu_chiplet_count` is cached for the whole process as well, warning once at most, so
+        # it is cleared alongside it to keep the tests independent of the order they run in.
         common.get_gpu_backend.cache_clear()
+        common.get_gpu_chiplet_count.cache_clear()
         try:
             sdfg = program.to_sdfg()
             if allow_distribution is not None:
@@ -74,6 +99,7 @@ def _generate(program, chiplets=None, allow_distribution=None):
             return sdfg.generate_code()[1].code
         finally:
             common.get_gpu_backend.cache_clear()
+            common.get_gpu_chiplet_count.cache_clear()
 
 
 def test_chiplet_distribution():
@@ -116,13 +142,84 @@ def test_chiplet_distribution_for_three_dimensional_grid():
     assert re.search(r'if \(\w+ < %d\)' % M, code)
 
 
-def test_chiplet_distribution_disabled_by_default():
-    default = _generate(two_dimensional)
-    disabled = _generate(two_dimensional, 1)
+def test_chiplet_number_detected(monkeypatch):
+    # The number of chiplets is not configured, so it is detected through `amdsmi` and the grid is
+    # distributed over the chiplets of the GPU without any configuration
+    amdsmi = _fake_amdsmi(CHIPLETS)
+    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
 
-    assert default == disabled
-    assert 'dim3(32, 512, 1)' in default
-    assert 'blockIdx.x % ' not in default
+    code = _generate(two_dimensional)
+
+    assert 'dim3(36, 512, 1)' in code
+    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
+
+    # The query initializes `amdsmi` and shuts it down again, exactly once
+    assert amdsmi.calls == ['init', 'shut_down']
+
+
+def test_detected_chiplet_number_is_written_back(monkeypatch):
+    # The detected number replaces the 0 of the configuration entry, so that the rest of the process
+    # sees the number of chiplets the code is generated for
+    amdsmi = _fake_amdsmi(CHIPLETS)
+    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
+
+    with dace.config.temporary_config():
+        dace.config.Config.set('compiler', 'cuda', 'backend', value='hip')
+        common.get_gpu_backend.cache_clear()
+        common.get_gpu_chiplet_count.cache_clear()
+        try:
+            first = two_dimensional.to_sdfg()
+            assert 'dim3(36, 512, 1)' in first.generate_code()[1].code
+            assert int(dace.config.Config.get('compiler', 'cuda', 'chiplet_number')) == CHIPLETS
+
+            # The next kernel is distributed over the same number of chiplets, without querying again
+            second = two_dimensional.to_sdfg()
+            second.name = 'two_dimensional_second_kernel'
+            assert 'dim3(36, 512, 1)' in second.generate_code()[1].code
+            assert amdsmi.calls == ['init', 'shut_down']
+        finally:
+            common.get_gpu_backend.cache_clear()
+            common.get_gpu_chiplet_count.cache_clear()
+
+
+def test_chiplet_number_detection_failure_warns(monkeypatch):
+    # `amdsmi` ships with ROCm, so importing it fails on a machine that generates code without it
+    monkeypatch.setitem(sys.modules, 'amdsmi', None)
+
+    with pytest.warns(UserWarning, match='amdsmi'):
+        code = _generate(two_dimensional)
+
+    assert 'dim3(32, 512, 1)' in code
+    assert 'blockIdx.x % ' not in code
+
+
+def test_chiplet_number_detection_without_gpu_warns(monkeypatch):
+    # A machine with ROCm but without a GPU, a login node for instance, reports no processor handle
+    amdsmi = _fake_amdsmi(CHIPLETS, handles=())
+    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
+
+    with pytest.warns(UserWarning, match='did not report any GPU'):
+        code = _generate(two_dimensional)
+
+    assert 'dim3(32, 512, 1)' in code
+    assert 'blockIdx.x % ' not in code
+
+    # `amdsmi` is shut down again even though the query failed
+    assert amdsmi.calls == ['init', 'shut_down']
+
+
+def test_chiplet_distribution_explicitly_disabled():
+    code = _generate(two_dimensional, 1)
+
+    assert 'dim3(32, 512, 1)' in code
+    assert 'blockIdx.x % ' not in code
+
+    # Disabling the distribution is deliberate, so it is not reported. Note that the label of the
+    # kernel contains the name of this file, so the messages themselves have to be matched.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        _generate(two_dimensional, 1)
+    assert not [w for w in caught if re.search(r'chiplets?[ ,.]|chiplet_number', str(w.message))]
 
 
 def test_chiplet_distribution_disabled_per_map():
@@ -178,13 +275,6 @@ def test_chiplet_distribution_disabled_per_map_with_threadblock_map():
     assert 'blockIdx.x % ' not in code
 
 
-def test_chiplet_number_not_configured_warns():
-    # Targeting an AMD GPU with a map that allows the distribution, but without a configured number
-    # of chiplets, is most likely an oversight
-    with pytest.warns(UserWarning, match='chiplet_number'):
-        _generate(two_dimensional, 1)
-
-
 def test_allow_chiplet_threadblock_distribution_is_serialized():
     sdfg = two_dimensional.to_sdfg()
     for node, _ in sdfg.all_nodes_recursive():
@@ -202,17 +292,18 @@ def test_allow_chiplet_threadblock_distribution_is_serialized():
 
 
 def test_invalid_chiplet_number():
+    # 0 is the value that asks for the number of chiplets to be detected, so only a negative number
+    # of chiplets is invalid
     with pytest.raises(ValueError, match='chiplet'):
-        _generate(two_dimensional, 0)
+        _generate(two_dimensional, -1)
 
 
 if __name__ == '__main__':
     test_chiplet_distribution()
     test_chiplet_distribution_for_three_dimensional_grid()
-    test_chiplet_distribution_disabled_by_default()
+    test_chiplet_distribution_explicitly_disabled()
     test_chiplet_distribution_disabled_per_map()
     test_chiplet_distribution_with_threadblock_map()
     test_chiplet_distribution_disabled_per_map_with_threadblock_map()
-    test_chiplet_number_not_configured_warns()
     test_allow_chiplet_threadblock_distribution_is_serialized()
     test_invalid_chiplet_number()
