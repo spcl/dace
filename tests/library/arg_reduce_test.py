@@ -19,6 +19,7 @@ from dace.libraries.standard.nodes import ArgReduce
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+S = dace.symbol('S')
 
 
 def _build(op: str):
@@ -289,20 +290,74 @@ def test_the_cuda_expansion_calls_cub_and_brings_the_answer_back(op):
          '_out_idx'}), ('both answers are written by host code, so an offloader must be told to leave them there')
 
 
-def test_the_cuda_expansion_refuses_a_transform():
-    """CUB reduces over a plain pointer; applying ``f`` per element needs an input iterator."""
-    sdfg = dace.SDFG('argreduce_gpu_transform')
-    sdfg.add_array('a', [64], dace.float64, storage=dace.StorageType.GPU_Global)
+def gpu_gather_sdfg(name, subset, transform='', op='max', size=64):
+    """A CUDA ArgReduce reading ``subset`` of a device array, optionally through ``transform``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [size], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('val', [1], dace.float64)
     sdfg.add_array('idx', [1], dace.int64)
     state = sdfg.add_state()
-    node = ArgReduce('argreduce', op='max', transform='abs')
+    node = ArgReduce('argreduce', op=op, transform=transform)
     node.implementation = 'CUDA'
     state.add_node(node)
-    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet('a[0:64]'))
+    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet(subset))
+    state.add_edge(node, '_out_val', state.add_write('val'), None, dace.Memlet('val[0]'))
     state.add_edge(node, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+    return sdfg
 
-    with pytest.raises(NotImplementedError, match='plain pointer'):
-        sdfg.expand_library_nodes()
+
+#: ``(subset, transform, stride_the_wrapper_must_be_handed)``. ``None`` means the read is provably
+#: contiguous and untransformed, so it must keep the raw-pointer fast path instead.
+CUDA_GATHER_CASES = [
+    ('a[0:64]', '', None),
+    ('a[0:64]', 'abs', '1'),
+    ('a[0:64:2]', '', '2'),
+    ('a[0:64:2]', 'abs', '2'),
+    ('a[0:64:S]', 'abs', 'S'),
+]
+
+
+@pytest.mark.parametrize('subset,transform,stride',
+                         CUDA_GATHER_CASES,
+                         ids=[c[0] + '/' + (c[1] or 'id') for c in CUDA_GATHER_CASES])
+def test_the_cuda_expansion_gathers_a_strided_or_transformed_operand(subset, transform, stride):
+    """A stride or a transform goes to CUB as an input iterator, not as a refusal.
+
+    ``DeviceReduce`` walks an iterator, so ``xf(base[j * stride])`` is one streaming pass with no
+    staged copy. The contiguous untransformed read must NOT pick up the iterator: a raw pointer is
+    what lets CUB issue vectorised loads, so keeping that path is the point of branching at all.
+    A symbolic stride (TSVC ``s318``'s ``inc``) is the case that has to reach the wrapper as a
+    runtime argument -- the wrapper is a free function in the CUDA unit, where the symbol is not
+    in scope.
+    """
+    sdfg = gpu_gather_sdfg(f'argreduce_gpu_gather_{abs(hash((subset, transform))) % 10**8}', subset, transform)
+    sdfg.expand_library_nodes()
+    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
+
+    if stride is None:
+        assert 'gather_iterator' not in code, 'a contiguous untransformed read lost CUB\'s raw-pointer fast path'
+        assert '__ar_stride' not in code, 'the fast path does not need a stride and must not carry one'
+        return
+
+    functor = 'AbsXf' if transform else 'IdentityXf'
+    assert f'::dace::cub::gather_iterator<::dace::cub::{functor}>(__ar_in, __ar_stride)' in code, (
+        f'the {subset!r}/{transform or "identity"} read did not reach CUB through a gather iterator')
+    assert f'long long __ar_stride' in code, 'the wrapper does not take the stride as an argument'
+    assert f'(long long)({stride})' in code, (
+        f'the host tasklet does not hand the wrapper the stride {stride!r}, which is the only place '
+        f'the symbol it is written in is in scope')
+
+
+def test_the_cub_gather_iterator_is_built_on_the_supported_iterators():
+    """cub's own iterators warn from CCCL 2.8 and are gone in CCCL 3, and warnings are errors here,
+    so the gather has to be able to fall back to thrust's -- the same choice ``reduction.h`` makes."""
+    compat = (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'cub_compat.cuh').read_text()
+    assert 'thrust::transform_iterator' in compat and 'thrust::counting_iterator' in compat, (
+        'the gather iterator has no thrust spelling, so it cannot build on CCCL 3')
+    assert 'gpucub::TransformInputIterator' in compat and 'gpucub::CountingInputIterator' in compat, (
+        'the gather iterator has no cub spelling, so it cannot build where thrust is absent')
+    for functor in ('IdentityXf', 'AbsXf', 'StridedGather'):
+        assert f'struct {functor}' in compat, f'{functor} is named by the expansion but not defined'
 
 
 def test_arg_reduce_rejects_an_unknown_transform():
@@ -311,20 +366,51 @@ def test_arg_reduce_rejects_an_unknown_transform():
         ArgReduce('argreduce', op='max', transform='sqrt')
 
 
-def test_the_cuda_expansion_refuses_a_strided_slice():
-    """``cub::DeviceReduce`` takes a contiguous pointer; a strided slice needs an input iterator."""
-    sdfg = dace.SDFG('argreduce_gpu_strided')
-    sdfg.add_array('a', [64], dace.float64, storage=dace.StorageType.GPU_Global)
+@pytest.mark.gpu
+@pytest.mark.parametrize('op', ['max', 'min'])
+@pytest.mark.parametrize('transform', ['', 'abs'])
+@pytest.mark.parametrize('stride', [1, 3])
+def test_the_cuda_expansion_matches_the_sequential_scan_through_the_gather(op, transform, stride):
+    """The device answer for a strided/transformed operand is the SEQUENTIAL one, on real hardware.
+
+    Emitting a gather iterator only proves the code compiles; what matters is that CUB reduces over
+    the sequence the node means and reports the index in THAT sequence -- slice-local, first
+    occurrence on a tie, exactly as the CPU expansions answer. Half the draws are rounded onto the
+    integers so ties actually occur, which is where a parallel combine can disagree with the
+    sequential scan without being wrong about the value.
+    """
+    import cupy
+
+    n_elems, total = 1000, 1000 * stride
+    subset = 'a[0:N]' if stride == 1 else f'a[0:N:{stride}]'
+    sdfg = dace.SDFG(f'argreduce_gpu_run_{op}_{transform or "id"}_{stride}')
+    sdfg.add_array('a', [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('val', [1], dace.float64)
     sdfg.add_array('idx', [1], dace.int64)
     state = sdfg.add_state()
-    node = ArgReduce('argreduce', op='max')
+    node = ArgReduce('argreduce', op=op, transform=transform)
     node.implementation = 'CUDA'
     state.add_node(node)
-    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet('a[0:64:2]'))
+    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet(subset))
+    state.add_edge(node, '_out_val', state.add_write('val'), None, dace.Memlet('val[0]'))
     state.add_edge(node, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+    sdfg.validate()
+    csdfg = sdfg.compile()
 
-    with pytest.raises(NotImplementedError, match='contiguous pointer'):
-        sdfg.expand_library_nodes()
+    for ties in (False, True):
+        drawn = np.random.default_rng(0x318 + stride + 7 * ties).standard_normal(total)
+        a = np.round(drawn) if ties else drawn
+        seq = a[0:total:stride]
+        if transform:
+            seq = np.abs(seq)
+        exp_v, exp_j = sequential_arg_extreme(list(seq), op)
+        val = np.zeros(1)
+        idx = np.zeros(1, dtype=np.int64)
+        csdfg(a=cupy.asarray(a), val=val, idx=idx, N=total)
+        assert val[0] == exp_v, f'ties={ties}: device value {val[0]} != sequential {exp_v}'
+        assert idx[0] == exp_j, (f'ties={ties}: device index {idx[0]} != {exp_j}; the index must be '
+                                 f'slice-local and break the tie toward the FIRST occurrence')
+    assert n_elems == len(seq), 'the gather did not present one element per strided position'
 
 
 if __name__ == '__main__':

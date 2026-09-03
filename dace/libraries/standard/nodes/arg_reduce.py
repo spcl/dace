@@ -29,9 +29,11 @@ Expansions:
 * ``OpenMP``: the same scan split across threads under a ``declare reduction``
   over the (value, index) pair (see :class:`ExpandArgReduceOpenMP`).
 * ``CUDA`` (GPU): ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin`` through
-  ``dace::cub::arg_reduce``, which answers both scalar outputs. Unit-stride,
-  untransformed input only; anything else needs an input iterator CUB does not
-  take for free.
+  ``dace::cub::arg_reduce``, which answers both scalar outputs. A contiguous
+  untransformed operand goes in as a raw pointer, which is what lets CUB use
+  vectorised loads; a strided and/or transformed one goes in as a
+  ``dace::cub::gather_iterator``, so the same one streaming pass serves it
+  without staging a copy.
 
 Tie-breaking matches the TSVC sequential source ``if a[i] OP best: best = a[i];
 idx = i`` -- a STRICT comparison, so the FIRST occurrence of the extreme value
@@ -50,7 +52,6 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
 
 _OP_CPP = {'max': '>', 'min': '<'}
-_OP_CUB = {'max': 'ArgMax', 'min': 'ArgMin'}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
 #: is not deprecated on the toolkit in front of us.
 _OP_TAG = {'max': 'ArgMaxOp', 'min': 'ArgMinOp'}
@@ -59,6 +60,10 @@ _OP_TAG = {'max': 'ArgMaxOp', 'min': 'ArgMinOp'}
 #: ``std::abs``, not ``dace::math::abs``: the latter namespace holds only the ``typeless_nan``
 #: overload, so a real operand does not match it.
 _TRANSFORM_CPP = {'': None, 'abs': 'std::abs'}
+#: The same transforms as ``dace/cub_compat.cuh`` functors, for the CUDA expansion's input iterator.
+#: Identity is a real functor rather than a skipped wrap so a strided untransformed read has the
+#: same iterator shape as a transformed one.
+_TRANSFORM_CUB = {'': 'IdentityXf', 'abs': 'AbsXf'}
 
 # The (value, index) pair below spells its fields ``__ar_v`` / ``__ar_i`` rather than ``v`` / ``i``
 # because a CPP tasklet's free symbols come from an identifier scan of its code: the member access
@@ -204,28 +209,6 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
                              language=dace.dtypes.Language.CPP)
 
 
-def cuda_refusal(node: "ArgReduce", state: dace.SDFGState) -> Optional[str]:
-    """Why :class:`ExpandArgReduceCUDA` cannot lower ``node`` as wired in ``state``, else ``None``.
-
-    ``gpucub::DeviceReduce::ArgMax`` reads a plain contiguous pointer, so neither a strided ``_in``
-    nor a per-element :attr:`ArgReduce.transform` has a CUB form here. The expansion raises this
-    text, and a caller CHOOSING an implementation asks the same question first -- one rule, so a
-    selector cannot pick a lowering the expansion then refuses.
-    """
-    in_edge = next(e for e in state.in_edges(node) if e.dst_conn == '_in')
-    sub = in_edge.data.subset
-    step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
-    if symbolic.equal(step, 1) is not True:
-        return (f"ArgReduce CUDA reads a slice of stride {step}; gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a "
-                "contiguous pointer. Lower this one through 'pure' or 'OpenMP', or wrap the input in a "
-                "gpucub::TransformInputIterator over a CountingInputIterator first.")
-    if node.transform:
-        return (f"ArgReduce CUDA reads through the transform {node.transform!r}; "
-                f"gpucub::DeviceReduce::{_OP_CUB[node.op]} takes a plain pointer. Lower this one through 'pure' or "
-                "'OpenMP', or wrap the input in a gpucub::TransformInputIterator first.")
-    return None
-
-
 @library.expansion
 class ExpandArgReduceCUDA(ExpandTransformation):
     """Device lowering: ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin``, split into the two outputs.
@@ -255,35 +238,45 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
         idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
 
-        refusal = cuda_refusal(node, parent_state)
-        if refusal is not None:
-            raise NotImplementedError(refusal)
+        # A raw pointer only when the read is PROVABLY contiguous and untransformed -- that is the
+        # shape CUB can issue vectorised loads for. ``symbolic.equal`` is tri-valued, and a stride it
+        # cannot decide (s318's ``inc``) has to take the iterator, which is correct either way.
+        sub = in_edge.data.subset
+        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
         state_id = parent_state.parent_graph.node_id(parent_state)
         idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
         vt, it = in_dtype.ctype, idx_dtype.ctype
-        prototype = (f'DACE_EXPORTED gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, '
-                     f'long long *__ar_idx, long long __ar_items, gpuStream_t __ar_stream);')
+        # The stride reaches the wrapper as an ARGUMENT, not baked into it: the wrapper is a free
+        # function in the CUDA unit, where the symbol the stride is written in is not in scope. The
+        # host tasklet is where it is, so the tasklet evaluates it and passes the number down.
+        stride_param = ', long long __ar_stride' if gathers else ''
+        prototype = (f'DACE_EXPORTED gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in{stride_param}, '
+                     f'{vt} *__ar_val, long long *__ar_idx, long long __ar_items, gpuStream_t __ar_stream);')
+        operand = (f'::dace::cub::gather_iterator<::dace::cub::{_TRANSFORM_CUB[node.transform]}>'
+                   f'(__ar_in, __ar_stride)') if gathers else '__ar_in'
 
         parent_sdfg.append_global_code(prototype + '\n')
         parent_sdfg.append_global_code(
             f'{prototype}\n'
-            f'gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in, {vt} *__ar_val, long long *__ar_idx, '
-            f'long long __ar_items, gpuStream_t __ar_stream) {{\n'
+            f'gpuError_t __dace_argreduce_{idstr}(const {vt} *__ar_in{stride_param}, {vt} *__ar_val, '
+            f'long long *__ar_idx, long long __ar_items, gpuStream_t __ar_stream) {{\n'
             # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a
             # free function in the CUDA unit does not have. The status is returned to the host
             # tasklet instead, and the ``DACE_GPU_CHECK`` around the call there reports it.
             f'    return ::dace::cub::arg_reduce<::dace::cub::{_OP_TAG[node.op]}>('
-            f'__ar_in, __ar_val, __ar_idx, __ar_items, __ar_stream);\n'
+            f'{operand}, __ar_val, __ar_idx, __ar_items, __ar_stream);\n'
             f'}}\n',
             'cuda')
 
         items = sym2cpp(_count(in_edge))
+        stride_arg = f', (long long)({sym2cpp(step)})' if gathers else ''
         val_out = '&__ar_val' if val_edge is not None else 'nullptr'
         code = ((f'{vt} __ar_val;\n' if val_edge is not None else '') + f'long long __ar_idx;\n'
-                f'DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in, {val_out}, &__ar_idx, (long long)({items}), '
-                f'__dace_current_stream));\n' + (f'_out_val = __ar_val;\n' if val_edge is not None else '') +
-                f'_out_idx = ({it})__ar_idx;')
+                f'DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in{stride_arg}, {val_out}, &__ar_idx, '
+                f'(long long)({items}), __dace_current_stream));\n' +
+                (f'_out_val = __ar_val;\n' if val_edge is not None else '') + f'_out_idx = ({it})__ar_idx;')
         return nodes.Tasklet(
             label=f'{node.label}_cuda',
             inputs={'_in': dace.pointer(in_dtype)},

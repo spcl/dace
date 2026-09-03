@@ -173,39 +173,42 @@ def test_a_contiguous_arg_reduce_takes_the_cub_expansion():
     assert node.implementation == 'CUDA', node.implementation
 
 
-def test_a_strided_arg_reduce_has_no_device_expansion_and_becomes_a_kernel():
-    """CUB takes a contiguous pointer, so a strided ``_in`` has no device lowering at all.
+def cuda_unit(sdfg):
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        return '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
 
-    Selecting ``CUDA`` here is not a slow choice but an impossible one: ``ExpandArgReduceCUDA``
-    raises at expansion time, which is how tsvc s318 (``argmax |a[inc*i]|``) failed. The node takes
-    the route of one that never had a device expansion -- the ``pure`` scan, scheduled
-    ``GPU_Device`` so codegen wraps it in a kernel instead of leaving host code over ``GPU_Global``.
+
+def test_a_strided_arg_reduce_still_takes_the_cub_expansion():
+    """A strided ``_in`` is a device lowering too: CUB reduces over an input ITERATOR, not a pointer.
+
+    tsvc s318 spells its operand ``argmax |a[inc*i]|``, and the answer used to be the ``pure`` serial
+    scan because ``ExpandArgReduceCUDA`` refused anything it could not hand CUB as a raw pointer.
+    ``dace::cub::gather_iterator`` presents ``j -> base[j * stride]`` instead, so the same one
+    streaming pass serves it and the selector no longer has a refusal to route around.
     """
     sdfg, node = arg_reduce_at_host_level(stride=3)
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
-    assert node.implementation == 'pure', node.implementation
-    assert node.schedule == dtypes.ScheduleType.GPU_Device, node.schedule
-    # And the choice survives codegen, which is what selecting ``CUDA`` did not: the scan is emitted
-    # into the device unit, reading ``a`` where it lives.
-    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        device_code = '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
-    assert '__ar_best' in device_code, device_code
+    assert node.implementation == 'CUDA', node.implementation
+    device_code = cuda_unit(sdfg)
+    assert 'gather_iterator<::dace::cub::IdentityXf>' in device_code, device_code
+    assert '__ar_best' not in device_code, ('the serial scan is still emitted, so the node did not take the '
+                                            f'device library call:\n{device_code}')
 
 
-def test_a_transformed_arg_reduce_has_no_device_expansion_either():
-    # The transform is read per element, which CUB's plain pointer cannot express any more than the
-    # stride can -- same verdict, and it must not depend on the stride being the thing that is odd.
+def test_a_transformed_arg_reduce_gathers_through_its_transform():
+    # The transform is read per element, which the gather functor composes rather than refuses -- and
+    # it must not depend on the stride being the thing that is odd, so this one is contiguous.
     sdfg, node = arg_reduce_at_host_level(transform='abs')
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
-    assert node.implementation == 'pure', node.implementation
-    assert node.schedule == dtypes.ScheduleType.GPU_Device, node.schedule
+    assert node.implementation == 'CUDA', node.implementation
+    assert 'gather_iterator<::dace::cub::AbsXf>' in cuda_unit(sdfg)
 
 
 if __name__ == '__main__':
     test_a_sequential_node_at_a_host_level_calls_the_device_library()
     test_a_contiguous_arg_reduce_takes_the_cub_expansion()
-    test_a_strided_arg_reduce_has_no_device_expansion_and_becomes_a_kernel()
-    test_a_transformed_arg_reduce_has_no_device_expansion_either()
+    test_a_strided_arg_reduce_still_takes_the_cub_expansion()
+    test_a_transformed_arg_reduce_gathers_through_its_transform()
     test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion()
     test_a_loop_does_not_make_its_body_device_code()
     test_a_pure_only_node_in_a_host_loop_becomes_a_kernel()

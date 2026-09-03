@@ -38,7 +38,6 @@ from dace.transformation.passes.gpu_specialization.promote_warp_tiles import Pro
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-from dace.libraries.standard.nodes.arg_reduce import ArgReduce, cuda_refusal
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.transformation.dataflow import OTFMapFusion
@@ -177,19 +176,6 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
             node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
                                    ('CUDA' if 'CUDA' in impls else node.implementation))
-            continue
-        # ``ArgReduce`` reading a strided or transformed slice has NO device expansion:
-        # ``ExpandArgReduceCUDA`` refuses both, because ``gpucub::DeviceReduce::ArgMax`` takes a
-        # contiguous pointer and the lift spells tsvc s318 as ``argmax |a[inc*i]|`` rather than
-        # staging a copy of it first. So take the route of a node that never had a device
-        # expansion: the ``pure`` scan, scheduled ``GPU_Device`` at host level so codegen wraps it
-        # in a kernel of its own rather than leaving host code over ``GPU_Global`` operands. Serial
-        # inside that kernel, which is the correctness floor the node's own docstring describes.
-        if isinstance(node, ArgReduce) and device == dtypes.DeviceType.GPU \
-                and cuda_refusal(node, state) is not None:
-            node.implementation = 'pure'
-            if not libnode_is_device_code(node, state, sdfg):
-                node.schedule = dtypes.ScheduleType.GPU_Device
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
