@@ -245,8 +245,13 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         exit_node = state.exit_node(node)
         memlets.update(e.data.data for e in state.in_edges(exit_node) if not e.data.is_empty())
     else:
-        # Other nodes only need neighboring memlets
-        memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
+        # A library node's ``host_connectors`` are the ones its expansion writes from host code even
+        # when the rest of it runs on the device -- ArgReduce's CUB call answers into host scalars.
+        # Their storage says nothing about where the node runs, and counting it makes every such
+        # node read as conflicted, so a CUDA ArgReduce could not be compiled at all.
+        host = node.host_connectors if isinstance(node, nodes.LibraryNode) else frozenset()
+        memlets = set(e.data.data for e in state.all_edges(node)
+                      if not e.data.is_empty() and (e.dst_conn if e.dst is node else e.src_conn) not in host)
 
     # From memlets, use non-scalar data descriptors for decision
     constraints: Set[dtypes.ScheduleType] = set()
