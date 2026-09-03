@@ -3000,6 +3000,48 @@ class ProgramVisitor(ExtNodeVisitor):
                 o.data = self.scope_vars[o.data]
         return node, inputs, outputs, ttrans.sdfg_inputs, ttrans.sdfg_outputs
 
+    def _indirect_index_group(self, node: ast.AST, aname: str,
+                              indirect_indices: Dict[int, str]) -> Tuple[str, Tuple, Dict[int, str]]:
+        """
+        Computes the shared iteration of the index arrays of a store. numpy broadcasts them against
+        ONE iteration space, so all indexed dimensions take a single map parameter; a parameter each
+        scatters the cartesian product, once per combination instead of once per index tuple.
+
+        :param node: The assignment node, for error reporting.
+        :param aname: The name of the array being written, for error reporting.
+        :param indirect_indices: Mapping from an indexed dimension to the name of its index array.
+        :return: A tuple of (shared map parameter, its range, per-dimension index expression).
+        """
+        extent = 1
+        for indarr in indirect_indices.values():
+            length = self.sdfg.arrays[indarr].shape[0]
+            if length == 1:
+                continue
+            if extent != 1 and inequal_symbols(extent, length):
+                raise IndexError(f'Index arrays used to write "{aname}" could not be broadcast together: '
+                                 f'lengths {extent} and {length}')
+            extent = length
+        param = f'__i{min(indirect_indices)}'
+        reads = {dim: ('0' if self.sdfg.arrays[a].shape[0] == 1 else param) for dim, a in indirect_indices.items()}
+        return param, (0, extent - 1, 1), reads
+
+    def _indirect_index_footprint(self, aname: str, subset: subsets.Range, dim: int) -> Tuple:
+        """
+        Computes the memlet range of an indexed dimension of a store. The write can land anywhere in
+        that dimension, so the memlet covers all of it. An index array's length is the extent of the
+        indexing RESULT, not of the destination: it cut the connector short of the elements the
+        indices reach, and ran off the end of a destination smaller than the index array.
+
+        :param aname: The name of the array being written.
+        :param subset: The subset the store was parsed into.
+        :param dim: The indexed dimension.
+        :return: The range covering that dimension.
+        """
+        desc = self.sdfg.arrays[aname]
+        if len(desc.shape) != len(subset):
+            return subset[dim]
+        return (0, desc.shape[dim] - 1, 1)
+
     def _add_assignment(self,
                         node: Union[ast.Assign, ast.AugAssign],
                         target: Union[str, Tuple[str, subsets.Range]],
@@ -3057,11 +3099,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 tasklet_code += f'if {boolarr}[{target_index}]:\n    '
 
         # Append indirect indices to input memlets as necessary
+        adv_param, adv_range = None, None
         if indirect_indices:
+            adv_param, adv_range, adv_reads = self._indirect_index_group(node, target_name, indirect_indices)
             outind = []
-            for i, indarr in indirect_indices.items():
+            for i in sorted(indirect_indices):
+                indarr = indirect_indices[i]
                 assert len(self.sdfg.arrays[indarr].shape) == 1
-                input_memlets[f'__ind_{i}'] = Memlet(f'{indarr}[__i{i}]')
+                input_memlets[f'__ind_{i}'] = Memlet(f'{indarr}[{adv_reads[i]}]')
                 outind.append(f'__ind_{i}')
             output_suffix = f'[{", ".join(outind)}]'
 
@@ -3069,6 +3114,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
+                if len(indirect_indices) > 1:
+                    raise DaceSyntaxError(
+                        self, node, f'Writing an array into "{target_name}" through more than one index array is '
+                        'not supported: the index arrays broadcast into a single axis of the indexing result, '
+                        'which the per-dimension subsets of a store cannot express. Assign a scalar, or scatter '
+                        'one dimension at a time')
                 squeezed = copy.deepcopy(target_subset)
                 squeezed.squeeze(offset=False)
                 squeezed_op = copy.deepcopy(op_subset)
@@ -3119,9 +3170,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         for i, (start, end, step) in enumerate(squeezed)
                     }
 
-                    for i, indarr in indirect_indices.items():
-                        out_memlet.subset[i] = target_subset[i]
-                        map_range[f'__i{i}'] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+                    if indirect_indices:
+                        for i in indirect_indices:
+                            out_memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
+                        map_range[adv_param] = adv_range
 
                     if op:
                         out_memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
@@ -3161,9 +3213,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     for i, (start, end, step) in enumerate(target_subset)
                 }
 
-                for i, indarr in indirect_indices.items():
-                    memlet.subset[i] = target_subset[i]
-                    map_range[f'__i{i}'] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+                if indirect_indices:
+                    for i in indirect_indices:
+                        memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
+                        if f'__i{i}' != adv_param:
+                            map_range.pop(f'__i{i}', None)
+                    map_range[adv_param] = adv_range
 
                 if op:
                     memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
@@ -3212,8 +3267,8 @@ class ProgramVisitor(ExtNodeVisitor):
             out_memlet = Memlet.simple(target_name, '%s' % target_subset)
             if boolarr is not None:
                 out_memlet.dynamic = True
-            for i in indirect_indices.keys():
-                out_memlet.subset[i] = target_subset[i]
+            for i in indirect_indices:
+                out_memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
             for cname, memlet in input_memlets.items():
                 r = state.add_read(memlet.data)
                 state.add_edge(r, None, tasklet, cname, memlet)
@@ -3297,11 +3352,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 tasklet_code += f'if {boolarr}[{wtarget_index}]:\n    '
 
         # Append indirect indices to input memlets as necessary
+        adv_param, adv_range = None, None
         if indirect_indices:
+            adv_param, adv_range, adv_reads = self._indirect_index_group(node, wtarget_name, indirect_indices)
             outind = []
-            for i, indarr in indirect_indices.items():
+            for i in sorted(indirect_indices):
+                indarr = indirect_indices[i]
                 assert len(self.sdfg.arrays[indarr].shape) == 1
-                input_memlets[f'__ind_{i}'] = Memlet(f'{indarr}[__i{i}]')
+                input_memlets[f'__ind_{i}'] = Memlet(f'{indarr}[{adv_reads[i]}]')
                 outind.append(f'__ind_{i}')
             output_suffix = f'[{", ".join(outind)}]'
 
@@ -3309,6 +3367,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
+                if len(indirect_indices) > 1:
+                    raise DaceSyntaxError(
+                        self, node, f'Updating "{wtarget_name}" with an array through more than one index array is '
+                        'not supported: the index arrays broadcast into a single axis of the indexing result, '
+                        'which the per-dimension subsets of a store cannot express. Update with a scalar, or '
+                        'scatter one dimension at a time')
                 # We first squeeze both sides, then try to broadcast the remaining shapes together
                 # This mimics numpy's behavior, where first the indices are taken (C[:i, j] -> (i,))
                 # and then the operation is performed.
@@ -3369,12 +3433,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Handle indirect indices
                     in1_suffix = []
-                    for i, indarr in indirect_indices.items():
-                        in1_memlet.subset[i] = rtarget_subset[i]
+                    for i in sorted(indirect_indices):
+                        in1_memlet.subset[i] = self._indirect_index_footprint(rtarget_name, rtarget_subset, i)
                         in1_suffix.append(f'__ind_{i}')
-                        out_memlet.subset[i] = wtarget_subset[i]
-                        map_range[f'__i{i}'] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+                        out_memlet.subset[i] = self._indirect_index_footprint(wtarget_name, wtarget_subset, i)
                     if indirect_indices:
+                        map_range[adv_param] = adv_range
                         in1_suffix = '[' + ', '.join(in1_suffix) + ']'
                     else:
                         in1_suffix = ''
@@ -3415,10 +3479,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     out_memlet.dynamic = True
 
                 # Handle indirect indices
-                for i, indarr in indirect_indices.items():
-                    in1_memlet.subset[i] = in1_subset[i]
-                    out_memlet.subset[i] = wtarget_subset[i]
-                    map_range[f'__i{i}'] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+                if indirect_indices:
+                    for i in indirect_indices:
+                        in1_memlet.subset[i] = self._indirect_index_footprint(rtarget_name, rtarget_subset, i)
+                        out_memlet.subset[i] = self._indirect_index_footprint(wtarget_name, wtarget_subset, i)
+                        if f'__i{i}' != adv_param:
+                            map_range.pop(f'__i{i}', None)
+                    map_range[adv_param] = adv_range
 
                 if op_name:
                     inp_memlets = {'__in1': in1_memlet, '__in2': in2_memlet}
@@ -4150,10 +4217,12 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 new_name, new_rng = true_name, rng
 
-            # Change the range in case indirect indices are used
+            # Change the range in case indirect indices are used. The index arrays broadcast into
+            # ONE axis of the indexing result, so only the first indexed dimension carries that
+            # extent; the rest keep the array's own, which is what the write can reach.
             if indirect_indices:
-                for dim, indarr in indirect_indices.items():
-                    new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+                _, adv_rng, _ = self._indirect_index_group(node, new_name, indirect_indices)
+                new_rng[min(indirect_indices)] = adv_rng
 
             # Self-copy check
             read_rng, write_rng = None, None
