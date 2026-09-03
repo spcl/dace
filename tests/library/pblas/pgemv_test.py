@@ -17,13 +17,6 @@ GM, GN = (dace.symbol(s, positive=True) for s in ('GM', 'GN'))
 # Local sizes
 LMx, LMy, LNx, LNy = (dace.symbol(s, positive=True) for s in ('LMx', 'LMy', 'LNx', 'LNy'))
 
-
-def process_grids(size):
-    """Every (NPx, NPy) with NPx * NPy == size, tall to wide."""
-    # Both extents divide size, so a problem size that is a multiple of size splits evenly.
-    return [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]
-
-
 rng = np.random.default_rng(42)
 
 
@@ -80,16 +73,21 @@ def test_pgemv():
         else:
             return None
 
-    def compile(sdfg):
+    def compile(sdfg, name):
+        # A shape configuration of its own gets a name of its own: auto_optimize gives the
+        # intermediate vectors Persistent lifetime, so their size is fixed by __dace_init_ and a
+        # second one is a second program, never a second init on this one. The grid is NOT among
+        # those symbols any more -- see test_pgemm_multiple_grids_one_compiled_object.
+        if sdfg is not None:
+            sdfg.name = name
         return utils.distributed_compile(sdfg, commworld)
 
-    sdfgs = []
-    for prog in (pdgemv, pdgemv_T, atax, bicg, gemver, gesummv):
-        sdfgs.append(optimize(prog))
+    sdfgs = [optimize(prog) for prog in (pdgemv, pdgemv_T, atax, bicg, gemver, gesummv)]
+    base_names = [sdfg.name for sdfg in sdfgs] if rank == 0 else [None] * len(sdfgs)
 
-    # Test for different grids possible with the given number of MPI processes.
-    grid_dims = process_grids(size)
-    for NPx, NPy in grid_dims:
+    # Every (NPx, NPy) with NPx * NPy == size, tall to wide. Both extents divide size, so a problem
+    # size that is a multiple of size splits evenly.
+    for NPx, NPy in [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]:
 
         cart_comm = commworld.Create_cart((NPx, NPy))
         i, j = cart_comm.Get_coords(rank)
@@ -98,15 +96,14 @@ def test_pgemv():
         Nmult = 48
         M, N = size * Mmult, size * Nmult
 
-        for _ in range(2):  # The sizes are permuted at the end of each iteration.
+        for shapes in range(2):  # The sizes are permuted at the end of each iteration.
 
             if rank == 0:
                 print(f"Testing PBLAS GEMV on a [{NPx}, {NPy}] grid with sizes ({M}, {N}).", flush=True)
 
-            funcs = []
-            for sd in sdfgs:
-                funcs.append(compile(sd))
-            func, func1, func2, func3, func4, func5 = funcs
+            func, func1, func2, func3, func4, func5 = [
+                compile(sd, f'{base}_{NPx}x{NPy}_{shapes}') for sd, base in zip(sdfgs, base_names)
+            ]
 
             A = rng.random((M, N), dtype=np.float64)
             x = rng.random((N, ), dtype=np.float64)

@@ -7,6 +7,9 @@ import pytest
 
 from dace import Memlet
 from dace.frontend.python.replacements.mpi import _distr_matmult
+from dace.libraries.mpi.nodes.comm_f2c import CommF2c
+from dace.libraries.pblas.nodes.gridinit import BlacsGridInit
+from dace.libraries.pblas.nodes.pgemm import Pgemm
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
 
@@ -19,13 +22,6 @@ GM, GN, GK, GR, GS, GT = (dace.symbol(s, positive=True) for s in ('GM', 'GN', 'G
 # Local sizes
 LMx, LMy, LNx, LNy, LKx, LKy = (dace.symbol(s, positive=True) for s in ('LMx', 'LMy', 'LNx', 'LNy', 'LKx', 'LKy'))
 LRx, LRy, LSx, LSy, LTx, LTy = (dace.symbol(s, positive=True) for s in ('LRx', 'LRy', 'LSx', 'LSy', 'LTx', 'LTy'))
-
-
-def process_grids(size):
-    """Every (NPx, NPy) with NPx * NPy == size, tall to wide."""
-    # Both extents divide size, so a problem size that is a multiple of size splits evenly.
-    return [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]
-
 
 rng = np.random.default_rng(42)
 
@@ -70,16 +66,22 @@ def test_pgemm():
         else:
             return None
 
-    def compile(sdfg):
+    def compile(sdfg, name):
+        # A shape configuration of its own gets a name of its own: auto_optimize gives the temporary
+        # between the two matrix products Persistent lifetime, so its size is fixed by
+        # __dace_init_ and a second one is a second program, never a second init on this one.
+        # The grid is NOT among those symbols any more -- see
+        # test_pgemm_multiple_grids_one_compiled_object below.
+        if sdfg is not None:
+            sdfg.name = name
         return utils.distributed_compile(sdfg, commworld)
 
-    sdfgs = []
-    for prog in (pdgemm, gemm, k2mm, k3mm):
-        sdfgs.append(optimize(prog))
+    sdfgs = [optimize(prog) for prog in (pdgemm, gemm, k2mm, k3mm)]
+    base_names = [sdfg.name for sdfg in sdfgs] if rank == 0 else [None] * len(sdfgs)
 
-    # Test for different grids possible with the given number of MPI processes.
-    grid_dims = process_grids(size)
-    for NPx, NPy in grid_dims:
+    # Every (NPx, NPy) with NPx * NPy == size, tall to wide. Both extents divide size, so a problem
+    # size that is a multiple of size splits evenly.
+    for NPx, NPy in [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]:
 
         cart_comm = commworld.Create_cart((NPx, NPy))
         i, j = cart_comm.Get_coords(rank)
@@ -91,15 +93,14 @@ def test_pgemm():
         Smult = 67
         M, N, K, R, S = size * Mmult, size * Nmult, size * Kmult, size * Rmult, size * Smult
 
-        for _ in range(5):  # The sizes are permuted at the end of each iteration.
+        for shapes in range(5):  # The sizes are permuted at the end of each iteration.
 
             if rank == 0:
                 print(f"Testing PBLAS GEMM on a [{NPx}, {NPy}] grid with sizes ({M}, {N}, {K}, {R}, {S}).", flush=True)
 
-            funcs = []
-            for sd in sdfgs:
-                funcs.append(compile(sd))
-            func, func1, func2, func3 = funcs
+            func, func1, func2, func3 = [
+                compile(sd, f'{base}_{NPx}x{NPy}_{shapes}') for sd, base in zip(sdfgs, base_names)
+            ]
 
             A = rng.random((M, K), dtype=np.float64)
             B = rng.random((K, N), dtype=np.float64)
@@ -331,15 +332,12 @@ def test_pgemm_named_block_sizes():
     B = rng.random((K, N), dtype=np.float64)
     C = A @ B
 
-    # Test for different grids possible with the given number of MPI processes.
-    for NPx, NPy in process_grids(size):
+    func = utils.distributed_compile(sdfg, commworld)
+
+    for NPx, NPy in [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]:
 
         cart_comm = commworld.Create_cart((NPx, NPy))
         i, j = cart_comm.Get_coords(rank)
-
-        # Px/Py reach __dace_init_, which is what builds the BLACS grid, and a CompiledSDFG
-        # initializes once -- so each grid needs its own, exactly as test_pgemm does above.
-        func = utils.distributed_compile(sdfg, commworld)
 
         ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
         lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
@@ -347,6 +345,130 @@ def test_pgemm_named_block_sizes():
         lC = np.zeros((ti, tj), dtype=np.float64)
 
         func(A=lA, B=lB, C=lC, LMx=ti, LKy=tkj, LKx=tki, LNy=tj, GK=K, Px=NPx, Py=NPy)
+        ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
+        assert (np.allclose(lC, ref))
+
+        commworld.Barrier()
+
+
+###############################################################################
+# Two process grids, one compiled object.
+#
+# The grid used to be built in __dace_init_ out of the Px / Py symbols. A
+# CompiledSDFG initializes once, so every grid after the first silently ran
+# against the first grid's context, and the only way to get a second grid was a
+# second build. Here the communicator arrives as a Fortran handle, CommF2c turns
+# it into an MPI_Comm, BlacsGridInit builds the grid the runtime prows / pcols
+# describe, and the context reaches Pgemm on its _context connector -- so every
+# grid is just another set of arguments to the same compiled object.
+
+
+def _make_comm_grid_sdfg():
+    sdfg = dace.SDFG('pgemm_comm_grid')
+    state = sdfg.add_state()
+    sdfg.add_array('A', (LMx, LKy), dace.float64)
+    sdfg.add_array('B', (LKx, LNy), dace.float64)
+    sdfg.add_scalar('fcomm', dace.int32)
+    sdfg.add_scalar('prows', dace.int32)
+    sdfg.add_scalar('pcols', dace.int32)
+    sdfg.add_scalar('usercomm', dace.dtypes.opaque('MPI_Comm'), transient=True)
+    sdfg.add_scalar('context', dace.int32, transient=True)
+    # The global sizes only ever appear inside the Pgemm node's symbolic m/n/k properties, never in
+    # a memlet or an array shape, so they need registering by hand to reach the program signature.
+    for sym in (GM, GN, GK):
+        sdfg.add_symbol(str(sym), sym.dtype)
+
+    f2c = CommF2c('_commf2c_')
+    state.add_edge(state.add_read('fcomm'), None, f2c, '_fcomm', Memlet(data='fcomm', subset='0'))
+    comm_node = state.add_access('usercomm')
+    state.add_edge(f2c, '_comm', comm_node, None, Memlet(data='usercomm', subset='0'))
+
+    gridinit = BlacsGridInit('_blacs_gridinit_')
+    gridinit.add_in_connector('_comm', dace.dtypes.opaque('MPI_Comm'))
+    state.add_edge(comm_node, None, gridinit, '_comm', Memlet(data='usercomm', subset='0'))
+    state.add_edge(state.add_read('prows'), None, gridinit, '_prows', Memlet(data='prows', subset='0'))
+    state.add_edge(state.add_read('pcols'), None, gridinit, '_pcols', Memlet(data='pcols', subset='0'))
+    context_node = state.add_access('context')
+    state.add_edge(gridinit, '_context', context_node, None, Memlet(data='context', subset='0'))
+
+    out_name = _distr_matmult(_StubProgramVisitor(sdfg), sdfg, state, 'A', 'B', (GM, GN, GK))
+    sdfg.arrays[out_name].transient = False
+    pgemm = next(node for node in state.nodes() if isinstance(node, Pgemm))
+    pgemm.add_in_connector('_context', dace.int32)
+    state.add_edge(context_node, None, pgemm, '_context', Memlet(data='context', subset='0'))
+    return sdfg
+
+
+def test_pgemm_comm_grid_wiring():
+    """Structural check: the context Pgemm reads is the one BlacsGridInit built out
+    of the communicator CommF2c produced. Needs no MPI, and holds whether or not
+    ScaLAPACK is installed."""
+    sdfg = _make_comm_grid_sdfg()
+    sdfg.validate()
+    state = next(iter(sdfg.states()))
+
+    pgemm = next(node for node in state.nodes() if isinstance(node, Pgemm))
+    gridinit = next(node for node in state.nodes() if isinstance(node, BlacsGridInit))
+    f2c = next(node for node in state.nodes() if isinstance(node, CommF2c))
+
+    context_edge = next(e for e in state.in_edges(pgemm) if e.dst_conn == '_context')
+    assert context_edge.data.data == 'context'
+    assert next(e for e in state.out_edges(gridinit) if e.src_conn == '_context').data.data == 'context'
+
+    comm_edge = next(e for e in state.in_edges(gridinit) if e.dst_conn == '_comm')
+    assert comm_edge.data.data == 'usercomm'
+    assert next(e for e in state.out_edges(f2c) if e.src_conn == '_comm').data.data == 'usercomm'
+
+    # Nothing about the grid is a symbol, so nothing about it can reach __dace_init_.
+    assert not ({'Px', 'Py'} & {str(s) for s in sdfg.free_symbols})
+
+
+@pytest.mark.scalapack
+def test_pgemm_multiple_grids_one_compiled_object():
+
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    sdfg = _make_comm_grid_sdfg() if rank == 0 else None
+    func = utils.distributed_compile(sdfg, commworld)
+
+    # Multiples of size, so every grid below splits the operands evenly.
+    M, N, K = size * 4, size * 6, size * 5
+    A = rng.random((M, K), dtype=np.float64)
+    B = rng.random((K, N), dtype=np.float64)
+    C = A @ B
+
+    # The cartesian communicators are kept alive: a freed one hands its Fortran handle back for
+    # reuse, and the handle is what identifies a grid that was already built.
+    cart_comms = []
+    for NPx, NPy in [(size // npy, npy) for npy in range(1, size + 1) if size % npy == 0]:
+
+        cart_comm = commworld.Create_cart((NPx, NPy))
+        cart_comms.append(cart_comm)
+        i, j = cart_comm.Get_coords(rank)
+
+        ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
+        lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+        lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
+        lC = np.zeros((ti, tj), dtype=np.float64)
+
+        # prows / pcols keep the Py / Px order the column-major BLACS grid is built in.
+        func(A=lA,
+             B=lB,
+             C=lC,
+             fcomm=cart_comm.py2f(),
+             prows=NPy,
+             pcols=NPx,
+             LMx=ti,
+             LKy=tkj,
+             LKx=tki,
+             LNy=tj,
+             GM=M,
+             GN=N,
+             GK=K)
         ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
         assert (np.allclose(lC, ref))
 

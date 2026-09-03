@@ -39,8 +39,11 @@ def test_environment_refuses_a_thread_level_below_funneled(environment):
     assert 'MPI_Query_thread' in init
     assert 'MPI_THREAD_FUNNELED' in init
     assert 'MPI_Abort' in init
-    # Before the grid, not after it: a corrupted broadcast is what the check exists to prevent.
-    assert init.index('MPI_Query_thread') < init.index('gridinit')
+    # Before BLACS touches MPI, not after: a corrupted broadcast is what the check exists to
+    # prevent. The grid itself is built in the dataflow now (see BlacsGridInit), which runs after
+    # __dace_init_, so the initializer holding the check and no grid is what puts it first.
+    assert 'gridinit' not in init
+    assert init.index('MPI_Query_thread') < init.index('blacs_pinfo')
 
 
 def expanded_tasklet_code(program, implementation):
