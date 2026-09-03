@@ -32,6 +32,12 @@ class InstrumentationProvider(object):
 
         return result
 
+    def writes_to_report(self) -> bool:
+        """ Returns whether this provider writes to the runtime performance report
+            (``__state->report``). Every concrete provider must override this.
+        """
+        raise NotImplementedError(f'{type(self).__name__} must implement writes_to_report()')
+
     def _idstr(self, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node) -> str:
         """ Returns a unique identifier string from a node or state. """
         result = str(cfg.cfg_id)

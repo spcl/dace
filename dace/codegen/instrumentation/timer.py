@@ -10,6 +10,9 @@ class TimerProvider(InstrumentationProvider):
     """ Timing instrumentation that reports wall-clock time directly after
         timed execution is complete. """
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         global_stream.write('#include <chrono>')
 
