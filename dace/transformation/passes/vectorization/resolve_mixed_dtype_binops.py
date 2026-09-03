@@ -56,6 +56,19 @@ def _cast_name(dtype: dtypes.typeclass) -> str:
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
 
 
+def _cast_call(node: ast.expr, dtype: dtypes.typeclass) -> ast.Call:
+    """``dace.<dtype>(node)`` -- the explicit-cast spelling both the tile converter and the C++
+    generator accept, the same one :meth:`_insert_operand_cast` writes into a cast tasklet."""
+    func = ast.Attribute(value=ast.Name(id="dace", ctx=ast.Load()), attr=_cast_name(dtype), ctx=ast.Load())
+    return ast.Call(func=func, args=[node], keywords=[])
+
+
+def _is_dace_cast(node: ast.expr) -> bool:
+    """Whether ``node`` is already a ``dace.<dtype>(...)`` cast call."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "dace")
+
+
 def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
     """If ``tasklet`` is a ternary blend -- the Python ``_o = _t if _c else _e`` form or the
     ``_o = ITE(_c, _t, _e)`` call form ``SplitTasklets`` emits for a same-write-set if/else --
@@ -224,15 +237,13 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         if detected is None:
             return False
         out_conn, arm_conns = detected
-        if not arm_conns:
-            return False
         sdfg = state.sdfg
         in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
         if len(out_edges) != 1:
             return False
         out_dt = sdfg.arrays[out_edges[0].data.data].dtype
-        changed = False
+        changed = self.cast_edgeless_ite_arms(tasklet, out_dt)
         for conn in arm_conns:
             edge = in_edges.get(conn)
             if edge is None:
@@ -241,6 +252,48 @@ class ResolveMixedDtypeBinops(ppl.Pass):
                 self._insert_operand_cast(state, tasklet, edge, conn, out_dt)
                 changed = True
         return changed
+
+    def cast_edgeless_ite_arms(self, tasklet: nodes.Tasklet, out_dt: dtypes.typeclass) -> bool:
+        """Wrap every ``ITE`` arm that is not an in-connector in an explicit cast to ``out_dt``.
+
+        A literal or symbol arm carries no edge, so :meth:`resolve_ite` has nothing to route
+        through a cast tasklet and the arm reaches the generator with its own C++ type. The tile
+        expansions hide this -- they materialise such an arm as a broadcast constant of the tile
+        dtype -- but the scalar tail of a vectorized map emits the ternary directly, as
+        ``ITE(c, 0.0, x)``. Its return type is ``std::common_type<TA, TB>``, which is undefined for
+        (``double``, ``dace::float16``): every conversion ``__half`` offers applies equally, so the
+        arms have no common type. Older toolkits report the ambiguity at the ternary itself. Casting
+        the arm here gives both arms one dtype at the source, which is what the rest of this pass
+        already guarantees for the arms that do have edges.
+        """
+        try:
+            tree = ast.parse(tasklet.code.as_string.strip())
+        except SyntaxError:
+            return False
+        rhs = tree.body[0].value
+        if isinstance(rhs, ast.IfExp):
+            arms = [("body", rhs), ("orelse", rhs)]
+        else:
+            arms = [(1, rhs), (2, rhs)]
+        in_conns = OrderedSet(tasklet.in_connectors)
+        changed = False
+        for key, owner in arms:
+            arm = getattr(owner, key) if isinstance(key, str) else owner.args[key]
+            if isinstance(arm, ast.Name) and arm.id in in_conns:
+                continue
+            if _is_dace_cast(arm):
+                continue
+            cast = _cast_call(arm, out_dt)
+            if isinstance(key, str):
+                setattr(owner, key, cast)
+            else:
+                owner.args[key] = cast
+            changed = True
+        if not changed:
+            return False
+        ast.fix_missing_locations(tree)
+        tasklet.code = CodeBlock(ast.unparse(tree), language=dace.Language.Python)
+        return True
 
     def resolve_masked_write(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
         """A masked write ``_o = IT(_cond, _val)`` lowers to a masked ``TileStore`` that copies
