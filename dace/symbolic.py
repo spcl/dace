@@ -513,9 +513,9 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr, self.approx // other.approx)
+            return SymExpr(int_floor(self.expr, other.expr), int_floor(self.approx, other.approx))
         if isinstance(other, sympy.Expr):
-            return SymExpr(self.expr // other, self.approx // other)
+            return SymExpr(int_floor(self.expr, other), int_floor(self.approx, other))
         return self // pystr_to_symbolic(other)
 
     def __mod__(self, other):
@@ -1341,7 +1341,7 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
@@ -1738,6 +1738,20 @@ def _construct_function_uncached(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
+# Operator-derived ``__``-prefixed variants for ``_SerializedSymbolicParser._functions``.
+# Defined at module level because Python name-mangles identifiers starting with ``__``
+# when they appear textually inside a class body.
+_SERIALIZED_OPERATOR_FUNCTIONS = {
+    '__int_floor': __int_floor,
+    '__bitwise_and': __bitwise_and,
+    '__bitwise_or': __bitwise_or,
+    '__bitwise_xor': __bitwise_xor,
+    '__bitwise_invert': __bitwise_invert,
+    '__left_shift': __left_shift,
+    '__right_shift': __right_shift,
+}
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1910,6 +1924,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'RightShift': right_shift,
         'left_shift': left_shift,
         'right_shift': right_shift,
+        **_SERIALIZED_OPERATOR_FUNCTIONS,
     }
     _constants = {
         'True': sympy.true,
@@ -2419,6 +2434,17 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
         return super()._print_Function(expr)
+
+    def _print_ceiling(self, expr):
+        if not self.cpp_mode:
+            return super()._print_Function(expr)
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
+        return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
