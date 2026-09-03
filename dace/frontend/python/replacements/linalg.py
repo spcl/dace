@@ -94,6 +94,8 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
     restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
+    if arr1.dtype == dtypes.float32sr and arr2.dtype == dtypes.float32sr:
+        restype = dtypes.float32sr
 
     op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, arr1.storage, find_new_name=True)
 

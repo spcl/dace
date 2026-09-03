@@ -32,13 +32,14 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
+        cast = "(float *)" if dtype == dace.float32sr else ""
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         uplo = "'L'" if node.lower else "'U'"
-        code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, _xin, {stride_x});"
+        code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, {cast} _xin, {stride_x});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
