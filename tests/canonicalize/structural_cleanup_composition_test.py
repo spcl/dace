@@ -15,13 +15,23 @@ from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.induction_variable_substitution import LoopCarriedRotationSubstitution
 from dace.transformation.passes.canonicalize.pipeline import _build_stages, _structural_cleanup
-from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.simplify import SimplifyPass
 
-#: Exact composition of the shared cleanup helper, in order.
-CLEANUP_COMPOSITION = ['StateFusionExtended', 'EmptyStateElimination', 'DeadStateElimination']
+#: Exact composition of the shared cleanup helper, in order: a symbol phase, then a structural one.
+#: The symbol phase is what keeps two names for one address from reaching a consumer that compares
+#: subsets syntactically (``AugAssignToWCR`` answering "different slots" turned an indirect
+#: accumulate into a scatter that aborted at run time), and it closes with a second ``SymbolDedup``
+#: because the prune deletes assignments and so mints merges no earlier dedup could see.
+CLEANUP_COMPOSITION = [
+    'SymbolDedup', 'SymbolPropagation', 'ConstantPropagation', 'RemoveUnusedSymbols', 'SymbolDedup',
+    'StateFusionExtended', 'EmptyStateElimination', 'DeadStateElimination', 'RedundantOrderingEdgeElimination'
+]
+
+#: The symbol phase, in order. Split out because the structural phase's own placement invariants
+#: are stated against indices within the block, and those shift when this grows.
+SYMBOL_PHASE = CLEANUP_COMPOSITION[:CLEANUP_COMPOSITION.index('StateFusionExtended')]
 
 #: The fold pass whose absence costs tsvc s252 its rematerialized producer.
 SCALAR_SLICE_FOLD = 'CleanAccessNodeToScalarSliceToTaskletPattern'
@@ -49,7 +59,10 @@ def _indices(flat, name: str):
 
 
 def test_cleanup_helper_composition_is_state_machine_only():
-    """A dataflow rewrite in this list would fire at every site by accident of cleanup placement."""
+    """Symbols and the state machine only. A dataflow rewrite in this list would fire at every site
+    by accident of cleanup placement, and ``RedundantOrderingEdgeElimination`` -- the one member
+    that works inside a state -- is last for that reason: fusing two states is what turns an
+    ordering edge that was load-bearing into one the merged dataflow already implies."""
     assert _names([p for _lbl, p in _structural_cleanup('probe')]) == CLEANUP_COMPOSITION
 
 
@@ -58,10 +71,23 @@ def test_cleanup_helper_carries_the_owning_stage_label():
     assert [lbl for lbl, _p in _structural_cleanup('probe')] == ['probe'] * len(CLEANUP_COMPOSITION)
 
 
-@pytest.mark.parametrize('name', [SimplifyPass.__name__, ConstantPropagation.__name__])
-def test_cleanup_helper_never_carries_a_whole_pipeline_pass(name):
-    """Neither is neutral, so neither may run at a dozen sites."""
-    assert name not in _names([p for _lbl, p in _structural_cleanup('probe')])
+def test_cleanup_helper_never_carries_a_whole_pipeline_pass():
+    """``SimplifyPass`` is a pipeline, not a tidy-up, and running one at a dozen sites hides which
+    stage actually changed the graph.
+
+    ``ConstantPropagation`` is the deliberate exception and is asserted as a MEMBER below: it is
+    there to re-fold the chains a dedup exposes, in the symbol phase, and only its own targeted
+    rewrite runs."""
+    assert SimplifyPass.__name__ not in _names([p for _lbl, p in _structural_cleanup('probe')])
+
+
+def test_symbol_phase_leads_the_helper_in_its_measured_order():
+    """Order is the claim, not membership: propagation and folding rewrite the assignments the
+    first dedup merged, which is what exposes the equal-RHS pairs the closing dedup merges, and the
+    closing dedup runs AFTER the prune because the prune is itself a merge-minting deletion."""
+    names = _names([p for _lbl, p in _structural_cleanup('probe')])
+    assert names[:len(SYMBOL_PHASE)] == SYMBOL_PHASE
+    assert names[len(SYMBOL_PHASE) - 1] == 'SymbolDedup', 'the closing dedup must follow the prune'
 
 
 @pytest.mark.parametrize('target', ['cpu', 'gpu'])
@@ -95,15 +121,28 @@ def test_every_loop_to_map_reaches_map_fusion_through_an_inline(target):
 
 @pytest.mark.parametrize('target', ['cpu', 'gpu'])
 def test_every_cleanup_past_the_first_loop_to_map_inlines_first(target):
-    """The skew and wavefront matchers read map-body subsets too, not just fusion."""
+    """The skew and wavefront matchers read map-body subsets too, not just fusion.
+
+    Stated against the cleanup BLOCK rather than a fixed lookback window: the inline has to run in
+    the work this cleanup closes, which is everything since the previous cleanup, and a window of
+    n entries silently stops meaning that the moment the helper's own length changes.
+    """
     flat = _flat(target)
     l2m = _indices(flat, LoopToMap.__name__)
     assert l2m, 'LoopToMap left the recipe -- re-home this constraint with it'
     inlines = _indices(flat, InlineSDFG.__name__)
+    dse_offset = CLEANUP_COMPOSITION.index(DeadStateElimination.__name__)
+    previous_block_end = l2m[0]
     for i in _indices(flat, DeadStateElimination.__name__):
         if i < l2m[0]:
+            previous_block_end = i
             continue
-        assert any(i - 6 < j < i for j in inlines), f'cleanup at {flat[i][0]}:{i} runs with no preceding inline'
+        block_start = i - dse_offset
+        assert flat[block_start][1] == CLEANUP_COMPOSITION[0], \
+            f'the cleanup ending at {flat[i][0]}:{i} is not the shared helper: {flat[block_start]}'
+        assert any(previous_block_end < j < block_start for j in inlines), \
+            f'cleanup at {flat[i][0]}:{i} closes work that was never inlined'
+        previous_block_end = i
 
 
 @pytest.mark.parametrize('target', ['cpu', 'gpu'])

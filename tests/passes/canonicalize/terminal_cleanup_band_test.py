@@ -44,7 +44,10 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplify import SimplifyPass
 
 LEN_1D = dace.symbol('LEN_1D')
@@ -98,12 +101,9 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
     return unit._pass_names == {DeadDataflowElimination.__name__, ArrayElimination.__name__}
 
 
-#: The terminal band, in order: the reclaimers, then the inline that leads every cleanup site, then
-#: the four units of :func:`_structural_cleanup`. Spelled out so the A/B below cannot silently start
-#: skipping the wrong passes if the band is reordered.
-_TERMINAL_BAND = ('FixedPointPipeline', 'PatternMatchAndApplyRepeated', 'PatternMatchAndApplyRepeated',
-                  'EmptyStateElimination', 'DeadStateElimination', 'RedundantOrderingEdgeElimination',
-                  'PruneEmptyConditionalBranches')
+#: Unit types of :func:`_structural_cleanup`, taken from the helper itself rather than transcribed:
+#: the A/B below has to skip exactly the cleanup, and a transcribed list goes stale silently.
+_CLEANUP_TYPES = frozenset(type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe'))
 
 
 def _band_start() -> int:
@@ -111,6 +111,42 @@ def _band_start() -> int:
     at = [i for i, (_lbl, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
     assert len(at) == 1, f'expected exactly one reclaim stage, found {at}'
     return at[0]
+
+
+def _leads_a_cleanup(unit) -> bool:
+    """Whether ``unit`` is the ``PruneConnectors`` + ``InlineSDFG`` fixpoint that leads a cleanup
+    site (an un-inlined body hides its per-element memlets behind a whole-array boundary memlet, so
+    the cleanup would read the wrong shape)."""
+    return (isinstance(unit, PatternMatchAndApplyRepeated)
+            and any(isinstance(t, InlineSDFG) for t in unit.transformations))
+
+
+def _cleanup_slots() -> List[int]:
+    """Recipe indices of the terminal cleanup: the structural-cleanup helper, the inline that leads
+    it, and the empty-arm prune.
+
+    Selected by ROLE, not as a slice after the reclaimers. The terminal optimization tail --
+    ``LoopToMap``, the fusions, ``RedundantArray``, remat -- now sits between the reclaimers and the
+    cleanup they precede, so a fixed-width window would skip that tail instead and the A/B would be
+    measuring something else entirely while still passing.
+    """
+    stages = canon_pipeline._build_stages()
+    start = _band_start()
+    names = [type(p).__name__ for _lbl, p in stages]
+    want = [type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe')]
+    # The FIRST full occurrence of the helper after the reclaimers -- matched as a run, not by
+    # membership: the recipe's tail holds further symbol passes of the same types, and picking
+    # those up would make the A/B skip work that is not cleanup at all.
+    at = [i for i in range(start + 1, len(names) - len(want) + 1) if names[i:i + len(want)] == want]
+    assert at, 'no structural cleanup after the reclaimers -- re-home this A/B with it'
+    helper = list(range(at[0], at[0] + len(want)))
+    slots = set(helper)
+    slots.update(i for i, (_lbl, p) in enumerate(stages)
+                 if start < i <= helper[-1] and isinstance(p, PruneEmptyConditionalBranches))
+    leading = [i for i, (_lbl, p) in enumerate(stages) if start < i < helper[0] and _leads_a_cleanup(p)]
+    assert leading, 'the terminal cleanup is no longer led by an inline'
+    slots.add(leading[-1])
+    return sorted(slots)
 
 
 def _canonicalize(sdfg: dace.SDFG,
@@ -123,7 +159,7 @@ def _canonicalize(sdfg: dace.SDFG,
     terminal ``OptionalArrayInference``, which sits later, beside the symbol cleanups."""
     canon_pipeline.disable_openmp_sections(sdfg)
     start = _band_start()
-    cleanup_slots = range(start + 1, start + len(_TERMINAL_BAND))
+    cleanup_slots = _cleanup_slots()
     for index, (_label, unit) in enumerate(canon_pipeline._build_stages()):
         if not with_reclaim and index == start:
             continue
@@ -172,9 +208,16 @@ def test_the_terminal_band_is_wired_in_once_and_holds_no_simplify():
     assert simplifies == ['clean', 'reduce', 'reduce'], simplifies
 
     start = _band_start()
-    band = [type(unit).__name__ for _label, unit in stages[start:start + len(_TERMINAL_BAND)]]
-    assert tuple(band) == _TERMINAL_BAND, band
-    assert all(label == 'end' for label, _unit in stages[start:start + len(_TERMINAL_BAND)])
+    slots = _cleanup_slots()
+    assert all(stages[i][0] == 'end' for i in slots), [stages[i][0] for i in slots]
+    assert stages[start][0] == 'end', stages[start][0]
+    # Nothing from the reclaimers onward may re-introduce a whole pipeline: the band exists
+    # precisely because the recipe used to end with one.
+    after = [type(p).__name__ for _lbl, unit in stages[start:] for p in _units_of(unit) if isinstance(p, SimplifyPass)]
+    assert not after, after
+    want = [type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe')]
+    run = [type(stages[i][1]).__name__ for i in slots if type(stages[i][1]).__name__ in _CLEANUP_TYPES]
+    assert run == want, run
 
 
 def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
