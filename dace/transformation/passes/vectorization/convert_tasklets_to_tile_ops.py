@@ -423,9 +423,28 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             existing_edge = existing[0]
             combined = self._and_mask_tiles(inner_state, existing_edge.src, mask_an)
             inner_state.remove_edge(existing_edge)
+            self._lock_mask_storage(inner_state.sdfg, combined.data)
             inner_state.add_edge(combined, None, lib_node, "_mask", dace.Memlet(f"{combined.data}[{subset}]"))
             return
+        self._lock_mask_storage(inner_state.sdfg, mask_an.data)
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
+
+    def _lock_mask_storage(self, sdfg: SDFG, name: str) -> None:
+        """Give a mask tile the ``Register`` storage the section 10.2 descriptor lock demands.
+
+        The container wired to a ``_mask`` connector is not always one this pass minted: a
+        ``MapFusionVertical`` carrier reaches a ``TileStore``'s mask on npbench ``mandelbrot1``,
+        and a carrier is created with ``Default`` storage, which infers to ``CPU_Heap`` at the top
+        level of a state. The lock is the consumer's requirement, so it is established where the
+        edge is made rather than hoped for. A tile-shaped transient bool array is a mask by
+        construction, and ``Register`` is what every mask this pass mints already carries.
+        """
+        desc = sdfg.arrays.get(name)
+        if not isinstance(desc, dace.data.Array) or not desc.transient:
+            return
+        if desc.dtype != dace.bool_ or tuple(desc.shape) != tuple(self.widths):
+            return
+        desc.storage = dace.dtypes.StorageType.Register
 
     def _and_mask_tiles(self, inner_state: SDFGState, an_a, an_b):
         """Mint a bool tile ``= an_a && an_b`` via :class:`TileBinop`, return its output
@@ -1485,8 +1504,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == broadcast_name),
                             None)
             cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
+            self._lock_mask_storage(inner_state.sdfg, broadcast_name)
             inner_state.add_edge(cond_an, None, ite, "_mask", dace.Memlet(f"{broadcast_name}[{subset}]"))
         else:
+            if cond_edge.data is not None and cond_edge.data.data:
+                self._lock_mask_storage(inner_state.sdfg, cond_edge.data.data)
             inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
                                  dace.Memlet.from_memlet(cond_edge.data))
         # Wire the materialised arms (an inline Symbol arm carries no connector).
