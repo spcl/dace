@@ -1663,6 +1663,29 @@ class CPUCodeGen(TargetCodeGenerator):
                                               uconn,
                                               codegen=self,
                                               conntype=node.out_connectors[uconn]))
+
+        # A transient of the nested SDFG whose allocation the frame placed in an ancestor scope --
+        # one with scope lifetime that cannot live in a register, say -- is out of reach by name from
+        # the function generated for the nested SDFG, so it is passed in like any other argument.
+        # ``ptr`` gives it the same unambiguous name on both sides. When the nested SDFG is generated
+        # inline the name is in scope already and nothing has to be passed.
+        for aname, adesc in node.sdfg.arrays.items():
+            if not adesc.transient or adesc.lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                         dtypes.AllocationLifetime.External):
+                continue
+            allocated_in = self._frame.where_allocated.get((node.sdfg, aname))
+            if allocated_in is None or allocated_in is node.sdfg:
+                continue
+            ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
+            if self._dispatcher.defined_vars.has(ptrname):
+                continue
+            try:  # The allocation defined it in the scope the frame chose for it
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
+            except KeyError:
+                continue
+            self._dispatcher.defined_vars.add(ptrname, defined_type, ctype, allow_shadowing=True)
+            memlet_references.append((ctype, ptrname, ptrname))
+
         return memlet_references
 
     def _generate_NestedSDFG(
