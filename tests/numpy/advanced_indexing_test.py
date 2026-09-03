@@ -5,6 +5,7 @@ https://numpy.org/devdocs/reference/arrays.indexing.html
 """
 import ast
 import dace
+from dace import graphlib as nx
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg import nodes as dace_nodes
 import numpy as np
@@ -918,6 +919,44 @@ def test_index_array_followed_by_integer_index_write_is_allowed():
     assert np.allclose(out, reference)
 
 
+def test_gather_evaluated_before_its_destination_is_cleared():
+    """A gather bound to a name BEFORE the buffer it lands in is overwritten wholesale.
+
+    ``RedundantArray`` folds the copy away, so the gather's map writes ``out`` itself. The ordering
+    (empty) edge guarding that write-after-write used to be re-attached to the destination access
+    node, which orders the node but not the map filling it -- the clear was then free to be emitted
+    after the gather and zero every gathered value.
+    """
+
+    @dace.program
+    def indexing_test(src: dace.float64[4], idx: dace.int64[12], out: dace.float64[12]):
+        gathered = src[idx]
+        out[:] = 0.0
+        out[:] = gathered
+
+    src = np.arange(4, dtype=np.float64)
+    idx = np.repeat(np.arange(4, dtype=np.int64), 3)
+    expected = src[idx]
+
+    sdfg = indexing_test.to_sdfg(simplify=True)
+    for state in sdfg.all_states():
+        producers = [
+            state.entry_node(edge.src) or edge.src for node in state.data_nodes()
+            if node.data == 'out' and state.entry_node(node) is None for edge in state.in_edges(node)
+            if not edge.data.is_empty()
+        ]
+        for first in producers:
+            for second in producers:
+                if first is second:
+                    continue
+                ordered = nx.has_path(state.nx, first, second) or nx.has_path(state.nx, second, first)
+                assert ordered, f'unordered overwrite of "out" in state {state.label}'
+
+    out = np.full((12, ), -1.0)
+    sdfg(src=src, idx=idx, out=out)
+    assert np.allclose(out, expected)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -971,3 +1010,4 @@ if __name__ == '__main__':
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
     test_index_array_with_integer_index_write_is_refused()
     test_index_array_followed_by_integer_index_write_is_allowed()
+    test_gather_evaluated_before_its_destination_is_cleared()

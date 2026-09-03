@@ -813,7 +813,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 wcr_nonatomic = e1.data.wcr_nonatomic
                 for e3 in path:
                     if e3.data.is_empty():
-                        continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
+                        continue  # ordering edge: no subsets to rewrite
                     # 2-a. Extract subsets for array B and others
                     other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                     # 2-b. Modify memlet to match array B.
@@ -831,14 +831,33 @@ class RedundantArray(pm.SingleStateTransformation):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
+        # An ordering (empty) in-edge guards the WRITE of in_array, and that write becomes a write
+        # of out_array by in_array's own producers below. Re-attached to out_array it would order
+        # the access node alone and leave the producing scope free to run first -- a silent
+        # write-after-write inversion. The producers are what it has to order.
+        write_guards = []
+        for e in graph.in_edges(in_array):
+            if e.data.is_empty():
+                continue
+            guard = graph.entry_node(e.src) or e.src
+            if guard not in write_guards:
+                write_guards.append(guard)
+
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
+            if e2.data.is_empty():
+                guards = [g for g in write_guards if g is not e2.src and not nx.has_path(graph.nx, g, e2.src)]
+                if guards:
+                    graph.remove_edge(e2)
+                    for guard in guards:
+                        graph.add_nedge(e2.src, guard, mm.Memlet())
+                    continue
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 if e3.data.is_empty():
-                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
+                    continue  # ordering edge: no subsets to rewrite
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
