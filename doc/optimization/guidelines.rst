@@ -46,7 +46,7 @@ order of operations is:
    and :class:`~dace.transformation.dataflow.map_collapse.MapCollapse` to
    produce maximally-parallel loop nests.
 2. **Specialize** the schedule to the target platform - use transformations
-   such as :class:`~dace.transformation.interstate.gpu_transform_sdfg.GPUTransformSDFG`
+   such as :class:`~dace.transformation.passes.offloading.OffloadToAccelerator`
    or choose a schedule manually (:attr:`~dace.dtypes.ScheduleType.GPU_Device` /
    :attr:`~dace.dtypes.ScheduleType.GPU_ThreadBlock` schedules for CUDA,
    :attr:`~dace.dtypes.ScheduleType.CPU_Multicore` for OpenMP, etc.)

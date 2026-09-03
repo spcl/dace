@@ -3043,37 +3043,12 @@ class SDFG(ControlFlowRegion):
                                   host_data=None):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
-
-            :param sequential_innermaps: Make all internal maps Sequential.
-            :param register_transients: Make all transients inside GPU maps registers.
-            :note: It is recommended to apply redundant array removal
-                   transformation after this transformation. Alternatively,
-                   you can ``simplify()`` after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
-        # Avoiding import loops
-        from dace.transformation.interstate import GPUTransformSDFG
-
-        if dace.config.Config.get_bool("optimizer", "new_gpu_offloading_pass"):
-            from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
-            assert host_maps is None or host_maps == set()
-            #print("NEW PASS")
-            OtA().apply_pass(self, {})
-            #self.sdfg.view()
+        from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator # Avoiding import loops
+        assert host_maps is None or host_maps == set()
+        OffloadToAccelerator().apply_pass(self, {})
         
-        else:
-            #print("OLD PASS")
-            self.apply_transformations(GPUTransformSDFG,
-                                   options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients,
-                                                simplify=simplify,
-                                                host_maps=host_maps,
-                                                host_data=host_data),
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   permissive=permissive,
-                                   states=states)
-
     def expand_library_nodes(self, recursive=True):
         """
         Recursively expand all unexpanded library nodes in the SDFG,

@@ -7,7 +7,7 @@ Submodules
 dace.transformation.interstate.gpu\_transform\_sdfg module
 ----------------------------------------------------------
 
-.. automodule:: dace.transformation.interstate.gpu_transform_sdfg
+.. automodule:: dace.transformation.passes.offloading.OffloadToAccelerator
    :members:
    :undoc-members:
    :show-inheritance:

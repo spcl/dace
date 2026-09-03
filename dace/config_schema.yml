@@ -103,11 +103,6 @@ required:
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
 
-            new_gpu_offloading_pass:
-                type: bool
-                default: false
-                title: "Use new GPU offloading transformation"
-                description: "Use new GPU offloading transformation"
     compiler:
         type: dict
         title: Compiler

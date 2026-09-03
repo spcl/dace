@@ -19,10 +19,10 @@ To utilize GPUs, DaCe provides two basic elements:
     * Map schedules for running GPU kernels: :class:`~dace.dtypes.ScheduleType.GPU_Device` for a GPU kernel (grid) map,
       and :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock` for a map of threads in a single thread-block.
 
-The :class:`~dace.transformation.interstate.gpu_transform_sdfg.GPUTransformSDFG` transformation takes an existing SDFG
+The :class:`~dace.transformation.passes.offloading.OffloadToAccelerator.OffloadToAccelerator` transformation takes an existing SDFG
 and transforms it into a GPU program. Call it on an SDFG with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`.
 The transformation will automatically detect GPU kernels and thread-blocks, and will make copies for all the relevant
-sub-arrays used to the GPU.
+arrays used to the GPU.
 
 **Threads**: Each Map scope that has a ``GPU_Device`` schedule will create a GPU kernel call. The number of blocks,
 and threads in each block, are determined by the Map's parameters. The number of elements in a ``GPU_Device`` map will
