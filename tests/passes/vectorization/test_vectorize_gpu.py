@@ -12,6 +12,7 @@ native ``f16x2`` SIMD in the PTX.
 import os
 import shutil
 
+import numpy as np
 import pytest
 
 import dace
@@ -67,6 +68,11 @@ def _heat3d16(A: dace.float16[N, N, N], B: dace.float16[N, N, N]):
             A[i, j, k] = dace.float16(0.125) * (B[i + 1, j, k] - dace.float16(2.0) * B[i, j, k] + B[i - 1, j, k]) \
                 + dace.float16(0.125) * (B[i, j + 1, k] - dace.float16(2.0) * B[i, j, k] + B[i, j - 1, k]) \
                 + dace.float16(0.125) * (B[i, j, k + 1] - dace.float16(2.0) * B[i, j, k] + B[i, j, k - 1]) + B[i, j, k]
+
+
+@dace.program
+def where_bf16(x: dace.bfloat16[N], y: dace.bfloat16[N]):
+    y[:] = np.where(x > 0, dace.bfloat16(0.0), x)
 
 
 def _prep(prog):
@@ -135,6 +141,22 @@ def test_scalar_cast_constant_broadcasts():
     if _HAS_NVCC:
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         sdfg.compile()
+
+
+def test_a_narrow_float_outside_numpy_s_hierarchy_still_vectorizes():
+    """``bfloat16`` is an ml_dtypes scalar, not an ``np.floating`` subtype, so the tile nodes'
+    promotion check read it as neither integer nor float and refused every conversion off it --
+    including the ``-> bool`` a comparison's result IS. ``np.where(x > 0, ...)`` on a bfloat16
+    array therefore died in validation, on the same path fp16 takes without complaint."""
+    sdfg = _prep(where_bf16)
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    assert [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_NODE_TYPES)], \
+        "the bfloat16 comparison did not reach the tile path at all"
+    sdfg.expand_library_nodes()
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
+    assert "dace::tileops::tile_load<dace::bfloat16, 2" in cu
+    assert "dace::bfloat16" in cu and "dace::float16" not in cu, \
+        "the bfloat16 tile must not be lowered through the float16 type"
 
 
 def test_gpu_half2_emits_tile_ops_in_device_tu():

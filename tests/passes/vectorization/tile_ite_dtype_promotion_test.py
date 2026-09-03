@@ -85,8 +85,39 @@ def test_tile_ite_symbol_arm_stays_exempt():
     ite.validate(sdfg, state)  # must not raise
 
 
+def test_tile_ite_treats_a_narrow_float_as_a_float():
+    """``bfloat16`` and the two fp8 types are ml_dtypes scalars, and ``np.issubdtype(bfloat16,
+    np.floating)`` is False, so the promotion rule read them as neither integer nor float and
+    refused EVERY conversion off them -- a widening bfloat16 -> float32 included."""
+    sdfg, state, ite = _build_sdfg("Tile", dace.bfloat16, dace.bfloat16, dace.float32)
+    ite.validate(sdfg, state)  # must not raise
+
+
+def test_tile_ite_takes_a_narrow_float_to_bool():
+    """The shape the GPU vectorizer actually emits: a comparison over a bfloat16 array answers
+    into a bool tile, which is a numeric -> bool truthiness cast and not a narrowing."""
+    sdfg, state, ite = _build_sdfg("Tile", dace.bfloat16, dace.bfloat16, dace.bool_)
+    ite.validate(sdfg, state)  # must not raise
+
+
+def test_tile_ite_rejects_a_same_width_float_swap():
+    """``float16`` -> ``bfloat16`` is two bytes either way, but they spend those bytes
+    differently -- neither direction round-trips -- so a width comparison alone must not admit
+    it. Only a STRICTLY wider float, or the same dtype, is a promotion."""
+    sdfg, state, ite = _build_sdfg("Tile", dace.float16, dace.bfloat16, dace.bfloat16)
+    try:
+        ite.validate(sdfg, state)
+    except NotImplementedError as ex:
+        assert "narrowing" in str(ex)
+        return
+    raise AssertionError("float16 -> bfloat16 Tile arm did not raise")
+
+
 if __name__ == "__main__":
     test_tile_ite_allows_widening_tile_arm()
     test_tile_ite_still_rejects_narrowing_tile_arm()
     test_tile_ite_symbol_arm_stays_exempt()
+    test_tile_ite_treats_a_narrow_float_as_a_float()
+    test_tile_ite_takes_a_narrow_float_to_bool()
+    test_tile_ite_rejects_a_same_width_float_swap()
     print("all tile_ite dtype promotion tests passed")

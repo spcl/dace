@@ -76,6 +76,20 @@ def scalar_operand_ref(desc, conn: str, widths, off: str) -> Tuple[str, bool]:
     return conn, True
 
 
+def is_floating_dtype(dtype: dace.dtypes.typeclass) -> bool:
+    """Whether ``dtype`` is a floating type, the ml_dtypes-backed narrow ones included.
+
+    ``np.issubdtype(ml_dtypes.bfloat16, np.floating)`` is False -- ml_dtypes registers its scalars
+    outside numpy's float hierarchy -- so a bare numpy test reads ``bfloat16`` and the two fp8 types
+    as neither integer nor float, and :func:`_promotion_ok` then refuses EVERY promotion off them,
+    a comparison's ``-> bool`` included.
+
+    :param dtype: The dtype to classify.
+    :returns: ``True`` iff ``dtype`` holds floating-point values.
+    """
+    return dtype in dace.dtypes.FLOAT_TYPES or np.issubdtype(dtype.type, np.floating)
+
+
 def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
     """Whether a Tile operand of dtype ``src`` may be promoted to the output
     dtype ``dst`` before the op (a widening conversion).
@@ -96,15 +110,18 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
         return True
     s_int = np.issubdtype(src.type, np.integer)
     d_int = np.issubdtype(dst.type, np.integer)
-    s_flt = np.issubdtype(src.type, np.floating)
-    d_flt = np.issubdtype(dst.type, np.floating)
+    s_flt = is_floating_dtype(src)
+    d_flt = is_floating_dtype(dst)
     s_bool = (src.type is np.bool_)
     d_bool = (dst.type is np.bool_)
     if s_int and d_flt:  # int -> float / double
         return True
     if s_int and d_int and dst.bytes >= src.bytes:  # integer widening
         return True
-    if s_flt and d_flt and dst.bytes >= src.bytes:  # float -> double
+    # Strictly wider, not wider-or-equal: two DISTINCT floats of the same width -- float16
+    # against bfloat16, or the two fp8 encodings -- trade mantissa for exponent, so neither
+    # direction round-trips. The equal case that is safe is the same dtype, returned above.
+    if s_flt and d_flt and dst.bytes > src.bytes:  # float -> double
         return True
     if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
         return True

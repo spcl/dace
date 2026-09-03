@@ -14,8 +14,6 @@ over the flattened tile (correctness-only); the K=1 ISA backends call
 """
 from typing import Optional, Tuple
 
-import numpy as np
-
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
@@ -24,6 +22,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
+from .tile_binop import _promotion_ok
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
@@ -86,37 +85,6 @@ _CUTE_UNOP_EXPR = {
 # ``_typecast_func_to_cpp``) -- the sanctioned convert form, not a raw C cast. Built
 # from the dtype registry so dtype names are never hardcoded.
 _CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
-
-
-def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
-    """Whether a Tile operand of dtype ``src`` may be promoted to the output
-    dtype ``dst`` (a widening conversion) before the op.
-
-    Same rule as :func:`dace.libraries.tileops.nodes.tile_binop._promotion_ok`:
-    int -> float/double, int -> wider int, float -> double, or equal; a
-    narrowing conversion raises.
-
-    :param src: The operand's element dtype.
-    :param dst: The output element dtype.
-    :returns: ``True`` iff promoting ``src`` to ``dst`` is non-narrowing.
-    """
-    if src == dst:
-        return True
-    s_int = np.issubdtype(src.type, np.integer)
-    d_int = np.issubdtype(dst.type, np.integer)
-    s_flt = np.issubdtype(src.type, np.floating)
-    d_flt = np.issubdtype(dst.type, np.floating)
-    s_bool = (src.type is np.bool_)
-    d_bool = (dst.type is np.bool_)
-    if s_int and d_flt:
-        return True
-    if s_int and d_int and dst.bytes >= src.bytes:
-        return True
-    if s_flt and d_flt and dst.bytes >= src.bytes:
-        return True
-    if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
-        return True
-    return False
 
 
 @library.expansion

@@ -11,6 +11,7 @@ import itertools
 from numbers import Number, Integral
 from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
 
+import ml_dtypes
 import numpy as np
 import sympy as sp
 
@@ -229,7 +230,10 @@ def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype_class).resolution)
+        # ml_dtypes' finfo, not numpy's: bfloat16 and the two fp8 types are registered
+        # outside numpy's float hierarchy, so np.finfo raises "not inexact" on them. It
+        # answers for every numpy float and complex type identically.
+        return nptype(ml_dtypes.finfo(nptype_class).resolution)
 
 
 def np_result_type(nptypes):
