@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from dace import SDFG, SDFGState, data, properties
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.validation import InvalidSDFGNodeError
@@ -70,6 +71,34 @@ def _is_war_carrier(state: SDFGState, data_name: str) -> bool:
     has_read_only = any(state.in_degree(n) == 0 and state.out_degree(n) > 0 for n in anodes)
     has_write_only = any(state.in_degree(n) > 0 and state.out_degree(n) == 0 for n in anodes)
     return has_read_only and has_write_only
+
+
+def _view_fold_breaks_anti_dependence(state: SDFGState, view: nodes.AccessNode) -> bool:
+    """True iff folding ``view`` into the container it views would reorder a read past a write.
+
+    ``RemoveSliceView`` detaches a view's data edges and re-attaches them to the node it views,
+    where they land AFTER whatever that node already carries -- in particular after an empty
+    ordering edge that fences a store into the same container. Codegen walks a state in
+    depth-first topological order, so the re-appended read chain gets emitted behind the store it
+    used to precede, and a write-after-read silently becomes a read-after-write.
+
+    Refuse when both halves of that hazard are present: the view chain is fenced by an ordering
+    edge leaving it, and the container at its root is a WAR carrier in this state (read through a
+    read-only source AccessNode AND written through a write-only sink AccessNode). Reduced from
+    HPCAgent-Bench ``daubechies_dwt2d``:
+    ``block = out[:]; out[:, 0:4] = 2*block[:, 0::2] + 3*block[:, 1::2]``.
+    """
+    if not isinstance(state.sdfg.arrays.get(view.data), data.View):
+        return False
+    chain = sdutil.get_all_view_nodes(state, view)
+    if not chain:
+        return False
+    inside = OrderedSet(chain)
+    fenced = any(e.data.is_empty() and (e.src not in inside or e.dst not in inside) for n in chain
+                 for e in state.all_edges(n))
+    if not fenced:
+        return False
+    return _is_war_carrier(state, chain[-1].data)
 
 
 @properties.make_properties
@@ -283,6 +312,8 @@ class ArrayElimination(ppl.Pass):
 
         for nodeset in access_nodes.values():
             for anode in list(nodeset):
+                if _view_fold_breaks_anti_dependence(state, anode):
+                    continue
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
