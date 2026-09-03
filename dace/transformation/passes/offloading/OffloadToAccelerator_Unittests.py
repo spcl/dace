@@ -638,40 +638,8 @@ def test_single_element_copy():
         new_out,
     )
 
-
-
 if __name__ == "__main__":
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"]) # @pytest.mark.current 
     pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
 
-
-    """
-    import importlib
-    import sys
-    from pathlib import Path
-
-    workspace_root = Path(__file__).resolve().parents[6]
-    npbench_repo_root = workspace_root / "npbench"
-    if str(npbench_repo_root) not in sys.path:
-        sys.path.insert(0, str(npbench_repo_root))
-
-    module = importlib.import_module("npbench.benchmarks.scattering_self_energies.scattering_self_energies_dace")#"npbench.benchmarks.polybench.symm.symm_dace")
-    sdfg = module.scattering_self_energies.to_sdfg()
-    
-    sdfg = copy_image()
-    OtA().apply_pass(sdfg, {})
-    sdfg.view()
-
-    OtA().apply_pass(sdfg, {})
-    sdfg.view()
-    
-    
-    sdfg.view()
-    sdfg.validate()
-    print("is valid")
-    OtA().apply_pass(sdfg, {})
-    print("done")
-    sdfg.validate()
-    print("offl is valid")
-    sdfg.view()
-    """
+  
