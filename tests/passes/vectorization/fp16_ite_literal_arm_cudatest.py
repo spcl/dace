@@ -36,6 +36,10 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 _HAS_NVCC = shutil.which("nvcc") is not None
 
+#: Every test here is about float16, so the whole module carries the marker the fp16 CI leg
+#: selects on.
+pytestmark = pytest.mark.fp16
+
 N = dace.symbol("N")
 
 

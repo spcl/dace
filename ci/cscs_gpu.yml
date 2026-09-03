@@ -94,6 +94,39 @@ test_cscs_gh200_experimental:
     DACE_compiler_cuda_implementation: experimental
     DACE_compiler_cpu_implementation: experimental_readable
 
+# Half precision, on its own leg. Every test here also runs inside the two codegen jobs above --
+# this one exists for the SIGNAL: an fp16 bug is a silent narrowing far more often than a crash
+# (``__half`` offers a dozen implicit conversions, so a mistyped operand compiles and rounds), and
+# a red that names fp16 is worth more than the same red buried in a 30-minute full-GPU run. It is
+# also fast, a couple of dozen tests, so it reports long before the full legs do.
+test_cscs_gh200_fp16:
+  stage: test
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
+  variables:
+    SLURM_GPUS_PER_NODE: 1
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_TIMELIMIT: 20
+    DACE_compiler_cuda_cuda_arch: '90'
+    # The pair that ships: an experimental GPU kernel is emitted into an experimental CPU frame.
+    DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
+  needs:
+    - build_cscs_gh200
+  interruptible: true
+  script:
+    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install --group testing .
+    - export DACE_cache=unique
+    - export PYTHONHASHSEED=0
+    # Serial: the fp16 numeric bodies re-enter this file in a fresh interpreter to keep a device
+    # fault out of the parent, and several of those at once would share one GPU with the workers.
+    - pytest --tb=short --timeout_method thread --timeout=600 -m "fp16 and not mpi"
+
 # HPCAgent-Bench numerical correctness on the canonicalize-then-offload GPU path. The corpus lives
 # in a separate PUBLIC repo, so it is cloned here rather than vendored; the kernels are numpy and
 # the harness compares every output against the numpy reference it computes itself.
