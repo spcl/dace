@@ -148,7 +148,9 @@ class MoveArrayOutOfKernel(Pass):
         new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
         array_desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
 
-        self.update_memlets(kernel_entry, array_name, closest_an, access_nodes)
+        # Only this SDFG's descriptor gained the leading dimensions, so only its memlets may be
+        # prefixed -- see ``update_memlets``.
+        self.update_memlets(kernel_entry, array_name, closest_an, access_nodes, {parent_state.sdfg})
 
         # Add edges to move the AccessNode out of the map
         in_connector: str = 'IN_' + array_name
@@ -208,16 +210,10 @@ class MoveArrayOutOfKernel(Pass):
                                  offset=new_offsets)
             array_desc.transient = False
 
-            self.update_memlets(kernel_entry, original_array_name, nsdfg_node, access_nodes)
-
-            # Rename on descriptor-name conflict
-            required, array_name = self.new_name_required(kernel_entry, original_array_name, sdfg_defined)
-            if required:
-                self.replace_array_name(sdfg_defined, original_array_name, array_name, array_desc)
-
-            self.update_symbols(map_entry_chain, kernel_parent_sdfg)
-
-            # Collect all SDFGs from the outermost definition to the target map's parent (inclusive)
+            # Collect all SDFGs from the outermost definition to the target map's parent (inclusive).
+            # ``lift_array_through_nested_sdfgs`` gives each of them a copy of the reshaped
+            # descriptor, so these -- and only these -- are the levels whose memlets carry the
+            # leading per-iteration indices.
             sdfg_hierarchy: List[SDFG] = [outermost_sdfg]
             current_sdfg = outermost_sdfg
             while current_sdfg != kernel_parent_sdfg:
@@ -232,6 +228,15 @@ class MoveArrayOutOfKernel(Pass):
                                  f"Expected at least two levels, since {outermost_sdfg} is not equal to "
                                  "the kernel map's SDFG and is contained within it -- the last entry should "
                                  "be the kernel's parent SDFG.")
+
+            self.update_memlets(kernel_entry, original_array_name, nsdfg_node, access_nodes, set(sdfg_hierarchy))
+
+            # Rename on descriptor-name conflict
+            required, array_name = self.new_name_required(kernel_entry, original_array_name, sdfg_defined)
+            if required:
+                self.replace_array_name(sdfg_defined, original_array_name, array_name, array_desc)
+
+            self.update_symbols(map_entry_chain, kernel_parent_sdfg)
 
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy)
             lifted += 1
@@ -354,7 +359,7 @@ class MoveArrayOutOfKernel(Pass):
         return subset
 
     def update_memlets(self, kernel_entry: nodes.MapEntry, array_name: str, outermost_node: nodes.Node,
-                       access_nodes: Set[nodes.AccessNode]):
+                       access_nodes: Set[nodes.AccessNode], reshaped_sdfgs: Set[SDFG]):
         """Rewrite every memlet of a transient array for correct data movement
         after lifting it out of the kernel.
 
@@ -363,6 +368,12 @@ class MoveArrayOutOfKernel(Pass):
         dimensions to prepend to each subset.
 
         :param access_nodes: AccessNodes inside the kernel referencing the array.
+        :param reshaped_sdfgs: The SDFGs whose descriptor for ``array_name`` gained the leading
+            per-iteration dimensions. Only their memlets may be prefixed: a descendant nested SDFG
+            reached through a connector keeps its own descriptor at the original rank, and its
+            in/out connector memlet -- which lives one level up, inside ``reshaped_sdfgs`` -- is
+            what selects the slice for it. Prefixing there too left a rank-3 memlet on a rank-2
+            descriptor, which validation rejects (``Memlet subset does not match node dimension``).
         """
         map_entry_chain, _ = self.get_maps_between(kernel_entry, outermost_node)
         params_as_ranges = self.get_memlet_subset(map_entry_chain, outermost_node)
@@ -374,6 +385,8 @@ class MoveArrayOutOfKernel(Pass):
         visited: Set[MultiConnectorEdge[Memlet]] = set()
         for access_node in access_nodes:
             state = self._node_to_state_cache[access_node]
+            if state.sdfg not in reshaped_sdfgs:
+                continue
             incoming = [(edge, True) for edge in state.edge_bfs(access_node, reverse=True)]
             outgoing = [(edge, False) for edge in state.edge_bfs(access_node)]
             for edge, is_incoming in incoming + outgoing:
@@ -548,9 +561,6 @@ class MoveArrayOutOfKernel(Pass):
             if sdfg in visited_sdfgs:
                 continue
 
-            # Any one descriptor copy suffices -- we only read metadata from it.
-            array_desc = access_node.desc(state)
-
             # Collect all SDFGs and access nodes referring to the same array,
             # determined by whether the array name is passed via connectors.
             sdfg_set: Set[SDFG] = set()
@@ -576,8 +586,18 @@ class MoveArrayOutOfKernel(Pass):
                 else:
                     break
 
-            # Get all child SDFGs where the array was also passed to
-            queue = [sdfg]
+            # The descriptor the lift reshapes and hoists is the one at the OUTERMOST definition,
+            # never a descendant's copy of it: only that one is the transient being allocated, and
+            # marking a descendant's copy instead leaves the definition transient behind a
+            # connector, which validation rejects.
+            array_desc = outermost_sdfg.arrays[array_name]
+
+            # Get all child SDFGs where the array was also passed to. The walk starts at the
+            # OUTERMOST definition, not at the SDFG this access node happens to sit in: two
+            # siblings that both receive the array from one definition are one logical array, and
+            # starting lower reaches only the sibling whose access node came first in traversal
+            # order. The other one then formed a second group and lifted the same descriptor twice.
+            queue = [outermost_sdfg]
             while queue:
                 current_sdfg = queue.pop(0)
                 for child_state in current_sdfg.states():
