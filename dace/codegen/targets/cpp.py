@@ -963,7 +963,13 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
         body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-        if (host_node_on_gpu_memory and gpu_stream_conn is not None and '__dace_current_stream' in str(body_str)):
+        # A WHOLE-WORD match: the fused-sync tasklets carry one connector per stream, named
+        # ``__dace_current_stream_<id>``, and a substring test sees the bare symbol inside every one
+        # of them. The rebind then declared ``__dace_current_stream = __dace_current_stream_0`` in a
+        # body that names neither -- its connectors are substituted with the stream array expression
+        # -- and the host TU failed to compile on an undeclared identifier.
+        names_stream_symbol = re.search(r'\b__dace_current_stream\b', str(body_str)) is not None
+        if host_node_on_gpu_memory and gpu_stream_conn is not None and names_stream_symbol:
             if gpu_stream_conn == '__dace_current_stream':
                 # The connector already exposes the symbol; skip the self-referential
                 # rebind that would redeclare it.
