@@ -143,17 +143,46 @@ def test_hoisted_kernel_matches_the_numpy_reference(name):
     assert_matches_reference(kernel, sdfg)
 
 
-def test_s115_snapshot_is_worksharing_rather_than_replicated():
-    """``s115``'s anti-dependence snapshot sits at the state's TOP level, one scalar store per trip.
+def tasklets_outside_the_map(sdfg):
+    """Tasklets sitting beside a map rather than inside it, in every state that has one.
 
-    Left as it is, the hoisted team would run that store on every thread. The pass wraps it in a
-    one-iteration map, so it becomes a second ``omp for`` -- run once, by one thread, with the
-    barrier that the reader on the other side of it needs.
+    Inside a hoisted team such a tasklet runs on EVERY thread. It is the hazard the snapshot
+    wrapping existed to avoid, and it stays checkable however many worksharing loops the state
+    ends up with. States with no map cannot replicate anything and are skipped -- the symbol
+    assumption checks live in one.
     """
-    _kernel, sdfg = finalized('s115_d_single', 'snapshot_s115')
+    loose = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            if not any(isinstance(n, nd.MapEntry) for n in state.nodes()):
+                continue
+            scope = state.scope_dict()
+            loose += [
+                f'{state.label}:{n.label}' for n in state.nodes() if isinstance(n, nd.Tasklet) and scope[n] is None
+            ]
+    return loose
+
+
+def test_s115_keeps_every_store_inside_a_worksharing_map():
+    """``s115`` no longer needs a snapshot beside its sweep, so the team distributes ONE loop.
+
+    It used to be two. The read that looked like a write-after-read has no writer at all, so
+    8d0f36f77 stopped ``break_anti_dependence`` splitting the sweep, and with no separate scalar
+    store there is nothing left to wrap in a one-iteration map. That commit measured the pass's
+    own suite and s115's numerics, not this count, which is how the pin came to disagree.
+
+    Counting to two pinned the workaround rather than the property, so the count is stated as the
+    shape it now has and the HAZARD is asserted directly: nothing may sit beside the map, where a
+    hoisted team would run it per thread. That hazard check and the value check both hold with
+    8d0f36f77 reverted as well -- only the count moved -- and the values are asserted here so a
+    lost store cannot pass as a simplification.
+    """
+    kernel, sdfg = finalized('s115_d_single', 'snapshot_s115')
     team_count, per_trip, worksharing = pragmas(sdfg)
     assert (team_count, per_trip) == (1, 0)
-    assert worksharing == 2, 'the snapshot and the sweep must each be their own omp-for'
+    assert worksharing == 1, 'the sweep no longer carries a snapshot region beside it'
+    assert not tasklets_outside_the_map(sdfg), 'a store beside the map runs on every thread'
+    assert_matches_reference(kernel, sdfg)
 
 
 def test_wavefront_reaching_into_the_neighbouring_band_is_still_correct():
