@@ -139,6 +139,25 @@ def dealias_sdfg_recursive(sdfg: SDFG):
         dealias_sdfg(nsdfg)
 
 
+def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
+    """
+    Says whether a nested SDFG's connector stands for the whole of a container, not a window of it.
+
+    Such a connector shares the container's coordinate system, so when the container is re-based the
+    memlet reaching it has to name the container rather than the part that is touched -- the nested
+    SDFG's own dealiasing reads the new origin off it.
+
+    :param node: The node at the far end of the memlet path.
+    :param connector: The connector the path reaches it through.
+    :param window: The descriptor the container had before it was re-based.
+    :return: True if the connector describes the container as a whole.
+    """
+    if not isinstance(node, nd.NestedSDFG) or connector is None:
+        return False
+    inner = node.sdfg.arrays.get(connector)
+    return inner is not None and inner.is_equivalent(window)
+
+
 def dealias_sdfg(sdfg: SDFG):
     """
     Renames all data containers in an SDFG to match the same data descriptors
@@ -253,6 +272,16 @@ def dealias_sdfg(sdfg: SDFG):
             elif isinstance(parent_arr, data.ContainerView):
                 parent_arr = parent_arr.as_array()
             child_names = inv_replacements[parent_name]
+            # What the connectors described before adopting the parent's descriptor. A nested SDFG
+            # below that is connected to the whole of one of them keeps its coordinates, so it has to
+            # be told where the container now begins rather than where the memlet does.
+            windows = {name: sdfg.arrays[name] for name in child_names}
+            # The container's own extent in the parent's coordinates, which is what such a nested
+            # SDFG's memlet has to name.
+            whole_subsets = {
+                name: unsqueeze_memlet(Memlet.from_array(name, windows[name]), parent_edges[name].data).subset
+                for name in child_names
+            }
             for name in child_names:
                 child_arr = copy.deepcopy(parent_arr)
                 child_arr.transient = False
@@ -304,6 +333,8 @@ def dealias_sdfg(sdfg: SDFG):
                             if str(sym) not in sdfg.symbols:
                                 sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
                                 parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
+                        if _covers_whole(mpath[-1].dst, mpath[-1].dst_conn, windows[src_data]):
+                            new_src_memlet.subset = copy.deepcopy(whole_subsets[src_data])
                         e.data.src_subset = new_src_memlet.subset
                     if new_dst_memlet is not None:
                         new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
@@ -311,6 +342,8 @@ def dealias_sdfg(sdfg: SDFG):
                             if str(sym) not in sdfg.symbols:
                                 sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
                                 parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
+                        if _covers_whole(mpath[0].src, mpath[0].src_conn, windows[dst_data]):
+                            new_dst_memlet.subset = copy.deepcopy(whole_subsets[dst_data])
                         e.data.dst_subset = new_dst_memlet.subset
                     if e.data.data == src_data:
                         e.data.data = new_src_memlet.data
