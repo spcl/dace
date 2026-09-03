@@ -16,7 +16,6 @@ import warnings
 from typing import Tuple
 
 import dace
-from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 
@@ -258,7 +257,7 @@ def make_binop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
             pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {buf}[_ci] = ({out_dtype}){conn}[_ci];")
             return "false", buf
         if kind == _SYMBOL:
-            val = f"({out_dtype})({pyexpr2cpp(expr)})"
+            val = f"({out_dtype})({expr})"
         else:
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
@@ -336,7 +335,7 @@ def make_fma_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
             pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {buf}[_ci] = ({out_dtype}){conn}[_ci];")
             return "false", buf
         if kind == _SYMBOL:
-            val = f"({out_dtype})({pyexpr2cpp(expr)})"
+            val = f"({out_dtype})({expr})"
         else:
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
@@ -472,7 +471,7 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
         if kind == _TILE:
             return "false", conn
         if kind == _SYMBOL:
-            val = f"({out_dtype})({pyexpr2cpp(expr)})"
+            val = f"({out_dtype})({expr})"
         else:  # _SCALAR
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
