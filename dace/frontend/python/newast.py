@@ -6496,6 +6496,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Loop over the advanced indexing expressions again to create the input memlets
         for i, (idxarrname, shape) in advidx_arrays.items():
+            # Set the subset of the input/output array to be the entire array
+            input_subset[i] = ndrange[i]
+
+            # A dimension of extent 1 has a single in-bounds element, so gathering from it is a
+            # broadcast: the memlet pins that element, the connector squeezes the dimension away
+            # (see ConnectorDimensionalityValidator), and the tasklet indexes one dimension fewer.
+            if ndrange[i][0] == ndrange[i][1]:
+                continue
+
             # Remove the original index dimension from index mapping
             del index_mapping[f'__i{i}']
 
@@ -6507,9 +6516,6 @@ class ProgramVisitor(ExtNodeVisitor):
             arr_subset = subsets.Range([(symbolic.symbol(idx.strip()), symbolic.symbol(idx.strip()), 1)
                                         for idx in arr_idx])
             index_memlets.append(Memlet(data=idxarrname, subset=arr_subset))
-
-            # Set the subset of the input/output array to be the entire array
-            input_subset[i] = ndrange[i]
 
         # Replace the advanced indexing dimensions with the broadcasted shape
         output_shape = output_shape[:dim_position] + list(advidx_shape) + output_shape[dim_position + 1:]
@@ -6560,9 +6566,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Make slice subgraph - a mapped tasklet with the proper dimensions
 
-        # Compute index expression string
-        access_expr = [f'__inp{i}' for i in range(len(expr.arrdims))]
+        # Compute index expression string. Only the advanced dimensions that survive the connector's
+        # squeeze are indexed, so this counts the index memlets rather than the indexed dimensions.
+        access_expr = [f'__inp{i}' for i in range(len(index_memlets))]
         access_str = ', '.join(access_expr)
+        code = f'__out = __arr[{access_str}]' if access_expr else '__out = __arr'
 
         # Make mapped tasklet with the proper dimensions
         self.current_state.add_mapped_tasklet(
@@ -6576,7 +6584,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 }
             },
             outputs={'__out': output_memlet},
-            code=f'__out = __arr[{access_str}]',
+            code=code,
             external_edges=True,
             debuginfo=self.current_lineinfo,
             input_nodes={rnode.data: rnode},
