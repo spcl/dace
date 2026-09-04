@@ -15,6 +15,48 @@ from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
+def _substitute_map_range(subset: subsets.Range, params: List[str], rng: subsets.Range) -> Optional[subsets.Range]:
+    """
+    Replaces the map parameters in ``subset`` by the range of values they take.
+
+    Memlet propagation falls back to a bounding box as soon as the map has a non-unit step, which
+    turns a strided gather into a contiguous copy. Where every dimension is a point access that is
+    affine in a single parameter with a positive integer multiplier, the exact strided range can be
+    derived instead, which keeps the number of elements on both sides of a copy equal.
+
+    :param subset: The subset to substitute into, expressed in terms of ``params``.
+    :param params: The map parameters.
+    :param rng: The range the map parameters iterate over.
+    :return: The substituted subset, or ``None`` if it cannot be derived exactly.
+    """
+    symbolic_params = [pystr_to_symbolic(p) for p in params]
+    result = []
+    for rb, re, rs in subset.ndrange():
+        rb, re, rs = (pystr_to_symbolic(v) for v in (rb, re, rs))
+        used = [(i, p) for i, p in enumerate(symbolic_params) if p in (rb.free_symbols | re.free_symbols)]
+        if not used:
+            result.append((rb, re, rs))
+            continue
+        if len(used) > 1 or rb != re or rs != 1:
+            return None
+        pind, param = used[0]
+        # Match an affine access ``mult * param + addition``
+        poly = rb.as_poly(param)
+        if poly is None or poly.degree() > 1:
+            return None
+        mult = poly.coeff_monomial(param)
+        addition = poly.coeff_monomial(1)
+        if not mult.is_Integer or mult <= 0:
+            return None
+        map_rb, map_re, map_rs = rng[pind]
+        # The range's own end is kept rather than the last value the parameter actually takes. Both
+        # describe the same set of elements, but this form makes the element count come out as the
+        # map's own size expression, which symbolic comparisons against the augmented transient can
+        # then match without having to reason about the ceiling division.
+        result.append((mult * map_rb + addition, mult * map_re + addition, mult * map_rs))
+    return subsets.Range(result)
+
+
 @transformation.explicit_cf_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
@@ -73,8 +115,12 @@ class MapFission(transformation.SingleStateTransformation):
         schildren = subgraph.scope_children()
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
-            return set(node.data for node in subset.nodes()
-                       if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].transient)
+            # Views are marked transient but do not own their storage: they alias a container that
+            # already spans every iteration of the map. Giving them the per-iteration extent that
+            # border transients get would grow the descriptor past the window its ``views`` edge
+            # binds, so they are not border arrays.
+            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode)
+                       and sdfg.arrays[node.data].transient and not isinstance(sdfg.arrays[node.data], dt.View))
         else:
             return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
 
@@ -441,7 +487,9 @@ class MapFission(transformation.SingleStateTransformation):
                 if state.out_degree(component_out) == 0:
                     state.add_edge(component_out, None, mx, None, mm.Memlet())
             # Connect other sources/sinks not in components (access nodes)
-            # directly to external nodes
+            # directly to external nodes. These edges end up outside the new Map scopes, which is
+            # recorded so that the memlets filled in below do not refer to the map parameters.
+            outside_border_edges = set()
             if self.expr_index == 0:
                 for node in sources:
                     if isinstance(node, nodes.AccessNode):
@@ -449,9 +497,12 @@ class MapFission(transformation.SingleStateTransformation):
                             outer_edge = edge_to_outer.get(edge)
                             if outer_edge is None:  # No outer feeder: nothing to rewire.
                                 continue
-                            memlet = dcpy(edge.data)
-                            memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
-                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
+                            # The added map dimensions are filled in below, where it is known which
+                            # side of the memlet belongs to the augmented container and whether that
+                            # container is scalar-like.
+                            new_edge = state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn,
+                                                      dcpy(edge.data))
+                            outside_border_edges.add(new_edge)
 
                 for node in sinks:
                     if isinstance(node, nodes.AccessNode):
@@ -459,8 +510,9 @@ class MapFission(transformation.SingleStateTransformation):
                             outer_edge = edge_to_outer.get(edge)
                             if outer_edge is None:  # No outer consumer: nothing to rewire.
                                 continue
-                            state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
-                                           dcpy(outer_edge.data))
+                            new_edge = state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
+                                                      dcpy(outer_edge.data))
+                            outside_border_edges.add(new_edge)
 
             # Augment arrays by prepending map dimensions
             for array in arrays:
@@ -523,6 +575,11 @@ class MapFission(transformation.SingleStateTransformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
+                        # If the two descriptors are already identical, the nested SDFG has been
+                        # integrated into its parent (see ``dace.sdfg.dealias``) and its memlets are
+                        # expressed in the outer coordinate system already. Widening them against the
+                        # outer edge would then apply the outer edge's offset a second time.
+                        already_integrated = desc.is_equivalent(outer_desc)
                         if isinstance(desc, dt.Scalar):
                             parent.arrays[node.data] = dcpy(outer_desc)
                             desc = parent.arrays[node.data]
@@ -537,14 +594,20 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
-                                e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                if not already_integrated:
+                                    e.data.subset.offset(desc.offset, False)
+                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    outside_border_edges.add(e)
+                                    new_subset = _substitute_map_range(e.data.subset, outer_map.params, outer_map.range)
+                                    if new_subset is None:
+                                        e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    else:
+                                        e.data.subset = new_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
@@ -553,6 +616,10 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
+            # NOTE: Edges rewired around the new Map scopes (see ``outside_border_edges``) sit
+            # outside them and therefore cannot refer to the map parameters; they have to span the
+            # whole extent that was added to the transient instead.
+            full_map_ranges = [(0, sz - 1, 1) for sz in mapsize]
             for node in subgraph.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in arrays:
                     is_scalar_like = node.data in scalar_like_arrays
@@ -562,7 +629,19 @@ class MapFission(transformation.SingleStateTransformation):
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
-                            map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
+                            if e in outside_border_edges:
+                                map_ranges = full_map_ranges
+                                # The external container on the other side of the copy did not gain
+                                # any dimension, but its subset may still name the map parameters,
+                                # which are out of scope here. Propagate it over the outer range.
+                                if e.data.data != node.data and e.data.subset is not None:
+                                    new_subset = _substitute_map_range(e.data.subset, outer_map.params, outer_map.range)
+                                    if new_subset is None:
+                                        new_subset = propagate_subset([e.data], parent.arrays[e.data.data],
+                                                                      outer_map.params, outer_map.range).subset
+                                    e.data.subset = new_subset
+                            else:
+                                map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:
                                 if e.data.subset:
                                     if is_scalar_like:

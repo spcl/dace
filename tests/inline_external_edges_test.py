@@ -32,6 +32,10 @@ state.add_memlet_path(L_in, me, nsdfg_node, memlet=dace.Memlet.simple('L', 'i'),
 state.add_memlet_path(nsdfg_node, mx, L_out, memlet=dace.Memlet.simple('L', 'i'), src_conn='local')
 state.add_memlet_path(nsdfg_node, mx, M_out, memlet=dace.Memlet.simple('M', 'i'), src_conn='m')
 
+# The nested SDFG's connectors are narrowed views of the outer arrays. Integration can only run
+# once the node is wired up, so it has to be requested explicitly here.
+nsdfg_node.integrate_into_parent()
+
 
 def test():
     L = np.random.rand(2).astype(np.float32)

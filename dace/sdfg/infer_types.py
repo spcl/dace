@@ -5,6 +5,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
+from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import dfs_topological_sort
 from typing import Callable, Dict, List, Optional, Set, Union
 
@@ -39,7 +40,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
-        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Stream))
         if isinstance(node, nodes.LibraryNode):
             scalar &= allocated_as_scalar
         dtype = sdfg.arrays[e.data.data].dtype
@@ -349,7 +350,10 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
     exit_nodes = [state.exit_node(n) for n in child_nodes[parent_node] if isinstance(n, nodes.EntryNode)]
     scope_subgraph = SubgraphView(state, child_nodes[parent_node] + exit_nodes)
 
-    # Loop over access nodes
+    # Loop over access nodes. Views are left for a second pass: a view addresses the memory of the
+    # container behind it, so it lives wherever that container lives, which is only known once the
+    # container itself has been given a storage.
+    view_nodes: List[nodes.AccessNode] = []
     for node in scope_subgraph.nodes():
         if not isinstance(node, nodes.AccessNode):
             continue
@@ -358,7 +362,19 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
         if not desc.transient and sdfg.parent is not None:
             desc.storage = _get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
-            desc.storage = child_storage
+            if isinstance(desc, data.View):
+                view_nodes.append(node)
+            else:
+                desc.storage = child_storage
+
+    for node in view_nodes:
+        desc = node.desc(sdfg)
+        if desc.storage != dtypes.StorageType.Default:  # Resolved through another access node
+            continue
+        viewed = sdutil.get_view_node(state, node)
+        viewed_storage = (viewed.desc(sdfg).storage
+                          if isinstance(viewed, nodes.AccessNode) else dtypes.StorageType.Default)
+        desc.storage = (viewed_storage if viewed_storage != dtypes.StorageType.Default else child_storage)
 
     # Take care of code->code edges that do not have access nodes
     for edge in scope_subgraph.edges():

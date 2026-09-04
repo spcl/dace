@@ -496,6 +496,10 @@ def test_single_data_multiple_connectors():
 
     sdutils.consolidate_edges(outer_sdfg)
 
+    # The connectors are rows of the outer arrays, so they have to be integrated into the parent
+    # once the node is wired up.
+    inner_sdfg_node.integrate_into_parent()
+
     A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
     ref = np.empty_like(A)
     ref_sdfg = copy.deepcopy(outer_sdfg)
@@ -589,6 +593,11 @@ def test_dependent_symbol():
     outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='1, 0:10'), src_conn='B1')
 
     sdutils.consolidate_edges(outer_sdfg)
+
+    # The connectors are rows of the outer arrays, so they have to be integrated into the parent
+    # once the node is wired up.
+    inner_sdfg_node.integrate_into_parent()
+
     A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
     ref = np.zeros_like(A)
     ref_sdfg = copy.deepcopy(outer_sdfg)

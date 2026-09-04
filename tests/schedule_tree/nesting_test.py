@@ -182,16 +182,12 @@ def test_dealias_memlet_composition(simplify):
     inline_control_flow_regions(sdfg)
     stree = as_schedule_tree(sdfg)
 
-    # Simplifying yields a different SDFG due to views, so testing is slightly different
-    if simplify:
-        assert len(stree.children) == 1
-        tasklet = stree.children[0]
-        assert isinstance(tasklet, tn.TaskletNode)
-        assert str(next(iter(tasklet.out_memlets.values()))) == 'a[N - 3, 1]'
-    else:
-        assert len(stree.children) == 3
-        stree_nodes = list(stree.preorder_traversal())[1:]
-        assert [type(n) for n in stree_nodes] == [tn.ViewNode, tn.ViewNode, tn.TaskletNode]
+    # Either way the chain of views composes down to the single access it denotes: a[:, 1] viewed
+    # as b, b[-5:] viewed as c, and c[2] written -- which is a[N - 3, 1].
+    assert len(stree.children) == 1
+    tasklet = stree.children[0]
+    assert isinstance(tasklet, tn.TaskletNode)
+    assert str(next(iter(tasklet.out_memlets.values()))) == 'a[N - 3, 1]'
 
 
 def test_dealias_interstate_edge():
@@ -214,6 +210,10 @@ def test_dealias_interstate_edge():
     rb = state.add_read('B')
     state.add_edge(ra, None, nsdfg_node, 'B', dace.Memlet('A[1:20]'))
     state.add_edge(rb, None, nsdfg_node, 'A', dace.Memlet('B[2:17]'))
+
+    # The connectors are offset slices of the outer arrays. Integration can only run once the node
+    # is wired up, so it has to be requested explicitly here.
+    nsdfg_node.integrate_into_parent()
 
     sdfg.validate()
     stree = as_schedule_tree(sdfg)

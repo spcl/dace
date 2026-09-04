@@ -237,7 +237,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         codegen=self,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write,
+                                                        use_offset=True)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -819,11 +820,21 @@ class CPUCodeGen(TargetCodeGenerator):
                             [src_node, dst_node],
                         )
                     else:
-                        copysize = " * ".join([cpp.sym2cpp(s) for s in memlet.subset.size()])
+                        # The memlet says which part of the array is pushed, so the pointer has to
+                        # start there: under the nested SDFG contract the connector is the whole
+                        # container and only the memlet narrows it to the element being pushed.
+                        push_subset = memlet.subset
+                        if memlet.data != src_node.data and memlet.other_subset:
+                            push_subset = memlet.other_subset
+                        if push_subset is None:
+                            push_subset = subsets.Range.from_array(src_nodedesc)
+                        copysize = " * ".join([cpp.sym2cpp(s) for s in push_subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                              arr=self.ptr(src_node.data, src_nodedesc, sdfg),
-                                                              size=copysize),
+                            "{s}.push(&{arr}[{off}], {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
+                                                                      arr=self.ptr(src_node.data, src_nodedesc, sdfg),
+                                                                      off=cpp.cpp_offset_expr(
+                                                                          src_nodedesc, push_subset),
+                                                                      size=copysize),
                             cfg,
                             state_id,
                             [src_node, dst_node],
@@ -1662,6 +1673,29 @@ class CPUCodeGen(TargetCodeGenerator):
                                               uconn,
                                               codegen=self,
                                               conntype=node.out_connectors[uconn]))
+
+        # A transient of the nested SDFG whose allocation the frame placed in an ancestor scope --
+        # one with scope lifetime that cannot live in a register, say -- is out of reach by name from
+        # the function generated for the nested SDFG, so it is passed in like any other argument.
+        # ``ptr`` gives it the same unambiguous name on both sides. When the nested SDFG is generated
+        # inline the name is in scope already and nothing has to be passed.
+        for aname, adesc in node.sdfg.arrays.items():
+            if not adesc.transient or adesc.lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                         dtypes.AllocationLifetime.External):
+                continue
+            allocated_in = self._frame.where_allocated.get((node.sdfg, aname))
+            if allocated_in is None or allocated_in is node.sdfg:
+                continue
+            ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
+            if self._dispatcher.defined_vars.has(ptrname):
+                continue
+            try:  # The allocation defined it in the scope the frame chose for it
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
+            except KeyError:
+                continue
+            self._dispatcher.defined_vars.add(ptrname, defined_type, ctype, allow_shadowing=True)
+            memlet_references.append((ctype, ptrname, ptrname))
+
         return memlet_references
 
     def _generate_NestedSDFG(

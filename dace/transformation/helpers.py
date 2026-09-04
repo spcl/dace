@@ -292,21 +292,20 @@ def nest_sdfg_control_flow(sdfg: SDFG):
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None,
-                        full_data: bool = False) -> nodes.NestedSDFG:
+                        name: Optional[str] = None) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
 
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
-        :param full_data: If True, nests entire input/output data.
         :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
+    full_data = True
     if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
@@ -951,45 +950,62 @@ def isolate_nested_sdfg(
 def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,
                          use_src_subset: bool = False,
-                         use_dst_subset: bool = False) -> subsets.Subset:
-    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
-        return internal_memlet.other_subset
+                         use_dst_subset: bool = False) -> Tuple[subsets.Subset, bool]:
+    """
+    Determines the internal memlet's subset to use based on the external memlet and the flags.
+
+    :param internal_memlet: The internal memlet (inside nested SDFG).
+    :param external_memlet: The external memlet before modification.
+    :param use_src_subset: If both sides of the memlet refer to the same array, prefer source subset.
+    :param use_dst_subset: If both sides of the memlet refer to the same array, prefer destination subset.
+    :return: The internal subset to use and a boolean indicating if the ``other_subset`` field was used.
+    """
     if not use_src_subset and not use_dst_subset:
-        return internal_memlet.subset
+        if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
+            return internal_memlet.other_subset, True
+        return internal_memlet.subset, False
     if use_src_subset and use_dst_subset:
         raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset and internal_memlet.src_subset is not None:
-        return internal_memlet.src_subset
+        return internal_memlet.src_subset, not internal_memlet._is_data_src
     if use_dst_subset and internal_memlet.dst_subset is not None:
-        return internal_memlet.dst_subset
-    return internal_memlet.subset
+        return internal_memlet.dst_subset, internal_memlet._is_data_src
+    return internal_memlet.subset, False
 
 
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
-                     preserve_minima: bool = False,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
-    """ Unsqueezes and offsets a memlet, as per the semantics of nested
-        SDFGs.
+                     external_offset: Tuple[int] = None,
+                     return_dims: bool = False) -> Union[Memlet, List[int]]:
+    """ Unsqueezes and offsets a memlet, as per the semantics of nested SDFGs.
+        Generally, this function is the inverse of the array narrowing rules found in languages such as Python
+        (specifically in frameworks such as NumPy or PyTorch) and FORTRAN.
 
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
-        :param preserve_minima: Do not change the subset's minimum elements.
         :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
-        :return: Offset Memlet to set on the resulting graph.
+        :param return_dims: If ``True``, returns the dimensions that were detected as squeezed.
+        :return: Offset Memlet to set on the resulting graph, or a list of squeezed dimensions if ``return_dims`` is
+                 ``True``.
     """
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    # We always use external_memlet's subset as the base.
+    # We either modify the internal memlet's subset or other_subset. Find out which one to use.
+    internal_subset, used_other_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset,
+                                                              use_dst_subset)
     internal_offset = internal_offset or [0] * len(internal_subset)
     external_offset = external_offset or [0] * len(external_memlet.subset)
     internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
+    if used_other_subset:
+        result.other_subset = result.subset
     result.subset = internal_subset
+    to_unsqueeze = []
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
@@ -1029,32 +1045,15 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
-    if preserve_minima:
-        if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
-                             'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-        original_minima = external_memlet.subset.min_element()
-        for i in set(range(len(original_minima))):
-            rb, re, rs = result.subset.ranges[i]
-            result.subset.ranges[i] = (original_minima[i], re, rs)
-    # TODO: Offset rest of memlet according to other_subset
-    if external_memlet.other_subset is not None:
-        raise NotImplementedError
+    result.data = external_memlet.data
+    if use_src_subset:
+        result._is_data_src = True
+    elif use_dst_subset:
+        result._is_data_src = False
 
-    # Actual result preserves 'other subset' and placement of subsets in memlet
-    actual_result = Memlet.from_memlet(internal_memlet)
-    actual_result.data = external_memlet.data
-    if actual_result.other_subset:
-        if internal_memlet.data == external_memlet.data:
-            actual_result.subset = result.subset
-        else:
-            actual_result.other_subset = actual_result.subset
-            actual_result.subset = result.subset
-            actual_result._is_data_src = not actual_result._is_data_src
-    else:
-        actual_result.subset = result.subset
-
-    return actual_result
+    if return_dims:
+        return to_unsqueeze
+    return result
 
 
 def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> ScopeSubgraphView:
@@ -1206,6 +1205,152 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         pass
 
     return False
+
+
+def reduce_integrated_nsdfg_connector(nsdfg: SDFG,
+                                      connector: str,
+                                      reduced_desc: data.Data,
+                                      offset: Optional[Union[Subset, List[symbolic.SymbolicType]]] = None,
+                                      squeezed_dims: Optional[List[int]] = None,
+                                      is_scalar: bool = False) -> None:
+    """
+    Mirrors the reduction of an outer container onto an integrated nested SDFG connector.
+
+    Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector's data
+    descriptor is identical to the outer container it is connected to. A transformation that replaces
+    that container with a smaller one -- a per-iteration buffer, a compressed intermediate -- therefore
+    has to repeat the reduction inside the nested SDFG, or the two descriptors disagree and every memlet
+    within still addresses the original, larger container.
+
+    :param nsdfg: The nested SDFG whose connector should be reduced.
+    :param connector: The name of the container inside the nested SDFG.
+    :param reduced_desc: The descriptor of the already-reduced outer container.
+    :param offset: The offset that the reduction introduced, if any.
+    :param squeezed_dims: The dimensions that the reduction removed, if any.
+    :param is_scalar: True if the reduced container holds a single element.
+    :note: This operation is performed in-place on the nested SDFG.
+    """
+    squeezed_dims = squeezed_dims or []
+
+    # The offset is written in the parent's terms, so the symbols it brings in have to be defined
+    # inside before any memlet is moved by it.
+    _define_offset_symbols(nsdfg, offset)
+
+    for state in nsdfg.all_states():
+        for edge in state.edges():
+            if edge.data.data == connector:
+                if is_scalar:
+                    edge.data.subset = subsets.Range.from_string('0')
+                elif edge.data.subset is not None:
+                    if offset is not None:
+                        edge.data.subset.offset(offset, True)
+                    edge.data.subset.pop(squeezed_dims)
+            elif (edge.data.other_subset is not None and offset is not None and not is_scalar
+                  and any(isinstance(n, nodes.AccessNode) and n.data == connector for n in (edge.src, edge.dst))):
+                # The container is the other end of a copy, so it is the other subset that addresses
+                # it and therefore the one that moves.
+                edge.data.other_subset.offset(offset, True)
+                edge.data.other_subset.pop(squeezed_dims)
+
+        # A view of the container walks the parent's memory, so its strides have to follow the reduced
+        # container's. Ranks that no longer match are left to the caller, which knows whether the
+        # mismatch is expected.
+        for node in state.data_nodes():
+            desc = node.desc(nsdfg)
+            if not isinstance(desc, data.View):
+                continue
+            viewed = utils.get_view_node(state, node)
+            if viewed is None or viewed.data != connector:
+                continue
+            if len(desc.shape) == len(reduced_desc.shape):
+                desc.set_shape(new_shape=tuple(desc.shape), strides=tuple(reduced_desc.strides))
+
+    # Meta code -- an interstate-edge condition or assignment, a loop or branch condition -- reads
+    # the container without ever going through a memlet on an edge, so those accesses have to be
+    # moved as well or they keep addressing the container's original coordinate system.
+    _reduce_meta_accesses(nsdfg, connector, offset, squeezed_dims, is_scalar)
+
+    new_desc = copy.deepcopy(reduced_desc)
+    new_desc.transient = False
+    nsdfg.arrays[connector] = new_desc
+
+
+def _define_offset_symbols(nsdfg: SDFG, offset: Optional[Union[Subset, List[symbolic.SymbolicType]]]) -> None:
+    """
+    Makes the symbols an offset is expressed in usable inside a nested SDFG.
+
+    The offset a reduction introduces is written in the coordinates of the parent, so it may name
+    symbols -- the parameters of the map the container was compressed under, for instance -- that
+    the nested SDFG has never heard of. Each of them is registered and mapped to itself, since the
+    parent defines it at the nested SDFG node.
+
+    :param nsdfg: The nested SDFG the offset is about to be applied in.
+    :param offset: The offset, or ``None`` if the reduction did not move the container.
+    :note: This function operates in-place.
+    """
+    parent_node = nsdfg.parent_nsdfg_node
+    if offset is None or parent_node is None:
+        return
+
+    if isinstance(offset, Subset):
+        symbols = set(offset.free_symbols)
+    else:
+        symbols = set()
+        for expr in offset:
+            symbols |= set(symbolic.symlist(expr).keys())
+
+    defined = nsdfg.parent.symbols_defined_at(parent_node) if nsdfg.parent is not None else {}
+    for sym in symbols:
+        name = str(sym)
+        if name in nsdfg.arrays or name in nsdfg.constants_prop:
+            continue
+        if name not in nsdfg.symbols:
+            nsdfg.add_symbol(name, defined.get(name, symbolic.DEFAULT_SYMBOL_TYPE))
+        if name not in parent_node.symbol_mapping:
+            parent_node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
+
+
+def _reduce_meta_accesses(nsdfg: SDFG, connector: str, offset: Optional[Union[Subset, List[symbolic.SymbolicType]]],
+                          squeezed_dims: List[int], is_scalar: bool) -> None:
+    """
+    Moves the meta-code accesses of a container into a reduced coordinate system.
+
+    :param nsdfg: The SDFG whose meta code should be rewritten.
+    :param connector: The name of the container being reduced.
+    :param offset: The offset that the reduction introduced, if any.
+    :param squeezed_dims: The dimensions that the reduction removed.
+    :param is_scalar: True if the reduced container holds a single element.
+    :note: This function operates in-place.
+    """
+    # Avoid import loops
+    from dace.frontend.python import astutils
+    from dace.sdfg.memlet_utils import MemletReplacer
+
+    def process(memlet):
+        new_memlet = copy.deepcopy(memlet)
+        if is_scalar:
+            new_memlet.subset = subsets.Range.from_string('0')
+        elif new_memlet.subset is not None:
+            if offset is not None:
+                new_memlet.subset.offset(offset, True)
+            new_memlet.subset.pop(squeezed_dims)
+        return new_memlet
+
+    replacer = MemletReplacer(nsdfg.arrays, process, {connector})
+
+    for edge in nsdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            for stmt in edge.data.condition.code:
+                replacer.visit(stmt)
+        for name, assignment in list(edge.data.assignments.items()):
+            edge.data.assignments[name] = astutils.unparse(replacer.visit(ast.parse(assignment)))
+
+    for region in nsdfg.all_control_flow_regions():
+        for code in region.get_meta_codeblocks():
+            if code.code is None or isinstance(code.code, str):
+                continue
+            for stmt in code.code:
+                replacer.visit(stmt)
 
 
 def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:

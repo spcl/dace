@@ -12,7 +12,7 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import dealias, SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
@@ -634,6 +634,15 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
+        # Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a
+        # connector's descriptor is identical to the container it is connected to. The nested SDFGs
+        # writing into the container about to be removed will write into the one behind it, so their
+        # connectors have to be brought back onto that container's descriptor afterwards.
+        to_integrate = [
+            e.src for e in graph.in_edges(in_array) if isinstance(e.src, nodes.NestedSDFG)
+            and e.src_conn in e.src.sdfg.arrays and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
+        ]
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
@@ -800,6 +809,9 @@ class RedundantArray(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
         except ValueError:  # Already in use (e.g., with Views)
             pass
+
+        for nsdfg_node in to_integrate:
+            dealias.integrate_nested_sdfg(nsdfg_node.sdfg)
 
 
 class RedundantSecondArray(pm.SingleStateTransformation):
@@ -1244,6 +1256,10 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if not isinstance(out_desc, data.View):
             return False
 
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in state.successors(out_array)):
+            return False
+
         vedge = state.out_edges(out_array)[0]
         if vedge.data.data != out_array.data:  # Ensures subset comes from view
             return False
@@ -1328,6 +1344,10 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
             return False
 
         if not isinstance(in_desc, data.View):
+            return False
+
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in state.predecessors(in_array)):
             return False
 
         vedge = state.in_edges(in_array)[0]
@@ -1462,6 +1482,10 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         if graph.in_degree(out_array) != 1:
             return False
 
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in graph.successors(out_array)):
+            return False
+
         # The match must be Array -> View(Array), i.e.,
         # the View must point to the Array. Find the true out_desc.
         true_out_array = sdutil.get_last_view_node(graph, out_array)
@@ -1505,6 +1529,15 @@ class RedundantReadSlice(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
+                            # Under the nested SDFG contract (see
+                            # ``dace.sdfg.dealias.integrate_nested_sdfg``) an integrated connector's
+                            # descriptor is identical to the container it is connected to, and the
+                            # memlets inside address that container's coordinate system. Removing the
+                            # view moves the connector onto the viewed array without moving those
+                            # memlets with it, so it is only safe when the connector already matches
+                            # the viewed array as well.
+                            if ndesc.is_equivalent(out_desc) and not ndesc.is_equivalent(in_desc):
                                 return False
 
         return True
@@ -1605,6 +1638,10 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
+            return False
+
+        # If the view is connected to a nested SDFG, we cannot safely remove it.
+        if any(isinstance(n, nodes.NestedSDFG) for n in graph.predecessors(in_array)):
             return False
 
         # The match must be View(Array) -> Array , i.e.,
@@ -1739,6 +1776,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if isinstance(desc, data.StructureView):
             return False
 
+        # If one of the edges is a nested SDFG, we cannot safely remove the view
+        for e in state.all_edges(self.view):
+            if isinstance(e.dst, nodes.NestedSDFG) or isinstance(e.src, nodes.NestedSDFG):
+                return False
+
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
         if view_edge is None:
@@ -1777,6 +1819,15 @@ class RemoveSliceView(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays:
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+                            # Under the nested SDFG contract (see
+                            # ``dace.sdfg.dealias.integrate_nested_sdfg``) an integrated connector's
+                            # descriptor is identical to the container it is connected to, and the
+                            # memlets inside address that container's coordinate system. Folding the
+                            # view moves the connector onto the viewed container without moving those
+                            # memlets with it, so it is only safe when the connector already matches
+                            # the viewed container as well.
+                            if ndesc.is_equivalent(desc) and not ndesc.is_equivalent(viewed.desc(sdfg)):
                                 return False
 
         ########################################################

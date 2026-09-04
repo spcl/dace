@@ -196,6 +196,57 @@ def replace_in_codeblock(codeblock: properties.CodeBlock,
             afr.visit(stmt)
 
 
+def _replace_list_item(item: Any, element_type: type, repl: Dict[str, str],
+                       symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]) -> Any:
+    """
+    Applies a replacement to a single element of a ``ListProperty``.
+
+    Lists are not uniformly symbolic: they hold map parameters, but also booleans, C declarations,
+    opaque identifiers, and arbitrary objects. Round-tripping all of them through sympy corrupts
+    the ones that are not expressions, so dispatch on the declared element type instead.
+
+    :param item: The list element to replace in.
+    :param element_type: The list property's declared element type.
+    :param repl: Mapping from names to replacements.
+    :param symrepl: Symbolic version of ``repl``.
+    :return: The replaced element, or ``item`` itself if nothing applies.
+    """
+    # Booleans are not symbols. ``pystr_to_symbolic('False')`` yields ``BooleanFalse``, which no
+    # longer converts back to ``int`` -- note ``bool`` is a subclass of ``int``, so this has to be
+    # checked on the value and not only on the declared element type.
+    if isinstance(item, bool) or element_type is bool:
+        return item
+
+    if element_type is str:
+        # String lists hold names (e.g. ``Map.params``), not expressions. Replace whole identifiers
+        # only, so lists of code fragments (``Dummy.fields``, ``CodeNode.state_fields``) and of
+        # opaque ids (``GPUTransformSDFG.host_maps``) are left alone. A replacement that is not an
+        # identifier cannot name a map parameter, so it is skipped rather than written back.
+        if not isinstance(item, str) or item not in repl:
+            return item
+        new_name = str(repl[item])
+        return new_name if new_name.isidentifier() else item
+
+    is_symbolic_type = (element_type is symbolic.SymExpr
+                        or (isinstance(element_type, type) and issubclass(element_type, sp.Basic)))
+    if element_type in (int, float) or is_symbolic_type:
+        try:
+            newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+        except (AttributeError, TypeError, ValueError, SyntaxError, sp.SympifyError):
+            return item
+        if element_type in (int, float):
+            try:
+                return element_type(newitem)
+            except (AttributeError, TypeError, ValueError):
+                # The substitution left something non-numeric; keep the original.
+                return item
+        return newitem
+
+    # Any other element type (Pass, PatternTransformation, SDFGState, TensorIndex, tuple, ...)
+    # holds objects rather than expressions, and carries no names for this function to rewrite.
+    return item
+
+
 def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
                             symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
@@ -236,6 +287,10 @@ def replace_properties_dict(node: Any,
                     propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
                 except AttributeError:  # If the symbolified value has no subs
                     pass
+        elif isinstance(propclass, properties.ListProperty):
+            newval = [_replace_list_item(item, propclass.element_type, repl, symrepl) for item in propval]
+            if any(new is not old for new, old in zip(newval, propval)):
+                setattr(node, pname, newval)
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,
