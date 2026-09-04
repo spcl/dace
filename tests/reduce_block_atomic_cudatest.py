@@ -13,7 +13,6 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-from dace.transformation.interstate import GPUTransformSDFG
 
 _HAS_NVCC = shutil.which("nvcc") is not None
 
@@ -46,7 +45,7 @@ def _build_block_atomic_sum_sdfg():
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0'))
     sdfg.fill_scope_connectors()
 
-    sdfg.apply_transformations(GPUTransformSDFG, options={'sequential_innermaps': False})
+    sdfg.apply_gpu_transformations()
     return sdfg
 
 

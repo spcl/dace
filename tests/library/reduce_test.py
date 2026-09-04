@@ -124,15 +124,14 @@ def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
     """The GPU-auto expansion may FLATTEN the planner input (``(M, N, K) -> (M*N, K)``); the
     reassigned shape/strides must be accompanied by a matching-rank offset, or the descriptor is
     invalid and the host-side inline at codegen dies with 'Offset must be the same size as shape'
-    (samples/optimization/matmul.py under GPUTransformSDFG). Codegen-only: no GPU needed."""
-    from dace.transformation.interstate import GPUTransformSDFG
+    (samples/optimization/matmul.py, offloaded). Codegen-only: no GPU needed."""
 
     @dace.program
     def flat_reduce(inp_tensor: dace.float64[16, 8, 32], out_matrix: dace.float64[16, 8]):
         out_matrix[:] = np.sum(inp_tensor, axis=2)
 
     sdfg = flat_reduce.to_sdfg(simplify=True)
-    assert sdfg.apply_transformations(GPUTransformSDFG) == 1
+    assert sdfg.apply_gpu_transformations() == 1
     sdfg.expand_library_nodes()
     for sub in sdfg.all_sdfgs_recursive():
         for name, desc in sub.arrays.items():

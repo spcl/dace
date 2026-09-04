@@ -3118,10 +3118,10 @@ class SDFG(ControlFlowRegion):
             Examples::
 
                       # Applies MapTiling, then MapFusionVertical, followed by
-                      # GPUTransformSDFG, specifying parameters only for the
+                      # MapCollapse, specifying parameters only for the
                       # first transformation.
                       sdfg.apply_transformations(
-                        [MapTiling, MapFusionVertical, GPUTransformSDFG],
+                        [MapTiling, MapFusionVertical, MapCollapse],
                         options=[{'tile_size': 16}, {}, {}])
         """
         from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
@@ -3242,67 +3242,37 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(self,
-                                  states=None,
-                                  validate=True,
-                                  validate_all=False,
-                                  permissive=False,
-                                  sequential_innermaps=True,
-                                  register_transients=True,
-                                  simplify=True,
-                                  host_maps=None,
-                                  host_data=None):
-        """ Applies a series of transformations on the SDFG for it to
-            generate GPU code.
+    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True):
+        """ Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
-            :param sequential_innermaps: Make all internal maps Sequential.
-            :param register_transients: Make all transients inside GPU maps registers.
-            :note: It is recommended to apply redundant array removal
-                   transformation after this transformation. Alternatively,
-                   you can ``simplify()`` after this transformation.
+            :param states: unused; kept so a caller passing it keeps working.
+            :param validate: validate the SDFG afterwards.
+            :param validate_all: as ``validate``.
+            :param simplify: simplify afterwards, folding the copy states the offloading inserted.
             :note: This is an in-place operation on the SDFG.
+            :raises NotImplementedError: if the SDFG holds a ``Stream`` descriptor.
         """
         # Avoiding import loops
-        from dace.transformation.interstate import GPUTransformSDFG
+        from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        # ``OffloadToAccelerator`` decides placement from the whole control flow rather than per
-        # kernel, so it has nowhere to honour a caller-supplied host pin: ``host_maps`` /
-        # ``host_data`` name what must STAY on the host, which is an answer, not an input. A caller
-        # that pins anything therefore gets the old transformation, whatever the config says.
-        pinned = bool(host_maps) or bool(host_data)
         # A Stream is a queue with a device-side push/pop protocol, not a buffer whose location can
-        # be decided and copied; the new pass classifies descriptors as array / scalar / view and
-        # has nowhere to put one. ``GPUTransformSDFG`` already handles them, so decline rather than
-        # raise out of the middle of a rewrite.
-        streams = any(
-            isinstance(desc, dt.Stream) for nsdfg in self.all_sdfgs_recursive() for desc in nsdfg.arrays.values())
-        # A library node that keeps part of its interface on the host whatever its schedule
-        # (``ScatterConflictCheck``'s flag and its tag scratch, cuBLAS's alpha and beta) needs no
-        # escape hatch: ``OffloadToAccelerator.host_pinned_arrays`` reads ``host_connectors`` and
-        # places those descriptors on the host with the rest of the state around them.
-        if Config.get_bool('optimizer', 'new_gpu_offloading_pass') and not pinned and not streams:
-            # Avoiding import loops
-            from dace.transformation.passes.offloading import OffloadToAccelerator
-            OffloadToAccelerator().apply_pass(self, {})
-            # ``simplify`` is this method's contract, not ``GPUTransformSDFG``'s: the offloading
-            # leaves the copy states it inserted unfused, so a caller that asked for a simplified
-            # graph would silently get one shaped by which pass ran.
-            if simplify:
-                self.simplify()
-            if validate or validate_all:
-                self.validate()
-            return
+        # be decided and copied; the offloading classifies descriptors as array / scalar / view and
+        # has nowhere to put one. Refused where the caller can still see it, rather than misplaced.
+        streamed = [
+            name for nsdfg in self.all_sdfgs_recursive() for name, desc in nsdfg.arrays.items()
+            if isinstance(desc, dt.Stream)
+        ]
+        if streamed:
+            raise NotImplementedError(f'Offloading an SDFG that holds Stream descriptors ({", ".join(streamed)}) '
+                                      'is not supported.')
 
-        self.apply_transformations(GPUTransformSDFG,
-                                   options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients,
-                                                simplify=simplify,
-                                                host_maps=host_maps,
-                                                host_data=host_data),
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   permissive=permissive,
-                                   states=states)
+        OffloadToAccelerator().apply_pass(self, {})
+        # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
+        # unfused, so a caller that asked for a simplified graph has to get one.
+        if simplify:
+            self.simplify()
+        if validate or validate_all:
+            self.validate()
 
     def expand_library_nodes(self, recursive=True, predicate=None):
         """

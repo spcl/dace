@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from dace.transformation.interstate import GPUTransformSDFG
 
 import pytest
 
@@ -55,7 +54,7 @@ def create_test_sdfg():
 def test():
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
-    my_max_sdfg.apply_transformations(GPUTransformSDFG)
+    my_max_sdfg.apply_gpu_transformations()
 
     BETA = np.random.rand(10).astype(np.float32)
     BETA_MAX = np.zeros(1).astype(np.float32)

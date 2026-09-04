@@ -441,7 +441,7 @@ def test_gemm_cublas_gpu():
     for conn in ('_a', '_b', '_c'):
         assert not re.search(r'\b%s\b' % conn, call), 'connector %s not inlined into base pointer: %s' % (conn, call)
     # The two offloaders spell a device copy differently -- OffloadToAccelerator names it ``A_gpu``,
-    # the older GPUTransformSDFG named it ``gpu_A`` -- and this assertion is about the connector
+    # the transformation that preceded the offloading named it ``gpu_A`` -- and this assertion is about the connector
     # being inlined to a base pointer, not about which one ran. Read the names off the SDFG.
     for operand in ('A', 'B', 'C'):
         copies = [n for n in sdfg.arrays if n != operand and n.replace('_gpu', '').replace('gpu_', '') == operand]

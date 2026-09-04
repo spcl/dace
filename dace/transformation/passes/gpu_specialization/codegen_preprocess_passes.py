@@ -48,7 +48,7 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
     The same expansion path can also leave bare *tasklets* at the host level that read/write
     ``GPU_Global`` data (e.g. the ONNX Conv expansion's C++ loop-nest tasklet): host code then
     dereferences device pointers and crashes at runtime. Those tasklets are wrapped in a
-    one-iteration ``GPU_Device`` map (mirroring ``GPUTransformSDFG`` step 7, which performs the
+    one-iteration ``GPU_Device`` map (as the offloading does for a host-level free tasklet, which performs the
     same wrapping for graphs whose expansion happened *before* the GPU transform).
 
     Finally, host-level access-to-access *WCR copies* over GPU-resident data (e.g. the ONNX

@@ -506,7 +506,7 @@ def test_view_in_a_kernel_still_code_generates():
     """A transient View inside a kernel must survive GPU code generation.
 
     ``data.View`` subclasses ``data.Array``, so the offload promotes a view to ``GPU_Global`` exactly
-    as DaCe's own ``GPUTransformSDFG`` does. The hoist in
+    as DaCe's own offloading does. The hoist in
     ``InsertExplicitGPUGlobalMemoryCopies`` then used to treat it as an allocatable kernel-local
     array and hand it to ``MoveArrayOutOfKernel``, which reshapes the view descriptor and hangs a
     second access node off the kernel exit -- destroying the unique view edge and failing validation

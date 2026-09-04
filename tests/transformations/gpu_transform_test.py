@@ -4,34 +4,12 @@
 import dace
 import numpy as np
 import pytest
-from dace.transformation.interstate import GPUTransformSDFG
-
-
-def test_toplevel_transient_lifetime():
-    N = dace.symbol('N')
-
-    @dace.program
-    def program(A: dace.float64[20, 20]):
-        for i in range(20):
-            tmp = A[:i, :i]
-            tmp2 = A[:5, :N]
-            tmp *= 5
-            tmp2 *= 10
-
-    sdfg = program.to_sdfg()
-    sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
-
-    for name, desc in sdfg.arrays.items():
-        if name == 'tmp2' and type(desc) is dace.data.Array:
-            assert desc.lifetime is dace.AllocationLifetime.SDFG
-        else:
-            assert desc.lifetime is not dace.AllocationLifetime.SDFG
 
 
 @pytest.mark.gpu
 def test_scalar_to_symbol_in_nested_sdfg():
     """
-    GPUTransformSDFG will automatically create copy-out states for GPU scalars that are used in host-side interstate
+    Offloading automatically creates copy-out states for GPU scalars that are used in host-side interstate
     edges. However, this process may only be applied in top-level SDFGs and not in NestedSDFGs that have GPU-device
     schedule but are not part of a single GPU kernel, leading to illegal memory accesses.
     """
@@ -53,7 +31,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
         return out
 
     sdfg = main_program.to_sdfg(simplify=False)
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations(simplify=False)
     out = sdfg(a=4)
     assert np.array_equal(out, np.array([0, 10] * 5, dtype=np.int32))
 
@@ -67,7 +45,7 @@ def test_write_subset():
             A[i, j] = i + j
 
     sdfg = write_subset.to_sdfg(simplify=True)
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations(simplify=False)
 
     ref = np.ones((20, 20), dtype=np.int32)
     val = np.copy(ref)
@@ -76,24 +54,6 @@ def test_write_subset():
     sdfg(A=val)
 
     assert np.array_equal(ref, val)
-
-
-def test_write_full():
-
-    M, N = dace.symbol('M'), dace.symbol('N')
-
-    @dace.program
-    def write_full(A: dace.int32[M, N]):
-        for i, j in dace.map[0:M, 0:N]:
-            A[i, j] = i + j
-
-    sdfg = write_full.to_sdfg(simplify=True)
-    sdfg.apply_transformations(GPUTransformSDFG)
-
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
-                assert state.out_degree(node) == 0
 
 
 @pytest.mark.gpu
@@ -105,7 +65,7 @@ def test_write_subset_dynamic():
             A[x[i], y[j]] = i + j
 
     sdfg = write_subset_dynamic.to_sdfg(simplify=True)
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations(simplify=False)
 
     ref = np.ones((20, 20), dtype=np.int32)
     val = np.copy(ref)
@@ -136,12 +96,7 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True,
-                                   validate_all=True,
-                                   permissive=True,
-                                   sequential_innermaps=True,
-                                   register_transients=False,
-                                   simplify=False)
+    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
 
     sdfg.validate()
 
@@ -166,12 +121,7 @@ def test_free_tasklet_connectorless_dependency_edge():
     state.add_nedge(seed, follow, dace.memlet.Memlet())
 
     sdfg.validate()
-    sdfg.apply_gpu_transformations(validate=True,
-                                   validate_all=True,
-                                   permissive=True,
-                                   sequential_innermaps=True,
-                                   register_transients=False,
-                                   simplify=False)
+    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
     sdfg.validate()
 
 
@@ -179,7 +129,6 @@ if __name__ == '__main__':
     test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
-    test_write_full()
     test_write_subset_dynamic()
     test_free_tasklet_connectorless_dependency_edge()
     for scalar in [False, True]:

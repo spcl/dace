@@ -177,23 +177,6 @@ def pytest_generate_tests(metafunc):
         ])
 
 
-@pytest.fixture(autouse=True)
-def old_gpu_transform_only(request):
-    """Run a test marked ``old_gpu_transform_only`` against ``GPUTransformSDFG``.
-
-    A test that asserts that transformation's own behaviour -- its ``host_maps`` / ``host_data``
-    parameters, or the ``gpu_A`` staging it leaves behind -- is about that transformation, not about
-    whichever offloader happens to be the default. This flips the config for the duration rather
-    than skipping, so the coverage survives the default moving to ``OffloadToAccelerator``.
-    """
-    if request.node.get_closest_marker('old_gpu_transform_only') is None:
-        yield
-        return
-    import dace
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=False):
-        yield
-
-
 def _active_cuda_impl():
     # Imported lazily so pytest collection works even if the dace package can't be imported.
     from dace.config import Config
