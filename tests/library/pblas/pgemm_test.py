@@ -26,6 +26,28 @@ LRx, LRy, LSx, LSy, LTx, LTy = (dace.symbol(s, positive=True) for s in ('LRx', '
 rng = np.random.default_rng(42)
 
 
+def mismatch(val, ref, rank, label: str) -> str:
+    """What actually came back, for a wrong product that only appears on the self-hosted runner.
+
+    ``assert np.allclose(...)`` reports nothing but ``False``. This failure has never reproduced
+    off that machine, so the message has to carry the evidence itself: how much of the array is
+    wrong, by how much, and the level MPI came up at. Below ``MPI_THREAD_FUNNELED`` Open MPI drops
+    the locking around its shared-memory transport and ScaLAPACK's panel broadcasts come back
+    corrupted differently on every call, which looks exactly like a plausible wrong product.
+    """
+    from mpi4py import MPI
+
+    level = MPI.Query_thread() if MPI.Is_initialized() else None
+    wrong = ~np.isclose(val, ref)
+    where = tuple(int(axis[0]) for axis in np.nonzero(wrong)) if wrong.any() else ()
+    seen = val[where] if where else None
+    want = ref[where] if where else None
+    return (f'{label}: rank {rank} got {int(wrong.sum())} of {wrong.size} entries wrong, '
+            f'max |diff| {float(np.abs(val - ref).max()):.6e}, first at {where} '
+            f'({seen} instead of {want}), MPI thread level {level} '
+            f'(funneled is {MPI.THREAD_FUNNELED})')
+
+
 # NOTE: The test passes with MKLMPICH, ReferenceMPICH, and ReferenceOpenMPI. It segfaults with MKLOpenMPI.
 @pytest.mark.scalapack
 def test_pgemm():
@@ -112,7 +134,7 @@ def test_pgemm():
 
             val = func(A=lA, B=lB, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, GK=K, Px=NPx, Py=NPy)
             ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
-            assert (np.allclose(val, ref))
+            assert np.allclose(val, ref), mismatch(val, ref, rank, 'pdgemm')
 
             commworld.Barrier()
 
@@ -130,7 +152,7 @@ def test_pgemm():
 
             func1(alpha=alpha, beta=beta, C=lC, A=lA, B=lB, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, GK=K, Px=NPx, Py=NPy)
             ref = C2[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
-            assert (np.allclose(lC, ref))
+            assert np.allclose(lC, ref), mismatch(lC, ref, rank, 'gemm')
 
             commworld.Barrier()
 
@@ -168,7 +190,7 @@ def test_pgemm():
                   Px=NPx,
                   Py=NPy)
             ref = D2[i * ti:(i + 1) * ti, j * tr:(j + 1) * tr]
-            assert (np.allclose(lD, ref))
+            assert np.allclose(lD, ref), mismatch(lD, ref, rank, 'k2mm')
 
             commworld.Barrier()
 
@@ -209,7 +231,7 @@ def test_pgemm():
                   Px=NPx,
                   Py=NPy)
             ref = E[i * ti:(i + 1) * ti, j * ts:(j + 1) * ts]
-            assert (np.allclose(val, ref))
+            assert np.allclose(val, ref), mismatch(val, ref, rank, 'k3mm')
 
             M, N, K, R, S = N, K, R, S, M
 
@@ -346,7 +368,7 @@ def test_pgemm_named_block_sizes():
 
         func(A=lA, B=lB, C=lC, LMx=ti, LKy=tkj, LKx=tki, LNy=tj, GK=K, Px=NPx, Py=NPy)
         ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
-        assert (np.allclose(lC, ref))
+        assert np.allclose(lC, ref), mismatch(lC, ref, rank, 'named block sizes')
 
         commworld.Barrier()
 
@@ -470,7 +492,7 @@ def test_pgemm_multiple_grids_one_compiled_object():
              GN=N,
              GK=K)
         ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
-        assert (np.allclose(lC, ref))
+        assert np.allclose(lC, ref), mismatch(lC, ref, rank, 'second grid')
 
         commworld.Barrier()
 
