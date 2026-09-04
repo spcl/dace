@@ -11,55 +11,44 @@ pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please ins
 pytest.importorskip("transformers",
                     reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import os
+import tempfile
 
 import onnx
 import onnxsim
-import pathlib
-import urllib
 
 import torch
 from transformers import BertTokenizer, BertModel
 
-import dace
 import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close
 
+# small public checkpoint on the HF hub, downloaded and cached via the transformers/huggingface_hub machinery
+BERT_TINY_MODEL = "prajjwal1/bert-tiny"
 
-def get_data_file(url, directory_name=None) -> str:
-    """ Get a data file from ``url``, cache it locally and return the local file path to it.
 
-        :param url: the url to download from.
-        :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :return: the path of the downloaded file.
-    """
+class _BertONNXExportWrapper(torch.nn.Module):
+    """ Pins the forward call to plain tensor in/out; the legacy ONNX tracer mishandles BertModel's own
+        use_cache kwarg default otherwise. """
 
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
 
-    if directory_name is not None:
-        data_directory /= directory_name
-
-    data_directory.mkdir(exist_ok=True, parents=True)
-
-    file_name = os.path.basename(urllib.parse.urlparse(url).path)
-    file_path = str(data_directory / file_name)
-
-    if not os.path.exists(file_path):
-        urllib.request.urlretrieve(url, file_path)
-    return file_path
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        output = self.model(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            use_cache=False,
+                            return_dict=False)
+        return output[0], output[1]
 
 
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
 def test_bert_full():
-    bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
-    get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
-    vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')
-    bert_path = get_data_file(bert_tiny_root + "/bert-tiny.onnx", directory_name='bert-tiny')
-    get_data_file(bert_tiny_root + "/pytorch_model.bin", directory_name='bert-tiny')
-    model_dir = os.path.dirname(vocab)
-
-    tokenizer = BertTokenizer.from_pretrained(vocab)
-    pt_model = BertModel.from_pretrained(model_dir)
+    tokenizer = BertTokenizer.from_pretrained(BERT_TINY_MODEL)
+    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL)
+    pt_model.eval()
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
     tokenized_text = tokenizer.tokenize(text)
@@ -70,13 +59,23 @@ def test_bert_full():
     segments_tensors = torch.tensor([segment_ids])
     attention_mask = torch.ones(1, 8, dtype=torch.int64)
 
-    model = onnx.load(bert_path)
-    # infer shapes
-    model, _ = onnxsim.simplify(model,
-                                skip_fuse_bn=True,
-                                input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                  token_type_ids=segments_tensors.shape,
-                                                  attention_mask=attention_mask.shape))
+    # export the ONNX graph locally instead of fetching a pre-converted one, no external host dependency
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
+        torch.onnx.export(_BertONNXExportWrapper(pt_model), (tokens_tensor, attention_mask, segments_tensors),
+                          bert_path,
+                          input_names=["input_ids", "attention_mask", "token_type_ids"],
+                          output_names=["output_0", "output_1"],
+                          opset_version=14,
+                          dynamo=False)
+
+        model = onnx.load(bert_path)
+        # infer shapes
+        model, _ = onnxsim.simplify(model,
+                                    skip_fuse_bn=True,
+                                    input_shapes=dict(input_ids=tokens_tensor.shape,
+                                                      token_type_ids=segments_tensors.shape,
+                                                      attention_mask=attention_mask.shape))
 
     dace_model = donnx.ONNXModel("test_bert_full", model, auto_merge=True)
 
