@@ -604,11 +604,12 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         backend = common.get_gpu_backend()
         if backend == 'cuda':
 
-            if cuda_arch := Config.get('compiler', 'cuda', 'cuda_arch'):
-                # A CUDA architecture was provided so use it.
-                cuda_arch = cuda_arch.split(',')
-                cuda_arch = [ca for ca in map(str.strip, cuda_arch) if len(ca) > 0]
-                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{";".join(cuda_arch)}"')
+            # Empty keeps CMake's ``native``, which resolves the local GPU. It is filled in from
+            # compiler.cuda.cuda_arch, or, on a host with no GPU for native to find, from what the
+            # toolkit can still build -- see native_compiler.cuda_architectures.
+            from dace.codegen import native_compiler
+            if cuda_arch := native_compiler.cuda_architectures():
+                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
 
             # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
             # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
@@ -2449,7 +2450,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             for _ in kernel_map.params:
                 kernel_stream.write('}', cfg, state_id, node)
 
-        # Drain thread-block reductions: bounds guard closed → all threads live for the cub
+        # Drain thread-block reductions: bounds guard closed, all threads live for the cub
         # fold (out-of-range partials hold the identity set above). Here, not at MapExit,
         # because this default path closes the guard inline.
         for i, red in enumerate(self._gpu_block_reductions):
@@ -3038,7 +3039,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             for i in range(len(node.map.params)):
                 callsite_stream.write('}', cfg, state_id, node)
 
-            # Drain thread-block reductions primed at scope entry: bounds guard just closed →
+            # Drain thread-block reductions primed at scope entry: bounds guard just closed,
             # all threads live for the (barrier-using) cub fold. Out-of-range threads carry the
             # identity; thread 0 commits the single atomic.
             covered = self._cpu_codegen._gpu_block_reduction_covered

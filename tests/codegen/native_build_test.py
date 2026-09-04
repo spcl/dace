@@ -174,13 +174,86 @@ def test_cuda_arch_flags_no_native_uses_explicit():
         ]
 
 
-def test_cuda_arch_flags_no_native_no_arch_errors():
-    """No local GPU and no configured arch is unbuildable -- raise clearly instead of emitting an
-    empty (and thus broken) flag list."""
+def test_cuda_arch_flags_no_native_no_arch_falls_back():
+    """No local GPU and no configured arch still has to build. Left to nvcc, ``-arch=native``
+    resolves to a default older than the fp16 the runtime emits, so name an architecture that works
+    instead of emitting an empty (and thus broken) flag list."""
     for value in ('', 'auto', 'native'):
         with set_temporary('compiler', 'cuda', 'cuda_arch', value=value):
-            with pytest.raises(cgx.CompilerConfigurationError, match='cuda_arch'):
-                nc._cuda_arch_flags(None, allow_native=False)
+            with pytest.warns(UserWarning, match='no local GPU'):
+                assert nc._cuda_arch_flags({75, 80}, allow_native=False) == ['-gencode', 'arch=compute_75,code=sm_75']
+
+
+def test_fallback_arch_is_the_oldest_one_that_can_build_fp16():
+    """Below sm_53 <cuda_fp16.h> declares no ``__half`` operators and no ``half2`` intrinsics: a
+    generated fp16 kernel then fails on undefined ``__hadd2`` and on ``__half`` conversions that are
+    suddenly ambiguous. A toolkit that dropped everything older (CUDA 13 starts at sm_75) reports
+    its own oldest instead, so the fallback always names something nvcc accepts."""
+    assert nc._fallback_arch({50, 52, 53, 60}) == 53
+    assert nc._fallback_arch({75, 80, 90}) == 75
+    assert nc._fallback_arch({35, 50}) == nc.MINIMUM_CUDA_ARCH
+    assert nc._fallback_arch(None) == nc.MINIMUM_CUDA_ARCH
+    assert nc.MINIMUM_CUDA_ARCH == 53
+
+
+def _fake_nvcc_run(stderr: str):
+    """A ``subprocess.run`` whose probe exits 0 and says ``stderr``."""
+
+    def run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, '', stderr)
+
+    return run
+
+
+def test_native_probe_reads_the_warning_not_the_exit_code(monkeypatch):
+    """nvcc does not fail when it finds no GPU for ``-arch=native``: it warns, substitutes a default
+    architecture of its own and exits 0. Trusting the exit code left a GPU-less host compiling for
+    that default -- which cannot build a half kernel at all."""
+    monkeypatch.setattr(nc.subprocess, 'run',
+                        _fake_nvcc_run("nvcc warning : Cannot find valid GPU for '-arch=native', default arch used\n"))
+    assert not nc._can_use_arch_native('/fake/nvcc-without-a-gpu')
+
+    monkeypatch.setattr(nc.subprocess, 'run', _fake_nvcc_run(''))
+    assert nc._can_use_arch_native('/fake/nvcc-with-a-gpu')
+
+
+def test_cuda_architectures_keeps_native_when_a_gpu_is_there(monkeypatch):
+    """Empty is what CMake reads as ``native``, and native is the right answer on a real GPU host."""
+    monkeypatch.setattr(nc, '_cuda_paths', lambda: ('/fake/nvcc', [], []))
+    monkeypatch.setattr(nc, '_can_use_arch_native', lambda nvcc: True)
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value=''):
+        assert nc.cuda_architectures() == ''
+
+
+def test_cuda_architectures_names_an_arch_without_a_gpu(monkeypatch):
+    """The GPU-less case: ``native`` stays the configured default, and DaCe resolves it here rather
+    than letting nvcc substitute a default that cannot compile the generated fp16."""
+    monkeypatch.setattr(nc, '_cuda_paths', lambda: ('/fake/nvcc', [], []))
+    monkeypatch.setattr(nc, '_can_use_arch_native', lambda nvcc: False)
+    monkeypatch.setattr(nc, '_nvcc_supported_arches', lambda nvcc: frozenset({50, 52, 53, 80}))
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value=''):
+        assert nc.cuda_architectures() == '53'
+
+
+def test_cuda_architectures_honors_the_configured_arch(monkeypatch):
+    """An explicit compiler.cuda.cuda_arch wins over detection, and reaches CMake as a ``;`` list."""
+    monkeypatch.setattr(nc, '_cuda_paths', lambda: ('/fake/nvcc', [], []))
+    monkeypatch.setattr(nc, '_can_use_arch_native', lambda nvcc: True)
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='80, 90'):
+        assert nc.cuda_architectures() == '80;90'
+
+
+def test_cmake_recomputes_the_cuda_architecture_every_configure():
+    """The architecture must not be a CACHE entry. Cached, it pinned the FIRST configure's choice:
+    setting compiler.cuda.cuda_arch on an existing build folder was read, printed in the status
+    message and then ignored, so the only way to change it was to delete the folder."""
+    cmakelists = os.path.join(os.path.dirname(dace.__file__), 'codegen', 'CMakeLists.txt')
+    with open(cmakelists) as f:
+        text = f.read()
+    block = text[text.index('if (DACE_CUDA_ARCHITECTURES_DEFAULT)'):text.index('set(CMAKE_CUDA_ARCHITECTURES')]
+
+    assert 'LOCAL_CUDA_ARCHITECTURES' in block
+    assert 'CACHE' not in block, 'a cached architecture ignores a later compiler.cuda.cuda_arch'
 
 
 # ---------------------------------------------------------------------------

@@ -304,11 +304,20 @@ def _nvcc_supported_arches(nvcc: str) -> Optional[frozenset]:
     return frozenset(int(m) for m in re.findall(r'compute_(\d+)', out.stdout))
 
 
+#: What nvcc says when ``-arch=native`` has no driver to ask. It does NOT fail: it warns, then
+#: compiles for a default architecture of its own, which is older than everything DaCe emits fp16
+#: for. The exit code alone therefore cannot tell a resolved GPU from a substituted default.
+_NO_NATIVE_GPU = 'Cannot find valid GPU'
+
+
 @functools.lru_cache(maxsize=None)
 def _can_use_arch_native(nvcc: str) -> bool:
-    """Whether ``nvcc -arch=native`` can resolve a local GPU. Native detection queries the driver, so
-    it fails on a host without a visible CUDA device (e.g. a GPU-less build node); there we must fall
-    back to the explicitly configured architectures instead of emitting an unbuildable command.
+    """Whether ``nvcc -arch=native`` resolves a local GPU rather than substituting its own default.
+
+    Native detection queries the driver, so it finds nothing on a host without a visible CUDA device
+    (a GPU-less build node, or one where CUDA_VISIBLE_DEVICES hides them). nvcc keeps going there --
+    the probe exits 0 -- so the warning is what has to be read; the caller then picks an architecture
+    instead of inheriting a default too old to build a half kernel.
 
     Cached per nvcc binary: the local GPU visibility is fixed for a run, and the probe compiles."""
     try:
@@ -317,12 +326,50 @@ def _can_use_arch_native(nvcc: str) -> bool:
                              text=True)
     except OSError:
         return False
-    return out.returncode == 0
+    return out.returncode == 0 and _NO_NATIVE_GPU not in out.stderr
 
 
 #: One ``compiler.cuda.cuda_arch`` entry: a number with an optional ``sm_``/``compute_`` prefix and an
 #: optional feature suffix -- ``90``, ``sm_90`` and ``90a`` all name architecture 90.
 _ARCH_TOKEN = re.compile(r'(?:sm_|compute_)?(\d+)([a-z]?)')
+
+#: Oldest architecture the generated device code can be built for. ``__half`` arithmetic, its
+#: comparison operators and the ``half2`` intrinsics the tile ops emit all appear in sm_53; below it
+#: <cuda_fp16.h> declares none of them, and an fp16 kernel fails on undefined ``__hadd2`` and on
+#: ``__half`` conversions that are suddenly ambiguous. nvcc's own default is older than this.
+MINIMUM_CUDA_ARCH = 53
+
+
+def _fallback_arch(supported: Optional[set]) -> int:
+    """Oldest architecture this toolkit still builds that the runtime's device code can use.
+
+    A toolkit that dropped everything below the minimum (CUDA 13 starts at sm_75) reports its own
+    oldest instead, so the fallback always names something nvcc accepts.
+    """
+    usable = sorted(arch for arch in supported if arch >= MINIMUM_CUDA_ARCH) if supported else []
+    return usable[0] if usable else MINIMUM_CUDA_ARCH
+
+
+def cuda_architectures() -> str:
+    """The architectures a build targets, spelled as CMake wants them (``;``-separated).
+
+    Empty means ``native``: nvcc resolves the local GPU, which is the default and what a machine with
+    a GPU should use. ``compiler.cuda.cuda_arch`` overrides it. Neither applies on a host with no
+    visible GPU, and there ``native`` does not fail -- nvcc warns once and silently substitutes its
+    own default architecture, which is older than the fp16 the runtime emits, so the build dies deep
+    in <cuda_fp16.h> naming nothing about architectures. Resolving it here keeps ``native`` the
+    default and still hands the compiler a target it can build.
+    """
+    configured = [arch for arch in map(str.strip, Config.get('compiler', 'cuda', 'cuda_arch').split(',')) if arch]
+    if configured:
+        return ';'.join(configured)
+    try:
+        nvcc = _cuda_paths()[0]
+    except cgx.CompilerConfigurationError:
+        return ''
+    if _can_use_arch_native(nvcc):
+        return ''
+    return str(_fallback_arch(_nvcc_supported_arches(nvcc)))
 
 
 def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> List[str]:
@@ -341,7 +388,8 @@ def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> Lis
     while only the number is matched against the toolkit's supported set -- an architecture the
     toolkit dropped is skipped with a warning rather than failing the compile. Anything unparseable
     is warned about and skipped instead of being interpolated into an unbuildable
-    ``arch=compute_sm_90``. An empty result raises rather than emitting no target at all.
+    ``arch=compute_sm_90``. An empty result falls back to the oldest architecture the toolkit
+    builds that the runtime can use, rather than emitting no target at all.
     """
     if allow_native:
         return ['-arch=native']
@@ -362,10 +410,14 @@ def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> Lis
         target = f'{number}{suffix}'
         flags += ['-gencode', f'arch=compute_{target},code=sm_{target}']
     if not flags:
-        raise cgx.CompilerConfigurationError(
-            'Native build: nvcc -arch=native found no local GPU and compiler.cuda.cuda_arch names no '
-            'architecture this toolkit supports. Set compiler.cuda.cuda_arch to a supported target, or '
-            'use compiler.build_mode=cmake.')
+        # Nothing configured (or nothing the toolkit still builds) and no GPU to detect. Left to
+        # nvcc, -arch=native resolves to a default too old for the runtime's fp16; name the oldest
+        # architecture that does work instead, which is what the cmake build now targets too.
+        arch = _fallback_arch(supported)
+        warnings.warn(f'Native build: nvcc -arch=native found no local GPU and compiler.cuda.cuda_arch '
+                      f'names no architecture this toolkit supports; building for sm_{arch}. Set '
+                      f'compiler.cuda.cuda_arch to target another one.')
+        flags = ['-gencode', f'arch=compute_{arch},code=sm_{arch}']
     return flags
 
 

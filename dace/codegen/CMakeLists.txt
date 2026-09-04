@@ -102,14 +102,14 @@ if(DACE_ENABLE_CUDA)
   string(APPEND CMAKE_CUDA_FLAGS " --expt-relaxed-constexpr")
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
-  if (DEFINED LOCAL_CUDA_ARCHITECTURES)
-    message(STATUS "Use cached CUDA architectures: '${DACE_CUDA_ARCHITECTURES_DEFAULT}'")
-
-  elseif(DACE_CUDA_ARCHITECTURES_DEFAULT)
-    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
-    message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+  # Recomputed on every configure. A CACHE entry here pinned the FIRST configure's choice: a later
+  # compiler.cuda.cuda_arch reached this file, got reported in the message, and was then ignored,
+  # so the only way to change the architecture of an existing build folder was to delete it.
+  if (DACE_CUDA_ARCHITECTURES_DEFAULT)
+    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+    message(STATUS "Compiling for CUDA architectures: ${LOCAL_CUDA_ARCHITECTURES}")
   else()
-    set(LOCAL_CUDA_ARCHITECTURES "native" CACHE STRING "Detected local GPUs for compilation")
+    set(LOCAL_CUDA_ARCHITECTURES "native")
     message(STATUS "No CUDA architecture provided, using native.")
   endif()
 
