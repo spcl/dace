@@ -730,7 +730,13 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
     dialect = dialect_for(language)
     prepared = copy.deepcopy(sdfg)
     provenance: Dict[str, Tuple[str, str]] = {}
-    prepare(prepared, provenance)
+    # Under the dialect, because ``prepare`` EXPANDS library nodes and an expansion bakes its
+    # tasklet text once and for good. A node that spells its own element transform -- ArgReduce
+    # writes ``std::abs`` -- had no way to know which dialect was being rendered and always chose
+    # the C++ one, so every argmax over a transformed element failed the C rendering at the
+    # self-containment check rather than at anything a caller could act on.
+    with mpr_lowering.dialect_scope(dialect):
+        prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
     # ``dace::CopyND`` and state-struct accesses that no dialect switch can take back. Refuse.

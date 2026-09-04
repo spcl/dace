@@ -60,6 +60,25 @@ _OP_TAG = {'max': 'ArgMaxOp', 'min': 'ArgMinOp'}
 #: ``std::abs``, not ``dace::math::abs``: the latter namespace holds only the ``typeless_nan``
 #: overload, so a real operand does not match it.
 _TRANSFORM_CPP = {'': None, 'abs': 'std::abs'}
+#: The same transforms in the C dialect. ``std::abs`` is C++ only, so a C rendering that pasted it
+#: is not self-contained and MPR's own verifier rejects the result -- which is what it did for every
+#: kernel whose argmax scans a transformed element. ``mpr_abs`` is the ``_Generic`` macro
+#: ``mpr_lowering.C_STD_RENAMES`` already emits for ``abs``, so this names the spelling that module
+#: defines rather than inventing a second one.
+_TRANSFORM_C = {'': None, 'abs': 'mpr_abs'}
+
+
+def _transform_spelling(transform: str) -> Optional[str]:
+    """The element transform's spelling in whichever dialect is being rendered.
+
+    Asked at EXPANSION time because the tasklet's text is fixed once it is built; outside a
+    standalone-C rendering this is the C++ table, which is the behaviour every other caller has.
+    """
+    from dace import mpr_lowering
+
+    return (_TRANSFORM_C if mpr_lowering.standalone_c() else _TRANSFORM_CPP)[transform]
+
+
 #: The same transforms as ``dace/cub_compat.cuh`` functors, for the CUDA expansion's input iterator.
 #: Identity is a real functor rather than a skipped wrap so a strided untransformed read has the
 #: same iterator shape as a transformed one.
@@ -110,7 +129,7 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     except (TypeError, ValueError):
         unit_stride = False
     step_str = sym2cpp(step)
-    fn = _TRANSFORM_CPP[node.transform]
+    fn = _transform_spelling(node.transform)
 
     def read(expr: str) -> str:
         raw = f'_in[{expr}]' if unit_stride else f'_in[({expr}) * ({step_str})]'
