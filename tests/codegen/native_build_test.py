@@ -181,18 +181,24 @@ def test_cuda_arch_flags_no_native_no_arch_falls_back():
     for value in ('', 'auto', 'native'):
         with set_temporary('compiler', 'cuda', 'cuda_arch', value=value):
             with pytest.warns(UserWarning, match='no local GPU'):
-                assert nc._cuda_arch_flags({75, 80}, allow_native=False) == ['-gencode', 'arch=compute_75,code=sm_75']
+                assert nc._cuda_arch_flags({75, 80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
-def test_fallback_arch_is_the_oldest_one_that_can_build_fp16():
-    """Below sm_53 <cuda_fp16.h> declares no ``__half`` operators and no ``half2`` intrinsics: a
-    generated fp16 kernel then fails on undefined ``__hadd2`` and on ``__half`` conversions that are
-    suddenly ambiguous. A toolkit that dropped everything older (CUDA 13 starts at sm_75) reports
-    its own oldest instead, so the fallback always names something nvcc accepts."""
+def test_fallback_arch_prefers_the_configured_default():
+    """Without a GPU to detect, the build targets sm_80 -- new enough for everything the runtime
+    emits, old enough for the cubin to still load on the hardware DaCe is run on."""
+    assert nc._fallback_arch({75, 80, 90}) == 80
+    assert nc._fallback_arch(None) == 80
+    assert nc.FALLBACK_CUDA_ARCH == 80
+
+
+def test_fallback_arch_drops_to_what_the_toolkit_can_build():
+    """A toolkit too old for sm_80 gets the oldest architecture it has that can build fp16 at all.
+    Below sm_53 <cuda_fp16.h> declares no ``__half`` operators and no ``half2`` intrinsics, so a
+    generated fp16 kernel fails on undefined ``__hadd2`` and on ``__half`` conversions that are
+    suddenly ambiguous."""
     assert nc._fallback_arch({50, 52, 53, 60}) == 53
-    assert nc._fallback_arch({75, 80, 90}) == 75
     assert nc._fallback_arch({35, 50}) == nc.MINIMUM_CUDA_ARCH
-    assert nc._fallback_arch(None) == nc.MINIMUM_CUDA_ARCH
     assert nc.MINIMUM_CUDA_ARCH == 53
 
 
@@ -232,7 +238,7 @@ def test_cuda_architectures_names_an_arch_without_a_gpu(monkeypatch):
     monkeypatch.setattr(nc, '_can_use_arch_native', lambda nvcc: False)
     monkeypatch.setattr(nc, '_nvcc_supported_arches', lambda nvcc: frozenset({50, 52, 53, 80}))
     with set_temporary('compiler', 'cuda', 'cuda_arch', value=''):
-        assert nc.cuda_architectures() == '53'
+        assert nc.cuda_architectures() == '80'
 
 
 def test_cuda_architectures_honors_the_configured_arch(monkeypatch):

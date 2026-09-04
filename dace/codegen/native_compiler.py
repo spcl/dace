@@ -339,14 +339,21 @@ _ARCH_TOKEN = re.compile(r'(?:sm_|compute_)?(\d+)([a-z]?)')
 #: ``__half`` conversions that are suddenly ambiguous. nvcc's own default is older than this.
 MINIMUM_CUDA_ARCH = 53
 
+#: What a build targets when ``-arch=native`` has no GPU to resolve. sm_80 (Ampere) carries
+#: everything the runtime emits and is old enough that the cubin still loads on the hardware DaCe is
+#: actually run on; a newer default would refuse to load, an older one gives up instructions.
+FALLBACK_CUDA_ARCH = 80
+
 
 def _fallback_arch(supported: Optional[set]) -> int:
-    """Oldest architecture this toolkit still builds that the runtime's device code can use.
+    """The architecture to build for when there is no GPU to detect.
 
-    A toolkit that dropped everything below the minimum (CUDA 13 starts at sm_75) reports its own
-    oldest instead, so the fallback always names something nvcc accepts.
+    ``FALLBACK_CUDA_ARCH`` unless this toolkit cannot build it, and then the oldest one it can that
+    the runtime's device code still works on -- so the fallback always names something nvcc accepts.
     """
-    usable = sorted(arch for arch in supported if arch >= MINIMUM_CUDA_ARCH) if supported else []
+    if not supported or FALLBACK_CUDA_ARCH in supported:
+        return FALLBACK_CUDA_ARCH
+    usable = sorted(arch for arch in supported if arch >= MINIMUM_CUDA_ARCH)
     return usable[0] if usable else MINIMUM_CUDA_ARCH
 
 
