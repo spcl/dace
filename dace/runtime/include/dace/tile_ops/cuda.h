@@ -22,7 +22,9 @@
 // a silent performance loss rather than an error. The two spots where the vendors genuinely differ
 // -- the fp16/fp8 header names and the missing FP16x2 min/max -- are handled where they occur.
 
+#include <cmath>
 #include <cstdint>
+#include <type_traits>
 
 #if defined(__HIPCC__)
 #include <hip/hip_fp16.h>
@@ -46,23 +48,63 @@ namespace dace {
 namespace tileops {
 
 // ----------------------------- compute-type apply ----------------------------
-// A scalar binary apply that is correct for every element type the GPU path
-// sees. Types without native arithmetic operators (fp8) are computed through
-// ``float``; ``__half`` and the builtin types use their device operators.
+// The type a scalar tile op COMPUTES in. Anything with native device arithmetic computes in
+// ITSELF: routing every element type through ``float`` narrowed a ``double`` tile to 24 bits of
+// mantissa (vadv's Thomas sweep came back 1e-4 off, and the wrong values were float-exact) and
+// dropped every 64-bit integer past 2^24. Only the types with no arithmetic operators convert --
+// fp8 (cuda_fp8.h is conversion and data movement only) and ``__half``, which keeps the float
+// round-trip the ``half2`` fast path below is checked against and which rounds identically to a
+// native half op for a single operation.
 template <typename T>
-DACE_DFI float _cuda_to_compute(T a) {
-  return static_cast<float>(a);
+using tile_compute_t = std::conditional_t<std::is_arithmetic_v<T>, T, float>;
+
+// The type the transcendental unops evaluate in: an integral tile has no ``exp`` of its own, and
+// only ``double`` earns the double-precision libm entry points.
+template <typename T>
+using tile_math_t = std::conditional_t<std::is_same_v<tile_compute_t<T>, double>, double, float>;
+
+// ``std::min`` / ``std::max`` are host-only, and ``fminf`` picks the non-NaN operand where
+// scalar.h's ``std::min`` propagates it. These match scalar.h, which is the reference the CPU
+// tiles are checked against.
+template <typename C>
+DACE_DFI C _tile_min(C a, C b) {
+  return (b < a) ? b : a;
 }
+
+template <typename C>
+DACE_DFI C _tile_max(C a, C b) {
+  return (a < b) ? b : a;
+}
+
+template <typename C>
+DACE_DFI C _tile_abs(C a) {
+  if constexpr (std::is_unsigned_v<C>)
+    return a;
+  else
+    return (a < C(0)) ? static_cast<C>(-a) : a;
+}
+
+template <typename C>
+DACE_DFI C _tile_fma(C a, C b, C c) {
+  if constexpr (std::is_same_v<C, double>)
+    return fma(a, b, c);
+  else if constexpr (std::is_same_v<C, float>)
+    return fmaf(a, b, c);
+  else
+    return static_cast<C>(a * b + c);
+}
+
 template <typename T>
-DACE_DFI T _cuda_from_compute(float a) {
-  return static_cast<T>(a);
+DACE_DFI bool _tile_truthy(T a) {
+  return static_cast<tile_compute_t<T>>(a) != tile_compute_t<T>(0);
 }
 
 template <typename T, char Op>
 DACE_DFI T tile_apply(T a, T b) {
-  const float af = _cuda_to_compute<T>(a);
-  const float bf = _cuda_to_compute<T>(b);
-  float r;
+  using C = tile_compute_t<T>;
+  const C af = static_cast<C>(a);
+  const C bf = static_cast<C>(b);
+  C r;
   if constexpr (Op == '+')
     r = af + bf;
   else if constexpr (Op == '-')
@@ -72,55 +114,59 @@ DACE_DFI T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     r = af / bf;
   else if constexpr (Op == 'm')
-    r = fminf(af, bf);
+    r = _tile_min(af, bf);
   else if constexpr (Op == 'M')
-    r = fmaxf(af, bf);
+    r = _tile_max(af, bf);
   else if constexpr (Op == '<')
-    r = (af < bf) ? 1.0f : 0.0f;
+    r = (af < bf) ? C(1) : C(0);
   else if constexpr (Op == 'l')
-    r = (af <= bf) ? 1.0f : 0.0f;
+    r = (af <= bf) ? C(1) : C(0);
   else if constexpr (Op == '>')
-    r = (af > bf) ? 1.0f : 0.0f;
+    r = (af > bf) ? C(1) : C(0);
   else if constexpr (Op == 'g')
-    r = (af >= bf) ? 1.0f : 0.0f;
+    r = (af >= bf) ? C(1) : C(0);
   else if constexpr (Op == '=')
-    r = (af == bf) ? 1.0f : 0.0f;
+    r = (af == bf) ? C(1) : C(0);
   else if constexpr (Op == '!')
-    r = (af != bf) ? 1.0f : 0.0f;
+    r = (af != bf) ? C(1) : C(0);
   else if constexpr (Op == '&')
-    r = (af && bf) ? 1.0f : 0.0f;
+    r = (af && bf) ? C(1) : C(0);
   else /* '|' */
-    r = (af || bf) ? 1.0f : 0.0f;
-  return _cuda_from_compute<T>(r);
+    r = (af || bf) ? C(1) : C(0);
+  return static_cast<T>(r);
 }
 
 template <typename T, char Op>
 DACE_DFI T tile_unop_apply(T a) {
-  const float af = _cuda_to_compute<T>(a);
-  float r;
-  if constexpr (Op == 'n')
-    r = -af;
-  else if constexpr (Op == '!')
-    r = af ? 0.0f : 1.0f;
-  else if constexpr (Op == 'a')
-    r = fabsf(af);
-  else if constexpr (Op == 'e')
-    r = expf(af);
-  else if constexpr (Op == 'l')
-    r = logf(af);
-  else if constexpr (Op == 's')
-    r = sqrtf(af);
-  else if constexpr (Op == 'S')
-    r = sinf(af);
-  else if constexpr (Op == 'C')
-    r = cosf(af);
-  else if constexpr (Op == 'f')
-    r = floorf(af);
-  else if constexpr (Op == 'c')
-    r = ceilf(af);
-  else /* 't' */
-    r = tanhf(af);
-  return _cuda_from_compute<T>(r);
+  using C = tile_compute_t<T>;
+  using M = tile_math_t<T>;
+  if constexpr (Op == 'n') {
+    return static_cast<T>(static_cast<C>(-static_cast<C>(a)));
+  } else if constexpr (Op == '!') {
+    return static_cast<T>(_tile_truthy<T>(a) ? C(0) : C(1));
+  } else if constexpr (Op == 'a') {
+    return static_cast<T>(_tile_abs<C>(static_cast<C>(a)));
+  } else {
+    const M af = static_cast<M>(a);
+    M r;
+    if constexpr (Op == 'e')
+      r = exp(af);
+    else if constexpr (Op == 'l')
+      r = log(af);
+    else if constexpr (Op == 's')
+      r = sqrt(af);
+    else if constexpr (Op == 'S')
+      r = sin(af);
+    else if constexpr (Op == 'C')
+      r = cos(af);
+    else if constexpr (Op == 'f')
+      r = floor(af);
+    else if constexpr (Op == 'c')
+      r = ceil(af);
+    else /* 't' */
+      r = tanh(af);
+    return static_cast<T>(r);
+  }
 }
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -384,10 +430,11 @@ DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __
   {
 #pragma unroll
     for (int i = 0; i < VLEN; ++i) {
-      const float af = _cuda_to_compute<T>(BroadcastA ? a[0] : a[i]);
-      const float bf = _cuda_to_compute<T>(BroadcastB ? b[0] : b[i]);
-      const float cf = _cuda_to_compute<T>(BroadcastC ? c[0] : c[i]);
-      const T rv = _cuda_from_compute<T>(fmaf(af, bf, cf));  // single-rounded a*b + c
+      using C = tile_compute_t<T>;
+      const C af = static_cast<C>(BroadcastA ? a[0] : a[i]);
+      const C bf = static_cast<C>(BroadcastB ? b[0] : b[i]);
+      const C cf = static_cast<C>(BroadcastC ? c[0] : c[i]);
+      const T rv = static_cast<T>(_tile_fma<C>(af, bf, cf));  // single-rounded a*b + c
       if constexpr (Masked)
         out[i] = mask[i] ? rv : T(0);
       else
@@ -432,7 +479,7 @@ DACE_DFI void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, cons
   for (int i = 0; i < VLEN; ++i) {
     const T tv = BroadcastThen ? t[0] : t[i];
     const T ev = BroadcastElse ? e[0] : e[i];
-    const bool c = _cuda_to_compute<CondT>(cond[i]) != 0.0f;
+    const bool c = _tile_truthy<CondT>(cond[i]);
     if constexpr (Masked)
       out[i] = mask[i] ? (c ? tv : ev) : T(0);
     else
@@ -616,10 +663,11 @@ template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool Broadcast
           typename A, typename B, typename C>
 DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_fma(Out&& out, A&& a, B&& b, C&& c,
                                                                  const bool* __restrict__ mask) {
-  const float af = _cuda_to_compute<T>(tile_load_value<T>(a));
-  const float bf = _cuda_to_compute<T>(tile_load_value<T>(b));
-  const float cf = _cuda_to_compute<T>(tile_load_value<T>(c));
-  T rv = _cuda_from_compute<T>(fmaf(af, bf, cf));
+  using CT = tile_compute_t<T>;
+  const CT af = static_cast<CT>(tile_load_value<T>(a));
+  const CT bf = static_cast<CT>(tile_load_value<T>(b));
+  const CT cf = static_cast<CT>(tile_load_value<T>(c));
+  T rv = static_cast<T>(_tile_fma<CT>(af, bf, cf));
   if constexpr (Masked)
     tile_store_value<T>(out, mask[0] ? rv : T(0));
   else
@@ -640,7 +688,7 @@ template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool Broadca
           typename C, typename TThen, typename EElse>
 DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_ite(Out&& out, C&& cond, TThen&& t, EElse&& e,
                                                                  const bool* __restrict__ mask) {
-  const bool cv = _cuda_to_compute<CondT>(tile_load_value<CondT>(cond)) != 0.0f;
+  const bool cv = _tile_truthy<CondT>(tile_load_value<CondT>(cond));
   const T tv = tile_load_value<T>(t);
   const T ev = tile_load_value<T>(e);
   T rv = cv ? tv : ev;
