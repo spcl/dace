@@ -112,7 +112,8 @@ def test_extended():
         # need a stream connector (the library-node expansion handles its own
         # during codegen).
         memcopy_tasklets = [
-            n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
+            n for n in state.nodes()
+            if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
         ]
         for tasklet in memcopy_tasklets:
             assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
