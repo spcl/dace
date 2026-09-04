@@ -1,0 +1,120 @@
+name: HPCAgent-Bench Canonicalize
+
+# The canonicalize CPU path over the HPCAgent-Bench corpus, which lives in its own PUBLIC repo and
+# is cloned rather than vendored. The GPU half of the same gate runs on the CSCS pipeline
+# (``ci/cscs_gpu.yml``), which is the only place with a device.
+on:
+  push:
+    branches: [ main, extended ]
+  pull_request:
+    branches: [ main, extended ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  hpcagent-canon-cpu:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two tags that fit a CI slot: 56 and 40 kernels. Separate cells so one tag's timeout
+        # does not hide the other's result.
+        tag: [ npbench, llr-focus40 ]
+
+    name: canon-cpu-${{ matrix.tag }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        groups: testing
+
+    - name: Check out HPCAgent-Bench
+      uses: actions/checkout@v7
+      with:
+        repository: spcl/HPCAgent-Bench
+        path: hpcagent-bench
+
+    - name: The bench must measure the checkout
+      # The bench is not installed into the project environment at all: ``uv run --with-editable .``
+      # layers it, and its dependencies, over the environment ``setup-dace`` already synced. That
+      # keeps dace resolving to THIS checkout -- the bench declares dace as an EXTRA
+      # (``dace @ git+...@extended``), never a base dependency, so nothing in the overlay pulls a
+      # released wheel over the branch under test. ``--project`` is required because the cwd below
+      # is the bench, and without it uv would take the bench for the project.
+      #
+      # ``working-directory`` matters and must match the sweep step below: from the repo root the
+      # cwd shadows anything installed into site-packages, so the check would pass while the sweep
+      # -- which runs from ``hpcagent-bench`` and has no such shadow -- imported the wheel.
+      working-directory: hpcagent-bench
+      run: |
+        resolved=$(uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -c 'import dace, pathlib; print(pathlib.Path(dace.__file__).resolve())')
+        echo "dace resolves to $resolved"
+        case "$resolved" in
+          "$GITHUB_WORKSPACE"/dace/*) ;;
+          *) echo "::error::dace resolves to $resolved, not the checkout at $GITHUB_WORKSPACE"
+             exit 1 ;;
+        esac
+
+    - name: Canonicalize CPU correctness
+      working-directory: hpcagent-bench
+      env:
+        PYTHONHASHSEED: '0'
+        MPI4PY_RC_INITIALIZE: '0'
+        OMPI_MCA_pml: ob1
+        OMPI_MCA_btl: self,vader,tcp
+        PMIX_MCA_gds: hash
+        UCX_VFS_ENABLE: n
+        HWLOC_COMPONENTS: '-gl'
+        DACE_cache: unique
+        DACE_compiler_cpu_implementation: experimental_readable
+        OMP_NUM_THREADS: '4'
+      # ``-r 1``: a correctness gate, not a measurement -- a timing repeat on a shared runner
+      # measures the runner. ``|| true`` is deliberate here (unlike the gate step below): it lets
+      # the sweep run to completion so every kernel is reported in the CSV, even if some kernels
+      # crash along the way, before the gate step below reads that CSV.
+      run: |
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework \
+          -b all@${{ matrix.tag }} -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_${{ matrix.tag }}.csv || true
+
+    - name: Gate on the CSV
+      working-directory: hpcagent-bench
+      # --summarize exit codes: 0 = every row green; 1 = the CSV has rows and some crashed,
+      # failed, or disagreed with numpy (a real result, tolerated for now); 2 = the CSV is
+      # missing, unreadable, or has zero data rows (the sweep ran nothing -- never tolerated).
+      # No continue-on-error: a 0-kernel crashed run must not report success.
+      run: |
+        set +e
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework --summarize canon_cpu_${{ matrix.tag }}.csv
+        code=$?
+        set -e
+        if [ "$code" -ge 2 ]; then
+          echo "::error::the sweep produced no rows -- it crashed before running any kernel"
+          exit 1
+        fi
+        if [ "$code" -eq 1 ]; then
+          echo "::warning::known per-kernel failures remain; tolerated until the corpus is clean"
+        fi
+
+    - name: Keep the verdicts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: canon-cpu-${{ matrix.tag }}
+        path: hpcagent-bench/canon_cpu_${{ matrix.tag }}.csv

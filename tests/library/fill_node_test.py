@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`FillLibraryNode` and its pure / CPU / CUDA / tasklet expansions."""
 import contextlib
+import re
 from typing import Optional, Sequence
 
 import dace
 from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
 
-import pytest
 import numpy as np
+import pytest
 
 
 def make_fill_sdfg(implementation: Optional[str],
@@ -465,6 +466,20 @@ def make_dynamic_fill_sdfg(shape: Sequence[int],
     return sdfg
 
 
+def assert_reads_the_dynamic_value(code: str, call: str) -> None:
+    """The emitted ``call`` must take its fill value FROM ``V``, not from a baked-in literal.
+
+    Asserted on the call's arguments rather than on ``_fill_val`` appearing somewhere in the file:
+    the readable CPU generator inlines tasklet connectors, so the same correct lowering spells the
+    operand ``V[V_idx(0)]`` while the legacy one spells it ``_fill_val``. Pinning the connector name
+    would pass only under the legacy generator and would not check the operand either way.
+    """
+    sites = [ln for ln in code.split('\n') if call in ln]
+    assert sites, f'expected a {call} call in the generated code'
+    assert any(FillLibraryNode.VALUE_CONNECTOR_NAME in ln or re.search(r'\bV\b', ln) for ln in sites), \
+        f'{call} must read the dynamic value; got {sites}'
+
+
 def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     """A dynamic <=32-bit value on a contiguous CPU subset lowers to ``std::fill_n``."""
     sdfg = make_dynamic_fill_sdfg((100, ),
@@ -478,8 +493,7 @@ def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     assert select_fill_implementation(node, sdfg.start_state) == 'CPU'
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'std::fill_n' in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    assert_reads_the_dynamic_value(code, 'std::fill_n')
 
 
 def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
@@ -561,5 +575,4 @@ def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     assert select_fill_implementation(node, sdfg.start_state) == 'CUDA'
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'MemsetAsync' in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    assert_reads_the_dynamic_value(code, 'MemsetAsync')

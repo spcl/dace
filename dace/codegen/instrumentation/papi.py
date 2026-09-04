@@ -113,7 +113,59 @@ class PAPIInstrumentation(InstrumentationProvider):
         self._papi_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
-        if sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
+        # Whole-SDFG counters are the fallback, not an override: when inner regions are instrumented
+        # too, the per-region path below wins, which is what an unextended DaCe does with the same
+        # SDFG. Refusing the combination instead would make this branch change base behaviour.
+        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
+                sdfg):
+            # Configure CMake project and counters
+            self.configure_papi_native()
+
+            # Add instrumentation includes and initialize PAPI
+            global_stream.write('#include <dace/perf/papi.h>', sdfg)
+            local_stream.write('''dace::perf::PAPI::init();''')
+            # start a counter on every available thread
+            counter_start_code = """
+int max_threads = omp_get_max_threads();
+int _papi_event_sets[max_threads];
+std::vector<std::string> _papi_events = {{{events}}};
+int _papi_nevents = _papi_events.size();
+
+#pragma omp parallel num_threads(max_threads)
+{{
+    #pragma omp critical
+    {{
+        int tid = omp_get_thread_num();
+        PAPI_register_thread();
+        int _papi_EventSet = PAPI_NULL;
+        int tretval = PAPI_create_eventset(&_papi_EventSet);
+        if (tretval != PAPI_OK){{
+            std::cerr << "PAPI error: " << "Create EventSet" << " -> " << PAPI_strerror(tretval) << std::endl;
+            std::exit(EXIT_FAILURE);
+        }}
+        _papi_event_sets[tid] = _papi_EventSet;
+        for (unsigned int i = 0; i < _papi_events.size(); ++i) {{
+            tretval = PAPI_add_named_event(_papi_EventSet, _papi_events[i].c_str());
+            if (tretval != PAPI_OK) {{
+                // If some event isn't available, print a warning and continue (but exit if critical)
+                std::cerr << "Warning: PAPI_add_event failed for event " << i
+                        << " (" << PAPI_strerror(tretval) << ").\\n";
+                _papi_nevents--;
+            }}
+        }}
+    }}
+}}
+#pragma omp parallel num_threads(max_threads)
+{{
+    int tid = omp_get_thread_num();
+    if(_papi_nevents>0){{
+        PAPI_start(_papi_event_sets[tid]);
+    }}
+}}
+""".format(events='"{}"'.format('", "'.join(self._counters)))
+            local_stream.write(counter_start_code)
+
+        elif sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
             # Configure CMake project and counters
             self.configure_papi()
 
@@ -136,7 +188,40 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
         if not self._papi_used:
             return
 
-        local_stream.write('__perf_store.flush();', sdfg)
+        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
+                sdfg):
+            counter_stop_code = """
+// Stop counters
+#pragma omp parallel num_threads(max_threads)
+{{
+    size_t tid = omp_get_thread_num();
+    int _papi_EventSet = _papi_event_sets[tid];
+    long long _papi_counts[_papi_nevents] = {{0}};
+    int tretval = PAPI_stop(_papi_EventSet, _papi_counts);
+    if (tretval != PAPI_OK){{
+        std::cerr << "PAPI error: " << "Stop Counters" << " -> " << PAPI_strerror(tretval) << std::endl;
+        std::exit(EXIT_FAILURE);
+    }}
+    #pragma omp critical
+    {{
+        tretval = PAPI_cleanup_eventset(_papi_EventSet);
+        if (tretval != PAPI_OK) {{
+            std::cerr << "Warning: PAPI_cleanup_eventset: " << PAPI_strerror(tretval) << "\\n";
+        }}
+        tretval = PAPI_destroy_eventset(&_papi_EventSet);
+        if (tretval != PAPI_OK) {{
+            std::cerr << "Warning: PAPI_destroy_eventset: " << PAPI_strerror(tretval) << "\\n";
+        }}
+        PAPI_unregister_thread();
+        for(int i = 0; i<_papi_nevents; i++){{
+            __state->report.add_counter("{region_name}", "PAPI", _papi_events[i].c_str(), (unsigned long) _papi_counts[i], tid, {cfg_id}, {state_id}, {node_id});
+        }}
+    }}
+}}
+""".format(region_name=(f"{sdfg.name}_{sdfg.cfg_id}"), cfg_id=sdfg.cfg_id, state_id=-1, node_id=-1)
+            local_stream.write(counter_stop_code)
+        else:
+            local_stream.write('__perf_store.flush();', sdfg)
 
     def on_state_begin(self, sdfg, cfg, state, local_stream, global_stream):
         if not self._papi_used:
@@ -564,7 +649,7 @@ class PAPIUtils(object):
                 # To not have hidden elements that get added again later, we
                 # also replace the values in the other itvars...
                 for k, v in retparams.items():
-                    newv = symbolic.pystr_to_symbolic(str(v))
+                    newv = symbolic.pystr_to_symbolic(v)
 
                     tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:

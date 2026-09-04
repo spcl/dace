@@ -1,0 +1,360 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""``TileUnop`` element-wise unary op on K-dim register tiles.
+
+The lib node consumes one operand ``_a`` and writes ``_c`` (``_mask``
+optional). The operand carries a ``kind`` flag — ``Tile`` (per-lane via a
+connector), ``Scalar`` (length-1 / ``dace.data.Scalar`` broadcast), or
+``Symbol`` (a free-symbol expression embedded inline). Covers the unary ops
+the legacy 1D path emitted: ``neg`` (``-a``), ``abs``, ``exp``, ``log``,
+``sqrt``, ``sin``, ``cos``, ``floor``, ``ceil``, ``tanh``.
+
+The pure expansion returns a CPP tasklet whose body is a single ``for``-loop
+over the flattened tile (correctness-only); the K=1 ISA backends call
+``dace::tileops::tile_unop`` in ``dace/tile_ops/<backend>.h``.
+"""
+from typing import Optional, Tuple
+
+import dace
+from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
+from dace.sdfg import nodes
+from dace.transformation.transformation import ExpandTransformation
+
+from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
+from .. import _isa_codegen
+from .tile_binop import _promotion_ok
+
+_TILE = "Tile"
+_SYMBOL = "Symbol"
+_SCALAR = "Scalar"
+_VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
+
+# op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
+#: Op -> (prefix, suffix) for the pure inline C++ form ``<pre>operand<suf>``.
+#:
+#: Uses ``std::`` for elemental functions to match the K=1 ISA backend's tile_unop_apply
+#: (which calls ``std::abs`` / ``std::exp`` / etc.). An earlier attempt to use the
+#: ``dace::math::`` namespace failed because ``dace::math::abs`` only has overloads for
+#: ``typeless_nan`` and ``unsigned integer`` -- a ``double`` argument trips the wrong
+#: overload at compile time.
+_UNOP_CPP = {
+    "neg": ("(-", ")"),
+    "not": ("(!", ")"),
+    "abs": ("std::abs(", ")"),
+    "exp": ("std::exp(", ")"),
+    "log": ("std::log(", ")"),
+    "sqrt": ("std::sqrt(", ")"),
+    "sin": ("std::sin(", ")"),
+    "cos": ("std::cos(", ")"),
+    "tan": ("std::tan(", ")"),
+    "asin": ("std::asin(", ")"),
+    "acos": ("std::acos(", ")"),
+    "atan": ("std::atan(", ")"),
+    "sinh": ("std::sinh(", ")"),
+    "cosh": ("std::cosh(", ")"),
+    "floor": ("std::floor(", ")"),
+    "ceil": ("std::ceil(", ")"),
+    "tanh": ("std::tanh(", ")"),
+}
+
+# op -> the cuTile-Python expression (operand placeholder ``{a}``).
+_CUTE_UNOP_EXPR = {
+    "neg": "-{a}",
+    "not": "~{a}",
+    "abs": "ct.abs({a})",
+    "exp": "ct.exp({a})",
+    "log": "ct.log({a})",
+    "sqrt": "ct.sqrt({a})",
+    "sin": "ct.sin({a})",
+    "cos": "ct.cos({a})",
+    "tan": "ct.tan({a})",
+    "asin": "ct.asin({a})",
+    "acos": "ct.acos({a})",
+    "atan": "ct.atan({a})",
+    "sinh": "ct.sinh({a})",
+    "cosh": "ct.cosh({a})",
+    "floor": "ct.floor({a})",
+    "ceil": "ct.ceil({a})",
+    "tanh": "ct.tanh({a})",
+}
+
+# Explicit dtype-cast ops: the ``TileUnop.op`` label IS the target dtype name
+# (``float64`` / ``int32`` / ...), so a kept ``dace.float64(x)`` cast lowers to a
+# ``TileUnop`` whose op self-describes the conversion. Each maps to the
+# ``dace::<dtype>(x)`` cast function the C++ codegen already recognises (cppunparse
+# ``_typecast_func_to_cpp``) -- the sanctioned convert form, not a raw C cast. Built
+# from the dtype registry so dtype names are never hardcoded.
+_CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
+
+
+@library.expansion
+class ExpandTileUnopPure(ExpandTransformation):
+    """Correctness-only CPP tasklet lowering of ``TileUnop``."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileUnop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        """Return a single CPP tasklet that walks the flattened tile.
+
+        :param node: The ``TileUnop`` lib node being expanded.
+        :param parent_state: State that owns the lib node.
+        :param parent_sdfg: SDFG that owns ``parent_state``.
+        :returns: A CPP tasklet replacing the lib node in place.
+        """
+        node.validate(parent_sdfg, parent_state)
+        widths = list(node.widths)
+        off = tile_offset(widths)
+        in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
+
+        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
+                                            if e.src_conn == "_c").data.data].dtype.ctype
+        # Never emit a ``(bool)X`` cast (``not`` has a bool output + bool
+        # operand; casting a value to bool truncates it). Unary ops preserve
+        # the operand dtype, so the cast only matters for int-literal -> typed
+        # resolution, never bool. Suppress it when the dtype is bool.
+        _cast = "" if out_dtype == "bool" else f"({out_dtype})"
+        if node.kind_a == _SYMBOL:
+            # Cast to out_dtype so a literal / symbolic int operand resolves
+            # cleanly against a typed unop call (mirrors the binop fix).
+            operand_ctype = out_dtype
+            operand = f"{_cast}({pyexpr2cpp(node.expr_a)})"
+        elif node.kind_a == _TILE:
+            operand_ctype = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
+            operand = f"_a[{off}]"
+        else:  # Scalar: descriptor-aware reference.
+            # A tile-shape Array widened upstream is read per lane ``_a[off]``
+            # like a Tile (never ``(T)_a`` -- a pointer cast); any volume-1
+            # source (Scalar / length-1 Array) is passed by value and read as
+            # the bare ``_a``. A per-lane tile read keeps the tile dtype uncast;
+            # a broadcast is cast.
+            from .tile_binop import scalar_operand_ref
+            desc = parent_sdfg.arrays[in_e["_a"].data.data]
+            ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
+            operand_ctype = out_dtype if broadcast else desc.dtype.ctype
+            operand = f"{_cast}({ref})" if broadcast else ref
+
+        if node.op not in _CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
+            # Every ``_UNOP_CPP`` op other than ``neg``/``not`` lowers to an
+            # overloaded ``std::`` function (``sqrt``, ``exp``, ``abs``, ...)
+            # with NO ``__half`` overload at all -- unlike a mixed-type infix
+            # operator, this is not a "meets a different type" question, it
+            # is unconditional: ``dace::float16`` (CUDA's ``__half`` on GPU)
+            # exposes several simultaneously implicit conversions, so the
+            # overload set can never pick one on its own (confirmed: this is
+            # the exact shape of the ``std::sqrt`` "more than one instance of
+            # overloaded function ... matches" ambiguity). Route through one
+            # explicit, lossless ``(float)`` hop first, same as
+            # ``half_disambiguated`` (see its docstring) and same as the ISA
+            # runtime header's own ``_cuda_to_compute`` (tile_ops/cuda.h).
+            operand = half_disambiguated(operand, operand_ctype, "float")
+
+        if node.op in _CAST_OP_TO_CPP:
+            # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as
+            # a unop whose op IS the target dtype. A cast is the one op that may
+            # narrow, emitted as the ``dace::<dtype>(x)`` cast function (the same form
+            # codegen lowers a bare ``float64(x)`` to), not an incidental C cast. The
+            # operand is read raw -- the cast function performs the conversion.
+            if node.kind_a == _SYMBOL:
+                cast_src = f"({pyexpr2cpp(node.expr_a)})"
+            elif node.kind_a == _TILE:
+                cast_src = f"_a[{off}]"
+            else:  # Scalar: the descriptor-aware reference (uncast).
+                cast_src = ref
+            rhs_expr = f"{_CAST_OP_TO_CPP[node.op]}({cast_src})"
+        else:
+            pre, post = _UNOP_CPP[node.op]
+            rhs_expr = f"{pre}{operand}{post}"
+        # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
+        # assignment (no lane loop). Otherwise the K-fold tile loop.
+        from .tile_binop import _is_scalar_shape
+        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
+        out_is_scalar = (node.kind_a != _TILE and _is_scalar_shape(out_desc))
+        if out_is_scalar:
+            # A volume-1 output (Scalar / length-1 Array) is a by-value local
+            # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced
+            # bare. ``[0]`` is a memlet concern, never a tasklet-body one.
+            if node.has_mask:
+                body = f"_c = _mask ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"_c = {rhs_expr};"
+            code = body
+        else:
+            if node.has_mask:
+                body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
+            else:
+                body = f"_c[{off}] = {rhs_expr};"
+            code = nested_loops(widths, body)
+        inputs = set()
+        if node.kind_a in (_TILE, _SCALAR):
+            inputs.add("_a")
+        if node.has_mask:
+            inputs.add("_mask")
+        return nodes.Tasklet(
+            label=f"{node.label}_pure",
+            inputs={c: None
+                    for c in inputs},
+            outputs={"_c": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
+
+
+@library.expansion
+class ExpandTileUnopCutile(ExpandTransformation):
+    """``cuda.tile``-Python expansion of :class:`TileUnop`."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "TileUnop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        raise NotImplementedError(
+            "ExpandTileUnopCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
+            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
+        )
+
+
+@library.node
+class TileUnop(nodes.LibraryNode):
+    """Element-wise unary op on a K-dim register tile.
+
+    Connectors: ``_a`` (operand, omitted when ``kind_a == 'Symbol'``),
+    ``_mask`` (optional), ``_c`` (output tile).
+
+    :cvar implementations: ``pure`` (portable lane loop), ``cutile`` (cuTile),
+        and the four K=1 ISA backends.
+    :cvar default_implementation: ``"pure"``.
+    """
+
+    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
+    # device, so device auto-selection must not overwrite it.
+    auto_select_implementation = False
+    implementations = {
+        "pure": ExpandTileUnopPure,
+        "cutile": ExpandTileUnopCutile,
+        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
+        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
+        # matching header. Built by the shared factory (selector routes K>=2 to
+        # ``pure``).
+        **_isa_codegen.make_isa_expansions("Unop", _isa_codegen.make_unop_tasklet, globals()),
+    }
+    default_implementation = "pure"
+
+    target_isa = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="SCALAR",
+        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
+    )
+    op = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default="abs",
+        desc="Unary op (one of: neg not abs exp log sqrt sin cos floor ceil tanh, "
+        "or a dtype name like 'float64' / 'int32' for an explicit per-lane cast).",
+    )
+    widths = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
+    )
+    has_mask = properties.Property(
+        dtype=bool,
+        allow_none=False,
+        default=False,
+        desc="When True, the ``_mask`` input connector is required.",
+    )
+    kind_a = properties.Property(
+        dtype=str,
+        allow_none=False,
+        default=_TILE,
+        desc="Operand kind: 'Tile', 'Scalar' or 'Symbol'.",
+    )
+    expr_a = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Symbolic expression embedded inline when kind_a == 'Symbol'; ignored otherwise.",
+    )
+
+    def __init__(self,
+                 name: str,
+                 widths: Tuple[int, ...],
+                 op: str = "abs",
+                 has_mask: bool = False,
+                 kind_a: str = _TILE,
+                 expr_a: Optional[str] = None,
+                 location: Optional[str] = None):
+        """Construct a ``TileUnop`` node.
+
+        :param name: Node label.
+        :param widths: Per-dim tile widths, innermost-last.
+        :param op: One of the keys of :data:`_UNOP_CPP`.
+        :param has_mask: When True, declare the ``_mask`` input connector.
+        :param kind_a: ``"Tile"`` (default), ``"Scalar"`` or ``"Symbol"``.
+        :param expr_a: Required when ``kind_a == "Symbol"``.
+        :param location: Optional DaCe node location override.
+        :raises ValueError: On invalid ``op``, ``widths`` length, kind, or a
+            missing expression for the symbol kind.
+        """
+        if op not in _UNOP_CPP and op not in _CAST_OP_TO_CPP:
+            raise ValueError(f"TileUnop: unknown op {op!r}; allowed: "
+                             f"{sorted(_UNOP_CPP) + sorted(_CAST_OP_TO_CPP)}")
+        if not (1 <= len(widths) <= 3):
+            raise ValueError(f"TileUnop: widths must have length in {{1, 2, 3}}, got {widths!r}")
+        if kind_a not in _VALID_KINDS:
+            raise ValueError(f"TileUnop: kind_a must be one of {_VALID_KINDS}, got {kind_a!r}")
+        if kind_a == _SYMBOL and not expr_a:
+            raise ValueError("TileUnop: kind_a='Symbol' requires expr_a")
+
+        inputs = set()
+        if kind_a in (_TILE, _SCALAR):
+            inputs.add("_a")
+        if has_mask:
+            inputs.add("_mask")
+        super().__init__(name, location=location, inputs=inputs, outputs={"_c"})
+        self.widths = list(widths)
+        self.op = op
+        self.has_mask = has_mask
+        self.kind_a = kind_a
+        self.expr_a = expr_a
+
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
+        """Validate connectors + the operand promotion at expansion time.
+
+        :param sdfg: SDFG that owns ``state``.
+        :param state: State that owns ``self``.
+        :raises ValueError: If a required connector is unconnected.
+        :raises NotImplementedError: If a Tile operand dtype would narrow to
+            the output dtype.
+        """
+        in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
+        out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
+        if "_c" not in out_e:
+            raise ValueError(f"{self.label}: required output '_c' not connected")
+        if self.has_mask and "_mask" not in in_e:
+            raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
+        if self.kind_a in (_TILE, _SCALAR) and "_a" not in in_e:
+            raise ValueError(f"{self.label}: kind_a={self.kind_a!r} but '_a' not connected")
+        c_arr = sdfg.arrays[out_e["_c"].data.data]
+        # A dtype-name op (``float64`` / ``int32`` / ...) is the explicit conversion
+        # that MAY narrow (int64 -> int32, double -> float); that is its purpose, so
+        # the widening-only promotion guard is skipped. Every other unop preserves the
+        # operand dtype, so a narrowing to the output dtype there is a real bug.
+        if self.kind_a == _TILE and self.op not in _CAST_OP_TO_CPP:
+            src = sdfg.arrays[in_e["_a"].data.data].dtype
+            # ``abs`` of a complex operand is the (real) magnitude -- ``std::abs(std::complex<T>)``
+            # returns ``T`` -- so a complex -> real result is correct, not a lossy narrowing.
+            is_complex_abs = self.op == "abs" and src in (dace.dtypes.complex64, dace.dtypes.complex128)
+            if not is_complex_abs and not _promotion_ok(src, c_arr.dtype):
+                raise NotImplementedError(
+                    f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
+                    f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
+        # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
+        from .tile_binop import _is_tile_shape
+        if self.kind_a == _TILE and not _is_tile_shape(c_arr, tuple(self.widths)):
+            raise NotImplementedError(
+                f"{self.label}: output-kind rule violated -- kind_a=Tile but '_c' descriptor is not "
+                f"tile-shape {tuple(self.widths)!r}. Per design section 6.2: Tile input -> Tile output.")

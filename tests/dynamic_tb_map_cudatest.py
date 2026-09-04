@@ -5,6 +5,10 @@ import numpy as np
 import pytest
 import scipy
 
+# All tests in this file rely on the GPU_ThreadBlock_Dynamic schedule, which is
+# only supported by the legacy CUDA codegen.
+pytestmark = pytest.mark.old_gpu_codegen_only
+
 W = dace.symbol('W')
 H = dace.symbol('H')
 nnz = dace.symbol('nnz')
@@ -27,6 +31,7 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map():
     height = 1024
     width = 1024
@@ -39,6 +44,8 @@ def test_dynamic_map():
         if isinstance(node[0], dace.sdfg.nodes.MapEntry) \
                 and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
             node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+
+    sdfg.save("tblock_dynamic.sdfg")
 
     # Fill input data
     # each row has up (including) 256 elements
@@ -68,6 +75,7 @@ def test_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_maps():
     """ Tests the case of multiple dynamic maps in a row that share dynamic inputs."""
 
@@ -223,6 +231,7 @@ def test_nested_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map_with_step():
 
     M = dace.symbol('M')
@@ -294,6 +303,7 @@ def test_dynamic_map_with_step():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_multidim_map():
 
     @dace.program
@@ -341,6 +351,7 @@ def test_dynamic_nested_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_default_schedule():
     N = dace.symbol('N')
 
@@ -362,9 +373,9 @@ def test_dynamic_default_schedule():
 
 if __name__ == '__main__':
     test_dynamic_map()
-    test_dynamic_maps()
-    test_nested_dynamic_map()
-    test_dynamic_map_with_step()
-    test_dynamic_multidim_map()
+    #test_dynamic_maps()
+    #test_nested_dynamic_map()
+    #test_dynamic_map_with_step()
+    #test_dynamic_multidim_map()
     # test_dynamic_nested_map()
-    test_dynamic_default_schedule()
+    #test_dynamic_default_schedule()

@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dc
 import itertools
-from typing import Dict, List
+from typing import Any, Dict, List, Set
 
 from dace import Memlet, symbolic, subsets
 from dace.sdfg import nodes
@@ -11,10 +11,63 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
 from dace.transformation import transformation, helpers
-from dace.properties import make_properties
+from dace.properties import make_properties, CodeBlock
 from dace import data
 from dace.sdfg.state import LoopRegion, ReturnBlock
+
+
+def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
+    """Whether two descriptors carry the same shape and the same strides.
+
+    ``Scalar`` reports strides as a list and ``Array`` as a tuple, and ``same_value`` counts the
+    sequence type -- so a ``Scalar`` facing a length-1 ``Array``, the ordinary nested-SDFG boundary,
+    would refuse the inline over a container type. Compare by value.
+    """
+    return (symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
+            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides)))
+
+
+def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None:
+    """Rename tasklet connectors that clash with outer-scope names.
+
+    After inlining, a tasklet connector whose name coincides with an outer
+    array, symbol, constant, or assignment target would fail validation (and
+    could confuse code generation). Rename such connectors to fresh names and
+    update the connecting edges and the tasklet code.
+
+    Library nodes are exempt: their connector names are part of the node's
+    interface (ONNX schema parameters, BLAS operand names), and expansions look
+    them up by name. Renaming one silently unbinds the node from its schema --
+    the name is not recoverable from connector order either, e.g. an ONNX Gemm
+    carries ``B, A, C`` against schema order ``A, B, C``. A library-node
+    connector is not emitted as an identifier at this point anyway: expansion
+    turns it into a nested-SDFG boundary, which has its own scope.
+    """
+    for nstate in nsdfg.states():
+        for node in list(nstate.nodes()):
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            used = set(node.in_connectors.keys()) | set(node.out_connectors.keys())
+            renames: Dict[str, str] = {}
+            for conn in used:
+                if conn in reserved_names:
+                    renames[conn] = data.find_new_name(conn, reserved_names | used)
+            if not renames:
+                continue
+            node.in_connectors = {renames.get(k, k): v for k, v in node.in_connectors.items()}
+            node.out_connectors = {renames.get(k, k): v for k, v in node.out_connectors.items()}
+            for edge in list(nstate.in_edges(node)):
+                if edge.dst_conn in renames:
+                    helpers.redirect_edge(nstate, edge, new_dst_conn=renames[edge.dst_conn])
+            for edge in list(nstate.out_edges(node)):
+                if edge.src_conn in renames:
+                    helpers.redirect_edge(nstate, edge, new_src_conn=renames[edge.src_conn])
+            tasklet_replace_code(node, renames)
+            # tasklet_replace_code only rewrites symbols on the right-hand side;
+            # also rename connector names that appear as assignment targets.
+            node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
 @make_properties
@@ -105,7 +158,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if not _same_layout(outer_desc, inner_desc):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -124,7 +177,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if not _same_layout(outer_desc, inner_desc):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
@@ -186,9 +239,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        # Replace symbols using invocation symbol mapping.
+        #
+        # Split the mapping into IDENTITY (``inner_K = inner_K``) and
+        # NON-IDENTITY (``inner_K = outer_expr``). Only the non-identity
+        # entries change anything; substituting them inline would
+        # propagate ``outer_expr`` into every memlet/condition that
+        # referenced ``inner_K``. Instead we lower the non-identity
+        # entries to interstate-edge ASSIGNMENTS on the edge
+        # ``predecessor_state -> source`` (the edge that enters the
+        # inlined SDFG), so the inner code keeps using ``inner_K`` and
+        # the parent sees ``inner_K = outer_expr`` as a normal iedge
+        # assignment. Inner symbols absent from the outer scope get
+        # added to the outer SDFG's symbol table with their inner
+        # type, preserving the strict-typing contract.
+        identity_mapping: Dict[Any, Any] = {}
+        non_identity_mapping: Dict[str, str] = {}
+        for k, v in nsdfg_node.symbol_mapping.items():
+            if str(k) == str(v):
+                identity_mapping[k] = v
+            else:
+                non_identity_mapping[str(k)] = symbolic.symstr(v)
+        # Two-step replacement (N -> __dacesym_N --> map[N]) for any
+        # identity entries we want safe_replace's clash-handling for.
+        if identity_mapping:
+            symbolic.safe_replace(identity_mapping, nsdfg.replace_dict)
 
         #######################################################
         # Collect and modify interstate edges as necessary
@@ -208,15 +283,33 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(b, LoopRegion):
                 if b.loop_variable is not None:
                     inner_assignments.add(b.loop_variable)
+        # The non-identity symbol_mapping keys are lowered below to interstate-edge assignments
+        # (``inner_K = outer_expr``) planted on the edge entering the inlined SDFG, i.e. they become
+        # symbols *defined* inside the inlined region. Treat them like inner assignments so that, if such a
+        # key collides with a symbol used elsewhere in the outer SDFG (e.g. a callback of the same name used
+        # by a sibling branch), it is disambiguated to a fresh name instead of hijacking the outer symbol
+        # and dropping it from the compiled signature (which left an uninitialized callback pointer -> crash).
+        inner_assignments |= set(non_identity_mapping.keys())
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
+        # Inner symbols that received their value from an IDENTITY symbol-mapping entry
+        # (outer ``K`` -> inner ``K``, lowered above via ``safe_replace`` as a no-op rename).
+        # Renaming such a symbol on collision (below) severs that implicit outer->inner link.
+        identity_names = {str(k) for k in identity_mapping}
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
+            # ``assign`` was inner == outer (identity map) but is now renamed to ``newname``; the
+            # outer value no longer reaches the inlined region. Re-establish it as a non-identity
+            # assignment ``newname = assign`` (planted on the entry edge below) so the inlined
+            # region is initialized from the outer symbol -- otherwise ``newname`` is undefined
+            # (e.g. an external loop-init symbol whose inner name collides with the outer one).
+            if assign in identity_names:
+                non_identity_mapping[assign] = assign
         nsdfg.replace_dict(sym_replacements)
 
         #######################################################
@@ -282,6 +375,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 node.label = node_name
             node_names.add(node.label)
 
+        # Rename code-node connectors that would clash with outer arrays, symbols,
+        # constants, or interstate assignments once the nodes are in the parent.
+        reserved_names = allnames | set(sdfg.constants) | set(sdfg.constants_prop.keys()) | outer_assignments
+        _disambiguate_code_connectors(nsdfg, reserved_names)
+
         #######################################################
         # Add nested SDFG states into top-level SDFG
 
@@ -297,9 +395,33 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         source = nsdfg.start_state
         sinks = nsdfg.sink_nodes()
 
-        # Reconnect state machine
+        # Apply disambiguation rename to non-identity symbol-mapping keys
+        # so the iedge assignments use the post-rename name.
+        non_identity_mapping = {sym_replacements.get(k, k): v for k, v in non_identity_mapping.items()}
+
+        # Reconnect state machine. For each edge ``predecessor -> nsdfg_state``
+        # we redirect it to ``predecessor -> source``; while doing so, plant the
+        # non-identity symbol_mapping entries as interstate-edge assignments
+        # on that edge. The inner code keeps its inner-symbol names and the
+        # parent's state machine binds them on entry.
         for e in outer_state.parent_graph.in_edges(nsdfg_state):
-            outer_state.parent_graph.add_edge(e.src, source, e.data)
+            new_data = e.data
+            if non_identity_mapping:
+                new_data = dc(new_data)
+                # Existing assignments win (caller may have already bound
+                # the same name); add only those that aren't already there.
+                for sym, expr in non_identity_mapping.items():
+                    if sym not in new_data.assignments:
+                        new_data.assignments[sym] = expr
+            outer_state.parent_graph.add_edge(e.src, source, new_data)
+            # Add new symbols to the outer SDFG so the iedge assignments
+            # validate against the outer scope.
+            if non_identity_mapping:
+                for sym in non_identity_mapping:
+                    if sym not in sdfg.symbols:
+                        inner_type = nsdfg.symbols.get(sym, None)
+                        if inner_type is not None:
+                            sdfg.add_symbol(sym, inner_type)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
                 outer_state.parent_graph.add_edge(sink, e.dst, dc(e.data))

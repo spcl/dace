@@ -11,6 +11,7 @@ import itertools
 from numbers import Number, Integral
 from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
 
+import ml_dtypes
 import numpy as np
 import sympy as sp
 
@@ -89,6 +90,20 @@ def simple_call(pv: 'ProgramVisitor',
             external_edges=True)
 
     return outname
+
+
+def step_state(pv: 'ProgramVisitor', state: SDFGState) -> SDFGState:
+    """The state that the next step of a lowering built from several maps has to be emitted into.
+
+    Two maps dropped into one state carry no ordering between them, so a step reading what the
+    previous step wrote gets a second, unconnected access node for that transient. Nothing then
+    stops map fusion from joining the two maps and leaving the read pointed at a transient the
+    fused map has not written yet. A state boundary is the dependency; simplification fuses the
+    states back together once it has linked the access nodes.
+    """
+    if pv is None:
+        return state
+    return pv._add_state(f'{state.label}_step')
 
 
 ########################################################################
@@ -215,7 +230,10 @@ def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype_class).resolution)
+        # ml_dtypes' finfo, not numpy's: bfloat16 and the two fp8 types are registered
+        # outside numpy's float hierarchy, so np.finfo raises "not inexact" on them. It
+        # answers for every numpy float and complex type identically.
+        return nptype(ml_dtypes.finfo(nptype_class).resolution)
 
 
 def np_result_type(nptypes):

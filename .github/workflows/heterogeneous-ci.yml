@@ -13,9 +13,9 @@ env:
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  PYTHONHASHSEED: '0'
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
-  UV_NO_EDITABLE: 1 # don't install dace in editable mode
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -25,84 +25,73 @@ jobs:
   test-heterogeneous:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, linux]
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v7
+    - uses: ./.github/actions/setup-dace-venv
       with:
-        enable-cache: true
-        pyproject-file: pyproject.toml
-        cache-dependency-glob: pyproject.toml
-    - name: Install dependencies
+        pip-packages: flake8 pytest-xdist coverage mpi4py pytest-mpi
+        codecov: 'true'
+
+    - name: Check mpi4py
       run: |
-        rm -f ~/.dace.conf
-        rm -rf .dacecache* tests/.dacecache*
-        export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
-        echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
-        uv venv --clear "$HOME/.venv"
-        uv sync --group testing --extra mpi
-        # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         source ~/.venv/bin/activate # activate venv
+        # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
 
     - name: Test dependencies
       run: |
-        source ~/.venv/bin/activate # activate venv
-        papi_avail
+        uv run papi_avail
 
     - name: Run parallel pytest
       run: |
-        source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl or papi or datainstrument"
+        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "papi or datainstrument"
 
     - name: Run MPI tests
       run: |
-        source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="uv run coverage run --source=dace --parallel-mode"
         ./tests/mpi_test.sh
 
 
     - name: Test MPI with pytest
       run: |
-        source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
+        # mpi4py's excepthook calls MPI_ABORT, which kills every rank immediately: a traceback
+        # still sitting in a pipe buffer is lost, and the job reports only "errorcode 1".
+        export PYTHONUNBUFFERED=1
+        mpirun -n 2 uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
 
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
-        source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
+        # See the MPI step above: without this an aborting rank takes its traceback with it.
+        export PYTHONUNBUFFERED=1
         for i in {1..4}
         do
-          mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
+          mpirun -n "$i" --oversubscribe uv run coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
         done
 
     - name: Report overall coverage
-      run: |
-        source ~/.venv/bin/activate # activate venv
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        coverage combine . */
-        coverage report
-        coverage xml
-        reachable=0
-        ping -W 2 -c 1 codecov.io || reachable=$?
-        if [ $reachable -eq 0 ]; then
-          ./codecov
-        else
-          echo "Codecov.io is unreachable"
-        fi
+      uses: ./.github/actions/report-coverage

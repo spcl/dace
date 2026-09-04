@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple, Optional
+from typing import TYPE_CHECKING, Optional
 
 # DaCe imports
 import dace.sdfg.nodes as nodes
@@ -11,6 +11,9 @@ from dace.sdfg import SDFGState, graph as dgraph
 from dace.autodiff.base_abc import AutoDiffException
 import dace.autodiff.utils as ad_utils
 import dace.autodiff.data_forwarding as data_forwarding
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
 class DataForwardingManager:
@@ -26,22 +29,22 @@ class DataForwardingManager:
         Iterate through all the data that needs to be forwarded to the backward pass states.
         """
         # Get the strategy decision for each data that needs to be forwarded to the backward pass
-        strategy_choice, recomputation_nsdfgs = self._get_overwrite_resolution_strategy()
+        strategy_choice, recomputation_nsdfgs = self.get_overwrite_resolution_strategy()
 
         # Make the connection according to the chosen strategy
         for index, (forward_state, backward_state, access_node, node,
                     edge) in enumerate(self.bwd_generator.data_to_forward):
-            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
-                                             recomputation_nsdfgs[index], strategy_choice[index])
+            self.connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
+                                            recomputation_nsdfgs[index], strategy_choice[index])
 
-    def _get_overwrite_resolution_strategy(self) -> Tuple[List[str], List[Optional[nodes.NestedSDFG]]]:
+    def get_overwrite_resolution_strategy(self) -> tuple[list[str], list[Optional[nodes.NestedSDFG]]]:
         """
         Choose a strategy for resolving overwritten data that we need to forward to the backward pass.
         If the user wants a specific strategy, we use it.
         Otherwise, we evaluate what strategy is best for this specific node.
         """
-        strategy_choice: List[str] = []
-        recomputation_nsdfgs: List[Optional[nodes.NestedSDFG]] = []
+        strategy_choice: list[str] = []
+        recomputation_nsdfgs: list[Optional[nodes.NestedSDFG]] = []
 
         # As preprocessing step,
         # We will store all of the global program inputs,
@@ -55,7 +58,7 @@ class DataForwardingManager:
                 continue
 
             # Store the input
-            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge, None, "store")
+            self.connect_forward_accessnode(forward_state, backward_state, access_node, node, edge, None, "store")
 
             # Remove this element from the list of the data to forward
             to_remove.append(i)
@@ -106,10 +109,10 @@ class DataForwardingManager:
                                     f"but got {self.bwd_generator.data_forwarding_strategy}")
         return strategy_choice, recomputation_nsdfgs
 
-    def _connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
-                                    forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                    starting_edge: dgraph.MultiConnectorEdge,
-                                    recomputation_nsdfg: Optional[nodes.NestedSDFG], strategy: str):
+    def connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
+                                   forward_node: nodes.AccessNode, target_node: nodes.Node,
+                                   starting_edge: dgraph.MultiConnectorEdge,
+                                   recomputation_nsdfg: Optional[nodes.NestedSDFG], strategy: str):
         """
         We need to forward an array from the forward pass to the backward pass.
         To do this we first check if this array has been overwritten or not.
@@ -125,7 +128,7 @@ class DataForwardingManager:
         """
 
         # First, we check if the node has been overwritten
-        overwritten, recomputable = self._check_node_overwrite(forward_state=forward_state, node=forward_node)
+        overwritten, recomputable = self.check_node_overwrite(forward_state=forward_state, node=forward_node)
 
         # Boolean indicating whether we should fall back to storing
         fallback = False
@@ -156,8 +159,8 @@ class DataForwardingManager:
             # The data has been overwritten
             if not overwritten:
                 # We still have access to this data
-                self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node,
-                                                                 target_node, starting_edge)
+                self.connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node,
+                                                                target_node, starting_edge)
                 return
 
             data_forwarding.resolve_overwrite_with_store(bwd_generator=self.bwd_generator,
@@ -167,7 +170,7 @@ class DataForwardingManager:
                                                          target_node=target_node,
                                                          starting_edge=starting_edge)
 
-    def _check_node_overwrite(self, forward_state: SDFGState, node: nodes.AccessNode) -> Tuple[bool, bool]:
+    def check_node_overwrite(self, forward_state: SDFGState, node: nodes.AccessNode) -> tuple[bool, bool]:
         """
         Given an AccessNode from the forward state, check if the data of this node has changed.
         We look at all the AccessNodes with the same data that occur after the 'node' parameter
@@ -272,13 +275,13 @@ class DataForwardingManager:
                 recomputable = True
         return overwritten, recomputable
 
-    def _connect_forward_accessnode_not_overwritten(self,
-                                                    forward_state: SDFGState,
-                                                    backward_state: SDFGState,
-                                                    forward_node: nodes.AccessNode,
-                                                    target_node: nodes.Node,
-                                                    starting_edge: dgraph.MultiConnectorEdge,
-                                                    replicated_node: Optional[nodes.AccessNode] = None):
+    def connect_forward_accessnode_not_overwritten(self,
+                                                   forward_state: SDFGState,
+                                                   backward_state: SDFGState,
+                                                   forward_node: nodes.AccessNode,
+                                                   target_node: nodes.Node,
+                                                   starting_edge: dgraph.MultiConnectorEdge,
+                                                   replicated_node: Optional[nodes.AccessNode] = None):
         """
         Replicate and connect the forward AccessNode to the requesting node in the backward pass.
         Because the AccessNode has not been overwritten, we just need to create the same connection
@@ -322,8 +325,8 @@ class DataForwardingManager:
             # If the destination is a map entry,
             if isinstance(dst, nodes.MapEntry):
                 # We need to get the corresponding map entry in the backward pass.
-                bwd_dst = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
-                                                                                     entry_node=dst)
+                bwd_dst = self.bwd_generator.find_backward_entry_node_for_map_entry(backward_state=backward_state,
+                                                                                    entry_node=dst)
                 # Add the dst connector to the map
                 added = bwd_dst.add_in_connector(bwd_dst_conn)
                 assert added
@@ -331,8 +334,8 @@ class DataForwardingManager:
             # If the destination is a map entry,
             if isinstance(src, nodes.MapEntry):
                 # We need to get the corresponding map entry in the backward pass.
-                bwd_src = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
-                                                                                     entry_node=src)
+                bwd_src = self.bwd_generator.find_backward_entry_node_for_map_entry(backward_state=backward_state,
+                                                                                    entry_node=src)
                 # Add the src connector to the map
                 added = bwd_src.add_out_connector(bwd_src_conn)
                 assert added

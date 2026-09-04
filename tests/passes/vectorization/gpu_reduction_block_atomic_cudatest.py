@@ -1,0 +1,206 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""GPU thread-block reduction for the tile-op vectorizer's map-exit WCR.
+
+Scalar reduction (``acc += A[i]``, ``max``, ``min``) on CUDA: fold half2 partials
+per thread (``TileReduce``), then lift map-exit WCR to one ``gpucub::BlockReduce`` per
+block + ONE ``reduce_atomic`` from thread 0 (GPU mirror of CPU OpenMP
+``reduction(op:var)``), not one atomic per thread. Per-thread partial = thread-local
+register: a shared/global partial would have every thread write+read back the SAME
+element (race that only "works" by nvcc ``__restrict__`` register-caching luck), and
+cub needs a register input anyway.
+
+``min``/``max`` reach this path only via ``AugAssignToWCR`` converting their
+loop-carried ``acc = f(acc, A[i])`` (frontend combine-then-copyback subgraph) into a
+WCR write so ``LoopToMap`` parallelizes.
+
+Assert CUDA shape without a GPU; compile with nvcc; run+check exact fp16 with a GPU.
+Inputs are order-independent (exact small ints for sum; associative max/min) and vary
+per element so each thread's partial is distinct across many blocks -- a race or
+dropped-block atomic would corrupt the result.
+"""
+import os
+
+os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
+os.environ.setdefault("OMPI_MCA_pml", "ob1")
+os.environ.setdefault("OMPI_MCA_btl", "self,vader")
+os.environ.setdefault("UCX_VFS_ENABLE", "n")
+
+import re
+import shutil
+
+import numpy as np
+import pytest
+
+import dace
+from dace import dtypes
+from dace.transformation.interstate import LoopToMap
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.libraries.tileops import TileReduce
+
+_HAS_NVCC = shutil.which("nvcc") is not None
+N = dace.symbol("N")
+
+
+@dace.program
+def _vsum16(A: dace.float16[N], out: dace.float16[1]):
+    acc = dace.float16(0.0)
+    for i in dace.map[0:N]:
+        acc += A[i]
+    out[0] = acc
+
+
+@dace.program
+def _vmax16(A: dace.float16[N], out: dace.float16[1]):
+    acc = dace.float16(-1.0e4)
+    for i in range(N):
+        acc = max(acc, A[i])
+    out[0] = acc
+
+
+@dace.program
+def _vmin16(A: dace.float16[N], out: dace.float16[1]):
+    acc = dace.float16(1.0e4)
+    for i in range(N):
+        acc = min(acc, A[i])
+    out[0] = acc
+
+
+# (program, cub reduction-type suffix as emitted in ``dace::ReductionType::<...>``)
+_PROGRAMS = {"sum": (_vsum16, "Sum"), "max": (_vmax16, "Max"), "min": (_vmin16, "Min")}
+
+
+def _vectorized(prog):
+    """@dace.program -> simplify + AugAssignToWCR + LoopToMap + GPU-offload + VectorizeGPU (half2 GPU).
+
+    ``VectorizeGPU`` assumes an already-offloaded SDFG (it never schedules / offloads itself), so we
+    run the canonicalize-GPU offload (:func:`offload_to_gpu`) FIRST -- mirroring the production
+    ``finalize_for_target(sdfg, 'gpu')`` path -- before vectorizing the resident ``GPU_Device`` map.
+    """
+    sdfg = prog.to_sdfg(simplify=True)
+    # min/max loop-carried -> WCR writes here; sum already map+WCR from frontend, unaffected.
+    sdfg.apply_transformations_repeated(AugAssignToWCR)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.simplify()
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    return sdfg
+
+
+def _device_code(sdfg):
+    # By TITLE, not by language: the experimental CUDA codegen emits the device TU as a ``.cpp``, so
+    # a ``language == "cu"`` filter selects nothing and every assertion below runs against "".
+    codes = [c for c in sdfg.generate_code() if c.title == "CUDA"]
+    assert codes, "no device translation unit was generated"
+    return "\n".join(c.clean_code for c in codes)
+
+
+@pytest.mark.parametrize("kind", list(_PROGRAMS))
+def test_partial_is_thread_local_register(kind):
+    """The per-thread reduction partial -- the WCR source feeding the map-exit boundary --
+    is a single-element, thread-private transient, detected by structure (not a hardcoded
+    ``_nmr_out`` name). Any per-thread storage is fine (``Register`` / kernel-local
+    ``Default`` / ...); only ``GPU_Shared`` / ``GPU_Global`` (shared across the folding
+    threads) is refused by :meth:`_collect_gpu_reductions`, since a single such slot read by
+    every thread would over-count the block fold."""
+    from dace.sdfg.nodes import AccessNode, MapExit
+    sdfg = _vectorized(_PROGRAMS[kind][0])
+    cross_thread = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
+    partials = [(e.src.data, s.arrays[e.src.data]) for s in sdfg.all_sdfgs_recursive() for st in s.states()
+                for n in st.nodes() if isinstance(n, MapExit) for e in st.in_edges(n)
+                if e.data is not None and e.data.wcr is not None and isinstance(e.src, AccessNode)]
+    assert partials, "expected a per-thread reduction partial feeding the map-exit WCR"
+    for name, d in partials:
+        assert d.total_size == 1, f"{name} reduction partial must fold onto a single element, got {d.total_size}"
+        assert d.storage not in cross_thread, f"{name} partial must be thread-private, got {d.storage}"
+
+
+@pytest.mark.parametrize("kind", list(_PROGRAMS))
+def test_half2_tile_reduce_fires(kind):
+    """The within-thread half2->half fold is a ``TileReduce`` of width 2.
+
+    GPU K=1's default remainder strategy is ``branched_masked_tail``
+    (:class:`FuseBranchedTailRemainder`): a non-divisible ``N`` splits the map into a
+    mask-free interior body and a masked tail body, each carrying its OWN complete
+    tile-op sequence -- including its own within-thread fold -- reused verbatim (see
+    that pass's docstring). So a non-divisible extent fires TWO width-2 TileReduce
+    nodes, one per body, not one.
+    """
+    sdfg = _vectorized(_PROGRAMS[kind][0])
+    reds = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileReduce)]
+    assert len(reds) == 2 and all(list(r.widths) == [2] for r in reds), \
+        f"expected two width-2 TileReduce nodes (mask-free body + masked-tail body); got {[r.widths for r in reds]}"
+
+
+@pytest.mark.parametrize("kind", list(_PROGRAMS))
+def test_emits_block_reduce_and_single_atomic(kind):
+    """The device TU folds the block with ``gpucub::BlockReduce`` and commits ONE atomic
+    from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
+    cu = _device_code(_vectorized(_PROGRAMS[kind][0]))
+    suffix = _PROGRAMS[kind][1]
+    # The block-reduce is typed to the reduction map's block thread count -- compile-time
+    # constants chosen by gpu_block_size_selection (not fixed magic numbers). All THREE block
+    # dimensions are spelled: the 1-D ``BlockReduce<T, N>`` form assumes threadIdx.y/z == 0 and
+    # mis-maps threads whenever the block is 2-D/3-D.
+    assert re.search(r"gpucub::BlockReduce<dace::float16,\s*\d+,\s*gpucub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu), \
+        "block reduce not emitted / not typed to a constant-thread block"
+    assert ".Reduce(" in cu, "cub block Reduce call missing"
+    assert f"dace::ReductionType::{suffix}" in cu, f"block reduce not using the {suffix} functor"
+    assert "reduce_atomic" in cu, "thread-0 atomic to the global accumulator missing"
+    assert "threadIdx.x == 0" in cu, "atomic not guarded to a single thread per block"
+    assert "__shared__" in cu, "block-reduce temp storage not in shared memory"
+    # Per-thread atomic suppressed: the covered WCR write lands in this thread's REGISTER partial
+    # (``__bpart_*``) instead, and every ``reduce_atomic`` in the TU sits under a thread-0 guard --
+    # so the TU commits one atomic per block, never one per thread.
+    assert re.search(
+        r"__bpart_\S+\[[^\]]*\]\s*=\s*dace::_wcr_fixed<dace::ReductionType::%s,\s*dace::float16>\(\)\(" % suffix,
+        cu), "per-thread atomic not suppressed into a register partial"
+    assert cu.count("reduce_atomic") == cu.count("threadIdx.x == 0"), \
+        "a reduce_atomic outside the thread-0 block-fold guard = one atomic per thread"
+
+
+@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
+@pytest.mark.parametrize("kind", list(_PROGRAMS))
+def test_compiles(kind):
+    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg.name = f"gpu_block_reduction_compile_{kind}"
+    shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+    sdfg.compile()
+
+
+def _run_inputs(kind, nval):
+    if kind == "sum":
+        return (np.arange(nval) % 3).astype(np.float16), lambda a: np.float16(a.sum())
+    rng = np.random.default_rng(nval)
+    a = (rng.permutation(nval) % 101 - 50).astype(np.float16)
+    return a, (np.max if kind == "max" else np.min)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kind", list(_PROGRAMS))
+def test_runs_exact_multiblock(kind):
+    cupy = pytest.importorskip("cupy")
+    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg.name = f"gpu_block_reduction_run_{kind}"
+    shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+    csdfg = sdfg.compile()
+    # Even extents only: width-2 half2 tiling under assume_even requires N % 2 == 0 (an odd N
+    # trips the even-extent guard). Sizes span several thread-blocks / a non-block-aligned tail.
+    for nval in (64, 258, 1024, 4000):
+        a, ref = _run_inputs(kind, nval)
+        dA = cupy.asarray(a)  # GPU_Global inputs need device arrays
+        dout = cupy.zeros(1, dtype=cupy.float16)
+        csdfg(A=dA, out=dout, N=nval)
+        exp = np.float16(ref(a))
+        got = dout.get()[0]
+        assert got == exp, f"{kind} N={nval}: {float(got)} != {float(exp)}"
+
+
+if __name__ == "__main__":
+    for _kind in _PROGRAMS:
+        test_partial_is_thread_local_register(_kind)
+        test_half2_tile_reduce_fires(_kind)
+        test_emits_block_reduce_and_single_atomic(_kind)
+    print("codegen ok")

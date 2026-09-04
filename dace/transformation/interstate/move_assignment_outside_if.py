@@ -65,15 +65,15 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         for data, nodes in access_nodes.items():
             write_only = True
             for node, state in nodes:
-                if node.has_reads(state):
-                    # The read is only a problem if it is not written before -> the access node has no incoming edge
-                    if state.in_degree(node) == 0:
+                # A WCR in-edge accumulates onto the incoming value, so the node is read-modify-written
+                # even when nothing reads it in this state.
+                if any(edge.data.wcr is not None for edge in state.in_edges(node)):
+                    write_only = False
+                elif node.has_reads(state):
+                    # The read is only a problem if it is not written before. An empty in-edge is an
+                    # ordering constraint, not a write, so in_degree is the wrong question.
+                    if not node.has_writes(state):
                         write_only = False
-                    else:
-                        # There is also a problem if any edge is an update instead of write
-                        for edge in [*state.out_edges(node), *state.out_edges(node)]:
-                            if edge.data.wcr is not None:
-                                write_only = False
 
             if write_only:
                 self.write_only_values.add(data)

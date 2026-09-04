@@ -239,6 +239,27 @@ def test_all(A: dace.float64[20]):
     return np.all(A > 0.8, axis=0)
 
 
+def test_all_of_all_true():
+    """``all`` over an all-true input.
+
+    The random-input form above cannot see this: with any false element both numpy and a
+    stuck-at-false reduction answer False, so the identity being 0 -- which pins every result to
+    False -- read as agreement.
+    """
+
+    @dace.program
+    def alltrue(a: dace.bool[8], out: dace.bool[1]):
+        out[0] = np.all(a)
+
+    out = np.zeros(1, dtype=np.bool_)
+    alltrue(a=np.ones(8, dtype=np.bool_), out=out)
+    assert out[0] == np.True_
+
+    mixed = np.array([True, False] * 4)
+    alltrue(a=mixed, out=out)
+    assert out[0] == np.all(mixed)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
@@ -286,3 +307,4 @@ if __name__ == '__main__':
 
     test_any()
     test_all()
+    test_all_of_all_true()

@@ -1,21 +1,18 @@
-name: Pauli GPU Tests
+name: Pauli GPU Legacy
 
 on:
-  workflow_dispatch
-  #push:
-  #  branches: [ main, ci-fix ]
-  #pull_request:
-  #  branches: [ main, ci-fix ]
-  #merge_group:
-  #  branches: [ main, ci-fix ]
+  # Disabled: the self-hosted Pauli runner does not serve CI. Manual dispatch only --
+  # GPU coverage comes from the external CSCS pipeline, which is unaffected.
+  workflow_dispatch:
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  DACE_compiler_cuda_implementation: legacy
+  PYTHONHASHSEED: '0'
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
-  UV_NO_EDITABLE: 1 # don't install dace in editable mode
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -25,27 +22,23 @@ jobs:
   test-gpu:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, gpu]
+    timeout-minutes: 120
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v7
+    - uses: ./.github/actions/setup-dace-venv
       with:
-        enable-cache: true
-        pyproject-file: pyproject.toml
-        cache-dependency-glob: pyproject.toml
-    - name: Install dependencies
+        pip-packages: flake8 pytest-xdist coverage mpi4py cupy cutensor-cu12
+        groups: testing
+        extras: ml
+        codecov: 'true'
+
+    - name: Check mpi4py
       run: |
-        rm -f ~/.dace.conf
-        rm -rf .dacecache* tests/.dacecache*
-        export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
-        echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
-        uv sync --group testing --extra ml,mpi,gpu
+        source ~/.venv/bin/activate # activate venv
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
-        MPI4PY_RC_INITIALIZE=0 uv run python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
+        MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
 
     - name: Test dependencies
       run: |
@@ -54,35 +47,44 @@ jobs:
     - name: Run pytest GPU
       run: |
         source ~/.venv/bin/activate # activate venv
+        # cutensor-cu12 ships its headers and .so under the wheel's
+        # ``cutensor/{include,lib}`` directories; expose them to the compiler
+        # (CPATH/LIBRARY_PATH) and the dynamic loader (LD_LIBRARY_PATH), and
+        # alias libcutensor.so.2 to libcutensor.so so ``-lcutensor`` resolves.
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
+        ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+        export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+        export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+        export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
+        export DACE_cache=single
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
+        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
 
     - name: Run pytest GPU with distributed compilation
       run: |
         source ~/.venv/bin/activate # activate venv
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export PATH=$PATH:/usr/local/cuda/bin
-        mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
+        mpirun -n 2 --oversubscribe uv run pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
 
     - name: Run extra GPU tests
       run: |
         source ~/.venv/bin/activate # activate venv
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
+        ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+        export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+        export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+        export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
         export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="uv run coverage run --source=dace --parallel-mode"
         ./tests/cuda_test.sh
 
     - name: Report overall coverage
-      run: |
-        source ~/.venv/bin/activate # activate venv
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        coverage combine . */
-        coverage report
-        coverage xml
-        reachable=0
-        ping -W 2 -c 1 codecov.io || reachable=$?
-        if [ $reachable -eq 0 ]; then
-          ./codecov
-        else
-          echo "Codecov.io is unreachable"
-        fi
+      uses: ./.github/actions/report-coverage

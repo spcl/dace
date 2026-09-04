@@ -264,3 +264,307 @@ def test_aug_assign_same_inconns():
 
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True)
     assert applied == 1
+
+
+def _build_copy_wrapped_rmw(op_code: str, op_wcr: str, n: int = 6):
+    """Build an SDFG whose loop body is the *copy-wrapped* RMW the array
+    frontends emit: the accumulator slice ``A[0]`` is materialized into a scalar
+    transient, combined with the per-iteration increment ``B[j]`` in a tasklet,
+    and copied back into ``A[0]`` -- ``A[0] -> a_in -> tasklet -> a_sum ->
+    A[0]``. ``op_code`` is the tasklet RHS (``__in1 <op> __in2``); ``op_wcr`` is
+    the numpy reduction used to build the oracle."""
+    sdfg = dace.SDFG(f'copy_wrapped_rmw_{op_wcr}')
+    sdfg.add_array('A', [2], dace.float64)
+    sdfg.add_array('B', [n], dace.float64)
+    sdfg.add_scalar('a_in', dace.float64, transient=True)
+    sdfg.add_scalar('b_in', dace.float64, transient=True)
+    sdfg.add_scalar('a_sum', dace.float64, transient=True)
+
+    body = sdfg.add_state('body')
+    a_r = body.add_read('A')
+    a_in = body.add_access('a_in')
+    b_r = body.add_read('B')
+    b_in = body.add_access('b_in')
+    tasklet = body.add_tasklet('combine', {'__in1', '__in2'}, {'__out'}, f'__out = {op_code}')
+    a_sum = body.add_access('a_sum')
+    a_w = body.add_write('A')
+
+    body.add_edge(a_r, None, a_in, None, dace.Memlet('A[0]'))  # accumulator load copy
+    body.add_edge(a_in, None, tasklet, '__in1', dace.Memlet('a_in[0]'))
+    body.add_edge(b_r, None, b_in, None, dace.Memlet('B[j]'))
+    body.add_edge(b_in, None, tasklet, '__in2', dace.Memlet('b_in[0]'))
+    body.add_edge(tasklet, '__out', a_sum, None, dace.Memlet('a_sum[0]'))
+    body.add_edge(a_sum, None, a_w, None, dace.Memlet('A[0]'))  # accumulator store copy
+
+    before = sdfg.add_state('before', is_start_block=True)
+    after = sdfg.add_state('after')
+    sdfg.add_loop(before, body, after, 'j', '0', 'j < %d' % n, 'j + 1')
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def test_aug_assign_copy_wrapped_rmw_match():
+    """The copy-wrapped RMW is recognised and rewritten to a WCR write: the
+    accumulator load is dropped, the tasklet emits only the increment, and the
+    write into ``A[0]`` carries the reduction WCR."""
+    from dace.sdfg import nodes
+    sdfg = _build_copy_wrapped_rmw('__in1 + __in2', 'sum')
+
+    applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
+    assert applied == 1
+    sdfg.validate()
+
+    body = next(s for s in sdfg.all_states() if s.label == 'body')
+    wcr_writes = [
+        e for e in body.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'A' and e.data.wcr is not None
+    ]
+    assert len(wcr_writes) == 1
+    assert 'a + b' in wcr_writes[0].data.wcr
+    # The accumulator is no longer loaded inside the body.
+    assert not any(isinstance(n, nodes.AccessNode) and n.data == 'A' and body.out_degree(n) > 0 for n in body.nodes())
+
+
+def test_aug_assign_copy_wrapped_rmw_value_and_parallelize():
+    """The rewrite is value-preserving and the now-WCR loop parallelizes via
+    LoopToMap (the accumulator write is no longer iteration-indexed but is
+    conflict-resolved)."""
+    import numpy as np
+    from dace.transformation.interstate import LoopToMap
+    from dace.sdfg.state import LoopRegion
+
+    rng = np.random.default_rng(0)
+    n = 6
+
+    def run(sdfg):
+        A = np.array([3.0, 99.0], dtype=np.float64)
+        B = rng.random(n)
+        sdfg(A=A, B=B.copy())
+        return A, B
+
+    ref_sdfg = _build_copy_wrapped_rmw('__in1 + __in2', 'sum')
+    A_ref, B = run(ref_sdfg)
+    assert np.allclose(A_ref[0], 3.0 + B.sum(), rtol=1e-15, atol=1e-15)
+
+    cand = _build_copy_wrapped_rmw('__in1 + __in2', 'sum')
+    assert cand.apply_transformations_repeated(AugAssignToWCR) == 1
+    n_l2m = cand.apply_transformations_repeated(LoopToMap)
+    assert n_l2m == 1, 'WCR accumulator loop should parallelize'
+    assert not [r for r in cand.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+
+    A = np.array([3.0, 99.0], dtype=np.float64)
+    cand(A=A, B=B.copy())
+    assert np.allclose(A, A_ref, rtol=1e-12, atol=1e-12)
+
+
+def test_aug_assign_copy_wrapped_rmw_max():
+    """max-reduction copy-wrapped RMW lifts to a ``max`` WCR."""
+    import numpy as np
+    sdfg = _build_copy_wrapped_rmw('max(__in1, __in2)', 'max')
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    sdfg.validate()
+    A = np.array([0.5, 0.0], dtype=np.float64)
+    B = np.array([0.1, 0.9, 0.3, 0.2, 0.7, 0.4], dtype=np.float64)
+    sdfg(A=A, B=B.copy())
+    assert np.allclose(A[0], max(0.5, B.max()))
+
+
+def test_aug_assign_copy_wrapped_rmw_subtract_left_only():
+    """Subtraction lifts only with the accumulator on the left (``a - b``);
+    ``b - a`` is not an order-independent reduction and must be refused."""
+    import numpy as np
+    sdfg = _build_copy_wrapped_rmw('__in1 - __in2', 'sub')  # acc on left -> OK
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    A = np.array([10.0, 0.0], dtype=np.float64)
+    B = np.array([1.0, 2.0, 0.5, 1.5, 0.0, 1.0], dtype=np.float64)
+    sdfg(A=A, B=B.copy())
+    assert np.allclose(A[0], 10.0 - B.sum())
+
+    refused = _build_copy_wrapped_rmw('__in2 - __in1', 'rsub')  # acc on right -> refuse
+    assert refused.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_refuses_cross_element_operand():
+    """A map whose tasklet is ``A[i,j] = A[i,k] * A[k,j]`` must NOT be rewritten to a
+    WCR: the operand ``A[i,k]`` shares the array NAME with the output ``A[i,j]`` but
+    reads a DIFFERENT element, so it is not the accumulator of a read-modify-write.
+    Treating it as one would rewrite the reduction with the delta's operator (``*``)
+    instead of the real accumulation, corrupting the result (polybench ``lu``). The
+    Python branch must apply the same element/subset check the CPP branch already has.
+    """
+    sdfg = dace.SDFG('aug_cross_element')
+    sdfg.add_array('A', [8, 8], dace.float64)
+    st = sdfg.add_state()
+    a_in = st.add_access('A')
+    me, mx = st.add_map('m', dict(i='0:8', j='0:8', k='0:8'))
+    tlet = st.add_tasklet('prod', {'aik', 'akj'}, {'out'}, 'out = aik * akj')
+    st.add_memlet_path(a_in, me, tlet, dst_conn='aik', memlet=dace.Memlet('A[i, k]'))
+    st.add_memlet_path(a_in, me, tlet, dst_conn='akj', memlet=dace.Memlet('A[k, j]'))
+    a_out = st.add_access('A')
+    st.add_memlet_path(tlet, mx, a_out, src_conn='out', memlet=dace.Memlet('A[i, j]'))
+    sdfg.validate()
+    # Cross-element operand -> not a read-modify-write -> refused.
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_cross_element_operand_trisolv_shape():
+    """Same cross-element guard, in the shape that regressed polybench ``trisolv``:
+    tasklet ``x[i] = L[i,j] * x[j]`` -- the operand ``x[j]`` shares the array NAME with
+    the output ``x[i]`` but reads a different element, so it is not the accumulator of a
+    read-modify-write. It must not be rewritten to a WCR (which previously misread the
+    reduction operator and then tried to fission a scope it cannot legally split). The
+    value-preserving corpus test (``poly:trisolv``) is the end-to-end check; this pins
+    the transform-level refusal.
+    """
+    sdfg = dace.SDFG('aug_cross_element_trisolv')
+    sdfg.add_array('x', [8], dace.float64)
+    sdfg.add_array('L', [8, 8], dace.float64)
+    st = sdfg.add_state()
+    x_in = st.add_access('x')
+    ell = st.add_access('L')
+    me, mx = st.add_map('m', dict(i='0:8', j='0:8'))
+    tlet = st.add_tasklet('prod', {'lij', 'xj'}, {'out'}, 'out = lij * xj')
+    st.add_memlet_path(ell, me, tlet, dst_conn='lij', memlet=dace.Memlet('L[i, j]'))
+    st.add_memlet_path(x_in, me, tlet, dst_conn='xj', memlet=dace.Memlet('x[j]'))
+    x_out = st.add_access('x')
+    st.add_memlet_path(tlet, mx, x_out, src_conn='out', memlet=dace.Memlet('x[i]'))
+    sdfg.validate()
+    # ``x[j]`` operand vs ``x[i]`` output: cross-element, not an accumulator -> refused.
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_combine_copyback_map():
+    """A min/max reduction expressed as a ``dace.map`` -- ``m = max(m, A[j])`` -- lowers (via the
+    frontend's 2-arg Call form) to a combine + private slice + trivial copyback INSIDE the map. The
+    in-map combine-copyback pattern converts that loop-invariant accumulation to a map-exit WCR so
+    the map parallelizes without a race (without it, every lane writes ``m`` un-synchronized)."""
+    import numpy as np
+
+    @dace.program
+    def sdfg_max_reduce_map(A: dace.float64[64], res: dace.float64[1]):
+        m = dace.float64(-1e30)
+        for j in dace.map[0:64]:
+            m = max(m, A[j])
+        res[0] = m
+
+    sdfg = sdfg_max_reduce_map.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    wcrs = [
+        e.data.wcr for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapExit)
+        for e in st.in_edges(n) if e.data is not None and e.data.wcr is not None
+    ]
+    assert wcrs and all('max' in w for w in wcrs), f"expected a max map-exit WCR, got {wcrs}"
+    a = np.random.rand(64)
+    res = np.zeros(1)
+    sdfg(A=a, res=res)
+    assert np.isclose(res[0], a.max()), f"{res[0]} != {a.max()}"
+
+
+def test_aug_assign_state_fission_is_order_stable():
+    """``AugAssignToWCR`` fissions the state when the accumulator it reads is produced in that same
+    state. The fission moves a node set into the new state, and a plain ``set`` of node objects
+    iterates in ``id()`` order -- not even stable under a pinned ``PYTHONHASHSEED``, so the same
+    input SDFG produced a different node order run to run (measured: 4 distinct orders in 6 runs).
+    Downstream pattern matching walks that order, so it decided which reduction got lifted."""
+    import copy
+
+    import numpy as np
+
+    def build() -> dace.SDFG:
+        sdfg = dace.SDFG('aug_assign_state_fission')
+        for name in ('A', 'B', 'C', 'D'):
+            sdfg.add_array(name, [32], dace.float64)
+        state = sdfg.add_state('main', is_start_block=True)
+        b, c, d = (state.add_access(n) for n in ('B', 'C', 'D'))
+        a_in, a_out = state.add_access('A'), state.add_access('A')
+        state.add_mapped_tasklet('seed', {'i': '0:32'}, {
+            '_b': dace.Memlet('B[i]'),
+            '_c': dace.Memlet('C[i]')
+        },
+                                 '_out = _b + _c', {'_out': dace.Memlet('A[i]')},
+                                 input_nodes={
+                                     'B': b,
+                                     'C': c
+                                 },
+                                 output_nodes={'A': a_in},
+                                 external_edges=True)
+        aug = state.add_tasklet('aug', {'_a': None, '_d': None}, {'_o': None}, '_o = _a + _d')
+        state.add_edge(a_in, None, aug, '_a', dace.Memlet('A[0]'))
+        state.add_edge(d, None, aug, '_d', dace.Memlet('D[0]'))
+        state.add_edge(aug, '_o', a_out, None, dace.Memlet('A[0]'))
+        return sdfg
+
+    def node_order(sdfg: dace.SDFG):
+        return [(type(n).__name__, n.label) for n, _ in sdfg.all_nodes_recursive()]
+
+    base = build()
+    base.validate()
+
+    orders = []
+    for _ in range(8):
+        sdfg = copy.deepcopy(base)
+        assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 1
+        orders.append(node_order(sdfg))
+    assert all(o == orders[0] for o in orders), f"node order varies run to run: {set(map(tuple, orders))}"
+
+    applied = copy.deepcopy(base)
+    applied.apply_transformations_repeated(AugAssignToWCR, permissive=False)
+    wcrs = [e.data.wcr for st in applied.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcrs) == 1 and '+' in wcrs[0], f"expected one summing WCR, got {wcrs}"
+
+    b, c, d = np.random.rand(32), np.random.rand(32), np.random.rand(32)
+    a = np.zeros(32)
+    expected = b + c
+    expected[0] += d[0]
+    applied(A=a, B=b, C=c, D=d)
+    assert np.allclose(a, expected), f"{a[:2]} != {expected[:2]}"
+
+
+def _rmw_with_tasklet_delta(also_write_accumulator: bool):
+    """``acc[k] = acc[k] + f(b[k])`` where the delta reaches the augassign straight from another
+    tasklet, so no AccessNode separates the two. Optionally give the read-side accumulator an
+    in-edge, which is what makes ``apply`` fission the state.
+    """
+    sdfg = dace.SDFG(f"rmw_tasklet_delta_{int(also_write_accumulator)}")
+    sdfg.add_array("acc", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+
+    read = state.add_access("acc")
+    write = state.add_access("acc")
+    delta = state.add_tasklet("delta", {"__inp": None}, {"__out": None}, "__out = __inp * 2.0")
+    augassign = state.add_tasklet("augassign", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+
+    state.add_edge(state.add_access("b"), None, delta, "__inp", dace.Memlet("b[k]"))
+    state.add_edge(delta, "__out", augassign, "__in2", dace.Memlet("b[k]"))
+    state.add_edge(read, None, augassign, "__in1", dace.Memlet("acc[k]"))
+    state.add_edge(augassign, "__out", write, None, dace.Memlet("acc[k]"))
+    if also_write_accumulator:
+        seed = state.add_tasklet("seed", {}, {"__out": None}, "__out = 1.0")
+        state.add_edge(seed, "__out", read, None, dace.Memlet("acc[k]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_aug_assign_matches_rmw_whose_delta_comes_from_a_tasklet():
+    """A non-AccessNode delta producer must not block the match when no fission is needed.
+
+    ``apply`` only relocates the producer chain when the accumulator is ALSO written in this state;
+    with nothing writing it, the chain stays put and its shape is irrelevant. The unstructured-grid
+    assembly ``Lx[src[i]] += flux[i]`` arrives exactly like this after the pipeline stages its
+    delta, and refusing it left a plain write where an accumulation belongs: the parallel lift then
+    reads the repeated indices as a write-write race and the scatter guard aborts on them.
+    """
+    sdfg = _rmw_with_tasklet_delta(also_write_accumulator=False)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 1
+    wcrs = [e.data.wcr for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcrs) == 1 and '+' in wcrs[0], f"expected one summing WCR, got {wcrs}"
+    sdfg.validate()
+
+
+def test_aug_assign_still_refuses_a_tasklet_delta_when_fission_is_needed():
+    """The guard stays in force for the case it was written for: an accumulator written in the same
+    state forces ``isolate_tasklet``, and only then does the producer's shape matter."""
+    sdfg = _rmw_with_tasklet_delta(also_write_accumulator=True)
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 0
+    assert not [e for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]

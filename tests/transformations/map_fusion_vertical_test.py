@@ -12,6 +12,7 @@ import uuid
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
+from dace.transformation.dataflow.map_fusion_helper import is_node_reachable_from
 
 
 def count_nodes(
@@ -1456,15 +1457,14 @@ def test_fusion_intermediate_different_access_mod_shape_2():
     _impl_fusion_intermediate_different_access(modified_shape=True, traditional_memlet_direction=True)
 
 
-@pytest.mark.skip(reason="This feature is not yet fully supported.")
 def test_fusion_multiple_producers_consumers():
     """Multiple producer and consumer nodes.
 
     This test is very similar to the `test_fusion_intermediate_different_access()`
     and `test_fusion_intermediate_different_access_mod_shape()` test, with the
     exception that now full data is used in the second map.
-    However, currently `MapFusionVertical` only supports a single producer, thus this test can
-    not run.
+    The two producers converge on one `IN_` connector of the first MapExit, so the reduced
+    intermediate is sized from the box they tile rather than from either one alone.
     """
 
     def reference(A, B):
@@ -3047,7 +3047,6 @@ def _make_multiple_top_level_connections_multi_producer_sdfg(
     return sdfg, state, first_map_exit, b, second_map_entry
 
 
-@pytest.mark.xfail(reason="Multiple edges between `first_map_exit` and intermediate are not yet supported.")
 @pytest.mark.parametrize("strict_dataflow", [True, False])
 def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflow: bool):
     sdfg, state, first_map_exit, b, second_map_entry = _make_multiple_top_level_connections_multi_producer_sdfg()
@@ -3062,8 +3061,7 @@ def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflo
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
-    # The transformation can not apply because there are multiple edges between
-    #  `first_map_exit` and intermediate are not yet supported.
+    # Both exit edges write one intermediate, so they share a single reduced intermediate.
     apply_fusion(
         sdfg,
         removed_maps=1,
@@ -3214,6 +3212,788 @@ def test_map_fusion_stable_label(forward_fusion: bool):
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def test_map_fusion_inout_connector_intermediate_rename_consistency():
+    """Pins the InOut-connector structural split that ``MapFusionVertical``
+    performs when the fusion intermediate's data name matches an InOut
+    connector of a NestedSDFG inside the producer map's body. Without the
+    split, the rename ``inter_name -> __map_fusion_<inter_name>`` would
+    produce a NestedSDFG whose InOut connector references the original
+    outer data on the input edge and the renamed transient on the output
+    edge -- a validation error (`Inout connector X is connected to
+    different input ({'X'}) and output ({'__map_fusion_X'}) arrays`).
+
+    Reproducer minimised from TSVC s221::
+
+        for i in range(1, N):
+            a[i] = a[i] + c[i] * d[i]    # NestedSDFG InOut on 'a' (in-place RMW)
+            b[i] = b[i-1] + a[i] + d[i]  # consumer of 'a', emits a Scan + apply map
+
+    The fix in ``MapFusionVertical.apply`` runs ``_split_inout_for_intermediate``
+    before the standard rename machinery: it allocates a fresh inner array
+    ``__map_fusion_split_<name>`` inside the NestedSDFG, renames every inner
+    read-side AccessNode of ``<name>`` to the fresh name, adds a new input
+    connector with the fresh name, and redirects the outer input edge to it.
+    The NestedSDFG's ``<name>`` connector becomes output-only; the standard
+    rename machinery can then rename it to ``__map_fusion_<name>`` cleanly.
+
+    Test asserts (post-fix): fusion APPLIES, validation passes, the
+    NestedSDFG's InOut overlap is empty, and the numerical outputs match
+    the pre-fuse reference oracle bit-exact.
+    """
+    sdfg = dace.SDFG('mf_inout_repro')
+    sdfg.add_array('a', [10], dace.float64, transient=False)
+    sdfg.add_array('b', [10], dace.float64, transient=False)
+    sdfg.add_array('c', [10], dace.float64, transient=False)
+
+    state = sdfg.add_state('main')
+
+    # Map 1's body: an InOut-on-`a` NestedSDFG performing `a[i] = a[i] + c[i]`.
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [1], dace.float64, transient=False)
+    inner.add_array('c', [1], dace.float64, transient=False)
+    ist = inner.add_state('istate')
+    a_r = ist.add_read('a')
+    c_r = ist.add_read('c')
+    a_w = ist.add_write('a')
+    t = ist.add_tasklet('upd', {'_a', '_c'}, {'_o'}, '_o = _a + _c')
+    ist.add_edge(a_r, None, t, '_a', dace.Memlet(data='a', subset='0'))
+    ist.add_edge(c_r, None, t, '_c', dace.Memlet(data='c', subset='0'))
+    ist.add_edge(t, '_o', a_w, None, dace.Memlet(data='a', subset='0'))
+
+    me1, mx1 = state.add_map('m1', {'i': '0:10'})
+    nsdfg = state.add_nested_sdfg(inner, inputs={'a', 'c'}, outputs={'a'})  # 'a' is InOut
+
+    a_src = state.add_read('a')
+    c_src = state.add_read('c')
+    a_inter = state.add_access('a')  # producer output, consumer input
+
+    state.add_memlet_path(a_src, me1, nsdfg, dst_conn='a', memlet=dace.Memlet(data='a', subset='i'))
+    state.add_memlet_path(c_src, me1, nsdfg, dst_conn='c', memlet=dace.Memlet(data='c', subset='i'))
+    state.add_memlet_path(nsdfg, mx1, a_inter, src_conn='a', memlet=dace.Memlet(data='a', subset='i'))
+
+    # Map 2: simple consumer `b[i] = a[i] + 1`.
+    me2, mx2 = state.add_map('m2', {'i': '0:10'})
+    t2 = state.add_tasklet('cons', {'_a'}, {'_b'}, '_b = _a + 1.0')
+    b_dst = state.add_write('b')
+    state.add_memlet_path(a_inter, me2, t2, dst_conn='_a', memlet=dace.Memlet(data='a', subset='i'))
+    state.add_memlet_path(t2, mx2, b_dst, src_conn='_b', memlet=dace.Memlet(data='b', subset='i'))
+
+    sdfg.validate()
+
+    # Numeric oracle: capture pre-fuse output, then optionally re-run post-fuse.
+    rng = np.random.default_rng(221)
+    a_in = rng.standard_normal(10)
+    c_in = rng.standard_normal(10)
+    ref = {'a': a_in.copy(), 'b': np.zeros(10), 'c': c_in.copy()}
+    res = {'a': a_in.copy(), 'b': np.zeros(10), 'c': c_in.copy()}
+    sdfg_ref = copy.deepcopy(sdfg)
+    sdfg_ref(**ref)
+
+    # Apply MapFusionVertical (the actual production pass) and ensure validation holds.
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    res_apply = PatternMatchAndApplyRepeated([MapFusionVertical()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # The structural split must let the fusion APPLY (refusal was the pre-fix
+    # behavior; pinning the split here prevents a future regression that
+    # reintroduces a refusal-only path on this shape).
+    assert res_apply is not None and 'MapFusionVertical' in res_apply, (
+        'MapFusionVertical must apply on the InOut shape via the structural split, '
+        f'not refuse; got result={res_apply!r}.')
+
+    # After the split + fusion the NestedSDFG's InOut overlap must be empty
+    # (the connector that was InOut is now output-only).
+    nsdfgs = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert nsdfgs, 'expected at least one NestedSDFG to survive the fusion'
+    for n in nsdfgs:
+        inout = set(n.in_connectors) & set(n.out_connectors)
+        assert not inout, f'NestedSDFG {n.label} still has InOut overlap after split: {sorted(inout)}'
+
+    # Numerically, the fused SDFG produces the same outputs as the pre-fuse oracle.
+    sdfg(**res)
+    assert np.allclose(ref['a'], res['a']), 'a-array semantics broken by fusion (InOut split desync)'
+    assert np.allclose(ref['b'], res['b']), 'b-array semantics broken by fusion'
+
+
+def _make_ordering_edge_beside_intermediate_sdfg(shared: bool) -> SDFG:
+    """`a -> map1 -> t -> map2 -> b`, plus the redundant ordering edge `t -> map2entry`.
+
+    That extra empty Memlet is what `StateFusionExtended` leaves behind next to the RAW edge.
+    With `shared` the intermediate is non-transient, so the AccessNode survives the fusion.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_beside_intermediate"))
+    for name in ("a", "b"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=not shared)
+    state = sdfg.add_state(is_start_block=True)
+
+    t = state.add_access("t")
+    state.add_mapped_tasklet("produce",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("a[__i]")},
+                             code="__out = __in + 10.0",
+                             outputs={"__out": dace.Memlet("t[__i]")},
+                             output_nodes={t},
+                             external_edges=True)
+    _, second_entry, _ = state.add_mapped_tasklet("consume",
+                                                  map_ranges={"__i": "0:10"},
+                                                  inputs={"__in": dace.Memlet("t[__i]")},
+                                                  code="__out = __in * 2.0",
+                                                  outputs={"__out": dace.Memlet("b[__i]")},
+                                                  input_nodes={t},
+                                                  external_edges=True)
+    state.add_nedge(t, second_entry, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_fusion_with_an_ordering_edge_beside_the_intermediate(shared: bool):
+    """An ordering edge next to the data edge must not block fusion, nor survive it as a self loop.
+
+    The empty Memlet has no `dst_conn`, so `partition_first_outputs` raised `AttributeError` on
+    `dst_conn.startswith("IN_")`; the matcher swallowed that as "cannot apply" and the pair silently
+    never fused. `handle_intermediate_set` tripped the same assumption once matching got past it.
+    """
+    sdfg = _make_ordering_edge_beside_intermediate_sdfg(shared)
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    state = sdfg.start_block
+    fused_entry = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert len(fused_entry) == 1
+    assert not [e for e in state.in_edges(fused_entry[0]) if e.data.is_empty()], "ordering edge became a self loop"
+
+    res = {"a": a.copy(), "b": np.zeros(10)}
+    if shared:
+        res["t"] = np.zeros(10)
+    sdfg(**res)
+    assert np.allclose(res["b"], ref), "fusing across the ordering edge changed the result"
+
+
+def test_intermediate_reaching_the_second_map_only_by_an_ordering_edge(capsys):
+    """An intermediate that reaches the second Map only through an ordering edge must be refused.
+
+    Skipping the empty edge leaves ``found_second_map`` False and ``has_found_a_consumer`` unbound,
+    so the invariant assert fired from inside ``can_be_applied``. The matcher swallows that as a
+    warning, but under ``python -O`` both asserts vanish and the intermediate would be rewired
+    without the producer-covers-consumer check ever having run.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_only_intermediate"))
+    for name in ("a", "b"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+
+    t = state.add_access("t")
+    state.add_mapped_tasklet("produce",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("a[__i]")},
+                             code="__out = __in + 10.0",
+                             outputs={"__out": dace.Memlet("t[__i]")},
+                             output_nodes={t},
+                             external_edges=True)
+    _, second_entry, _ = state.add_mapped_tasklet("consume",
+                                                  map_ranges={"__i": "0:10"},
+                                                  inputs={"__in": dace.Memlet("a[__i]")},
+                                                  code="__out = __in * 2.0",
+                                                  outputs={"__out": dace.Memlet("b[__i]")},
+                                                  external_edges=True)
+    # `t` never feeds the second Map with data -- only this ordering edge reaches it.
+    state.add_nedge(t, second_entry, dace.Memlet())
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(MapFusionVertical, validate_all=True)
+
+    # `PatternMatchAndApply` reports a raising `can_be_applied` by printing, then carries on.
+    reported = [line for line in capsys.readouterr().out.splitlines() if "triggered a" in line]
+    assert not reported, f"can_be_applied raised instead of refusing: {reported}"
+
+
+def test_ordering_edge_beside_an_inout_read():
+    """An ordering edge beside a read of an in/out array must not stop the read/write analysis.
+
+    `a` is read by the first Map and written by the second, so it is an in/out of the fused Map and
+    `has_read_write_dependency()` calls `find_subsets()` on it. `find_subsets()` walked EVERY edge
+    between the AccessNode and the MapEntry, including the empty ordering Memlet, and sliced its
+    `dst_conn` -- which an ordering edge does not have -- raising
+    `TypeError: 'NoneType' object is not subscriptable` from inside `can_be_applied`. The matcher
+    swallowed that as "cannot apply", so the pair silently never fused.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_beside_inout_read"))
+    sdfg.add_array("a", shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+
+    a_read = state.add_access("a")
+    t = state.add_access("t")
+    a_write = state.add_access("a")
+    _, first_entry, _ = state.add_mapped_tasklet("produce",
+                                                 map_ranges={"__i": "0:10"},
+                                                 inputs={"__in": dace.Memlet("a[__i]")},
+                                                 code="__out = __in + 10.0",
+                                                 outputs={"__out": dace.Memlet("t[__i]")},
+                                                 input_nodes={a_read},
+                                                 output_nodes={t},
+                                                 external_edges=True)
+    state.add_mapped_tasklet("consume",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("t[__i]")},
+                             code="__out = __in * 2.0",
+                             outputs={"__out": dace.Memlet("a[__i]")},
+                             input_nodes={t},
+                             output_nodes={a_write},
+                             external_edges=True)
+    # The extra empty Memlet `StateFusionExtended` leaves beside the real read of `a`.
+    state.add_nedge(a_read, first_entry, dace.Memlet())
+    sdfg.validate()
+
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+
+    # `apply_fusion` runs with `optimizer.match_exception` on, so a raising `can_be_applied` fails.
+    apply_fusion(sdfg, removed_maps=1)
+
+    res = {"a": a.copy()}
+    sdfg(**res)
+    assert np.allclose(res["a"], ref), "fusing beside the ordering edge changed the result"
+
+
+def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
+    """Builds the mark/search pattern of CloudSC's selection sort.
+
+    The mark Map contains a NestedSDFG that writes a single element
+    `A[i - 1, idx[i - 1] - 1]` per iteration, but its connector Memlet claims the
+    whole array (a frontend's conservative widening for a data dependent index).
+    The search Map contains a NestedSDFG that reads full rows of `A`, again with a
+    whole array connector Memlet. `A` is non transient, i.e. shared data, and
+    Fortran layout, matching the original bug.
+    """
+    N = dace.symbol("N")
+
+    # The inner mark SDFG: writes one element, the connector claims the full array.
+    inner_mark = dace.SDFG(unique_name("mark_inner"))
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    istate = inner_mark.add_state()
+    ia = istate.add_access("A")
+    iidx = istate.add_access("idx_at")
+    t = istate.add_tasklet("mark", {"_in_idx": dace.int32}, {"_out": dace.bool_}, "_out = 0")
+    istate.add_edge(iidx, None, t, "_in_idx", dace.Memlet("idx_at[0]"))
+    istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, idx_at - 1]"))
+
+    # The inner search SDFG: reads one row, the connector claims the full array.
+    inner_search = dace.SDFG(unique_name("search_inner"))
+    inner_search.add_symbol("j", dace.int32)
+    inner_search.add_symbol("N", dace.int32)
+    inner_search.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_search.add_array("B", (N, ), dace.int32)
+    istate2 = inner_search.add_state()
+    ia2 = istate2.add_access("A")
+    ib2 = istate2.add_access("B")
+    t2i = istate2.add_tasklet("search", {"_a": dace.pointer(dace.bool_)}, {"_b": dace.int32},
+                              "_b = _a[0] + _a[1] + _a[2] + _a[3] + _a[4]")
+    istate2.add_edge(ia2, None, t2i, "_a", dace.Memlet("A[j - 1, 0:5]"))
+    istate2.add_edge(t2i, "_b", ib2, None, dace.Memlet("B[j - 1]"))
+
+    sdfg = dace.SDFG(unique_name("partial_write_shared_intermediate"))
+    sdfg.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    sdfg.add_array("idx", (N, ), dace.int32)
+    sdfg.add_array("B", (N, ), dace.int32)
+
+    # `A[:, :] = True`
+    s0 = sdfg.add_state("init")
+    a0 = s0.add_access("A")
+    me0, mx0 = s0.add_map("init_map", {"ii": "0:N", "jj": "0:5"})
+    t0 = s0.add_tasklet("one", {}, {"_o": dace.bool_}, "_o = 1")
+    s0.add_edge(me0, None, t0, None, dace.Memlet())
+    s0.add_edge(t0, "_o", mx0, "IN_1", dace.Memlet("A[ii, jj]"))
+    s0.add_edge(mx0, "OUT_1", a0, None, dace.Memlet("A[0:N, 0:5]"))
+    mx0.add_in_connector("IN_1")
+    mx0.add_out_connector("OUT_1")
+
+    s1 = sdfg.add_state("main")
+    a1 = s1.add_access("A")
+    idx1 = s1.add_access("idx")
+    b1 = s1.add_access("B")
+
+    me1, mx1 = s1.add_map("mark_map", {"i": "1:N + 1"})
+    me1.add_in_connector("IN_1")
+    me1.add_out_connector("OUT_1")
+    mx1.add_in_connector("IN_1")
+    mx1.add_out_connector("OUT_1")
+    nsdfg = s1.add_nested_sdfg(inner_mark, {"idx_at": dace.int32}, {"A": dace.bool_},
+                               symbol_mapping={
+                                   "i": "i",
+                                   "N": "N"
+                               })
+    # Pinned: `generate_code` inlines host nested SDFGs, and inlining this one drops the `idx_at`
+    # descriptor while leaving `idx_at` in the `A[i - 1, idx_at - 1]` subset, so the SDFG still
+    # validates but `arglist()` raises `KeyError: 'idx_at'` (a separate InlineSDFG bug). Pinning also
+    # keeps the shape this test is about -- a NestedSDFG producer -- intact through compilation.
+    nsdfg.no_inline = True
+    s1.add_edge(idx1, None, me1, "IN_1", dace.Memlet("idx[0:N]"))
+    s1.add_edge(me1, "OUT_1", nsdfg, "idx_at", dace.Memlet("idx[i - 1]"))
+    s1.add_edge(nsdfg, "A", mx1, "IN_1", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(mx1, "OUT_1", a1, None, dace.Memlet("A[0:N, 0:5]"))
+
+    me2, mx2 = s1.add_map("search_map", {"j": "1:N + 1"})
+    me2.add_in_connector("IN_2")
+    me2.add_out_connector("OUT_2")
+    mx2.add_in_connector("IN_1")
+    mx2.add_out_connector("OUT_1")
+    nsdfg2 = s1.add_nested_sdfg(inner_search, {"A": dace.bool_}, {"B": dace.int32}, symbol_mapping={"j": "j", "N": "N"})
+    nsdfg2.no_inline = True
+    s1.add_edge(a1, None, me2, "IN_2", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(me2, "OUT_2", nsdfg2, "A", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(nsdfg2, "B", mx2, "IN_1", dace.Memlet("B[0:N]"))
+    s1.add_edge(mx2, "OUT_1", b1, None, dace.Memlet("B[0:N]"))
+
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_map_fusion_partial_write_of_shared_intermediate_not_fused():
+    """A NestedSDFG producer that only partially writes its shared intermediate must
+    not be fused.
+
+    The connector Memlets of both Maps claim the whole array, so the claim based
+    coverage test sees a pointwise producer/consumer pair. But the mark NestedSDFG
+    writes a single element per iteration, so the privatized per-iteration buffer
+    is mostly undefined; the search Map then reads garbage and the shared mode
+    write back copies it over the whole shared array (the CloudSC `llindex1`/
+    `iorder` segfault). The fusion must be refused; without the guard this test
+    fails on the numerics comparison (or crashes).
+    """
+    sdfg = _make_partially_written_shared_intermediate_sdfg()
+
+    n = 8
+    idx = np.array([5, 4, 3, 2, 1, 5, 4, 3], dtype=np.int32)
+    A_ref = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_ref = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_ref, idx=idx, B=B_ref, N=n)
+    assert np.all(B_ref == 4), "reference broken"
+
+    maps_before = count_nodes(sdfg, nodes.MapEntry)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        applied = sdfg.apply_transformations_repeated(MapFusionVertical(strict_dataflow=True))
+    assert applied == 0, "partial write of a shared intermediate must not be fused"
+    assert count_nodes(sdfg, nodes.MapEntry) == maps_before
+
+    A_res = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_res = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_res, idx=idx, B=B_res, N=n)
+    assert np.array_equal(A_ref, A_res)
+    assert np.array_equal(B_ref, B_res)
+
+
+def _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark: SDFG) -> SDFG:
+    """The mark/search skeleton around a NestedSDFG producer of a shared intermediate.
+
+    `A` is the non transient, i.e. shared, intermediate. The mark Map runs `inner_mark`,
+    whose `A` connector Memlet claims the *whole* array -- a frontend's conservative
+    widening -- and the search Map reads full rows of `A` behind an equally wide claim.
+    Only the body of `inner_mark` differs between the callers, and each body defines less
+    of `A` than the claim promises, so fusing (which privatizes `A` into a per iteration
+    buffer and copies the whole buffer back) would publish undefined data.
+
+    Both Maps are sequential so that the deliberately racy inner writes have one defined
+    outcome to compare against.
+    """
+    N = dace.symbol("N")
+
+    inner_search = SDFG(unique_name("search_inner"))
+    inner_search.add_symbol("j", dace.int32)
+    inner_search.add_symbol("N", dace.int32)
+    inner_search.add_array("A", (N, 5), dace.float64)
+    inner_search.add_array("B", (N, ), dace.float64)
+    search_state = inner_search.add_state(is_start_block=True)
+    search_a = search_state.add_access("A")
+    search_b = search_state.add_access("B")
+    search_tasklet = search_state.add_tasklet("search", {"_a": dace.pointer(dace.float64)}, {"_b": dace.float64},
+                                              "_b = _a[0] + _a[1] + _a[2] + _a[3] + _a[4]")
+    search_state.add_edge(search_a, None, search_tasklet, "_a", dace.Memlet("A[j - 1, 0:5]"))
+    search_state.add_edge(search_tasklet, "_b", search_b, None, dace.Memlet("B[j - 1]"))
+
+    sdfg = SDFG(unique_name("nsdfg_producer_shared_intermediate"))
+    sdfg.add_array("A", (N, 5), dace.float64)
+    sdfg.add_array("idx", (N, ), dace.int32)
+    sdfg.add_array("B", (N, ), dace.float64)
+
+    # `A[:, :] = 1.0`, so that the unwritten part of `A` is a known value.
+    init_state = sdfg.add_state("init", is_start_block=True)
+    init_a = init_state.add_access("A")
+    init_state.add_mapped_tasklet("init_map",
+                                  map_ranges={
+                                      "ii": "0:N",
+                                      "jj": "0:5"
+                                  },
+                                  inputs={},
+                                  code="_o = 1.0",
+                                  outputs={"_o": dace.Memlet("A[ii, jj]")},
+                                  output_nodes={"A": init_a},
+                                  external_edges=True)
+
+    state = sdfg.add_state("main")
+    a_node = state.add_access("A")
+    idx_node = state.add_access("idx")
+    b_node = state.add_access("B")
+
+    mark_entry, mark_exit = state.add_map("mark_map", {"i": "1:N + 1"}, schedule=dace.ScheduleType.Sequential)
+    mark_entry.add_in_connector("IN_1")
+    mark_entry.add_out_connector("OUT_1")
+    mark_exit.add_in_connector("IN_1")
+    mark_exit.add_out_connector("OUT_1")
+    mark_nsdfg = state.add_nested_sdfg(inner_mark, {"idx_at": dace.int32}, {"A": dace.float64},
+                                       symbol_mapping={
+                                           "i": "i",
+                                           "N": "N"
+                                       })
+    # Pinned for the same reason as in `_make_partially_written_shared_intermediate_sdfg()`:
+    #  `generate_code` inlines host nested SDFGs, which would dissolve the very shape -- a
+    #  NestedSDFG producer -- that these tests are about.
+    mark_nsdfg.no_inline = True
+    state.add_edge(idx_node, None, mark_entry, "IN_1", dace.Memlet("idx[0:N]"))
+    state.add_edge(mark_entry, "OUT_1", mark_nsdfg, "idx_at", dace.Memlet("idx[i - 1]"))
+    state.add_edge(mark_nsdfg, "A", mark_exit, "IN_1", dace.Memlet("A[0:N, 0:5]"))
+    state.add_edge(mark_exit, "OUT_1", a_node, None, dace.Memlet("A[0:N, 0:5]"))
+
+    search_entry, search_exit = state.add_map("search_map", {"j": "1:N + 1"}, schedule=dace.ScheduleType.Sequential)
+    search_entry.add_in_connector("IN_1")
+    search_entry.add_out_connector("OUT_1")
+    search_exit.add_in_connector("IN_1")
+    search_exit.add_out_connector("OUT_1")
+    search_nsdfg = state.add_nested_sdfg(inner_search, {"A": dace.float64}, {"B": dace.float64},
+                                         symbol_mapping={
+                                             "j": "j",
+                                             "N": "N"
+                                         })
+    search_nsdfg.no_inline = True
+    state.add_edge(a_node, None, search_entry, "IN_1", dace.Memlet("A[0:N, 0:5]"))
+    state.add_edge(search_entry, "OUT_1", search_nsdfg, "A", dace.Memlet("A[0:N, 0:5]"))
+    state.add_edge(search_nsdfg, "B", search_exit, "IN_1", dace.Memlet("B[0:N]"))
+    state.add_edge(search_exit, "OUT_1", b_node, None, dace.Memlet("B[0:N]"))
+
+    sdfg.add_edge(init_state, state, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def _assert_nsdfg_producer_fusion_is_refused(sdfg: SDFG, expected_a: np.ndarray, expected_b: np.ndarray) -> None:
+    """Run `sdfg`, refuse to fuse it and run it again, expecting the same numbers."""
+    n = expected_b.shape[0]
+    idx = np.arange(1, n + 1, dtype=np.int32)
+
+    a_ref = np.zeros((n, 5), dtype=np.float64)
+    b_ref = np.full(n, -1.0, dtype=np.float64)
+    compile_and_run_sdfg(sdfg, A=a_ref, idx=idx, B=b_ref, N=n)
+    assert np.allclose(a_ref, expected_a), "reference broken"
+    assert np.allclose(b_ref, expected_b), "reference broken"
+
+    maps_before = count_nodes(sdfg, nodes.MapEntry)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        applied = sdfg.apply_transformations_repeated(MapFusionVertical(strict_dataflow=True))
+    assert applied == 0, "an undecidable inner write must not be accepted as full coverage"
+    assert count_nodes(sdfg, nodes.MapEntry) == maps_before
+
+    a_res = np.zeros((n, 5), dtype=np.float64)
+    b_res = np.full(n, -1.0, dtype=np.float64)
+    compile_and_run_sdfg(sdfg, A=a_res, idx=idx, B=b_res, N=n)
+    assert np.allclose(a_ref, a_res)
+    assert np.allclose(b_ref, b_res)
+
+
+def test_fusion_refuses_rank_mismatched_inner_write():
+    """An inner write of a different rank than the intermediate must not count as coverage.
+
+    The inner `A` is a Scalar, which `_can_nsdfg_be_handled_for_intermediate()` waves
+    through unconditionally, so a rank-1 inner write reaches the coverage guard against a
+    rank-2 intermediate. `Subset.covers()` RETURNS a truthy `ValueError` instance on a
+    dimensionality mismatch instead of raising, so the guard used to read that error as
+    "covered" and accepted a nest that defines a single element of `A[0:N, 0:5]`.
+    """
+    inner_mark = SDFG(unique_name("mark_inner_scalar"))
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_scalar("A", dace.float64, transient=False)
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    mark_state = inner_mark.add_state(is_start_block=True)
+    mark_idx = mark_state.add_access("idx_at")
+    mark_a = mark_state.add_access("A")
+    mark_tasklet = mark_state.add_tasklet("mark", {"_in": dace.int32}, {"_out": dace.float64}, "_out = _in")
+    mark_state.add_edge(mark_idx, None, mark_tasklet, "_in", dace.Memlet("idx_at[0]"))
+    mark_state.add_edge(mark_tasklet, "_out", mark_a, None, dace.Memlet("A[0]"))
+
+    n = 8
+    # Only `A[0, 0]` is ever written, by the last iteration of the sequential Map.
+    expected_a = np.ones((n, 5), dtype=np.float64)
+    expected_a[0, 0] = n
+    _assert_nsdfg_producer_fusion_is_refused(
+        _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark),
+        expected_a,
+        expected_a.sum(axis=1),
+    )
+
+
+def test_fusion_refuses_conditionally_written_shared_intermediate():
+    """A covering write behind a branch does not define the intermediate on every execution.
+
+    The guard used to union the writes of *all* states of the nest, which
+    `SDFG.states()` also collects out of `ConditionalBlock` branches and `LoopRegion`
+    bodies, and to accept the first covering one. Here the only covering write sits in a
+    branch that is not taken for `i <= 2`, so on those iterations the privatized buffer
+    stays undefined and the write back would publish it.
+    """
+    N = dace.symbol("N")
+    inner_mark = SDFG(unique_name("mark_inner_conditional"))
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_array("A", (N, 5), dace.float64)
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    conditional = dace.sdfg.state.ConditionalBlock("maybe")
+    inner_mark.add_node(conditional, is_start_block=True)
+    branch = dace.sdfg.state.ControlFlowRegion("branch_body", sdfg=inner_mark)
+    conditional.add_branch(dace.sdfg.state.CodeBlock("i > 2"), branch)
+    mark_state = branch.add_state("write_all", is_start_block=True)
+    mark_idx = mark_state.add_access("idx_at")
+    mark_a = mark_state.add_access("A")
+    mark_state.add_mapped_tasklet("write_all",
+                                  map_ranges={
+                                      "ii": "0:N",
+                                      "jj": "0:5"
+                                  },
+                                  inputs={"_in": dace.Memlet("idx_at[0]")},
+                                  code="_out = _in",
+                                  outputs={"_out": dace.Memlet("A[ii, jj]")},
+                                  input_nodes={"idx_at": mark_idx},
+                                  output_nodes={"A": mark_a},
+                                  external_edges=True)
+
+    n = 8
+    # The last iteration of the sequential Map takes the branch and overwrites everything.
+    expected_a = np.full((n, 5), float(n), dtype=np.float64)
+    _assert_nsdfg_producer_fusion_is_refused(
+        _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark),
+        expected_a,
+        expected_a.sum(axis=1),
+    )
+
+
+def test_fusion_refuses_inner_write_without_a_destination_subset():
+    """A missing destination subset is not a statement that the whole container is written.
+
+    The copy `tmp -> A` names `tmp`, so it has no `other_subset` and reports `dst_subset`
+    as `None`. That does not mean "all of `A`": the transferred shape comes from
+    `Memlet.subset` and the missing side only fixes the base at index zero, so a single
+    row of `A` is written. The guard used to read the `None` as a whole array write.
+    """
+    N = dace.symbol("N")
+    inner_mark = SDFG(unique_name("mark_inner_no_dst_subset"))
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_array("A", (N, 5), dace.float64)
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    inner_mark.add_array("tmp", (N, 5), dace.float64, transient=True)
+    mark_state = inner_mark.add_state(is_start_block=True)
+    mark_idx = mark_state.add_access("idx_at")
+    mark_tmp = mark_state.add_access("tmp")
+    mark_a = mark_state.add_access("A")
+    mark_state.add_mapped_tasklet("fill_row",
+                                  map_ranges={"k": "0:5"},
+                                  inputs={"_in": dace.Memlet("idx_at[0]")},
+                                  code="_out = _in",
+                                  outputs={"_out": dace.Memlet("tmp[0, k]")},
+                                  input_nodes={"idx_at": mark_idx},
+                                  output_nodes={"tmp": mark_tmp},
+                                  external_edges=True)
+    mark_state.add_edge(mark_tmp, None, mark_a, None, dace.Memlet(data="tmp", subset="0, 0:5"))
+    assert mark_state.edges_between(mark_tmp, mark_a)[0].data.dst_subset is None, "test premise broken"
+
+    n = 8
+    # Only row 0 is written, by the last iteration of the sequential Map.
+    expected_a = np.ones((n, 5), dtype=np.float64)
+    expected_a[0, :] = n
+    _assert_nsdfg_producer_fusion_is_refused(
+        _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark),
+        expected_a,
+        expected_a.sum(axis=1),
+    )
+
+
+def _make_empty_memlet_ordering_sdfg(ordering_only: bool, both: bool) -> SDFG:
+    """Two fusable Maps with an empty Memlet into the first MapEntry.
+
+    `tmp` is read AND written by the first Map and is the intermediate, which is what
+    routes `has_read_write_dependency()` into `find_subsets()`.
+
+    :param ordering_only: order a node that has no data edge at all against the Map,
+        instead of putting the ordering edge on the intermediate's read node.
+    :param both: use both ordering edges at once. `relocate_nodes()` deduplicates the
+        empty Memlets of `all_edges()` by the `(src, dst)` pair; keying on `dst` alone --
+        which for an INCOMING edge is the scope node itself -- would drop the second
+        ordering edge whatever its source, isolating a node whose only edge it was.
+    """
+    sdfg = SDFG(unique_name("empty_memlet_ordering"))
+    state = sdfg.add_state("state", is_start_block=True)
+
+    for name in ("A", "B"):
+        sdfg.add_array(name, shape=(20, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(20, ), dtype=dace.float64, transient=True)
+
+    a_node, b_node = (state.add_access(name) for name in ("A", "B"))
+    tmp_read, tmp_inter = (state.add_access("tmp") for _ in range(2))
+    # The first Map reads `tmp` before it writes it, so pin the initial value instead of
+    #  leaving the read undefined.
+    tmp_read.setzero = True
+    tmp_inter.setzero = True
+
+    _, first_entry, _ = state.add_mapped_tasklet("first",
+                                                 map_ranges={"__i": "0:20"},
+                                                 inputs={
+                                                     "__a": dace.Memlet("A[__i]"),
+                                                     "__t": dace.Memlet("tmp[__i]")
+                                                 },
+                                                 code="__out = __a + __t",
+                                                 outputs={"__out": dace.Memlet("tmp[__i]")},
+                                                 input_nodes={
+                                                     "A": a_node,
+                                                     "tmp": tmp_read
+                                                 },
+                                                 output_nodes={"tmp": tmp_inter},
+                                                 external_edges=True)
+    state.add_mapped_tasklet("second",
+                             map_ranges={"__i": "0:20"},
+                             inputs={"__t": dace.Memlet("tmp[__i]")},
+                             code="__out = __t * 2.0",
+                             outputs={"__out": dace.Memlet("B[__i]")},
+                             input_nodes={"tmp": tmp_inter},
+                             output_nodes={"B": b_node},
+                             external_edges=True)
+
+    if ordering_only or both:
+        sdfg.add_array("C", shape=(20, ), dtype=dace.float64, transient=False)
+        state.add_nedge(state.add_access("C"), first_entry, dace.Memlet())
+    if not ordering_only or both:
+        # The same node carries both a data edge and an ordering edge.
+        state.add_nedge(tmp_read, first_entry, dace.Memlet())
+
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize(("ordering_only", "both"), [(False, False), (True, False), (False, True)])
+def test_fusion_empty_memlet_ordering(ordering_only: bool, both: bool):
+    """An empty Memlet into the MapEntry must not stop the two Maps from fusing.
+
+    With `both` the MapEntry has two ordering edges from two different sources, which is
+    what pins the `(src, dst)` keyed deduplication in `relocate_nodes()`: keyed on `dst`
+    alone the `C` edge is dropped and `C` becomes an isolated node, which `validate_all`
+    then rejects.
+    """
+    sdfg = _make_empty_memlet_ordering_sdfg(ordering_only, both)
+
+    # `apply_fusion()` validates after every application, so a dropped ordering edge shows
+    #  up as the isolated `C` node it leaves behind.
+    apply_fusion(sdfg, removed_maps=1)
+
+    state = sdfg.start_block
+    expected_orderings = 2 if both else 1
+    fused_entry = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert len(fused_entry) == 1
+    orderings = [e for e in state.in_edges(fused_entry[0]) if e.data.is_empty()]
+    assert len(orderings) == expected_orderings, "an ordering edge was deduplicated away"
+    assert len({(e.src, e.dst) for e in orderings}) == expected_orderings
+
+    a = np.random.rand(20)
+    res = {"A": a.copy(), "B": np.zeros(20)}
+    if ordering_only or both:
+        res["C"] = np.zeros(20)
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(res["B"], a * 2.0), "fusing across the ordering edges changed the result"
+
+
+def _make_ordering_into_intermediate_sdfg() -> SDFG:
+    """cg's shape: an ordering edge reaches the second Map only THROUGH the intermediate.
+
+    ``fill`` writes ``B``, an empty Memlet puts it before the intermediate ``tmp``, the first
+    Map writes ``tmp`` and the second reads ``tmp`` to write ``B`` again. Nothing else keeps
+    the fill before that second write: the whole constraint is the path
+    ``B_filled -> tmp -> second_entry``, which fusion turns around by making ``tmp`` an output.
+    """
+    sdfg = SDFG(unique_name("ordering_into_intermediate"))
+    state = sdfg.add_state("state", is_start_block=True)
+
+    for name in ("A", "B"):
+        sdfg.add_array(name, shape=(20, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(20, ), dtype=dace.float64, transient=True)
+
+    a_node, b_filled, b_out = state.add_access("A"), state.add_access("B"), state.add_access("B")
+    tmp_inter = state.add_access("tmp")
+
+    state.add_mapped_tasklet("fill",
+                             map_ranges={"__i": "0:20"},
+                             inputs={},
+                             code="__out = 0.0",
+                             outputs={"__out": dace.Memlet("B[__i]")},
+                             output_nodes={"B": b_filled},
+                             external_edges=True)
+    state.add_mapped_tasklet("first",
+                             map_ranges={"__i": "0:20"},
+                             inputs={"__a": dace.Memlet("A[__i]")},
+                             code="__out = __a + 1.0",
+                             outputs={"__out": dace.Memlet("tmp[__i]")},
+                             input_nodes={"A": a_node},
+                             output_nodes={"tmp": tmp_inter},
+                             external_edges=True)
+    state.add_mapped_tasklet("second",
+                             map_ranges={"__i": "0:20"},
+                             inputs={"__t": dace.Memlet("tmp[__i]")},
+                             code="__out = __t * 2.0",
+                             outputs={"__out": dace.Memlet("B[__i]")},
+                             input_nodes={"tmp": tmp_inter},
+                             output_nodes={"B": b_out},
+                             external_edges=True)
+
+    state.add_nedge(b_filled, tmp_inter, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+def test_fusion_keeps_ordering_that_ran_through_the_intermediate():
+    """Fusing must not silently drop the happens-before an intermediate carried.
+
+    The edge itself survives the rewrite, so counting edges proves nothing -- what breaks is
+    its REACH: once ``tmp`` is an output of the fused Map, ``B_filled -> tmp`` no longer puts
+    the fill before the Map that writes ``B``. That is a scheduling hazard, not a value the
+    reference disagrees with, so the assertion is reachability rather than numerics (cg's
+    zero-fill of ``p`` floated past its writer and only surfaced as a NaN 100 iterations on).
+    """
+    sdfg = _make_ordering_into_intermediate_sdfg()
+    state = sdfg.start_block
+    b_filled = next(n for n in state.data_nodes()
+                    if n.data == "B" and state.in_degree(n) > 0 and any(e.data.is_empty() for e in state.out_edges(n)))
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    entries = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert len(entries) == 2, "expected the fill Map and the fused Map"
+    fused_entry = next(e for e in entries if not e.map.label.startswith("fill"))
+    assert is_node_reachable_from(state, b_filled, fused_entry), \
+        "the fill is no longer ordered before the Map that overwrites B"
+
+    a = np.random.rand(20)
+    res = {"A": a.copy(), "B": np.zeros(20)}
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(res["B"], (a + 1.0) * 2.0), "fusing changed the result"
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()
@@ -3266,4 +4046,12 @@ if __name__ == '__main__':
     test_map_fusion_multiple_top_level_connections_with_shared_intermediate(False)
     test_map_fusion_stable_label(forward_fusion=True)
     test_map_fusion_stable_label(forward_fusion=False)
+    test_map_fusion_partial_write_of_shared_intermediate_not_fused()
+    test_fusion_refuses_rank_mismatched_inner_write()
+    test_fusion_refuses_conditionally_written_shared_intermediate()
+    test_fusion_refuses_inner_write_without_a_destination_subset()
+    test_fusion_empty_memlet_ordering(ordering_only=False, both=False)
+    test_fusion_empty_memlet_ordering(ordering_only=True, both=False)
+    test_fusion_empty_memlet_ordering(ordering_only=False, both=True)
+    test_fusion_keeps_ordering_that_ran_through_the_intermediate()
     test_map_fusion_is_deprecated()

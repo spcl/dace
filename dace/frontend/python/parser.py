@@ -24,6 +24,11 @@ try:
     from dace.sdfg.utils import distributed_compile
 except ImportError:
     mpi4py = None
+else:
+    # Settle MPI bring-up here, once, rather than at the first communicator call: under a launcher
+    # a process that skipped mpi4py's automatic MPI_Init aborts the whole job the moment anything
+    # touches a communicator, with no Python traceback to say why.
+    preprocessing.ensure_mpi_initialized()
 
 ArgTypes = Dict[str, Data]
 
@@ -107,15 +112,41 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
-            given_values = list(arg_val.shape)
+            # Distributed descriptors (process grids, subarrays) have no strides
+            desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
             given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
-            given_values += given_strides + given_offset
+
+            # On a rank mismatch (e.g. a rank-4 view with a length-1 axis passed to a rank-3 nested
+            # descriptor), first drop size-1 axes of the GIVEN argument right-to-left until the
+            # ranks agree -- the only sound way a higher-rank value can map onto the descriptor.
+            given_shape = list(arg_val.shape)
+            if len(given_shape) > len(desc.shape):
+                for i in range(len(given_shape) - 1, -1, -1):
+                    if len(given_shape) == len(desc.shape):
+                        break
+                    if given_shape[i] == 1:
+                        del given_shape[i]
+                        if given_strides:
+                            del given_strides[i]
+                        if given_offset:
+                            del given_offset[i]
+
+            # Equate shape with shape, strides with strides, offset with offset -- and only when a
+            # section's lengths match. A concatenated zip across mismatched sections shifts every
+            # later section by the rank difference, silently solving stride symbols against shape
+            # entries and producing wrong-but-plausible strides (uninitialized reads at runtime).
+            symbolic_values = []
+            given_values = []
+            for sym_part, given_part in ((desc.shape, given_shape), (desc_strides, given_strides), (desc.offset,
+                                                                                                    given_offset)):
+                if len(sym_part) == len(given_part):
+                    symbolic_values += list(sym_part)
+                    given_values += list(given_part)
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
@@ -127,6 +158,11 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                         symbols.add(newsym)
                         exclude.add(sym)
                     repldict[sym] = newsym
+
+                # ``ipow`` is a codegen-only spelling of ``Pow``; restore ``Pow`` so ``solve`` can
+                # invert the shape. A Function-head rewrite can't ride in ``repldict`` (symbol
+                # rename), so do it here.
+                sym_dim = symbolic.relax_ipow(sym_dim)
 
                 # Replace symbols with __SOLVE_ symbols so as to allow
                 # the same symbol in the called SDFG
@@ -291,15 +327,16 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
-                return entry.sdfg
+                return copy.deepcopy(entry.sdfg)
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
         if use_cache:
-            # Add to cache
+            # Add the pristine parsed SDFG to the cache; hand the caller a copy so
+            # any transformations they apply cannot corrupt the cached template.
             self._cache.add(cachekey, sdfg, None)
 
-        return sdfg
+        return copy.deepcopy(sdfg) if use_cache else sdfg
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -464,10 +501,17 @@ class DaceProgram(pycommon.SDFGConvertible):
         kwargs.update(arg_mapping)
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
+        # Auto-optimization turns THIS call's symbol values into constants, so the artifact it
+        # produces is only valid for them. The cache key carries argument types, not values, so an
+        # entry made from such an SDFG would be handed back for every later value.
+        specialized = False
+
         if self.recreate_sdfg:
             # Invoke auto-optimization as necessary
             if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
+                constants = set(sdfg.constants_prop.keys())
                 sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
+                specialized = bool(sdfg.constants_prop.keys() - constants)
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
@@ -479,9 +523,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                 binaryobj = sdfg.compile(validate=self.validate)
 
             # Recreate key and add to cache
-            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
-                                            constant_args)
-            self._cache.add(cachekey, sdfg, binaryobj)
+            if not specialized:
+                cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys,
+                                                self.closure_constant_keys, constant_args)
+                self._cache.add(cachekey, sdfg, binaryobj)
 
             # Call SDFG
             result = binaryobj(**sdfg_args)

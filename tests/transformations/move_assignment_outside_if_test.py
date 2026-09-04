@@ -1,5 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy as np
+
 import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveAssignmentOutsideIf
@@ -177,8 +179,48 @@ def multiple_variable_not_all_const_test():
     assert len(conditional.branches) == 2
 
 
+def wcr_branch_sdfg() -> dace.SDFG:
+    """``if C < 0.5: A(+)= 2*B`` / ``else: A = 0`` -- the const seed may not move out of the branch."""
+    sdfg = dace.SDFG('wcr_branch')
+    guard = sdfg.add_state('guard', is_start_block=True)
+    acc_state = sdfg.add_state('accumulate')
+    const_state = sdfg.add_state('const')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+
+    acc_tasklet = acc_state.add_tasklet('acc', {'b'}, {'a'}, 'a = 2*b')
+    acc_state.add_memlet_path(acc_state.add_read('B'), acc_tasklet, memlet=Memlet(data='B', subset='0'), dst_conn='b')
+    acc_state.add_memlet_path(acc_tasklet,
+                              acc_state.add_write('A'),
+                              memlet=Memlet(data='A', subset='0', wcr='lambda x, y: x + y'),
+                              src_conn='a')
+
+    const_tasklet = const_state.add_tasklet('const_assign', {}, {'a'}, 'a = 0')
+    const_state.add_memlet_path(const_tasklet,
+                                const_state.add_write('A'),
+                                memlet=Memlet(data='A', subset='0'),
+                                src_conn='a')
+
+    sdfg.add_edge(guard, acc_state, InterstateEdge(condition='B[0] < 0.5'))
+    sdfg.add_edge(guard, const_state, InterstateEdge(condition='B[0] >= 0.5'))
+    sdfg.simplify()
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_branch_is_not_hoisted():
+    sdfg = wcr_branch_sdfg()
+    assert sdfg.apply_transformations_repeated([MoveAssignmentOutsideIf]) == 0
+
+    A = np.array([100.0])
+    B = np.array([0.25])
+    sdfg(A=A, B=B)
+    assert np.allclose(A, 100.5)
+
+
 if __name__ == '__main__':
     one_variable_simple_test(0)
     one_variable_simple_test(2)
     multiple_variable_test()
     multiple_variable_not_all_const_test()
+    test_wcr_branch_is_not_hoisted()

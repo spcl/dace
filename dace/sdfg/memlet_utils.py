@@ -50,7 +50,7 @@ class MemletReplacer(ast.NodeTransformer):
 
         # Parse memlet subset
         array = self.arrays[data]
-        subset, newaxes, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
+        subset, newaxes, _, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
         if newaxes:
             raise NotImplementedError('Adding new axes to memlets is not supported')
 

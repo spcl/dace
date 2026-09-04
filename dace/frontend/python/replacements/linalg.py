@@ -4,16 +4,48 @@ Contains linear algebra function and operator replacements.
 """
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
 from numbers import Integral
+from string import ascii_letters
 from typing import Optional, Sequence, Union
 import warnings
 
 import numpy as np
+
+
+def check_batched_matmul_support(visitor: ProgramVisitor, shape_a: Sequence, shape_b: Sequence) -> None:
+    """
+    Refuses batched matrix multiplications whose batch dimensions do not broadcast.
+
+    NumPy aligns the leading dimensions to the RIGHT and stretches any of extent 1. The pure
+    expansion of ``BatchedMatMul`` reproduces that by reading a stretched dimension at 0; the BLAS
+    expansions walk a fixed batch stride and refuse a broadcast themselves. What no expansion can
+    do is combine dimensions that genuinely differ, so only that is rejected here.
+
+    Supported: ``(*B, M, K) @ (*B, K, N)``, either operand a plain ``(M, K)`` / ``(K, N)`` matrix,
+    and broadcast forms such as ``(B, 1, M, K) @ (1, C, K, N) -> (B, C, M, N)``.
+
+    :param visitor: The program visitor, used to locate the error in the source.
+    :param shape_a: Shape of the first operand.
+    :param shape_b: Shape of the second operand.
+    :raise DaceSyntaxError: If a pair of batch dimensions neither matches nor broadcasts.
+    """
+    batch_a, batch_b = tuple(shape_a[:-2]), tuple(shape_b[:-2])
+    if not batch_a or not batch_b:
+        return
+    offset = len(batch_a) - len(batch_b)
+    paired = zip(batch_a[offset:], batch_b) if offset >= 0 else zip(batch_a, batch_b[-offset:])
+    for dim_a, dim_b in paired:
+        if symbolic.equal(dim_a, dim_b) is False and symbolic.equal(dim_a, 1) is not True and symbolic.equal(
+                dim_b, 1) is not True:
+            raise DaceSyntaxError(
+                visitor, None, f'Batched matmul of shapes {tuple(shape_a)} and {tuple(shape_b)} is not supported: '
+                f'batch dimensions {batch_a} and {batch_b} do not broadcast -- {dim_a} and {dim_b} differ and '
+                'neither is 1.')
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
@@ -29,7 +61,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
-        res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
+        # Equalize first: the two dims can reach here as different sympy instances of one name,
+        # which symbolic.equal cannot decide and reports as a spurious inconclusive mismatch.
+        # pystr_to_symbolic also converts a plain int dim, which equalize_symbols_across itself
+        # does not accept (it indexes .free_symbols on its arguments).
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[-1])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[-2])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
@@ -38,6 +76,8 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
+
+        check_batched_matmul_support(visitor, arr1.shape, arr2.shape)
 
         # Determine batched multiplication (supports N-D tensors)
         bopt = _get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides, None, None)
@@ -50,7 +90,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
 
-        res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[-1])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
@@ -63,7 +105,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
 
-        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[0])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
@@ -76,7 +120,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
-        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        d1 = symbolic.pystr_to_symbolic(arr1.shape[0])
+        d2 = symbolic.pystr_to_symbolic(arr2.shape[0])
+        res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
                 f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
@@ -108,6 +154,32 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     state.add_edge(tasklet, '_c', acc3, None, Memlet.from_array(op3, arr3))
 
     return op3
+
+
+@oprepo.replaces('dace.matmul')
+@oprepo.replaces('numpy.matmul')
+def matmul(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """
+    ``numpy.matmul(a, b)``. PEP 465 defines it as exactly what ``a @ b`` computes, so the function
+    spelling delegates to the operator implementation instead of growing a second one.
+
+    Supported ranks: 1-D x 1-D, 1-D x 2-D, 2-D x 1-D, and N-D x M-D with N, M >= 2, whose leading
+    dimensions are batched under the restriction of :func:`check_batched_matmul_support`. Mixing a
+    1-D operand with an operand of rank >= 3 is refused, since the promote-batch-demote result
+    NumPy computes for it has no implementation here.
+    """
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise DaceSyntaxError(pv, None, f'Operand "{op}" of numpy.matmul is not an SDFG array')
+
+    rank_a = len(sdfg.arrays[op_a].shape)
+    rank_b = len(sdfg.arrays[op_b].shape)
+    if (rank_a == 1) != (rank_b == 1) and max(rank_a, rank_b) > 2:
+        raise DaceSyntaxError(
+            pv, None, f'numpy.matmul of a {rank_a}-D and a {rank_b}-D operand is not supported '
+            '(a 1-D operand may only be combined with a 1-D or 2-D one)')
+
+    return _matmult(pv, sdfg, state, op_a, op_b)
 
 
 @oprepo.replaces('dace.dot')
@@ -146,7 +218,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
     if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
         raise NotImplementedError
 
-    if arr_a.shape[0] != arr_b.shape[0]:
+    if symbolic.inequal_symbols(arr_a.shape[0], arr_b.shape[0]):
         raise SyntaxError()
 
     if op_out:
@@ -282,7 +354,9 @@ def _tensordot(pv: 'ProgramVisitor',
         raise ValueError("Axes for right tensor are out-of-bounds.")
     if len(left_axes) != len(right_axes):
         raise ValueError("The input tensors must have the same number of contracting modes.")
-    if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
+    left_dims = [arr_a.shape[l] for l in left_axes]
+    right_dims = [arr_b.shape[r] for r in right_axes]
+    if not symbolic.shapes_equal(left_dims, right_dims):
         raise ValueError("The input tensors' contracting modes must have the same length.")
 
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
@@ -329,3 +403,221 @@ def _einsum(pv: ProgramVisitor,
                               output_name=pv.get_target_name(),
                               alpha=alpha,
                               beta=beta)
+
+
+EINSUM_LETTERS = ascii_letters
+
+
+def einsum_subscripts(ranks: Sequence[int], contracted: int, funcname: str) -> list[str]:
+    """Hands out one distinct einsum letter per tensor mode, sharing the LAST ``contracted`` modes.
+
+    :param ranks: Rank of each operand.
+    :param contracted: Number of trailing modes the operands contract over pairwise.
+    :param funcname: Name reported in the refusal.
+    :return: One subscript string per operand.
+    :raise ValueError: If the operands together need more modes than einsum has letters.
+    """
+    free = sum(r - contracted for r in ranks)
+    if free + contracted > len(EINSUM_LETTERS):
+        raise ValueError(f'{funcname} of rank-{ranks} operands needs more modes than einsum has letters')
+    shared = EINSUM_LETTERS[:contracted]
+    subs, pos = [], contracted
+    for rank in ranks:
+        subs.append(EINSUM_LETTERS[pos:pos + rank - contracted] + shared)
+        pos += rank - contracted
+    return subs
+
+
+@oprepo.replaces('numpy.outer')
+def outer(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, out=None) -> str:
+    """``np.outer(a, b)``: both operands are FLATTENED first, then multiplied against each other.
+
+    That is exactly the ``outer`` method of the ``multiply`` ufunc, which already lowers to a pair
+    of nested maps around an elementwise product, so this is the flattening plus a delegation.
+    """
+    from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
+    from dace.frontend.python.replacements.ufunc import implement_ufunc_outer  # Avoid import loop
+
+    if out is not None:
+        raise ValueError('numpy.outer(out=...) is not supported; assign the result instead')
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.outer is not an SDFG array')
+
+    flat_a = flat(pv, sdfg, state, op_a)
+    flat_b = flat(pv, sdfg, state, op_b)
+    return implement_ufunc_outer(pv, ast.Call(), sdfg, state, 'multiply', [flat_a, flat_b], {})[0]
+
+
+@oprepo.replaces('numpy.inner')
+def inner(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """``np.inner(a, b)``: a contraction over the LAST mode of BOTH operands.
+
+    That differs from :func:`dot`, which contracts the last mode of ``a`` against the second-to-last
+    of ``b``; the two agree only when ``b`` is 1-D. The result keeps ``a``'s leading modes followed
+    by ``b``'s, which is what the einsum subscripts below spell out.
+    """
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.inner is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        from dace.frontend.python.replacements.ufunc import implement_ufunc  # Avoid import loop
+        return implement_ufunc(pv, ast.Call(), sdfg, state, 'multiply', [op_a, op_b])[0]
+
+    rank_a, rank_b = len(desc_a.shape), len(desc_b.shape)
+    if symbolic.inequal_symbols(desc_a.shape[-1], desc_b.shape[-1]):
+        raise ValueError(f'numpy.inner: last modes {desc_a.shape[-1]} and {desc_b.shape[-1]} must match')
+    if rank_a == 1 and rank_b == 1:
+        return dot(pv, sdfg, state, op_a, op_b)
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    sub_a, sub_b = einsum_subscripts([rank_a, rank_b], 1, 'numpy.inner')
+    spec = f'{sub_a},{sub_b}->{sub_a[:-1]}{sub_b[:-1]}'
+    return _einsum(pv, sdfg, state, StringLiteral(spec), op_a, op_b, dtype=restype)
+
+
+@oprepo.replaces('numpy.kron')
+def kron(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """``np.kron(a, b)``: the outer product with the two operands' modes INTERLEAVED, then merged
+    pairwise by a reshape -- ``out[i*P + k, j*Q + l] = a[i, j] * b[k, l]``.
+
+    The interleaving is the whole content of the operation, so it is spelled directly as the einsum
+    output subscript ``ikjl``; a rank-1 pair needs no interleaving and is the plain outer product.
+    NumPy right-aligns operands of unequal rank by PREPENDING length-1 modes, reproduced here by a
+    reshape (which keeps every existing mode, unlike a squeeze).
+    """
+    from dace.frontend.python.replacements.array_manipulation import reshape  # Avoid import loop
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.kron is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        raise ValueError('numpy.kron of a 0-D operand is not supported; multiply instead')
+
+    shape_a, shape_b = list(desc_a.shape), list(desc_b.shape)
+    ndim = max(len(shape_a), len(shape_b))
+    if len(shape_a) < ndim:
+        op_a = reshape(pv, sdfg, state, op_a, [1] * (ndim - len(shape_a)) + shape_a)
+        shape_a = list(sdfg.arrays[op_a].shape)
+    if len(shape_b) < ndim:
+        op_b = reshape(pv, sdfg, state, op_b, [1] * (ndim - len(shape_b)) + shape_b)
+        shape_b = list(sdfg.arrays[op_b].shape)
+
+    merged = [da * db for da, db in zip(shape_a, shape_b)]
+    if ndim == 1:
+        return reshape(pv, sdfg, state, outer(pv, sdfg, state, op_a, op_b), merged)
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    sub_a, sub_b = einsum_subscripts([ndim, ndim], 0, 'numpy.kron')
+    interleaved = ''.join(a + b for a, b in zip(sub_a, sub_b))
+    spec = f'{sub_a},{sub_b}->{interleaved}'
+    return reshape(pv, sdfg, state, _einsum(pv, sdfg, state, StringLiteral(spec), op_a, op_b, dtype=restype), merged)
+
+
+# out[k] = a[i] * b[j] - a[m] * b[n], one row per component of the 3-vector result.
+CROSS_TERMS = ((1, 2, 2, 1), (2, 0, 0, 2), (0, 1, 1, 0))
+
+
+def cross_component_code(comp: int, dim_a: int, dim_b: int) -> str:
+    """Body of one output component of :func:`cross`, with out-of-range 2-vector reads as zero."""
+    i, j, m, n = CROSS_TERMS[comp]
+    plus = f'__a{i} * __b{j}' if i < dim_a and j < dim_b else ''
+    minus = f'__a{m} * __b{n}' if m < dim_a and n < dim_b else ''
+    if plus and minus:
+        return f'{plus} - {minus}'
+    if minus:
+        return f'-({minus})'
+    return plus or '0'
+
+
+@oprepo.replaces('numpy.cross')
+def cross(pv: ProgramVisitor,
+          sdfg: SDFG,
+          state: SDFGState,
+          op_a: str,
+          op_b: str,
+          axisa: int = -1,
+          axisb: int = -1,
+          axisc: int = -1,
+          axis: int | None = None) -> str:
+    """``np.cross(a, b)`` over the LAST mode, broadcasting the leading modes.
+
+    The cross product is a fixed three-term expression, not a contraction, so it lowers to one
+    data-parallel map over the broadcast leading modes whose tasklet reads the components directly.
+    A 2-vector operand is the deprecated NumPy special case with an implied zero third component;
+    two of them yield the single ``z`` component and therefore an output with NO trailing mode --
+    that mode is INDEXED away, which is why it disappears where a length-1 slice would have stayed.
+    """
+    from dace.frontend.python.replacements.operators import result_type  # Avoid import loop
+    from dace.frontend.python.replacements.ufunc import _broadcast  # Avoid import loop
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise ValueError(f'Operand "{op}" of numpy.cross is not an SDFG array')
+    desc_a, desc_b = sdfg.arrays[op_a], sdfg.arrays[op_b]
+    rank_a, rank_b = len(desc_a.shape), len(desc_b.shape)
+    if isinstance(desc_a, data.Scalar) or isinstance(desc_b, data.Scalar):
+        raise ValueError('numpy.cross needs operands of rank >= 1')
+    if axis is not None:
+        axisa = axisb = axisc = axis
+    if axisa not in (-1, rank_a - 1) or axisb not in (-1, rank_b - 1):
+        raise ValueError('numpy.cross is supported for vectors along the LAST mode only')
+
+    dims = []
+    for op, desc in ((op_a, desc_a), (op_b, desc_b)):
+        dim = desc.shape[-1]
+        if not isinstance(dim, Integral) and not (symbolic.issymbolic(dim) and dim.is_Integer):
+            raise ValueError(f'numpy.cross needs a compile-time last mode on "{op}", got {dim}')
+        dims.append(int(dim))
+        if dims[-1] not in (2, 3):
+            raise ValueError(f'numpy.cross needs a last mode of 2 or 3 on "{op}", got {dims[-1]}')
+    dim_a, dim_b = dims
+    ncomp = 1 if dim_a == 2 and dim_b == 2 else 3
+    if ncomp == 3 and axisc not in (-1, rank_a - 1, rank_b - 1):
+        raise ValueError('numpy.cross is supported for a result along the LAST mode only')
+
+    lead_a, lead_b = list(desc_a.shape[:-1]), list(desc_b.shape[:-1])
+    if lead_a or lead_b:
+        out_lead, map_range, out_idx, (idx_a, idx_b) = _broadcast([lead_a, lead_b])
+        map_range = dict(map_range)
+    else:
+        out_lead, map_range, out_idx, idx_a, idx_b = (), {}, '', '', ''
+
+    restype, _ = result_type([desc_a, desc_b], 'Mul')
+    out_shape = list(out_lead) + ([3] if ncomp == 3 else [])
+    if out_shape:
+        out, _ = sdfg.add_transient(pv.get_target_name(), out_shape, restype, desc_a.storage, find_new_name=True)
+    else:
+        out, _ = sdfg.add_scalar(pv.get_target_name(),
+                                 restype,
+                                 transient=True,
+                                 storage=desc_a.storage,
+                                 find_new_name=True)
+
+    def indexed(name: str, lead: str, comp: str) -> Memlet:
+        return Memlet.simple(name, ', '.join([p for p in (lead, comp) if p]) or '0')
+
+    inputs = {f'__a{i}': indexed(op_a, idx_a, str(i)) for i in range(dim_a)}
+    inputs.update({f'__b{i}': indexed(op_b, idx_b, str(i)) for i in range(dim_b)})
+    # A 2x2 cross yields only the z component, whose terms are the third row of CROSS_TERMS.
+    comps = range(3) if ncomp == 3 else (2, )
+    outputs = {f'__c{k}': indexed(out, out_idx, str(k) if ncomp == 3 else '') for k in comps}
+    code = '\n'.join(f'__c{k} = {cross_component_code(k, dim_a, dim_b)}' for k in comps)
+
+    if map_range:
+        state.add_mapped_tasklet('cross', map_range, inputs, code, outputs, external_edges=True)
+        return out
+
+    tasklet = state.add_tasklet('cross', {k: None for k in inputs}, {k: None for k in outputs}, code)
+    read_a, read_b, write = state.add_read(op_a), state.add_read(op_b), state.add_write(out)
+    for conn, memlet in inputs.items():
+        state.add_edge(read_a if conn.startswith('__a') else read_b, None, tasklet, conn, memlet)
+    for conn, memlet in outputs.items():
+        state.add_edge(tasklet, conn, write, None, memlet)
+    return out

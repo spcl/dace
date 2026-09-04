@@ -10,7 +10,20 @@ import dace
 from dace.library import change_default
 from dace.libraries import blas
 
-MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
+MKL_AND_CUBLAS = [
+    pytest.param("cuBLAS",
+                 marks=[
+                     pytest.mark.gpu,
+                     pytest.mark.skipif(not blas.environments.cuBLAS.is_installed(),
+                                        reason='cuBLAS not installed on this machine')
+                 ]),
+    pytest.param("MKL",
+                 marks=[
+                     pytest.mark.mkl,
+                     pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(),
+                                        reason='Intel MKL not installed on this machine')
+                 ]),
+]
 
 
 def test_change_default():
@@ -36,6 +49,7 @@ def assert_used_environment(sdfg, impl):
 
 
 @pytest.mark.mkl
+@pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason='Intel MKL not installed on this machine')
 def test_gemm_fails_storage_mkl():
 
     with change_default(blas, "MKL"):

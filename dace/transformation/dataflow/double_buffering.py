@@ -3,6 +3,8 @@
 
 import copy
 
+from dace.ordered import OrderedSet
+
 from dace import data, sdfg as sd, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -72,8 +74,8 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Gather transients to modify
-        transients_to_modify = set(edge.dst.data for edge in graph.out_edges(map_entry)
-                                   if isinstance(edge.dst, nodes.AccessNode))
+        transients_to_modify = OrderedSet(edge.dst.data for edge in graph.out_edges(map_entry)
+                                          if isinstance(edge.dst, nodes.AccessNode))
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
@@ -112,6 +114,10 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         map_to_for = MapToForLoop()
         map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
                                {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
+        # DoubleBuffering assumes the historical wrapped-NestedSDFG form of MapToForLoop.
+        # Keep it; the caller can run the expand+inline passes afterwards if it wants the
+        # LoopRegion hoisted into the parent CFR.
+        map_to_for.inline_after = False
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
         ##############################
@@ -194,7 +200,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         return nsdfg_node
 
     @staticmethod
-    def _modify_memlet(sdfg, subset, data_name):
+    def _modify_memlet(sdfg: sd.SDFG, subset: subsets.Range, data_name: str) -> subsets.Range:
         desc = sdfg.arrays[data_name]
         if len(subset) == len(desc.shape):
             # Already in the right shape, modify new dimension
@@ -204,7 +210,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         return new_subset
 
     @staticmethod
-    def _replace_in_subset(subset, string_or_symbol, new_string_or_symbol):
+    def _replace_in_subset(subset: subsets.Range, string_or_symbol: str, new_string_or_symbol: str) -> subsets.Range:
         new_subset = copy.deepcopy(subset)
 
         repldict = {symbolic.pystr_to_symbolic(string_or_symbol): symbolic.pystr_to_symbolic(new_string_or_symbol)}

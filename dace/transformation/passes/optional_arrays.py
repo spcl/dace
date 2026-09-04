@@ -68,6 +68,9 @@ class OptionalArrayInference(ppl.Pass):
             for anode in state.data_nodes():
                 desc = anode.desc(sdfg)
                 if isinstance(desc, data.Array) and desc.optional is None:
+                    # Ordering-only (and isolated) nodes never dereference the pointer.
+                    if all(e.data.is_empty() for e in state.all_edges(anode)):
+                        continue
                     desc.optional = False
                     result.add((cfg_id, anode.data))
 

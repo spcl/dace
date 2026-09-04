@@ -1,0 +1,86 @@
+name: Set up DaCe
+description: Python toolchain plus the apt and pip dependencies shared by the hosted (GitHub-runner) CI jobs.
+
+# Callers must run ``actions/checkout@v7`` themselves, first: GitHub resolves a local action from the
+# checked-out workspace, so the repository has to be on disk before this file can be referenced. v7 is
+# the version every workflow in this repository uses -- keep it in step with this note.
+
+inputs:
+  python-version:
+    description: Version passed to astral-sh/setup-uv.
+    required: true
+  apt-packages:
+    description: System packages to install.
+    default: libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+  pip-packages:
+    description: Extra packages installed into the environment before DaCe itself.
+    default: pytest-xdist
+  groups:
+    description: Dependency groups (comma-separated) to sync -- see [dependency-groups] in pyproject.toml.
+    default: testing
+  extras:
+    description: DaCe extras (comma-separated) to sync -- see [project.optional-dependencies].
+    default: ''
+  codecov:
+    description: Also fetch the codecov uploader into the workspace.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv with Python ${{ inputs.python-version }}
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        # man-db auto-update dominates apt time on the hosted images.
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        sudo apt-get update
+        sudo apt-get install -y ${{ inputs.apt-packages }}
+        # `testing` / `ml-testing` / `linting` / `docs` are dependency GROUPS, not extras
+        # (upstream moved them in spcl/dace#2514); `ml` / `mpi` / `gpu` / `fastgraph` are extras.
+        sync_args=()
+        IFS=',' read -ra _groups <<< "${{ inputs.groups }}"
+        for g in "${_groups[@]}"; do [ -n "$g" ] && sync_args+=(--group "$g"); done
+        IFS=',' read -ra _extras <<< "${{ inputs.extras }}"
+        for e in "${_extras[@]}"; do [ -n "$e" ] && sync_args+=(--extra "$e"); done
+        uv sync "${sync_args[@]}"
+        uv pip install ${{ inputs.pip-packages }}
+
+    - name: Put the uv environment on PATH
+      shell: bash
+      run: |
+        # Every later step gets its own shell, and the jobs here call ``pytest`` / ``python``
+        # directly rather than through ``uv run``. Export the synced environment once so those
+        # commands resolve to it without each workflow having to learn about uv.
+        echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+        echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+    - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
+      shell: bash
+      run: |
+        # The hosted image's default is GCC 13, whose auto-vectorizer mislowers the select the
+        # readable code generator emits: it reuses the low-half lane mask for the high-half
+        # vmaskmovpd, so the upper half of each vector reads back as zeros. That is a silent wrong
+        # answer -- it surfaced as merge_node's 2-D case losing exactly its columns 4-7, and only on
+        # runners whose CPU let the vectorizer take that path. Fixed in GCC 14. dace warns about it
+        # at emission time (codegen.common.warn_if_cxx_miscompiles_inline_selects); here we simply
+        # build with a compiler that does not have the bug.
+        sudo apt-get install -y g++-14
+        echo "CXX=g++-14" >> $GITHUB_ENV
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "DACE_compiler_cpu_executable=$(command -v g++-14)" >> $GITHUB_ENV
+
+    - name: Install codecov uploader
+      if: inputs.codecov == 'true'
+      shell: bash
+      run: |
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov

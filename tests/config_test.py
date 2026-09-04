@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.config import Config, set_temporary, temporary_config
+import os
 import threading
 
 
@@ -9,6 +10,23 @@ def test_set_temporary():
     with set_temporary(*path, value="I'm not a build type"):
         assert Config.get(*path) == "I'm not a build type"
     assert Config.get(*path) == current_value
+
+
+def test_set_temporary_outranks_an_environment_override():
+    """A ``DACE_*`` variable wins in ``Config.get``, which made ``set_temporary`` a silent no-op."""
+    path = ["compiler", "cuda", "backend"]
+    envvar = "DACE_" + "_".join(path)
+    ambient = os.environ.get(envvar)
+    os.environ[envvar] = "hip"
+    try:
+        with set_temporary(*path, value="cuda"):
+            assert Config.get(*path) == "cuda"
+        assert Config.get(*path) == "hip"
+    finally:
+        if ambient is None:
+            del os.environ[envvar]
+        else:
+            os.environ[envvar] = ambient
 
 
 def test_temporary_config():
@@ -145,6 +163,7 @@ def test_config_isolation_multi_thread():
 
 if __name__ == '__main__':
     test_set_temporary()
+    test_set_temporary_outranks_an_environment_override()
     test_temporary_config()
     test_temporary_config_exception()
     test_set_temporary_exception()

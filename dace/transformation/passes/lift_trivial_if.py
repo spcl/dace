@@ -393,6 +393,20 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
+    def lift_in_region(self, region, recursive: bool = True) -> int:
+        """Scoped entry point: collapse decidable conditionals inside ``region`` -- recursively by
+        default, one level only with ``recursive=False`` -- without walking the whole SDFG. For a
+        caller that just made a guard constant (TrivialLoopElimination substituting the iterator
+        into a spliced single-trip body) and wants the cleanup local to what it touched.
+
+        :param region: The control flow region to simplify in place.
+        :param recursive: Also descend into nested regions and SDFGs.
+        :returns: Number of branches/conditionals removed.
+        """
+        if recursive:
+            return self._detect_trivial_ifs_and_rm_cfg(region)
+        return self._detect_and_remove_top_level_trivial_ifs(region)
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.
 

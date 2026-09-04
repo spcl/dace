@@ -1,0 +1,77 @@
+name: Pauli GPU New
+
+on:
+  # Disabled: the self-hosted Pauli runner does not serve CI. Manual dispatch only --
+  # GPU coverage comes from the external CSCS pipeline, which is unaffected.
+  workflow_dispatch:
+
+env:
+  CUDACXX: /usr/local/cuda/bin/nvcc
+  MKLROOT: /opt/intel/oneapi/mkl/latest/
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  # Force the experimental CUDA codegen for every test in this workflow.
+  DACE_compiler_cuda_implementation: experimental
+  PYTHONHASHSEED: '0'
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  test-gpu-experimental:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace-venv
+      with:
+        pip-packages: flake8 pytest-xdist coverage mpi4py cupy cutensor-cu12
+        groups: testing
+        extras: ml
+        codecov: 'true'
+
+    - name: Test dependencies
+      run: |
+        source ~/.venv/bin/activate # activate venv
+        nvidia-smi
+
+    - name: Run pytest GPU (experimental codegen)
+      run: |
+        source ~/.venv/bin/activate # activate venv
+        # cutensor-cu12 ships its headers and .so under the wheel's
+        # ``cutensor/{include,lib}`` directories; expose them to the compiler
+        # (CPATH/LIBRARY_PATH) and the dynamic loader (LD_LIBRARY_PATH), and
+        # alias libcutensor.so.2 to libcutensor.so so ``-lcutensor`` resolves.
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
+        ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+        export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+        export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+        export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
+        export DACE_cache=single
+        export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
+        echo "CUDACXX: $CUDACXX"
+        echo "DACE_compiler_cuda_implementation: $DACE_compiler_cuda_implementation"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu"
+
+    - name: Run extra GPU tests (experimental codegen)
+      run: |
+        source ~/.venv/bin/activate # activate venv
+        CUTENSOR_DIR=$(python -c "import cutensor; print(cutensor.__path__[0])")
+        ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+        export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+        export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+        export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=single
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        ./tests/cuda_test.sh
+
+    - name: Report overall coverage
+      uses: ./.github/actions/report-coverage

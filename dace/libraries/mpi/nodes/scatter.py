@@ -6,7 +6,8 @@ from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, input_descriptor_name
+from dace.ordered import OrderedSet
 
 
 @library.expansion
@@ -25,14 +26,20 @@ class ExpandScatterMPI(ExpandTransformation):
         if root.dtype.base_type != dtypes.int32:
             raise ValueError("Scatter root must be an integer!")
 
+        comm = resolve_comm(node, parent_state)
+
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
+            MPI_Comm_size({comm}, &_commsize);
             MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
                         _outbuffer, {out_count_str}, {out_mpi_dtype_str},
-                        _root, MPI_COMM_WORLD);
+                        _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name,
+                                expanded_input_connectors(node, parent_state),
+                                node.out_connectors,
+                                code,
+                                language=dtypes.Language.CPP)
         return tasklet
 
 
@@ -46,7 +53,7 @@ class Scatter(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_inbuffer', '_root')), outputs={"_outbuffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

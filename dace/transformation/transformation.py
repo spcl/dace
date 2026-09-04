@@ -20,6 +20,7 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import importlib
 import inspect
 from dace import serialize
 from dace.dtypes import ScheduleType
@@ -39,6 +40,41 @@ PassT = TypeVar('PassT', bound=ppl.Pass)
 def explicit_cf_compatible(cls: PassT) -> PassT:
     cls.__explicit_cf_compatible__ = True
     return cls
+
+
+#: Packages holding the built-in transformations. Subclass discovery only sees classes whose defining
+#: module was imported, so name-based deserialization has to load these first.
+BUILTIN_TRANSFORMATION_PACKAGES = ('dace.transformation.dataflow', 'dace.transformation.interstate',
+                                   'dace.transformation.subgraph')
+
+
+def load_builtin_transformations() -> None:
+    """Import the packages holding the built-in transformations.
+
+    Both the ``dace.serialize`` type registry and ``PatternTransformation`` subclass discovery are
+    import-driven, so reading a saved transformation history needs these loaded -- after a bare
+    ``import dace`` they are not, and the names in the history resolve to nothing. Imported here
+    rather than at module level: every one of those packages imports this module.
+    """
+    for package in BUILTIN_TRANSFORMATION_PACKAGES:
+        importlib.import_module(package)
+
+
+def transformation_by_name(name: str, root: Type['TransformationBase']) -> Type['TransformationBase']:
+    """Resolve the transformation class called ``name`` below ``root``, for JSON deserialization.
+
+    An unresolved name used to surface as a bare ``StopIteration``, which the JSON reader swallowed
+    into a silently dropped element; it now raises.
+    """
+    load_builtin_transformations()
+    if root is PatternTransformation:
+        candidates = root.subclasses_recursive(all_subclasses=True)
+    else:
+        candidates = root.subclasses_recursive()
+    for cls in candidates:
+        if cls.__name__ == name:
+            return cls
+    raise TypeError(f'Unknown {root.__name__} {name!r}: no such class in any imported module')
 
 
 class TransformationBase(ppl.Pass):
@@ -489,8 +525,7 @@ class PatternTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'PatternTransformation':
-        xform = next(ext for ext in PatternTransformation.subclasses_recursive(all_subclasses=True)
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], PatternTransformation)
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj.get('expr_index', 0)]
@@ -724,6 +759,34 @@ class ExpandTransformation(PatternTransformation):
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
+
+            # Carry over any in/out connectors from the original library node
+            # that the expansion didn't already declare (e.g. dynamic-range
+            # passthrough connectors injected by upstream passes). Without this
+            # the redirected edges point at nonexistent connectors after
+            # ``change_edge_*`` swaps the endpoint, and validation rejects
+            # them. We preserve the expansion's own connector types, so any
+            # name collision keeps the expansion's typing.
+            #
+            # Only carry over connectors that are still actively used: an
+            # expansion may rename incoming/outgoing edges in-place (e.g.
+            # ``SpecializeMatMul`` rewrites the ``_a``/``_b`` MatMul connectors
+            # to ``_x``/``_y`` on the matching Dot edges). The original
+            # connector names then have no edges referencing them and must
+            # not be re-added to the expansion node -- doing so would leave
+            # them dangling and trip ``InvalidSDFGNodeError``.
+            in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
+            out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
+            for conn_name, conn_type in node.in_connectors.items():
+                if conn_name not in in_conns_with_edges:
+                    continue
+                if conn_name not in expansion.in_connectors and conn_name not in expansion.out_connectors:
+                    expansion.add_in_connector(conn_name, dtype=conn_type)
+            for conn_name, conn_type in node.out_connectors.items():
+                if conn_name not in out_conns_with_edges:
+                    continue
+                if conn_name not in expansion.out_connectors and conn_name not in expansion.in_connectors:
+                    expansion.add_out_connector(conn_name, dtype=conn_type)
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 
@@ -1028,8 +1091,7 @@ class SubgraphTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'SubgraphTransformation':
-        xform = next(ext for ext in SubgraphTransformation.subclasses_recursive()
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], SubgraphTransformation)
 
         # Reconstruct transformation
         ret = xform()

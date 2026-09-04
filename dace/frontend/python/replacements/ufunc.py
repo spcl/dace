@@ -14,6 +14,7 @@ from dace import dtypes, data, symbolic, nodes
 
 import ast
 import copy
+import re
 import functools
 import itertools
 from numbers import Integral, Number
@@ -24,6 +25,65 @@ import numpy as np
 import sympy as sp
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
+
+# Cephes Chebyshev tables for the modified Bessel function I0, split at |x| == 8. NumPy's own ``i0``
+# evaluates exactly these, so a native lowering built on them stays numerically indistinguishable
+# from the reference instead of merely close.
+I0_CHEBYSHEV_SMALL = (-4.41534164647933937950E-18, 3.33079451882223809783E-17, -2.43127984654795469359E-16,
+                      1.71539128555513303061E-15, -1.16853328779934516808E-14, 7.67618549860493561688E-14,
+                      -4.85644678311192946090E-13, 2.95505266312963983461E-12, -1.72682629144155570723E-11,
+                      9.67580903537323691224E-11, -5.18979560163526290666E-10, 2.65982372468238665035E-9,
+                      -1.30002500998624804212E-8, 6.04699502254191894932E-8, -2.67079385394061173391E-7,
+                      1.11738753912010371815E-6, -4.41673835845875056359E-6, 1.64484480707288970893E-5,
+                      -5.75419501008210370398E-5, 1.88502885095841655729E-4, -5.76375574538582365885E-4,
+                      1.63947561694133579842E-3, -4.32430999505057594430E-3, 1.05464603945949983183E-2,
+                      -2.37374148058994688156E-2, 4.93052842396707084878E-2, -9.49010970480476444210E-2,
+                      1.71620901522208775349E-1, -3.04682672343198398683E-1, 6.76795274409476084995E-1)
+
+I0_CHEBYSHEV_LARGE = (-7.23318048787475395456E-18, -4.83050448594418207126E-18, 4.46562142029675999901E-17,
+                      3.46122286769746109310E-17, -2.82762398051658348494E-16, -3.42548561967721913462E-16,
+                      1.77256013305652638360E-15, 3.81168066935262242075E-15, -9.55484669882830764870E-15,
+                      -4.15056934728722208663E-14, 1.54008621752140982691E-14, 3.85277838274214270114E-13,
+                      7.18012445138366623367E-13, -1.79417853150680611778E-12, -1.32158118404477131188E-11,
+                      -3.14991652796324136454E-11, 1.18891471078464383424E-11, 4.94060238822496958910E-10,
+                      3.39623202570838634515E-9, 2.26666899049817806459E-8, 2.04891858946906374183E-7,
+                      2.89137052083475648297E-6, 6.88975834691682398426E-5, 3.36911647825569408990E-3,
+                      8.04490411014108831608E-1)
+
+
+def chbevl_code(coeffs: tuple[float, ...], arg: str, prefix: str, indent: str) -> str:
+    """Cephes ``chbevl`` unrolled into straight-line SSA, leaving the value in ``<prefix>res``.
+
+    The Clenshaw recurrence carries three running values, so it is spelled as one new name per step
+    rather than as a single nested expression, which would grow exponentially.
+    """
+    lines = [f'{prefix}b0_0 = {coeffs[0]!r}', f'{prefix}b1_0 = 0.0']
+    for i, coeff in enumerate(coeffs[1:], start=1):
+        lines.append(f'{prefix}b1_{i} = {prefix}b0_{i - 1}')
+        lines.append(f'{prefix}b0_{i} = {arg} * {prefix}b1_{i} - {prefix}b1_{i - 1} + {coeff!r}')
+    last = len(coeffs) - 1
+    lines.append(f'{prefix}res = 0.5 * ({prefix}b0_{last} - {prefix}b1_{last - 1})')
+    return '\n'.join(indent + line for line in lines)
+
+
+def i0_code() -> str:
+    """Tasklet body for ``numpy.i0``: two Chebyshev expansions selected on |x|, as in Cephes.
+
+    Written out rather than deferred to ``std::cyl_bessel_i``, which libc++ does not provide and
+    which has no device-side spelling at all.
+    """
+    small = chbevl_code(I0_CHEBYSHEV_SMALL, '__i0_xs', '__i0_s_', '    ')
+    large = chbevl_code(I0_CHEBYSHEV_LARGE, '__i0_xl', '__i0_l_', '    ')
+    return ('__i0_ax = abs(__in1)\n'
+            'if __i0_ax <= 8.0:\n'
+            '    __i0_xs = __i0_ax / 2.0 - 2.0\n'
+            f'{small}\n'
+            '    __out = exp(__i0_ax) * __i0_s_res\n'
+            'else:\n'
+            '    __i0_xl = 32.0 / __i0_ax - 2.0\n'
+            f'{large}\n'
+            '    __out = exp(__i0_ax) * __i0_l_res / sqrt(__i0_ax)')
+
 
 # TODO: Add all ufuncs in subsequent PR's.
 ufuncs = dict(
@@ -655,6 +715,14 @@ ufuncs = dict(
                code="__out = trunc(__in1)",
                reduce=None,
                initial=np.trunc.identity),
+    i0=dict(
+        name="_numpy_i0_",
+        operator="Exp",  # Only tags the dtype rule: integers widen to float64, floats are kept
+        inputs=["__in1"],
+        outputs=["__out"],
+        code=i0_code(),
+        reduce=None,
+        initial=None),
 )
 
 
@@ -1021,6 +1089,17 @@ def _create_output(sdfg: SDFG,
     return outputs
 
 
+def replace_connector(code: str, connector: str, replacement: str) -> str:
+    """Substitute a tasklet connector by NAME, never as a bare substring.
+
+    ``clip`` is the one entry whose connectors share a prefix (``__in_a``, ``__in_amin``,
+    ``__in_amax``), so a plain ``str.replace`` of ``__in_a`` also rewrote the middle of the other
+    two and produced ``dace.float64(__in_a)min`` -- two adjacent expressions, which is not parseable
+    Python. The tasklet then failed to build with a bare SyntaxError naming no kernel.
+    """
+    return re.sub(r'\b' + re.escape(connector) + r'\b', lambda _: replacement, code)
+
+
 def _set_tasklet_params(ufunc_impl: Dict[str, Any],
                         inputs: List[UfuncInput],
                         casting: List[dtypes.typeclass] = None) -> Dict[str, Any]:
@@ -1045,10 +1124,10 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
         inp_conn = inp_connectors[i]
         if casting and casting[i]:
             repl = "{c}({o})".format(c=str(casting[i]).replace('::', '.'), o=inp_conn)
-            code = code.replace(inp_conn, repl)
+            code = replace_connector(code, inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
-            code = code.replace(inp_conn, astutils.unparse(arg))
+            code = replace_connector(code, inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
 
     return dict(name=name, inputs=inp_connectors, outputs=out_connectors, code=code)
@@ -1261,7 +1340,7 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
 
         :return: List of output datanames
     """
-    from dace.frontend.python.replacements.operators import result_type
+    from dace.frontend.python.replacements.operators import fold_symbolic_operator, result_type
 
     # Flatten arguments
     args = _flatten_args(args)
@@ -1296,6 +1375,17 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
         dtype = kwargs['dtype']
         if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
+
+    # Fold to a symbolic expression when no operand is backed by data, so the NumPy spelling of an
+    # operator produces exactly what the operator spelling produces (``np.bitwise_and(N, 3)`` gives
+    # the same expression as ``N & 3``) and stays usable in a map range, a memlet subset or an
+    # interstate condition instead of materializing a transient. Placed after ``result_type`` so its
+    # integer-only check still rejects float operands first. Skipped when an output container is
+    # requested (``out=`` or positional) or a ``where`` mask applies: both demand materialized data.
+    if not has_where and all(out is None for out in outputs):
+        folded = fold_symbolic_operator(ufunc_impl['operator'], inputs)
+        if folded is not None:
+            return [folded]
 
     # Create output data (if needed)
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())

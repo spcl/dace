@@ -13,6 +13,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
+from dace import mpr_lowering
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -91,7 +92,9 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     loop = region
     cond = unparse_interstate_edge(loop.loop_condition.code[0], sdfg, codegen=codegen, symbols=symbols)
 
-    expr = ''
+    # Ahead of every spelling of the loop below, so a hint on an inverted loop is not silently
+    # dropped. Empty unless the rendering is standalone and a pass recorded an alternative.
+    expr = mpr_lowering.hint_comment(loop.specialization_hint)
 
     lsyms = {}
     lsyms.update(symbols)
@@ -102,6 +105,14 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     if loop.init_statement:
         init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
         init = init.strip(';')
+        # ``decl_placement = late``: a loop-local counter is declared HERE, in the init clause, instead
+        # of being hoisted to the top of the generated function. The gate that put it in this map also
+        # established that the init is a plain ``i = <expr>`` and that the loop is not inverted, so this
+        # only ever runs for the `for (init; cond; update)` form below, where the clause scopes the
+        # counter to the loop. Absent under the default ``eager``, leaving `init` untouched.
+        counter_ctype = codegen.loop_local_counters.get((sdfg.cfg_id, loop.loop_variable))
+        if counter_ctype is not None:
+            init = f'{counter_ctype} {init}'
     else:
         init = ''
 
@@ -216,9 +227,15 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         expr += '__state_{}_{}:;\n'.format(region.cfg_id, re.sub(r'\s+', '_', node.label))
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
-                expr += '{\n'
-                expr += dispatch_state(node)
-                expr += '\n}\n'
+                # dispatch_state returns the state body as a string (its declarations stream into a
+                # local buffer), so it is generated first and the C scope wrapped around it only when
+                # needed. Legacy always wraps (byte-identical); the readable generator drops the scope
+                # for a state that declares nothing into it -- see DaCeCodeGenerator.state_needs_brace.
+                body = dispatch_state(node)
+                if codegen.state_needs_brace(node):
+                    expr += '{\n' + body + '\n}\n'
+                else:
+                    expr += body
             else:
                 # Dispatch empty state in any case in order to register that the state was dispatched.
                 expr += dispatch_state(node)

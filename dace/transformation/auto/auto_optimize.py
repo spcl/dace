@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
+import os
+
 import dace
 import sympy
 from dace.sdfg import infer_types
@@ -9,7 +11,8 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Dict, Callable
+from dace.ordered import OrderedSet
+from typing import Any, Callable, Dict, List, Set, Tuple, Union
 
 # Transformations
 from dace.transformation.passes import FullMapFusion
@@ -179,6 +182,21 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             graph.validate()
 
 
+def _map_touches_gpu_global(state, mapentry: nodes.MapEntry, sdfg: SDFG) -> bool:
+    """True iff the scope rooted at ``mapentry`` reads or writes a
+    ``GPU_Global`` array through any of its boundary memlet paths.
+    Used by ``tile_wcrs`` to decide whether a small map is safe to
+    demote to ``Sequential`` (host) scheduling."""
+    mapexit = state.exit_node(mapentry)
+    for boundary_edge in list(state.in_edges(mapentry)) + list(state.out_edges(mapexit)):
+        for path_edge in state.memlet_path(boundary_edge):
+            for endpoint in (path_edge.src, path_edge.dst):
+                if isinstance(endpoint, nodes.AccessNode):
+                    if sdfg.arrays[endpoint.data].storage == dtypes.StorageType.GPU_Global:
+                        return True
+    return False
+
+
 def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_partial_parallelism: bool = None) -> None:
     """
     Tiles parallel write-conflict resolution maps in an SDFG, state,
@@ -212,7 +230,12 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         raise TypeError('Graph must be a state, an SDFG, a control flow region, or a subgraph of either')
     sdfg = graph.parent
 
-    edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
+    # Ordered, not plain sets: every one of these is ITERATED to decide which map is tiled and in
+    # what order, and a plain set of unhashable-by-value graph objects iterates by id(), which
+    # tracks allocation history. Two runs of the same program then transform in different orders --
+    # and for a partially-conflicted 2-D reduction that is the difference between a right and a
+    # wrong answer, not just different code.
+    edges_to_consider: OrderedSet[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = OrderedSet()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
             if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry)):
@@ -241,22 +264,22 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     if prefer_partial_parallelism is None:
         prefer_partial_parallelism = config.Config.get_bool('optimizer', 'autotile_partial_parallelism')
 
-    maps_to_consider: Set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
+    maps_to_consider: OrderedSet[nodes.MapEntry] = OrderedSet(me for _, me in edges_to_consider)
 
-    transformed: Set[nodes.MapEntry] = set()
+    transformed: OrderedSet[nodes.MapEntry] = OrderedSet()
 
     # Heuristic: If the map is only partially conflicted, extract
     # parallel dimensions instead of tiling
     if prefer_partial_parallelism:
         for mapentry in maps_to_consider:
             # Check the write-conflicts of all WCR edges in map
-            conflicts: Set[str] = set()
+            conflicts: OrderedSet[str] = OrderedSet()
             for edge, me in edges_to_consider:
                 if me is not mapentry:
                     continue
-                conflicts |= set(cpp.write_conflicted_map_params(mapentry, edge))
+                conflicts |= OrderedSet(cpp.write_conflicted_map_params(mapentry, edge))
 
-            nonconflicted_dims = set(mapentry.params) - conflicts
+            nonconflicted_dims = OrderedSet(mapentry.params) - conflicts
             if nonconflicted_dims:
                 dims = [i for i, p in enumerate(mapentry.params) if p in nonconflicted_dims]
                 if ((dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True):
@@ -276,7 +299,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         # to be "definitely True"
         if all((s < tile_size) == True for s in mapentry.map.range.size()):
             # If smaller than tile size, don't transform and instead
-            # make map sequential
+            # make map sequential -- but only when the data the map
+            # touches is host-accessible. A Sequential schedule emits a
+            # host loop; if any neighbouring AccessNode is GPU_Global
+            # the loop would read/write device memory, which the
+            # validator rightly rejects.
+            if _map_touches_gpu_global(graph, mapentry, sdfg):
+                if debugprint:
+                    print(f'Keeping map "{mapentry}" device-scheduled '
+                          f'(smaller than tile size but touches GPU_Global data)')
+                continue
             if debugprint:
                 print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
@@ -284,6 +316,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
 
         # MapTiling -> AccumulateTransient / AccumulateStream
         outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
+
+        # The tile body accumulates into the per-tile transient one element after another -- that
+        # accumulation is what removes the atomics, and it is sequential by construction. MapTiling
+        # copies the original schedule onto both halves, so on GPU the body stayed GPU_Device: a
+        # kernel inside a kernel, which the codegen refuses and NestedGPUDeviceMapLowering then has
+        # to flatten by hoisting a range naming the outer map's own parameter. Sequential here is a
+        # device-side loop, not the host loop the small-map branch above has to guard against,
+        # because this map now sits inside the outer kernel's scope.
+        mapentry.map.schedule = dtypes.ScheduleType.Sequential
 
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
@@ -344,9 +385,24 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             backend = 'none'
 
         if backend == 'cuda':
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'pure']
+            # ``CUDA`` for the same reason the CPU branch below carries everything past the vendor
+            # BLAS: it is the key the CUB-backed nodes register under (``Scan``'s ``gpucub::DeviceScan``,
+            # ``IntegerSort``'s ``DeviceRadixSort``, ``ArgReduce``'s ``DeviceReduce::ArgMax``,
+            # ``FindFirst``, ``ScatterConflictCheck``, ``Symmetrize``'s parallel bounding box). Without
+            # it every one of them fell through to the serial ``pure`` loop here while canonicalize
+            # took the device form, so the GPU column compared library selection, not pipelines.
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
-            return ['rocBLAS', 'GPUAuto', 'pure']
+            # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
+            # compared column against column, so a node that takes a tuned expansion under one and
+            # the serial ``pure`` loop under the other measures the priority LIST rather than the
+            # hardware. ``CUB`` and ``CUDA`` earn their place here for the same reason they do
+            # above: they are the keys the device-primitive nodes register under (``Scan``,
+            # ``IntegerSort``, ``ArgReduce``, ``FindFirst``, ``ScatterConflictCheck``,
+            # ``Symmetrize``), and their emitted code names the backend-neutral ``gpucub`` /
+            # ``gpu*`` aliases, so one expansion serves both. Each node's own environment still
+            # gates whether the library is actually present.
+            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', 'hipTENSOR', 'CUB', 'CUDA', 'pure']
         else:
             return ['GPUAuto', 'pure']
     elif device == dtypes.DeviceType.CPU:
@@ -358,7 +414,22 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
-        return result + ['pure']
+        # Same order as canonicalize's ``canonicalize_fast_library_priority``, deliberately: the two
+        # pipelines are compared column against column, so a node that lowers to a tuned expansion
+        # under one and to the serial ``pure`` loop under the other measures the priority list rather
+        # than the pipeline. Everything past the vendor BLAS was previously missing here, which left
+        # a tensor transpose/contraction or a threaded reduction falling through to ``pure`` under
+        # auto_optimize while canonicalize took the fast form.
+        #
+        # HPTT needs its own install (gated on HPTT_ROOT); TTGT is transpose+GEMM with no external
+        # dependency; ``OpenMP`` covers Reduce/ArgReduce and ``CPU`` the OpenMP-5 Scan / radix sort /
+        # ScatterConflictCheck. ``apply_cpu_library_parallelism`` below still has the last word on the
+        # scope-dependent types, so a node nested in a parallel map keeps its sequential expansion.
+        if 'HPTT_ROOT' in os.environ:
+            result.append('HPTT')
+        result.append('TTGT')
+
+        return result + ['OpenMP', 'CPU', 'pure']
 
     return ['pure']
 
@@ -386,6 +457,158 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
     if config.Config.get_bool('debugprint') and converted > 0:
         print(f'Statically allocating {converted} transient arrays')
+
+
+def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether ``node`` moves PROVABLY too few elements to pay for its own OpenMP region.
+
+    The compile-time home of a decision the runtime used to re-take for itself: ``dace/scan.hpp``
+    carried a ``PARALLEL_MIN_ELEMENTS_CONTIGUOUS`` gate that re-tested the element count on every
+    call. Canonical form is parallel and the specialization band decides what goes back to
+    sequential, so the gate belonged here, once, and not in the emitted kernel forever.
+
+    Only a PROVABLY small count is sequential. A symbolic one is assumed big and stays parallel --
+    reading "unknown" as "small" would single-thread every dynamically sized reduction and scan in
+    the program, which is the opposite of the canonical form. The threshold is
+    ``compiler.cpu.parallel_min_work_per_region``, calibrated to the host by
+    :class:`~dace.transformation.passes.cpu_specialization.calibrate_thresholds.CalibrateCpuThresholds`
+    before this runs.
+
+    :param node: the library node to classify.
+    :param state: the state containing it.
+    :returns: ``True`` only when the element count is provably below the break-even.
+    """
+    threshold = int(config.Config.get('compiler', 'cpu', 'parallel_min_work_per_region'))
+    if threshold <= 0:  # the size rule is disabled
+        return False
+    counts = [e.data.subset.num_elements() for e in state.in_edges(node) if e.data.subset is not None]
+    if not counts:
+        return False
+    biggest = counts[0]
+    for count in counts[1:]:
+        biggest = sympy.Max(biggest, count)
+    return symbolic.ask('negative', symbolic.simplify(biggest - threshold)) is True
+
+
+def libnode_runs_multicore(node: nodes.LibraryNode) -> bool:
+    """Whether ``node``'s OWN schedule is one that runs as an OpenMP team on the CPU.
+
+    The other half of the top-level rule. Being top-level only says nobody re-enters the node; it
+    does not say the node would run multicore. Opening a parallel region is right only when both
+    hold, so this answers the second question and :func:`libnode_is_sequential` the first.
+
+    ``Default`` counts as multicore: the enum documents it as the scope-default PARALLEL schedule and
+    ``dtypes.SCOPEDEFAULT_SCHEDULE[None]`` resolves a top-level scope to ``CPU_Multicore``, so a node
+    a pass introduces before :func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types`
+    has run is not misread as sequential and silently single-threaded. Every other schedule
+    (``Sequential``, ``MPI``, ``SVE_Map``, the GPU and Snitch ones) names an execution context that
+    is not an OpenMP team, and takes the single-core expansion.
+
+    :param node: the library node to classify.
+    :returns: True if the node's schedule would run as an OpenMP team.
+    """
+    return node.schedule in (dtypes.ScheduleType.Default, *dtypes.CPU_SCHEDULES)
+
+
+def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """Whether ``node`` is re-entered inside an outer parallel/repeated scope and so must NOT open
+    its own (nested) parallel region -- it lowers to its efficient single-core expansion instead.
+
+    The storage-derived ``node.schedule`` is NOT a reliable signal here:
+    :func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types` sets a library node's
+    schedule from the *storage* of its neighbouring memlets (``CPU_Heap`` ->
+    ``ScheduleType.CPU_Multicore``), NOT from the parallelism of the enclosing scope, so a ``Reduce``
+    nested in a parallel map can carry ``CPU_Multicore`` and would then wrongly open a nested
+    ``#pragma omp parallel`` per outer iteration -- the "constant parallel reductions" catastrophe.
+    Determine sequentiality from SCOPE instead: a libnode is sequential if it has a parallel parent
+    map or an enclosing loop (both re-enter it).
+
+    A ``NestedSDFG`` node carries no ``schedule`` of its own, so "lives inside a sequential nested
+    SDFG" is not a distinct case to probe for:
+    :func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes` walks OUT across every
+    nested-SDFG boundary up to the root and yields every enclosing ``MapEntry`` / ``LoopRegion``
+    regardless of how many nsdfg levels separate ``node`` from them. A genuinely top-level node
+    returns ``False`` and is free to open its own OpenMP / device-parallel region.
+
+    :param node: The library node to classify.
+    :param state: The state containing ``node``.
+    :param sdfg: The root SDFG.
+    :returns: True if ``node`` is re-entered by an enclosing parallel map or loop.
+    """
+    from dace.sdfg.state import LoopRegion  # Avoid an import cycle at module load.
+    if node.schedule == dtypes.ScheduleType.Sequential:
+        return True
+    for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state):
+        if isinstance(scope, nodes.MapEntry):
+            if scope.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+        elif isinstance(scope, LoopRegion):
+            return True
+    return False
+
+
+def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """Pick the CPU lowering of the library nodes whose parallel form depends on their SCOPE.
+
+    The single home for the CPU parallel-lowering rule, shared by :func:`set_fast_implementations`
+    and canonicalize's
+    :func:`~dace.transformation.passes.canonicalize.finalize.canonicalize_set_fast_implementations`,
+    so the ``auto_optimize`` and ``canonicalize`` paths cannot drift onto different implementations
+    of the same node. :func:`find_fast_library` lists only the vendor BLAS names, so without this the
+    nodes below all fell through to the terminal ``pure`` fallback and a top-level reduction/scan lost
+    its parallelism.
+
+    A node opens its own parallel region only when it is top-level (nothing re-enters it --
+    :func:`libnode_is_sequential`) AND its own schedule would run as an OpenMP team
+    (:func:`libnode_runs_multicore`). Fail either half -- re-entered inside a parallel map or a loop,
+    or scheduled onto something that is not an OpenMP team -- and it takes its efficient single-core
+    expansion instead.
+
+    * ``Reduce`` / ``ArgReduce``: ``OpenMP`` (privatized ``reduction(op:var)``; for ArgReduce a
+      ``declare reduction`` over the (value, index) pair) vs the plain ``pure`` accumulate loop --
+      never a contended ``omp atomic`` or a re-forked team per outer iteration.
+    * ``Scan`` / ``ScatterConflictCheck``: ``CPU`` (OpenMP 5.0 ``reduction(inscan,..)`` +
+      ``#pragma omp scan`` for the scan; an OpenMP tagged-write + verify for the conflict check) vs
+      the serial ``pure`` form.
+    * ``Copy`` / ``Memset``: ``Auto`` at top level, whose own size gate routes a large contiguous
+      transfer to the element map that DaCe parallelizes across threads. A nested node asks its OWN
+      selector for a concrete expansion, because the contiguous-only single-call forms would raise.
+
+    :param node: The library node to select an implementation for.
+    :param state: The state containing ``node``.
+    :param sdfg: The root SDFG.
+    :returns: True if ``node`` is one of the governed types and its implementation was set.
+    """
+    from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+    from dace.libraries.standard.nodes.arg_reduce import ArgReduce
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+    from dace.libraries.standard.nodes.fill import FillLibraryNode, select_fill_implementation
+    from dace.libraries.standard.nodes.reduce import Reduce
+    from dace.libraries.standard.nodes.scan import Scan
+
+    if not isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck, CopyLibraryNode, FillLibraryNode)):
+        return False
+    impls = type(node).implementations
+    # The rule, both halves. A node opens its own parallel region only when nothing re-enters it
+    # (:func:`libnode_is_sequential`) AND its own schedule would run as an OpenMP team
+    # (:func:`libnode_runs_multicore`); a node re-entered by an outer parallel map or loop, or one
+    # scheduled onto anything that is not an OpenMP team, takes the single-core expansion. Then the
+    # size rule: provably too little work to pay for a region of its own. That one covers the
+    # copy/fill nodes through their own selectors, so it is applied to the rest.
+    sequential = libnode_is_sequential(node, state, sdfg) or not libnode_runs_multicore(node)
+    if not sequential and not isinstance(node, (CopyLibraryNode, FillLibraryNode)):
+        sequential = libnode_work_is_below_break_even(node, state)
+    if isinstance(node, (Reduce, ArgReduce)):
+        # ``pure-seq`` needs an ``identity`` a lifted node may not carry, so ``pure`` is the robust
+        # single-core choice (it lowers to a plain accumulate loop when Sequential).
+        node.implementation = 'pure' if sequential else ('OpenMP' if 'OpenMP' in impls else node.implementation)
+    elif isinstance(node, (Scan, ScatterConflictCheck)):
+        node.implementation = 'pure' if sequential else ('CPU' if 'CPU' in impls else node.implementation)
+    elif isinstance(node, CopyLibraryNode):
+        node.implementation = select_copy_implementation(node, state) if sequential else 'Auto'
+    else:
+        node.implementation = select_fill_implementation(node, state) if sequential else 'Auto'
+    return True
 
 
 def set_fast_implementations(sdfg: SDFG,
@@ -423,7 +646,10 @@ def set_fast_implementations(sdfg: SDFG,
 
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
+        # ``auto_select_implementation`` opts a node out entirely: its lowering was chosen by a
+        # transformation (the tile ops, from the vectorizer's ``target_isa``), and every branch below
+        # would silently reset it to the generic fallback -- no error, just the ISA path gone.
+        if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
             # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
             # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
             if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
@@ -438,10 +664,19 @@ def set_fast_implementations(sdfg: SDFG,
                     node.implementation = impl
                     break
 
+    # CPU: the nodes whose parallel lowering depends on scope. ``implementation_prio`` names only the
+    # vendor BLAS libraries, so a Reduce / ArgReduce / Scan / Copy / Fill fell through to the
+    # terminal ``pure`` fallback above and a TOP-LEVEL one silently lost its parallelism. Runs after
+    # the priority loop so it has the last word on exactly those types.
+    if device == dtypes.DeviceType.CPU:
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
+                apply_cpu_library_parallelism(node, state, sdfg)
+
     # reduce nodes
     if device == dtypes.DeviceType.GPU:
         for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, dace.nodes.LibraryNode):
+            if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     node.implementation = "pure"
                     continue
@@ -455,6 +690,16 @@ def set_fast_implementations(sdfg: SDFG,
                         and not is_devicelevel_gpu_kernel(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
+                    continue
+                # The whole-array algorithms -- Scan, FindFirst, ScatterConflictCheck -- name their
+                # device lowering ``CUDA``, which is in none of the ``find_fast_library`` priority
+                # lists (those name vendor BLAS). Without this they fall through to ``pure`` on the
+                # GPU: a scan loses its Blelloch/CUB sweep, a search and a conflict check lose theirs,
+                # and each becomes a serial walk inside a kernel launch. Host-side only -- a
+                # device-level instance keeps the pure expansion, which is what runs in-kernel.
+                if ('CUDA' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                        and state.scope_dict()[node] is None):
+                    node.implementation = 'CUDA'
 
 
 def make_transients_persistent(sdfg: SDFG,
@@ -494,8 +739,14 @@ def make_transients_persistent(sdfg: SDFG,
                 if (dnode.root_data != dnode.data
                         and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
                     continue
-                # Only convert arrays and scalars that are not registers
-                if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
+                # Only convert transient arrays -- never a scalar or a provably single-element array.
+                # Persistent (state-struct) allocation buys nothing for a single element, and a
+                # persistent scalar has no state-struct-value form in the readable code generator; a
+                # symbolically-sized array (possibly >1) is still eligible.
+                if not desc.transient or type(desc) is not dt.Array:
+                    not_persistent.add(dnode.data)
+                    continue
+                if all(symbolic.equal(s, 1) is True for s in desc.shape):
                     not_persistent.add(dnode.data)
                     continue
                 if desc.storage == dtypes.StorageType.Register:
@@ -538,20 +789,36 @@ def make_transients_persistent(sdfg: SDFG,
     return result
 
 
+def interstate_read_names(sdfg: SDFG) -> OrderedSet:
+    """The containers this SDFG's interstate edges read, which is host code reading them.
+
+    An interstate edge's reads live in its condition and its assignments rather than on any
+    AccessNode, so no dataflow analysis of the states reports them and a pass that walks nodes
+    alone concludes the container is only ever touched by the maps it can see.
+    """
+    names: OrderedSet = OrderedSet()
+    for edge in sdfg.all_interstate_edges():
+        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True):
+            names.add(memlet.data)
+    return names
+
+
 def apply_gpu_storage(sdfg: SDFG) -> None:
-    """ Changes the storage of the SDFG's input and output data to GPU global memory. """
+    """ Changes the storage of the SDFG's input and output arrays to GPU global memory.
 
-    written_scalars = set()
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            desc = node.desc(sdfg)
-            if isinstance(desc, dt.Scalar) and not desc.transient and state.in_degree(node) > 0:
-                written_scalars.add(node.data)
+    Scalars stay on the host: host code reads them (loop bounds, branch conditions, a tasklet
+    outside any map), and a device-resident scalar makes every such read invalid. A device map
+    that writes one gets a GPU transient and a copy back from the offload pass.
 
+    An array an interstate edge indexes stays for the same reason, and it is the same host read --
+    ``A[0] < N`` on a loop condition is not a scalar, so the check above does not cover it, and the
+    graph it produces is refused only later, by validation, as a host read of device memory.
+    """
+    host_read = interstate_read_names(sdfg)
     for name, desc in sdfg.arrays.items():
+        if isinstance(desc, dt.Scalar) or name in host_read:
+            continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
-            if isinstance(desc, dt.Scalar) and not name in written_scalars:
-                continue
             desc.storage = dtypes.StorageType.GPU_Global
 
 
@@ -561,7 +828,8 @@ def auto_optimize(sdfg: SDFG,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
                   use_gpu_storage: bool = False,
-                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> SDFG:
+                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+                  expand: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -572,7 +840,7 @@ def auto_optimize(sdfg: SDFG,
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
         * Tiled stream accumulation (MapTiling -> AccumulateTransient)
         * Collapse all maps to parallelize across all dimensions
-        * Set all library nodes to expand to ``fast`` expansion, which calls
+        * Set all library nodes to their ``fast`` implementation, which calls
           the fastest library on the target device
 
     :param sdfg: The SDFG to optimize.
@@ -585,6 +853,9 @@ def auto_optimize(sdfg: SDFG,
     :param find_fast_library_fn: Optional function that returns the prioritized list of
                                  implementations for the given device, which will take priority over
                                  the existing set of fast libraries found using auto-optimize.
+    :param expand: If True (default), select fast library implementations for the device. Library
+                   nodes are left un-expanded either way -- codegen expands whatever remains -- so
+                   this only decides whether ``implementation`` is set.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -640,13 +911,14 @@ def auto_optimize(sdfg: SDFG,
             # node.map.collapse = len(node.map.range)
             pass
 
-    # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
-
-    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
-    infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    sdfg.expand_library_nodes()
+    # Pick each library node's fast implementation, but leave it UNEXPANDED. Expansion is codegen's
+    # job (``generate_code`` expands what is left), and doing it here throws away the one node the
+    # later passes can still reason about -- a Gemm is a Gemm until it becomes three nested maps.
+    # ``infer_types`` still runs, because choosing an implementation can change connector types.
+    if expand:
+        set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # TODO(later): Safe vectorization
 

@@ -80,16 +80,39 @@ import sympy
 import dace
 from numbers import Number
 from io import StringIO
-from dace import dtypes
+from typing import List
+from dace import dtypes, mpr_lowering
 from dace.sdfg import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
 INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
+#: Write-only conditional write: ``out = IT(cond, value)`` assigns ``value`` only where ``cond``
+#: holds and leaves ``out`` untouched otherwise. Sibling of the ``ITE(c, t, e)`` blend, but with
+#: NO else arm -- so it has no value to return when the predicate is false and cannot be a
+#: function like ``ITE`` (see ``runtime/include/dace/ITE.h``). It is unparsed as a guarded
+#: statement instead; see :meth:`CPPUnparser._conditional_write_parts`.
+CONDITIONAL_WRITE_FUNC = "IT"
+
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
+
+# DaCe typeclass names usable as cast "functions" in expressions (e.g. a
+# ``float64(x)`` / ``int32(x)`` produced by sympy lowering or the Fortran
+# bridge).  Each is a ``dace::``-namespaced typedef in the runtime headers,
+# so a bare call must be namespaced to resolve -- exactly the way an explicit
+# ``dace.float64(x)`` is lowered to ``dace::float64(x)``.  Built from the
+# canonical typeclass->string map, which already carries the ``dace::``
+# prefix and naturally excludes the plain C++ builtins (``int`` / ``float`` /
+# ``bool`` / ``complex``), whose bare functional casts are valid as-is.
+_typecast_func_to_cpp = {s.split("::")[-1]: s for s in dtypes.TYPECLASS_TO_STRING.values()}
+
+#: Every C++ spelling a DaCe typeclass has. ``dace.float32(x)`` arrives at the printer as a CALL to
+#: one of these, because ``cpp.DaCeKeywordRemover.visit_Attribute`` rewrites the attribute to the
+#: typeclass's ``ctype`` before unparsing.
+_CTYPE_NAMES = frozenset(typeclass.ctype for typeclass in dtypes.TYPECLASS_TO_STRING)
 
 
 def interleave(inter, f, seq, **kwargs):
@@ -106,6 +129,86 @@ def interleave(inter, f, seq, **kwargs):
         for x in seq:
             inter()
             f(x, **kwargs)
+
+
+def numeric_literal_value(node: ast.AST):
+    """The numeric value of a literal operand (``2``, ``2.5``, ``2.5j``) including a unary sign
+    (``-1.5``), or ``None`` if ``node`` is not one.
+
+    A negative literal reaches the unparser as ``UnaryOp(USub, Constant)`` rather than a signed
+    ``Constant``, so a caller inspecting ``ast.Constant`` alone misses exactly the negative half of
+    the cases. ``bool`` is excluded (an ``int`` subclass, but not a numeric literal here). Unlike
+    :func:`numeric_power_value` -- which serves the ``**`` lowering and is therefore real-only and
+    also folds ``abs`` / ``sqrt`` / dtype casts -- this recognizes COMPLEX literals and nothing but
+    literals.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            return None
+        return node.value if isinstance(node.value, (int, float, complex)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = numeric_literal_value(node.operand)
+        if inner is None:
+            return None
+        return -inner if isinstance(node.op, ast.USub) else inner
+    return None
+
+
+def numeric_power_value(node: ast.AST):
+    """Constexpr-evaluate the ``**`` exponent to its numeric value, or ``None`` if it is not a
+    compile-time constant.
+
+    Used by the ``**`` code generator so a constant exponent lowers to an ``ipow`` product (integral
+    result) or a ``sqrt`` (a +/-0.5 result) instead of a libm ``pow`` call. Each operand is evaluated
+    recursively; the recognized forms are:
+
+    * a bare numeric literal (``2`` / ``2.0``) and its unary negation (``-3``);
+    * ``abs(...)`` and ``sqrt(...)`` of a constant (a perfect square folds to an integer, e.g.
+      ``sqrt(4)`` -> ``2`` -> ``ipow(x, 2)``);
+    * a dtype cast ``TYPE(...)``, applied with C ``static_cast`` semantics so the folded exponent
+      MATCHES the runtime value: a float cast rounds to that precision (``float64(2)`` -> ``2``); an
+      integer cast wraps two's-complement (``int8(300)`` -> ``44``, ``uint32(-1)`` -> ``4294967295``),
+      which are valid ``ipow`` exponents.
+
+    A ``bool`` literal, or any non-numeric / non-constant / unrecognized operand, returns ``None`` and
+    stays on the general ``pow`` path.
+    """
+    if isinstance(node, ast.Constant):
+        # ``bool`` is an ``int`` subclass; treat only real int/float literals as powers.
+        if isinstance(node.value, bool):
+            return None
+        return node.value if isinstance(node.value, (int, float)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = numeric_power_value(node.operand)
+        return None if inner is None else -inner
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            leaf = func.attr
+        elif isinstance(func, ast.Name):
+            leaf = func.id
+        else:
+            return None
+        inner = numeric_power_value(node.args[0])
+        if inner is None:
+            return None
+        if leaf in ('abs', 'fabs'):
+            return abs(inner)
+        if leaf in ('sqrt', 'sqrtf') and inner >= 0:
+            return inner**0.5  # a perfect square yields an exact integer-valued float (ipow); else pow
+        # A dtype cast: apply C ``static_cast`` semantics so the folded exponent equals the runtime one.
+        typeclass = vars(dtypes).get(leaf) if leaf in _typecast_func_to_cpp else None
+        if typeclass is not None:
+            if np.issubdtype(typeclass.type, np.floating):
+                return float(typeclass.type(inner))  # round to the cast precision (exact for tiny exponents)
+            if np.issubdtype(typeclass.type, np.integer):
+                bits = typeclass.bytes * 8
+                wrapped = int(inner) & ((1 << bits) - 1)  # two's-complement wrap (matches static_cast)
+                if np.issubdtype(typeclass.type, np.signedinteger) and wrapped >= (1 << (bits - 1)):
+                    wrapped -= (1 << bits)
+                return wrapped
+        return None
+    return None
 
 
 class LocalScheme(object):
@@ -148,6 +251,40 @@ class CPPLocals(LocalScheme):
 
         for var in toremove:
             del self.locals[var]
+
+
+def runtime_call(name: str, arguments: List[str]) -> str:
+    """A call to a DaCe runtime function, spelled for the ambient dialect.
+
+    Under :attr:`~dace.mpr_lowering.Dialect.RUNTIME` this is the call the generators have always
+    emitted. Under ``STANDALONE`` the name goes through :mod:`dace.mpr_lowering`, which either
+    renames it to the standard library, rewrites the call into an expression, or names an inline
+    definition MPR emits at the top of the unit.
+
+    A ``dace::``-qualified name with no lowering RAISES rather than passing through: the header
+    that declares it is not included, so passing it through would produce a translation unit that
+    does not build, and the C++ error would name a symbol rather than the SDFG construct that
+    asked for it.
+
+    :param name: the function as the ordinary generators spell it, qualified or not.
+    :param arguments: the already-printed argument expressions.
+    :returns: the call (or the expression that replaces it).
+    :raises NotImplementedError: if a runtime function has no standalone spelling.
+    """
+    if mpr_lowering.standalone():
+        dialect = mpr_lowering.active_dialect()
+        bare = name.rsplit('::', 1)[-1]
+        lowered = mpr_lowering.lowering_for(bare, tuple(arguments), dialect)
+        if lowered is not None:
+            return lowered
+        if mpr_lowering.needs_definition(bare, dialect):
+            # MPR emits this one's definition at the top of the unit, under the SAME name -- so the
+            # call keeps its shape and only loses the namespace it was qualified with.
+            return '%s(%s)' % (bare, ', '.join(arguments))
+        if name.startswith('dace::'):
+            raise NotImplementedError(f'MPR has no standalone spelling for the DaCe runtime function {name!r}; '
+                                      'it is declared by a header MPR does not include')
+    return '%s(%s)' % (name, ', '.join(arguments))
 
 
 class CPPUnparser:
@@ -202,6 +339,39 @@ class CPPUnparser:
     def write(self, text):
         """Append a piece of text to the current line"""
         self.f.write(str(text))
+
+    def render(self, node) -> str:
+        """The C++ text ``node`` unparses to, captured instead of written.
+
+        Needed because a dialect lowering can be an EXPRESSION over its arguments
+        (``reciprocal(x)`` becomes ``(1 / (x))``), and an expression template has to be filled in
+        with argument text -- which the incremental ``dispatch``/``write`` path never materializes.
+        """
+        stream = StringIO()
+        saved, self.f = self.f, stream
+        try:
+            self.dispatch(node)
+        finally:
+            self.f = saved
+        return stream.getvalue()
+
+    def emit_call(self, name: str, arguments) -> None:
+        """Write a call to the runtime function ``name`` over the argument AST nodes."""
+        self.write(runtime_call(name, [self.render(node) for node in arguments]))
+
+    def typecast(self, ctype: str, argument: str) -> str:
+        """A numeric cast of ``argument`` to ``ctype``, spelled for the ambient dialect.
+
+        A tasklet's ``float64(x)`` prints as a call to the ``dace::float64`` typedef, which is a
+        name from ``types.h``. Standalone C++ spells the same type with the language's own
+        (``double(x)``); C has no functional cast, so it needs the cast-expression form.
+        """
+        if not mpr_lowering.standalone():
+            return '%s(%s)' % (ctype, argument)
+        spelled = mpr_lowering.ctype_for(ctype, mpr_lowering.active_dialect())
+        if mpr_lowering.standalone_c():
+            return '((%s)(%s))' % (spelled, argument)
+        return '%s(%s)' % (spelled, argument)
 
     def enter(self):
         """Print '{', and increase the indentation."""
@@ -287,6 +457,25 @@ class CPPUnparser:
     def _Assign(self, t):
         self.fill()
 
+        # ``out = IT(cond, value)`` -- the write-only conditional write. Unlike ``ITE(c, t, e)``
+        # this has NO else arm, so it cannot be a function: there is no value to return when the
+        # predicate is false, and the destination must keep whatever it already held. It is
+        # inherently a STATEMENT, so lower it as one -- exactly the guarded assignment the Python
+        # frontend emits for a masked assignment ``A[mask] = value``, and what the tile path turns
+        # into a masked ``TileStore``. Emitting it here makes ``IT`` a first-class primitive
+        # everywhere (like ``ITE``), so a masked write no longer has to stay tile-only.
+        conditional_write = self._conditional_write_parts(t)
+        if conditional_write is not None:
+            target, cond, value = conditional_write
+            self.write("if (")
+            self.dispatch(cond)
+            self.write(") { ")
+            self.dispatch(target)
+            self.write(" = ")
+            self.dispatch(value)
+            self.write("; }")
+            return
+
         # Handle the case of a tuple output
         if len(t.targets) > 1:
             self.dispatch_lhs_tuple(t.targets)
@@ -330,6 +519,37 @@ class CPPUnparser:
         self.dispatch(t.value)
         #self.dtype = inferred_type
         self.write(';')
+
+    def _conditional_write_parts(self, t):
+        """Match a lone ``<target> = IT(<cond>, <value>)`` assignment.
+
+        The target is never declared here, only assigned: ``IT`` writes a destination that already
+        exists -- a tasklet OUT connector declared by the tasklet preamble, or, once the write is a
+        dynamic memlet, the destination the connector was substituted with (a scalar the codegen
+        allocated at function scope). Declaring it under the guard (``if (c) { auto x = v; }``)
+        would scope it to the branch and leave the false path referring to nothing.
+
+        This deliberately does not verify that the target is declared. ``self.locals`` only tracks
+        declarations this unparser emitted, so it cannot see the function-scope allocation behind a
+        substituted connector -- and treating "unknown" as "do not lower" is not a safe fallback:
+        ``IT`` is not a C++ function, so anything that reaches the ordinary assignment path fails to
+        compile regardless. Lowering unconditionally turns a would-be ``'IT' was not declared``
+        error into correct code where the destination exists, and into a plain undeclared-identifier
+        error on the destination itself where it does not.
+
+        :param t: The ``ast.Assign`` node being unparsed.
+        :returns: ``(target, cond, value)`` AST nodes, or ``None`` if this is an ordinary assign.
+        """
+        value = t.value
+        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                and value.func.id == CONDITIONAL_WRITE_FUNC and len(value.args) == 2):
+            return None
+        if len(t.targets) != 1:
+            return None
+        target = t.targets[0]
+        if not isinstance(target, (ast.Subscript, ast.Attribute, ast.Name)):
+            return None
+        return target, value.args[0], value.args[1]
 
     def _AugAssign(self, t):
         self.fill()
@@ -713,10 +933,17 @@ class CPPUnparser:
 
     def _Num(self, t):
         t_n = t.value
+        # numpy bools reach here (only Python True/False are caught in _Constant) and str() them
+        # emits Python 'True'.
+        if isinstance(t_n, (bool, np.bool_)):
+            self.write('true' if t_n else 'false')
+            return
+
         repr_n = str(t_n)
-        # For complex values, use ``dtype_to_typeclass``
-        if isinstance(t_n, complex):
-            dtype = dtypes.dtype_to_typeclass(complex)
+        # For complex values, use ``dtype_to_typeclass`` -- of the value's OWN type, so a
+        # complex64 literal does not widen to dace::complex128.
+        if isinstance(t_n, (complex, np.complexfloating)):
+            dtype = dtypes.dtype_to_typeclass(type(t_n))
             repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
         # Handle large integer values
@@ -851,16 +1078,71 @@ class CPPUnparser:
         "Sub": "-",
         "Mult": "*",
         "Div": "/",
-        "Mod": "%",
         "LShift": "<<",
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
         "BitAnd": "&"
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    #: ``//`` and ``%`` are PYTHON's, which is numpy's: the quotient rounds toward negative infinity
+    #: and the remainder therefore takes the DIVISOR's sign. C rounds toward zero and gives the
+    #: remainder the dividend's sign, so neither operator can be written infix.
+    #:
+    #: ``ifloor(a / b)`` was the old spelling of ``//`` and was wrong on integers, where ``a / b``
+    #: has already truncated and flooring an integer changes nothing (``-32 // 7`` -> ``-4``, Python
+    #: says ``-5``). A bare ``%`` was wrong on integers the same way (``-32 % 7`` -> ``-4``, Python
+    #: says ``3``) and did not compile at all on floats, where C has no ``%``. ``py_floor`` and
+    #: ``py_mod`` dispatch on the operand type and answer for every one of them.
+    funcops = {
+        "FloorDiv": (",", "py_floor"),
+        "Mod": (",", "py_mod"),
+        "MatMult": (",", "dace::gemm"),
+    }
+
+    #: Arithmetic ops folded over two complex literal operands (see _BinOp).
+    binop_lambda = {
+        'Add': (lambda a, b: a + b),
+        'Sub': (lambda a, b: a - b),
+        'Mult': (lambda a, b: a * b),
+        'Div': (lambda a, b: a / b),
+    }
+
+    def _complex_literal_fold(self, t) -> bool:
+        """Folds ``<num literal> op <num literal>`` into ONE constant when the result is complex,
+        dispatches it, and returns True; returns False to leave ``t`` to the general path.
+
+        A complex value round-trips through :func:`~dace.symbolic.symstr` as PYTHON source
+        (``1.5-2.5j``, ``-0-6.283185307179586j``), which re-parses here as arithmetic between a real
+        and an imaginary literal. Python's numeric tower promotes the real operand implicitly;
+        ``std::complex<T>`` does NOT -- its operators take exactly ``T`` or ``complex<T>``, so an
+        integer-valued real part emits ``0 - dace::complex128(0.0, 6.28)`` and fails to compile with
+        "no match for 'operator-' (operand types are 'int' and 'dace::complex128')" (stockham_fft).
+        Folding the pair back into the single complex it came from emits one well-typed
+        ``dace::complex128(re, im)`` construction, so no mixed-type arithmetic is generated at all.
+
+        Restricted to a complex RESULT: real literal arithmetic keeps its existing spelling.
+        """
+        op = t.op.__class__.__name__
+        if op not in self.binop_lambda:
+            return False
+        lv = numeric_literal_value(t.left)
+        rv = numeric_literal_value(t.right)
+        if lv is None or rv is None:
+            return False
+        if not isinstance(lv, complex) and not isinstance(rv, complex):
+            return False
+        try:
+            folded = self.binop_lambda[op](lv, rv)
+        except (ArithmeticError, ValueError):  # e.g. division by zero -- leave it to the general path
+            return False
+        self.dispatch(ast.Constant(value=folded))
+        return True
 
     def _BinOp(self, t):
+        # Two numeric literals whose result is complex fold to one complex constant, so that no
+        # int/complex mixed arithmetic (illegal for std::complex) is emitted.
+        if self._complex_literal_fold(t):
+            return
         # Operations that require a function call
         if t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
@@ -874,46 +1156,27 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (ast.Constant, ast.UnaryOp)):
-                power = None
-                if isinstance(t.right, ast.Constant):
-                    power = t.right.value
-                elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, ast.Constant):
-                        power = -(t.right.operand.value)
-
-                if power is not None and int(power) == power:
-                    negative = power < 0
-                    power = int(-power if negative else power)
-                    if negative:
-                        self.write("reciprocal(")
-                    else:
-                        self.write("(")
-                    if power == 0:
-                        self.write("1")
-                    else:
-                        self.write("dace::math::ipow(")
-                        self.dispatch(t.left)
-                        self.write(f", {power})")
-                    self.write(")")
-                    return
-                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
-                    if float(power) == -0.5:
-                        # rsqrt
-                        self.write("reciprocal(")
-                    self.write("dace::math::sqrt(")
-                    self.dispatch(t.left)
-                    self.write(")")
-                    if float(power) == -0.5:
-                        self.write(")")
-                    return
+            # A compile-time numeric exponent -- a plain literal, a float that is an exact
+            # integer (``x ** 2.0``), or a dtype-cast-wrapped constant (``x ** dace.float64(2)``)
+            # -- lowers to an ``ipow`` product or a ``sqrt``, never a libm ``pow`` call.
+            # ``numeric_power_value`` unwraps those forms; a non-integer or non-constant
+            # exponent (``0.5`` stays a ``sqrt``, ``2.5`` / a symbolic exponent) falls through
+            # to the general ``pow`` path below.
+            power = numeric_power_value(t.right)
+            if power is not None and int(power) == power:
+                negative = power < 0
+                power = int(-power if negative else power)
+                base = '1' if power == 0 else runtime_call('dace::math::ipow', [self.render(t.left), str(power)])
+                self.write(runtime_call('reciprocal', [base]) if negative else '(%s)' % base)
+                return
+            elif power is not None and (float(power) == 0.5 or float(power) == -0.5):  # Square root
+                root = runtime_call('dace::math::sqrt', [self.render(t.left)])
+                # rsqrt
+                self.write(runtime_call('reciprocal', [root]) if float(power) == -0.5 else root)
+                return
 
             # General pow operator
-            self.write("dace::math::pow(")
-            self.dispatch(t.left)
-            self.write(", ")
-            self.dispatch(t.right)
-            self.write(")")
+            self.emit_call('dace::math::pow', [t.left, t.right])
         else:
             self.write("(")
 
@@ -986,9 +1249,46 @@ class CPPUnparser:
         "Or": ast.Or,
     }
 
+    # First-grade numeric typecast functions (``int32(x)`` / ``float64(x)``
+    # ...) -- the canonical spelling the Fortran frontend emits for a kind
+    # coercion, used uniformly in tasklet bodies AND symbolic expressions
+    # (interstate edges / memlet subsets) so one form round-trips through
+    # both printers.  Here (tasklet-body C++) they lower to the matching
+    # ``dace::<type>(x)`` cast (truncating for int, widening for float).
+    _typecast_funcs = {
+        'int32': 'dace::int32',
+        'int64': 'dace::int64',
+        'float32': 'dace::float32',
+        'float64': 'dace::float64'
+    }
+
+    # Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real /
+    # imaginary part of a complex value -- they lower to the ``dace::math``
+    # helpers (which call ``.real()`` / ``.imag()`` on ``std::complex`` /
+    # ``thrust::complex``).  Same call shape as a renamed function: write the
+    # C++ name, then the (single) argument list.  This is the tasklet-body
+    # spelling for a complex's components, mirroring how ``int_floor`` maps to
+    # ``dace::math::ifloor``.
+    # The math names come from ``mpr_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
+    # must be qualified (a bare call binds to ``std::``, whose overloads are ambiguous for a 16-bit
+    # float). It is shared with ``dace.symbolic``'s printer on purpose: the same expression reaches
+    # C++ through a tasklet body here and through a memlet subset there, and a name qualified by
+    # only one of the two builds in one place and fails in the other.
+    _renamed_funcs = {
+        're': 'dace::math::re',
+        'im': 'dace::math::im',
+        **mpr_lowering.RUNTIME_QUALIFIED_MATH,
+    }
+
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
+            if t.func.id in self._typecast_funcs:
+                self.write(self.typecast(self._typecast_funcs[t.func.id], ', '.join(self.render(e) for e in t.args)))
+                return
+            if t.func.id in self._renamed_funcs:
+                self.emit_call(self._renamed_funcs[t.func.id], t.args)
+                return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()
                 self.dispatch(
@@ -1000,6 +1300,26 @@ class CPPUnparser:
                 op = self.callbools[t.func.id]()
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
+            elif t.func.id in _typecast_func_to_cpp:
+                # A bare DaCe typeclass cast (``float64(x)`` / ``int32(x)``):
+                # namespace it to the ``dace::`` typedef so it resolves the
+                # same as an explicit ``dace.float64(x)``.
+                self.write(self.typecast(_typecast_func_to_cpp[t.func.id], ', '.join(self.render(e) for e in t.args)))
+                return
+
+        if isinstance(t.func, ast.Name) and mpr_lowering.standalone() and not t.keywords:
+            # ``dace.float32(x)`` reaches here as a call to the TYPE (cpp.py's visit_Attribute
+            # rewrites the attribute to the typeclass's ctype), which is a C++ functional cast. C
+            # has none, and the ``dace::``-namespaced widths have no C spelling either.
+            if t.func.id in _CTYPE_NAMES and len(t.args) == 1:
+                self.write(self.typecast(t.func.id, self.render(t.args[0])))
+                return
+            # A runtime function the module rewrite already namespaced (``math.sqrt`` arrives here
+            # as ``dace::math::sqrt``), or one of the unqualified runtime globals (``reciprocal``,
+            # ``int_ceil``). A name with no lowering comes back as the same call this would have
+            # printed, so nothing else changes.
+            self.emit_call(t.func.id, t.args)
+            return
 
         self.dispatch(t.func)
         self.write("(")
@@ -1123,6 +1443,29 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
     strio = StringIO()
     CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon, defined_symbols=defined_symbols)
     return strio.getvalue().strip()
+
+
+def cpp_assignment(target: str, value, defined_symbols=None) -> str:
+    """A C++ statement assigning ``value`` to the already-rendered ``target`` expression.
+
+    For callers that cannot go through :meth:`CPPUnparser._Assign` because the assignment target is
+    a C++ expression they built themselves (a pointer name, an array-interface subscript) rather
+    than a Python AST node -- codegen's dynamic-memlet writes, chiefly. Unparsing only the value
+    and gluing ``"%s = %s;"`` around it would lose every rewrite the assignment unparser performs,
+    of which the conditional write is one: ``IT(cond, v)`` is not a C++ function and must become a
+    guarded statement, so it has to be handled where the target is known.
+
+    :param target: The assignment destination, already rendered as C++.
+    :param value: The right-hand side, as a Python AST node.
+    :param defined_symbols: Symbols with known types, forwarded to the unparser.
+    :returns: The C++ statement, terminated with a semicolon.
+    """
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == CONDITIONAL_WRITE_FUNC
+            and len(value.args) == 2):
+        cond, written = value.args
+        return (f"if ({cppunparse(cond, expr_semicolon=False, defined_symbols=defined_symbols)}) "
+                f"{{ {target} = {cppunparse(written, expr_semicolon=False, defined_symbols=defined_symbols)}; }}")
+    return f"{target} = {cppunparse(value, expr_semicolon=False, defined_symbols=defined_symbols)};"
 
 
 # Code can either be a string or a function

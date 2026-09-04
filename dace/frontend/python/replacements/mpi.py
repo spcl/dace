@@ -1375,9 +1375,9 @@ def _distr_matmult(pv: ProgramVisitor,
         a_bsizes_node = state.add_read(a_bsizes_name)
 
     b_bsizes_range = None
-    if isinstance(a_block_sizes, (list, tuple)):
-        if isinstance(a_block_sizes[0], str):
-            b_bsizes_name, b_sizes_range = b_block_sizes
+    if isinstance(b_block_sizes, (list, tuple)):
+        if isinstance(b_block_sizes[0], str):
+            b_bsizes_name, b_bsizes_range = b_block_sizes
             b_bsizes_desc = sdfg.arrays[b_bsizes_name]
             b_bsizes_node = state.add_read(b_bsizes_name)
         else:

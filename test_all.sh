@@ -77,7 +77,7 @@ testcmd() {
 
 runtest_cpp() {
     test_start $1
-    testcmd $CXX -std=c++14 -Wall -Wextra -O3 -march=native -ffast-math -fopenmp -fPIC \
+    testcmd $CXX -std=c++14 -Wall -Wextra -O3 -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -fopenmp -fPIC \
         -I $SCRIPTPATH/dace/runtime/include $1 -o ./$1.out
     if [ $? -ne 0 ]; then bail "$1 (compilation)"; fi
     testcmd ./$1.out

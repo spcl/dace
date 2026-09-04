@@ -30,7 +30,9 @@ build_cscs_gh200:
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   needs: []
 
-test_cscs_gh200:
+# Hidden template shared by both codegen variants. Each concrete job below sets
+# DACE_compiler_cuda_implementation to pin the codegen under test.
+.test_cscs_gh200_base:
   stage: test
   extends:
     - .container-runner-daint-gh200
@@ -63,6 +65,7 @@ test_cscs_gh200:
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install --group testing .
     - export DACE_cache=unique
+    - echo "DACE_compiler_cuda_implementation=${DACE_compiler_cuda_implementation}"
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
@@ -75,3 +78,97 @@ test_cscs_gh200:
     - else
     -   echo "Codecov.io is unreachable"
     - fi
+
+# The two codegens are paired on purpose: an experimental GPU kernel is emitted into
+# a frame the experimental CPU generator produced, so testing them apart leaves the
+# combination that actually ships untested.
+test_cscs_gh200_legacy:
+  extends: .test_cscs_gh200_base
+  variables:
+    DACE_compiler_cuda_implementation: legacy
+    DACE_compiler_cpu_implementation: legacy
+
+test_cscs_gh200_experimental:
+  extends: .test_cscs_gh200_base
+  variables:
+    DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
+
+# Half precision, on its own leg. Every test here also runs inside the two codegen jobs above --
+# this one exists for the SIGNAL: an fp16 bug is a silent narrowing far more often than a crash
+# (``__half`` offers a dozen implicit conversions, so a mistyped operand compiles and rounds), and
+# a red that names fp16 is worth more than the same red buried in a 30-minute full-GPU run. It is
+# also fast, a couple of dozen tests, so it reports long before the full legs do.
+test_cscs_gh200_fp16:
+  stage: test
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
+  variables:
+    SLURM_GPUS_PER_NODE: 1
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_TIMELIMIT: 20
+    DACE_compiler_cuda_cuda_arch: '90'
+    # The pair that ships: an experimental GPU kernel is emitted into an experimental CPU frame.
+    DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
+  needs:
+    - build_cscs_gh200
+  interruptible: true
+  script:
+    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install --group testing .
+    - export DACE_cache=unique
+    - export PYTHONHASHSEED=0
+    # Serial: the fp16 numeric bodies re-enter this file in a fresh interpreter to keep a device
+    # fault out of the parent, and several of those at once would share one GPU with the workers.
+    - pytest --tb=short --timeout_method thread --timeout=600 -m "fp16 and not mpi"
+
+# HPCAgent-Bench numerical correctness on the canonicalize-then-offload GPU path. The corpus lives
+# in a separate PUBLIC repo, so it is cloned here rather than vendored; the kernels are numpy and
+# the harness compares every output against the numpy reference it computes itself.
+#
+# Only the two tags that fit a CI slot: @npbench (56 kernels) and @llr-focus40 (40). ``-r 1``
+# because this is a correctness gate -- a timing repeat on a shared node measures the node.
+test_cscs_gh200_hpcagent_canon_gpu:
+  stage: test
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
+  variables:
+    SLURM_GPUS_PER_NODE: 4
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_TIMELIMIT: 60
+    DACE_compiler_cuda_cuda_arch: '90'
+    DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
+    HPCAGENT_BENCH_REF: main
+  needs:
+    - build_cscs_gh200
+  interruptible: true
+  # Until the kernels this currently reports are fixed, a red here must not block the pipeline.
+  # Flip to ``false`` once a run comes back with an exit status of 0.
+  allow_failure: true
+  script:
+    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    - uv pip install -e ".[testing]"
+    # The bench pins no dace: it must measure the checkout above, not a released wheel.
+    - git clone --depth 1 --branch "${HPCAGENT_BENCH_REF}" https://github.com/spcl/HPCAgent-Bench.git "${WORKDIR}/hpcagent-bench"
+    - cd "${WORKDIR}/hpcagent-bench"
+    - uv pip install -e .
+    - export DACE_cache=unique
+    - export PYTHONHASHSEED=0
+    - export MPI4PY_RC_INITIALIZE=0
+    # Written out rather than looped: every list entry is its own shell, so a `for`/`done` pair
+    # split across entries is two broken commands, not a loop.
+    - python -m hpcagent_bench.cli run-framework -b all@npbench -f dace_gpu_canonicalize -p S -r 1 -t 900 --csv canon_gpu_npbench.csv || true
+    - python -m hpcagent_bench.cli run-framework -b all@llr-focus40 -f dace_gpu_canonicalize -p S -r 1 -t 900 --csv canon_gpu_llr-focus40.csv || true
+    # summarize is the gate: it exits with the number of rows that crashed, failed to build, or
+    # disagreed with numpy. The sweep above is allowed to keep going so every kernel is reported.
+    - python -m hpcagent_bench.cli run-framework --summarize canon_gpu_npbench.csv canon_gpu_llr-focus40.csv

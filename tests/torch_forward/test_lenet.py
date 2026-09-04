@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class LeNet(nn.Module):
@@ -36,25 +37,30 @@ class LeNet(nn.Module):
 
 
 @pytest.mark.torch
-def test_lenet(use_cpp_dispatcher: bool):
+@pytest.mark.parametrize("device", DEVICES)
+def test_lenet(use_cpp_dispatcher: bool, device):
 
-    input = torch.rand(8, 1, 32, 32, dtype=torch.float32)
+    dev = torch_device(device)
 
-    net = LeNet()
+    input = torch.rand(8, 1, 32, 32, dtype=torch.float32).to(dev)
+
+    net = LeNet().to(dev)
     dace_net = LeNet()
     dace_net.load_state_dict(net.state_dict())
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
     dace_net = DaceModule(dace_net,
-                          sdfg_name=f"test_lenet_{dispatcher_suffix}",
-                          compile_torch_extension=use_cpp_dispatcher)
+                          sdfg_name=f"test_lenet_{dispatcher_suffix}_{device}",
+                          compile_torch_extension=use_cpp_dispatcher,
+                          cuda=is_gpu(device))
 
     torch_output = net(torch.clone(input))
-    dace_output = dace_net(torch.clone(input))
+    with experimental_cuda():
+        dace_output = dace_net(torch.clone(input))
     dace_net.sdfg.expand_library_nodes()
 
     torch_tensors_close("output", torch_output, dace_output)
 
 
 if __name__ == "__main__":
-    test_lenet(use_cpp_dispatcher=True)
-    test_lenet(use_cpp_dispatcher=False)
+    test_lenet(use_cpp_dispatcher=True, device="cpu")
+    test_lenet(use_cpp_dispatcher=False, device="cpu")

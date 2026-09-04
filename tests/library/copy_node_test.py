@@ -6,12 +6,14 @@ from typing import Optional, Sequence, Tuple
 
 import dace
 from dace import symbolic
+from dace.codegen.common import get_gpu_backend
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_fill_libnode
 
 import pytest
 import numpy as np
@@ -170,8 +172,8 @@ def test_copy_cpu_memcpy():
 
 def test_copy_fortran_packed_same_rank():
     """Same-rank Fortran-packed (column-major) full copy is contiguous and same-layout, so the
-    Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); a flat byte copy is exact
-    for two Fortran-packed operands."""
+    Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); it is well below the
+    parallel byte threshold. A flat byte copy is exact for two Fortran-packed operands."""
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
@@ -740,6 +742,34 @@ def test_copy_node_storage_defaults_when_unattached():
     assert node.dst_storage(state) == dace.dtypes.StorageType.Default
 
 
+def test_is_gpu_copy_libnode_detects_gpu_storage():
+    """A copy touching GPU memory is a GPU stream consumer. Regression: the helper
+    resolves src/dst storage live via ``src_storage(state)`` / ``dst_storage(state)``;
+    it must not pass a stale extra ``sdfg`` argument (which raised ``TypeError`` and
+    broke experimental GPU code generation)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.GPU_Global, name="B"),
+        name="gpu_copy_detect",
+        libnode_name="gpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is True
+
+
+def test_is_gpu_copy_libnode_false_for_cpu_only():
+    """A purely CPU<->CPU copy is not a GPU stream consumer (exercises both the
+    src and dst storage resolution branches)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="B"),
+        name="cpu_copy_detect",
+        libnode_name="cpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is False
+
+
 def test_copy_cross_storage_validation_rejects_without_flag():
     """The ``MemcpyCPU`` expansion rejects a CPU<->GPU storage mismatch at expansion time."""
     sdfg, _ = _make_copy_sdfg(
@@ -753,16 +783,28 @@ def test_copy_cross_storage_validation_rejects_without_flag():
         sdfg.expand_library_nodes()
 
 
-def test_copy_dtype_mismatch_rejected():
-    """CopyLibraryNode must reject mismatched dtypes."""
+def test_copy_across_dtypes_casts_rather_than_memcpying():
+    """A copy that changes dtype is carried as a CAST, not refused and not memcpy'd.
+
+    No memcpy variant can convert, so the selector has to route this to a tasklet form and the
+    tasklet has to spell the conversion. Refusing it instead left the classic CPU generator
+    emitting a CopyND template instantiated on one element type and handed a pointer of the other,
+    which does not compile (npbench adi).
+    """
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
         name="dtype_mismatch",
-        libnode_name="cp_bad",
+        libnode_name="cp_cast",
     )
-    with pytest.raises(ValueError, match="data types must match"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    casts = [
+        n.code.as_string for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+        if isinstance(n, dace.sdfg.nodes.Tasklet)
+    ]
+    assert casts, 'the converting copy left no tasklet to carry the cast'
+    assert any('dace.float64(' in c for c in casts), casts
 
 
 def test_cpu_memcpy_rejects_non_contiguous_subset():
@@ -1201,6 +1243,19 @@ def test_auto_dispatch_single_element_never_mapped_tasklet(src_storage, dst_stor
         "single-element copies must use Tasklet / MemcpyCUDA1D / SharedMemoryCollective.")
 
 
+# Auto-dispatch unit tests for Shared-involved copies. One exact-impl
+# assertion per unique routing rule (symmetric directions share the rule);
+# end-to-end correctness lives in the ``test_copy_*_roundtrip`` tests.
+# The "no single-element -> MappedTasklet" invariant is exhaustively
+# covered by ``test_auto_dispatch_single_element_never_mapped_tasklet``.
+
+# Auto-dispatch unit tests for Shared-involved copies. One exact-impl
+# assertion per unique routing rule (symmetric directions share the rule);
+# end-to-end correctness lives in the ``test_copy_*_roundtrip`` tests.
+# The "no single-element -> MappedTasklet" invariant is exhaustively
+# covered by ``test_auto_dispatch_single_element_never_mapped_tasklet``.
+
+
 def test_shared_memory_copy_rejects_no_shared():
     """SharedMemoryCopy expansion rejects if neither side is GPU_Shared."""
     sdfg, _ = _make_copy_sdfg(
@@ -1514,25 +1569,8 @@ def test_copy_single_element_d2h():
 # correct output, the test fails and should be deleted (the advantage is gone).
 
 
-def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
-    """``True`` if compiling/running the legacy SDFG raises OR produces output diverging from ``expected``.
-
-    :param sdfg_leg: SDFG with libnodes already replaced by direct edges.
-    :param expected: NumPy ground truth.
-    :param run: a callable ``run(exe) -> np.ndarray`` that runs the compiled SDFG and returns the dst array.
-    """
-    # ``compiler.cpu.explicit_copy`` defaults to on, which lifts this very direct edge to a
-    # CopyLibraryNode -- comparing against it would compare the libnode path with itself.
-    try:
-        with dace.config.set_temporary('compiler', 'cpu', 'explicit_copy', value=False):
-            exe = sdfg_leg.compile()
-        return not np.array_equal(run(exe), expected)
-    except Exception:
-        return True
-
-
-def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
-    """Pin: legacy direct-edge miscompiles a 4D->2D Fortran-packed reshape."""
+def test_legacy_matches_libnode_on_rank_mismatch_fortran_collapse():
+    """Legacy direct edge and the libnode agree on a 4D->2D Fortran-packed reshape."""
     src = _ArraySpec(shape=(2, 3, 4, 5),
                      storage=dace.dtypes.StorageType.CPU_Heap,
                      strides=(1, 2, 6, 24),
@@ -1565,8 +1603,9 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
         exe(src=A, dst=out)
         return out
 
-    assert _legacy_fails(sdfg_leg, expected, run), ("Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
-                                                    "remove this test, the libnode advantage is gone.")
+    # Was a pin on the legacy direct edge MISCOMPILING this reshape. Legacy now agrees with the
+    # libnode, so the case is kept as a positive test guarding the fix rather than deleted with it.
+    np.testing.assert_array_equal(run(sdfg_leg.compile()), expected)
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
@@ -1618,11 +1657,13 @@ def test_register_location_detection():
     nsdfg_count = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     assert nsdfg_count == 0, (f"Single-element in-kernel copy should expand to a direct Memcpy (cross-boundary), "
                               f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s).")
+    # ``cuda``/``hip``: the expansion spells the backend it was configured for, so ask which.
+    memcpy_call = f'{get_gpu_backend()}Memcpy'
     assignments = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and 'cudaMemcpy' in n.code.as_string
+        if isinstance(n, dace.nodes.Tasklet) and memcpy_call in n.code.as_string
     ]
-    assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
+    assert assignments, f"Expected at least one ``{memcpy_call}`` Tasklet from the expansion."
 
 
 def test_cuda2d_pitch_params_branches():
@@ -1667,6 +1708,17 @@ def _cpu_copy_sdfg(extent, name):
 
 def _generated_code(sdfg):
     return "\n".join(obj.code for obj in sdfg.generate_code())
+
+
+def _device_code(sdfg):
+    """The GPU target's code object, whatever the backend calls its file.
+
+    The CUDA target emits ``.cu`` for CUDA and ``.cpp`` for HIP, so selecting on the language
+    would silently find nothing on a HIP-configured machine (``StopIteration``, not a failed
+    assertion). Select on the target that produced it instead.
+    """
+    from dace.codegen.targets.cuda import CUDACodeGen
+    return next(obj.clean_code for obj in sdfg.generate_code() if obj.target is CUDACodeGen)
 
 
 def test_copy_below_threshold_emits_memcpy():
@@ -1817,9 +1869,14 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     state = sdfg.add_state('s0')
     state.add_nedge(state.add_read('s'), state.add_write('gs'), dace.Memlet('s'))
     state.add_nedge(state.add_read('gs'), state.add_write('out'), dace.Memlet('gs'))
-    code = _generated_code(sdfg)
-    assert 'MemcpyAsync(_cpy_out, _cpy_in' in code
-    assert '_cpy_in = &s;' in code, code
+    # Legacy generator: the readable one inlines tasklet connectors, so the input connector the
+    # address binds to is spelled away. The address-taking itself is generator-independent.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = _generated_code(sdfg)
+    src = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    dst = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    assert f'MemcpyAsync({dst}, {src}' in code
+    assert f'{src} = &s;' in code, code
 
 
 def test_opaque_handle_endpoint_is_not_addressed():
@@ -1836,8 +1893,13 @@ def test_opaque_handle_endpoint_is_not_addressed():
     state.add_edge(state.add_access('h'), None, tasklet, '_h', dace.memlet.Memlet('h'))
     state.add_edge(tasklet, '_o', state.add_write('out'), None, dace.memlet.Memlet('out[0]'))
 
-    code = _generated_code(sdfg)
-    assert 'MPI_Comm _h = h;' in code, code
+    # Legacy generator, as in the sibling scalar-endpoint test: the readable one inlines the
+    # connector, so there is no binding left to look at. The binding may carry ``__restrict__``
+    # (this branch de-duplicates the qualifier when registering the pointer), which is why the
+    # assertion is on the initializer rather than on an exact spelling.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = _generated_code(sdfg)
+    assert '_h = h;' in code, code
     assert '&h' not in code, code
 
 
@@ -1850,7 +1912,10 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     state = sdfg.add_state('s0')
     state.add_nedge(state.add_read('A'), state.add_write('gA'), dace.Memlet('A[0:64]'))
     state.add_nedge(state.add_read('gA'), state.add_write('B'), dace.Memlet('gA[0:64]'))
-    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=-1):
+    # Legacy generator: the readable one inlines the copy nest, so the connectors this orders the
+    # stream declaration against are spelled away.
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=-1), \
+            dace.config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
         code = _generated_code(sdfg)
     stream_decl = code.find('__dace_current_stream = ')
     memcpy_call = code.find('MemcpyAsync(_cpy_out, _cpy_in')
@@ -1875,13 +1940,19 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
 
     sdfg = gbar_prog.to_sdfg()
     sdfg.apply_gpu_transformations()
-    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    # The compute states, named rather than positional: the offloading places its transfers where
+    # the control flow wants them, not only at the start and the sink, and a persistent kernel that
+    # swallowed one would be a kernel doing its own host copy.
+    content_nodes = {block for block in sdfg.nodes() if not block.label.startswith('copy_')}
     transform = GPUPersistentKernel()
     transform.setup_match(SubgraphView(sdfg, content_nodes))
     transform.kernel_prefix = 'stuff'
     transform.apply(sdfg)
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+    # Legacy CUDA target: ``GPU_Persistent`` (and with it the grid barrier this pins) is the
+    # legacy generator's scope; the experimental one registers no dispatcher for that schedule.
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        cuda = _device_code(sdfg)
     marker = 'DACE_DFI void copy_'
     assert marker in cuda, cuda
     start = cuda.index(marker)
@@ -1919,7 +1990,8 @@ def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
                         internal_memlet=dace.Memlet.from_array('X', sdfg.arrays['X']))
     sdfg.validate()
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+        cuda = _device_code(sdfg)
     # One barrier per inner state: the transition between them is a sync point.
     assert cuda.count('__gbar.Sync();') >= 2, cuda
 

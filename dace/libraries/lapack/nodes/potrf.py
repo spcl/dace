@@ -8,6 +8,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -58,12 +59,19 @@ class ExpandPotrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandPotrfCuSolverDn(ExpandTransformation):
+class ExpandPotrfGPUSolver(ExpandTransformation):
+    """Cholesky factorization on a vendor GPU solver.
 
-    environments = [environments.cusolverdn.cuSolverDn]
+    The two differ in more than spelling here, which is why the emitted body is a per-dialect
+    method rather than a format string: cuSolverDn sizes and allocates a workspace through
+    ``*_bufferSize`` before the call, and rocSOLVER takes none at all. Everything up to that point
+    -- validation, the veclen division, the fill mode -- is shared.
+    """
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
@@ -74,22 +82,9 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         n = n or node.n
         if veclen != 1:
             n /= veclen
-        uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
+        uplo = cls.fill_enum(node.lower)
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-                int __dace_workspace_size = 0;
-                {cuda_type}* __dace_workspace;
-                cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
-                    {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
-                    &__dace_workspace,
-                    sizeof({cuda_type}) * __dace_workspace_size);
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
-                    {stride_x}, __dace_workspace, __dace_workspace_size, _res);
-                cudaFree(__dace_workspace);
-                """)
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, uplo, rows_x, stride_x)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -103,11 +98,59 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandPotrfCuSolverDn(ExpandPotrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        return "CUBLAS_FILL_MODE_LOWER" if lower else "CUBLAS_FILL_MODE_UPPER"
+
+    @classmethod
+    def call(cls, func, ctype, uplo, rows, stride) -> str:
+        return f"""
+                int __dace_workspace_size = 0;
+                {ctype}* __dace_workspace;
+                cusolverDn{func}_bufferSize(
+                    __dace_cusolverDn_handle, {uplo}, {rows}, _xin,
+                    {stride}, &__dace_workspace_size);
+                gpuMalloc<{ctype}>(
+                    &__dace_workspace,
+                    sizeof({ctype}) * __dace_workspace_size);
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {uplo}, {rows}, _xin,
+                    {stride}, __dace_workspace, __dace_workspace_size, _res);
+                gpuFree(__dace_workspace);
+                """
+
+
+@dace.library.expansion
+class ExpandPotrfRocSolver(ExpandPotrfGPUSolver):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        return "rocblas_fill_lower" if lower else "rocblas_fill_upper"
+
+    @classmethod
+    def call(cls, func, ctype, uplo, rows, stride) -> str:
+        # No workspace: rocSOLVER manages its own, so there is nothing to size, allocate or free.
+        return f"""
+                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
+                    __dace_rocblas_handle, {uplo}, {rows}, _xin, {stride}, _res));
+                """
+
+
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"OpenBLAS": ExpandPotrfOpenBLAS, "MKL": ExpandPotrfMKL, "cuSolverDn": ExpandPotrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandPotrfOpenBLAS,
+        "MKL": ExpandPotrfMKL,
+        "cuSolverDn": ExpandPotrfCuSolverDn,
+        "rocSOLVER": ExpandPotrfRocSolver
+    }
     default_implementation = None
 
     # Object fields
@@ -115,7 +158,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(('_xout', '_res')), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

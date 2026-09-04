@@ -71,10 +71,12 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
     pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
     pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu)
+    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    pytest.param("rocBLAS", dace.float32, marks=pytest.mark.gpu),
+    pytest.param("rocBLAS", dace.float64, marks=pytest.mark.gpu)
 ])
 def test_dot(implementation, dtype):
-    storage = (dace.StorageType.GPU_Global if implementation == 'cuBLAS' else dace.StorageType.Default)
+    storage = (dace.StorageType.GPU_Global if implementation in ('cuBLAS', 'rocBLAS') else dace.StorageType.Default)
     sdfg = make_sdfg(implementation, dtype, storage=storage)
     np_dtype = getattr(np, dtype.to_string())
 

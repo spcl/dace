@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
 import dace
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import dtypes, symbolic, subsets, data
 from dace.sdfg import nodes, SDFG
@@ -9,7 +9,7 @@ from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
@@ -20,6 +20,7 @@ import warnings
 
 from collections import defaultdict
 from itertools import chain
+from dace.ordered import OrderedSet
 
 
 @make_properties
@@ -215,7 +216,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         in_data = set([n.data for n in in_nodes if isinstance(n, nodes.AccessNode)])
         out_data = set([n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
 
-        view_nodes = set()
+        view_nodes = OrderedSet()
         for node in chain(in_nodes, out_nodes, intermediate_nodes):
             if isinstance(node, nodes.AccessNode):
                 is_view = isinstance(sdfg.data(node.data), dace.data.View)
@@ -294,9 +295,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         access_set = None
                         for node in container_dict[node_data]:
                             for e in graph.out_edges(node):
-                                if e.dst in map_entries:
+                                if e.dst in map_entries and e.dst_conn is not None:
                                     # get corresponding inner memlet and join its subset to our access set
                                     for oe in graph.out_edges(e.dst):
+                                        # An ordering edge has no connector and accesses no
+                                        # element, so it names no data to add to the access set.
+                                        if oe.src_conn is None:
+                                            continue
                                         if oe.src_conn[3:] == e.dst_conn[2:]:
                                             current_subset = dcpy(oe.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
@@ -306,9 +311,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                 warnings.warn("SubgraphFusion::Disjoint Access found")
                                                 return False
                             for e in graph.in_edges(node):
-                                if e.src in map_exits:
+                                if e.src in map_exits and e.src_conn is not None:
                                     for ie in graph.in_edges(e.src):
                                         # get corresponding inner memlet and join its subset to our access set
+                                        if ie.dst_conn is None:
+                                            continue
                                         if ie.dst_conn[2:] == e.src_conn[3:]:
                                             current_subset = dcpy(ie.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
@@ -323,10 +330,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # if there is any intersection in any dimension, return False
                         subset_plus = dcpy(access_set)
                         subset_minus = dcpy(access_set)
-                        repl_dict = {
-                            symbolic.pystr_to_symbolic(f'{param}'): symbolic.pystr_to_symbolic(f'{param}-1')
-                            for param in map_entries[0].params
-                        }  # e.g., ['i' -> 'i-1']
+                        # Symbol identity includes the dtype, so shift the very instances the subset carries.
+                        scope_symbols = symbolic.symbols_in([access_set])
+                        params = [symbolic.resolve_symbol(p, scope_symbols) for p in map_entries[0].params]
+                        repl_dict = {param: param - 1 for param in params}  # e.g., ['i' -> 'i-1']
                         subset_minus.replace(repl_dict)
 
                         for (rng, orng) in zip(subset_plus, subset_minus):
@@ -442,7 +449,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for node in intermediate_nodes | out_nodes:
             # these nodes must not lead to a map entry
-            nodes_to_check = set()
+            nodes_to_check = OrderedSet()
             for oedge in graph.out_edges(node):
                 if oedge.dst not in map_entries:
                     nodes_to_check.add(oedge.dst)
@@ -805,6 +812,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         (in_nodes, intermediate_nodes, out_nodes) = node_config
 
+        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+            # Fusion would leave ordering edges that re-enter the fused maps and
+            # create cycles (e.g. an external node ordered between two maps that
+            # both read/write the same non-transient array). Keep the graph unchanged.
+            return
+
         if self.debug:
             print("SubgraphFusion::In_nodes", in_nodes)
             print("SubgraphFusion::Out_nodes", out_nodes)
@@ -841,10 +854,32 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # Format: {access_node: (edge, in_conn, out_conn)}
 
         for map_entry, map_exit in zip(map_entries, map_exits):
+            # An ordering edge into the entry names no connector to rewire, and dropping it would
+            # drop the sequencing it encodes. Where its source ends up decides where it lands. A
+            # source outside the subgraph still gates the whole fused map, so it re-anchors onto
+            # the fused entry. An intermediate node is produced INSIDE the fused map, so anchoring
+            # it on the entry would close a cycle and make the entry its own scope ancestor; what
+            # survives fusion there is the per-iteration order, carried on the body the original
+            # entry guarded. Runs before the connector rewiring, which consumes the entry's out
+            # edges and would leave no body to attach to.
+            for edge in list(graph.in_edges(map_entry)):
+                if edge.dst_conn:
+                    continue
+                if edge.src in intermediate_nodes:
+                    for root in dict.fromkeys(e.dst for e in graph.out_edges(map_entry)):
+                        if root is not map_exit:
+                            graph.add_edge(edge.src, None, root, None, Memlet())
+                    graph.remove_edge(edge)
+                else:
+                    self.copy_edge(graph, edge, new_dst=global_map_entry)
+
             # handle inputs
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
+                # Ordering edges name no connector pair and were re-anchored above.
+                if edge.dst_conn is None:
+                    continue
                 out_edges = [
                     e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
@@ -1266,13 +1301,43 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        if not onode:
-                            onode = graph.add_access(dname)
-                        graph.add_memlet_path(acc,
-                                              global_map_exit,
-                                              onode,
-                                              memlet=Memlet(data=dname, subset=in_subset),
-                                              src_conn=None)
+                        # Dead-store elimination: skip the outer write when a
+                        # downstream consumer chain reaches another AccessNode
+                        # of ``dname`` writing the same outer subset -- the
+                        # intermediate's store is dead and would otherwise
+                        # create an unordered WAW sibling of the fused MapExit.
+                        # See ``tests/npbench/weather_stencils/vadv_test.py::test_gpu``.
+                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
+                                                        global_map_exit.map.params, global_map_exit.map.range).subset
+                        downstream_dominates = False
+                        for ds in graph.nodes():
+                            if not isinstance(ds, nodes.AccessNode) or ds is onode:
+                                continue
+                            if ds.data != dname or graph.in_degree(ds) == 0:
+                                continue
+                            try:
+                                if not nx.has_path(graph.nx, global_map_exit, ds):
+                                    continue
+                                shortest = nx.shortest_path_length(graph.nx, global_map_exit, ds)
+                            except (nx.NodeNotFound, nx.NetworkXError, nx.NetworkXNoPath):
+                                continue
+                            # A direct MapExit -> AccessNode child is a
+                            # parallel peer, not a dominator; require the
+                            # dominator to sit past a consumer node.
+                            if shortest < 2:
+                                continue
+                            if any(ie.data.subset == outer_subset for ie in graph.in_edges(ds)
+                                   if ie.data.subset is not None):
+                                downstream_dominates = True
+                                break
+                        if not downstream_dominates:
+                            if not onode:
+                                onode = graph.add_access(dname)
+                            graph.add_memlet_path(acc,
+                                                  global_map_exit,
+                                                  onode,
+                                                  memlet=Memlet(data=dname, subset=in_subset),
+                                                  src_conn=None)
 
         for e in edges_to_remove:
             graph.remove_edge(e)

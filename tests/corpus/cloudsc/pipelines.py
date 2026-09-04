@@ -1,0 +1,783 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""CloudSC e2e pipeline driver: parallelize / canon_cpu / canon_gpu, phase-checkpointed.
+
+Every variant drives the loops to MAXIMUM (sound) parallelism -- canon runs with peeling and
+anti-dependence breaking on (its defaults), parallelize peels too. ``canon_gpu`` runs every GPU
+knob but does not offload; the cutoff is structural (``offload_to_gpu`` absent from ``_build_stages``),
+so the graph stays CPU-runnable and the numeric check compiles it for the host.
+
+GPU offload is a separate OPT-IN phase (``offload=True``), appended after the variant's own phases for
+EVERY variant (see :data:`OFFLOAD_VARIANTS`) -- including ``canon_cpu``, so that all three offloaded
+recipes can be benchmarked against each other and the fastest kept. Its check depends on the host:
+where a GPU is actually usable (:func:`gpu_is_runnable`) the offloaded graph is RUN ON THE DEVICE and
+``numeric_check`` compares it to the same reference as every other phase; where there is no GPU it
+falls back to ``validate()`` + CUDA code generation. The printed line names which of the two happened,
+so a structural-only run can never be read as a numeric one. Every earlier phase is unaffected.
+
+The recipe is grouped into PHASES (consecutive stages sharing a stage label -- so canon's
+``loop_to_x`` Loop2X lifts and its ``parallelize`` Loop2Map each form one phase; the parallelize
+variant is classified into ``prep`` / ``loop_to_x`` / ``parallelize``, then ``coalesce`` -- inline the
+nested SDFGs and fuse the maps they were walling off, see :func:`coalesce_stages`). At each phase boundary
+``run_pipeline`` validates, runs ``numeric_check`` against the un-transformed reference, and saves a
+``.sdfgz`` checkpoint. A checkpoint on disk therefore means "this phase passed"; a re-run loads the
+furthest good checkpoint and resumes past it (the multi-minute ``simplify`` / build is not repeated).
+
+``numeric_check`` is the reference-compare closure from :func:`make_numeric_check` (self-contained --
+no dace-fortran); ``None`` = structural-only (fast, no per-phase compile+run).
+"""
+import contextlib
+import copy
+import functools
+import hashlib
+import importlib.util
+import os
+import time
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
+
+import numpy
+
+import dace
+from dace import dtypes
+from dace.codegen.codegen import generate_code
+from dace.config import set_temporary
+from dace.sdfg import nodes
+from dace.sdfg.utils import specialize_symbols
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.full_map_fusion import FullMapFusion
+from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
+from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT
+from dace.transformation.passes.parallelize import ParallelizePipeline
+from dace.transformation.passes.pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
+
+Stage = Tuple[str, Callable[[dace.SDFG], None]]
+Phase = Tuple[str, List[Stage]]
+
+VARIANTS: Tuple[str, ...] = ('parallelize', 'canon_cpu', 'canon_gpu')
+
+#: Numeric-check regimes; parameters resolved lazily by :func:`_regime_params`.
+_REGIME_NAMES: Tuple[str, ...] = ('ieee', 'o3')
+
+
+def _regime_params(regime: str) -> Tuple[str, bool, float, float]:
+    """``(cpu_args, sequential, strict_tol, relaxed_tol)`` for a numeric-check regime. The CPU arg
+    strings load lazily from ``generate_data_for_cloudsc`` so this module still imports when loaded by
+    path OUTSIDE the extended tests tree -- the dace-fortran matrix test imports pipelines.py directly
+    and needs only ``run_pipeline``, never the python-variant numeric helpers, whose
+    ``tests.corpus.cloudsc...`` imports would otherwise fail against another repo's ``tests`` package.
+    ``ieee`` (-O0, sequential) is bit-exact on value-preserving phases; ``o3`` runs parallel maps, so
+    reassociating phases get the looser bound."""
+    from tests.corpus.cloudsc.generate_data_for_cloudsc import IEEE_CPU_ARGS, O3_CPU_ARGS
+    return {
+        'ieee': (IEEE_CPU_ARGS, True, 1e-16, 1e-15),
+        'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
+    }[regime]
+
+
+#: Coarse phase names at (or after) which FP reassociation / parallel-reduction reorder can occur. The
+#: tolerance goes relaxed on the first hit and STAYS relaxed (sticky) -- ``start`` and ``normalize``
+#: (value-preserving; on cloudsc the BLAS/IV lifts there no-op) stay bit-exact, ``loop_to_x`` onward
+#: (reduction/scan lifts, then loops->maps, then fusion) gets the reduction tolerance.
+_REASSOC_PHASES = frozenset({'loop_to_x', 'parallelize', 'finalize'})
+
+
+def specialize_stage(constants: Optional[Dict[str, int]]) -> List[Stage]:
+    if not constants:
+        return []
+
+    def apply(sdfg, consts=dict(constants)):
+        free = {str(s) for s in sdfg.free_symbols}
+        specialize_symbols(sdfg, {n: v for n, v in consts.items() if n in sdfg.symbols or n in free})
+
+    return [('specialize', apply)]
+
+
+def pretreat_stages() -> List[Stage]:
+    """Shrink the raw frontend SDFG before any loop unrolling: simplify, then fuse states with
+    happens-before (StateFusionExtended). Both pipelines unroll constant-trip loops -- unroll cost
+    and post-unroll validation both scale with state count, so collapsing the one-state-per-statement
+    frontend graph first is what keeps unrolling (and its validate) tractable. ``parallelize``
+    documents that its caller must simplify beforehand; this IS that step. Value-preserving, so the
+    per-phase numeric_check still holds."""
+
+    def simplify(sdfg):
+        sdfg.simplify()
+
+    def state_fusion_extended(sdfg):
+        from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+        sdfg.apply_transformations_repeated(StateFusionExtended, validate=False, validate_all=False)
+
+    return [('simplify', simplify), ('state_fusion_extended', state_fusion_extended)]
+
+
+#: Name of the coalescing phase, and the variants it is appended to. Both canon variants already
+#: coalesce inside their own recipe -- ``_build_stages`` runs ``canonicalize/pipeline.py::_coalesce``
+#: between ``post_l2m`` and ``loop_fuse`` (see the ``'coalesce'`` entry in :data:`_CANON_SUPER_PHASE`)
+#: -- so appending a second round there would re-scan the graph for nothing. ``parallelize`` stops
+#: dead at ``LoopToMap`` and is the one variant that never coalesces, so it is the one that gets this.
+COALESCE_PHASE: str = 'coalesce'
+COALESCE_VARIANTS: Tuple[str, ...] = ('parallelize', )
+
+#: Name of the opt-in GPU-offload phase, and the variants it may be appended to -- now ALL of them.
+#: ``canon_cpu`` was previously excluded as "a CPU recipe", but which recipe feeds the fastest offloaded
+#: graph is an empirical question, not one to settle by naming: the CPU recipe's materialized
+#: intermediates and its different fusion/collapse choices can win on the device too. All three are
+#: benchmarked and the best is kept, so excluding one a priori would prejudge the answer.
+OFFLOAD_PHASE: str = 'offload'
+OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
+
+#: Device-side FP flags for the offload phase's numeric run, prepended to the configured CUDA args.
+#: The host reference legs already build strict (``IEEE_CPU_ARGS`` / the dace-fortran
+#: ``_strict_fp_cpu_args`` fixture: ``-O0 -fno-fast-math -ffp-contract=off``); nvcc contracts to FMA and
+#: approximates division/sqrt by DEFAULT, so without these the device leg is compiled under looser FP
+#: rules than the reference it is compared against. Measured on the gpu_scc CLOUDSC graph: leaving
+#: nvcc's defaults on costs ~2.5e-12 worst relative error and 19 non-bit-exact output arrays, turning
+#: them off gives ~2.5e-13 over 11 arrays with 8 more coming out bit-exact. This matches the two legs'
+#: build regimes; it does NOT relax anybody's tolerance -- the caller's ``numeric_check`` still decides.
+STRICT_FP_CUDA_ARGS: str = '-fmad=false --prec-div=true --prec-sqrt=true'
+
+#: Host FP rules shared by BOTH legs: no fast-math, no FMA contraction, so the SDFG matches
+#: strict-IEEE gfortran. Carries NO optimization level -- ``compiler.build_type`` is the single
+#: source of that, and an ``-O`` here does not work anyway: CMake emits
+#: ``<compiler.cpu.args> <CMAKE_CXX_FLAGS_$<CONFIG>>``, so the build type's level comes LAST and wins.
+#: Note what is absent: the shipped default adds ``-fno-signed-zeros -freciprocal-math``, which are
+#: fast-math components under another name. The perf leg does not get to be faster by being sloppier.
+STRICT_FP_CPU_ARGS: str = ('-fPIC -Wall -Wextra -fno-fast-math -ffp-contract=off '
+                           '-Wno-unused-parameter -Wno-unused-label')
+
+#: Perf leg: identical FP semantics, plus the ISA the host actually has. Pair with
+#: ``build_type='Release'``; the numeric leg pairs the same args with ``'Debug'``.
+PERF_CPU_ARGS: str = f'{STRICT_FP_CPU_ARGS} -march=native'
+
+
+def coalesce_stages() -> List[Stage]:
+    """Inline the nested SDFGs, then fuse the maps they were walling off.
+
+    ``LoopToMap`` leaves each lifted body in its own NestedSDFG, and map fusion cannot see across an
+    NSDFG boundary -- so straight out of the ``parallelize`` phase the element-wise maps that should be
+    one kernel are a chain of separate ones. The order is forced:
+
+    1. ``InlineSDFGs`` -- drop the NSDFG walls. Nothing downstream fires until this runs.
+    2. ``FuseStates`` -- two maps fuse only if they share a state; inlining a multi-state body leaves
+       the maps in adjacent states.
+    3. ``MapCollapse`` -- BEFORE fusing. A lifted 2-D nest arrives as ``map jk { map jl }``; folding it
+       to one 2-D map first means fusion pairs whole nests instead of merging an outer map with its
+       neighbour's inner one. Same reasoning as the canon recipe's collapse-then-fuse, and worth a
+       stage: without it the fixture in ``cloudsc_pipeline_coalesce_test.py`` ends at 4 maps, not 3.
+    4. ``FullMapFusion`` -- the payoff (vertical + horizontal + ``FindSingleUseData`` in one pass).
+       Wrapped in a ``Pipeline`` because it declares a ``FindSingleUseData`` dependency and raises if
+       applied with an empty results dict.
+    5. ``FuseStates`` again -- fusion and collapse free the state boundaries they had been pinning.
+       This is what makes the phase converge in ONE round: without it the graph is still shrinking
+       when the phase returns.
+
+    Every stage above is observed to fire on that fixture; nothing is here on speculation. A trailing
+    second ``MapCollapse`` (canon runs one, for nests that fusion leaves perfect) matched nothing and
+    is therefore not wired.
+
+    Value-preserving: no stage here reorders a reduction, so the phase is deliberately absent from
+    :data:`_REASSOC_PHASES` (it runs after ``parallelize``, whose relaxation is sticky anyway).
+    """
+    units = [
+        ('inline_nsdfgs', InlineSDFGs()),
+        ('fuse_states', FuseStates()),
+        ('collapse', PatternMatchAndApplyRepeated([MapCollapse()])),
+        ('fuse_maps', Pipeline([FullMapFusion()])),
+        ('fuse_states', FuseStates()),
+    ]
+    return [(label, lambda sdfg, u=unit: u.apply_pass(sdfg, {})) for label, unit in units]
+
+
+def load_offload_pass() -> Callable[[dace.SDFG], None]:
+    """``offload_cloudsc_to_gpu`` from the sibling module. Dotted import first; when pipelines.py was
+    itself exec'd BY PATH -- the dace-fortran matrix test does that, because its own top-level
+    ``tests`` package shadows ours -- fall back to loading the sibling file directly. Same reason
+    :func:`_regime_params` defers its ``tests.corpus.cloudsc`` import."""
+    try:
+        from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
+        return offload_cloudsc_to_gpu
+    except ImportError:
+        path = Path(__file__).resolve().parent / 'offload_cloudsc_to_gpu.py'
+        spec = importlib.util.spec_from_file_location('cloudsc_offload_to_gpu', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.offload_cloudsc_to_gpu
+
+
+def offload_stage() -> List[Stage]:
+    """The GPU-offload phase: schedule the outermost non-block map as a kernel and mirror host data to
+    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
+    nothing in the recipe runs after it."""
+
+    def apply(sdfg):
+        load_offload_pass()(sdfg)
+
+    return [('offload_to_gpu', apply)]
+
+
+def generate_cuda_code(sdfg: dace.SDFG) -> int:
+    """Code-generate ``sdfg`` for CUDA; return the number of ``__global__`` kernels emitted.
+
+    The FALLBACK check for an offloaded graph, used where :func:`gpu_is_runnable` says no: no GPU is
+    needed to code-generate, and a graph that is not actually device-scheduled emits no ``.cu`` object
+    at all, so the assert below is not vacuous. Structural only -- it says the graph compiles for a
+    device, never that it computes the right thing there. Runs on a deepcopy -- ``generate_code``
+    raises control flow and infers types/storage in place.
+
+    Uses the ``experimental`` backend: it used to crash on this "kernel nested inside a host map"
+    shape, which is exactly what CLOUDSC produces (the nblocks map stays on the host), because
+    ``KernelSpec`` resolved the stream descriptor through ``edge.src`` -- an AccessNode only when
+    the kernel is top-level, an enclosing MapEntry here. That fix has landed on ``extended``, and
+    the experimental backend is what gives CLOUDSC the schedule it wants: every kernel on stream 0
+    with a single terminal sync, where legacy spreads the same graph over four streams.
+    """
+    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        objects = generate_code(copy.deepcopy(sdfg))
+    cuda = [obj for obj in objects if obj.language == 'cu']
+    assert cuda, 'CUDA codegen emitted no .cu object -- the graph is not device-scheduled'
+    kernels = sum(obj.clean_code.count('__global__') for obj in cuda)
+    assert kernels > 0, 'CUDA codegen emitted a .cu object with no __global__ kernel'
+    return kernels
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def gpu_is_runnable() -> bool:
+    """True iff this host can build AND run a device-scheduled SDFG, decided by doing exactly that.
+
+    Deliberately end-to-end rather than a capability sniff. ``nvidia-smi`` exiting 0, a CUDA_HOME in
+    the environment or an ``nvcc`` on PATH each answer a different, weaker question than the one the
+    offload phase needs -- a driver with no device, a toolkit that cannot link, a device the process
+    has no permission to open all pass those and still fail at the phase. Building the smallest
+    possible GPU program and checking its output answers the real question once, and the
+    ``lru_cache`` keeps it to one compile per process.
+
+    Any failure is a no -- a host without a GPU raises from nvcc, a compiler configuration error, or a
+    runtime error at launch, and all of them mean the same thing here: fall back to the structural
+    check.
+    """
+
+    @dace.program
+    def gpu_probe(inp: dace.float64[32], out: dace.float64[32]):
+        for i in dace.map[0:32]:
+            out[i] = inp[i] * 2.0
+
+    try:
+        probe = gpu_probe.to_sdfg()
+        probe.apply_gpu_transformations()
+        inp = numpy.arange(32, dtype=numpy.float64)
+        out = numpy.zeros(32, dtype=numpy.float64)
+        with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+            probe(inp=inp, out=out)
+        return bool(numpy.array_equal(out, inp * 2.0))
+    except Exception as exc:
+        print(f'gpu_is_runnable: no usable GPU ({type(exc).__name__}: {exc})')
+        return False
+
+
+def check_offload_phase(sdfg: dace.SDFG, numeric_check: Optional[Callable[[dace.SDFG, str], None]]) -> bool:
+    """Check the offloaded graph as strongly as this host allows; return whether that was a NUMERIC
+    check. Prints one line saying which of the two ran, so a structural pass never reads as a device
+    pass.
+
+    With a usable GPU (:func:`gpu_is_runnable`) and a ``numeric_check`` wired, the offloaded graph is
+    RUN ON THE DEVICE and compared against the same reference every earlier phase used. That works
+    because the offload mirrors each host array to a ``gpu_<name>`` sibling with copy-in/copy-out
+    states -- the graph does its own transfers, so it is called with ordinary host numpy arrays and the
+    caller's check needs no GPU-specific spelling. Without one of those two, it falls back to
+    :func:`generate_cuda_code`.
+
+    The device leg builds with :data:`STRICT_FP_CUDA_ARGS` so its FP rules match the strict-FP host
+    reference. Residual host/device differences (device libm is not host libm) are left for
+    ``numeric_check`` to judge at the caller's own tolerance -- nothing here loosens it.
+    """
+    kernels = generate_cuda_code(sdfg)
+    if numeric_check is None or not gpu_is_runnable():
+        reason = 'no numeric_check wired' if numeric_check is None else 'no usable GPU on this host'
+        print(f'    numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE ({reason}) -- STRUCTURAL ONLY: '
+              f'validate() + CUDA codegen, {kernels} __global__ kernel(s), experimental backend.')
+        return False
+    cuda_args = f'{STRICT_FP_CUDA_ARGS} {dace.Config.get("compiler", "cuda", "args")}'
+    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        with set_temporary('compiler', 'cuda', 'args', value=cuda_args):
+            numeric_check(sdfg, OFFLOAD_PHASE)
+    print(f'    numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE -- the offloaded graph ran on the GPU and '
+          f'matched the reference ({kernels} __global__ kernel(s), experimental backend, strict-FP).')
+    return True
+
+
+def is_device_scheduled(sdfg: dace.SDFG) -> bool:
+    """True iff any map in ``sdfg``, at any nesting depth, is scheduled onto the GPU."""
+    return any(
+        isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive())
+
+
+def _stage_pass_names(unit) -> set:
+    """The transformation type names a pass runs -- unwrapping ``PatternMatchAndApply`` to see the
+    real transforms inside (so a ``PatternMatchAndApplyRepeated([LoopToMap()])`` reads as LoopToMap,
+    not the wrapper). Avoids getattr: ``PatternMatchAndApply`` always sets ``transformations``."""
+    if isinstance(unit, PatternMatchAndApply):
+        return {type(t).__name__ for t in unit.transformations}
+    return {type(unit).__name__}
+
+
+def _parallelize_phase_of(names: set) -> str:
+    """Classify a parallelize-pipeline pass into a phase label -- Loop2Map and Loop2X are their own
+    phases (per the user's request), everything else is ``prep``."""
+    if names & {'LoopToMap'}:
+        return 'parallelize'
+    if names & {'LoopToReduce'}:
+        return 'loop_to_x'
+    return 'prep'
+
+
+def _parallelize_phases() -> List[Phase]:
+    """The parallelize pipeline (single source of truth: ``ParallelizePipeline._stages()``) grouped
+    into ``prep`` / ``loop_to_x`` / ``parallelize`` phases. Peeling on (``peel_limit=4``) for max
+    parallelism."""
+    stages = ParallelizePipeline(unroll_limit=DEFAULT_UNROLL_LIMIT, peel_limit=4)._stages()
+    flat: List[Tuple[str, Stage]] = []
+    for unit in stages:
+        names = _stage_pass_names(unit)
+        phase = _parallelize_phase_of(names)
+        label = next(iter(names)) if len(names) == 1 else '+'.join(sorted(names))
+        # Carry the phase label as the group key; keep the transform name for per-stage reporting.
+        flat.append((phase, (label, lambda sdfg, u=unit: u.apply_pass(sdfg, {}))))
+    # Group by the phase key (first element), preserving the (label, fn) stage tuples.
+    phases: List[Phase] = []
+    for phase, stage in flat:
+        if phases and phases[-1][0] == phase:
+            phases[-1][1].append(stage)
+        else:
+            phases.append((phase, [stage]))
+    return phases
+
+
+#: Coarse canon super-phases: each fine ``_build_stages`` stage label -> one of four super-phases, so
+#: canon checkpoints at 4 boundaries (Loop2X and Loop2Map kept distinct) instead of ~47. GLUE labels
+#: (value-preserving structural fixups that recur across regions) inherit the currently-open
+#: super-phase, so a ``cascade_iedges_up`` between the loop_to_x lifts stays in ``loop_to_x`` rather
+#: than opening a spurious ``normalize`` group. A fine label absent from BOTH maps trips the assert in
+#: :func:`_canon_coarse_phases` -- a canon stage added upstream must be classified here, never
+#: silently misfiled.
+_CANON_SUPER_PHASE: Dict[str, str] = {
+    # normalize: clean + semantic lifts + lower-to-loops + reduce-prep -> canonical loop form.
+    'clean': 'normalize',
+    'loop_to_symm': 'normalize',
+    'lift_inv': 'normalize',
+    'privatize_scatter': 'normalize',
+    'normalize_reduction': 'normalize',
+    'loop_to_syrk': 'normalize',
+    'loop_to_syr2k': 'normalize',
+    'prep': 'normalize',
+    'lift_reduce': 'normalize',
+    'lower': 'normalize',
+    'reroll': 'normalize',
+    'reduce': 'normalize',
+    'distribute': 'normalize',
+    'loop_to_symmetrize': 'normalize',
+    # loop_to_x (Loop2X): parallelization-prep (peel/break/fission/stride) + the reduction/scan lifts.
+    'peel': 'loop_to_x',
+    'break_antidep': 'loop_to_x',
+    'move_if_into_loop': 'loop_to_x',
+    'fission': 'loop_to_x',
+    'loop_stride_permutation': 'loop_to_x',
+    'fuse_consecutive_loops': 'loop_to_x',
+    'lift_copy_loops': 'loop_to_x',
+    'loop_to_x': 'loop_to_x',
+    'loop_to_scan': 'loop_to_x',
+    # parallelize (Loop2Map): loops -> maps, scatter guards, post-l2m fusion / interchange / collapse.
+    'parallelize': 'parallelize',
+    'parallelize_guarded': 'parallelize',
+    'reduction_to_wcr_map': 'parallelize',
+    'scatter': 'parallelize',
+    'post_l2m': 'parallelize',
+    'loop_fuse': 'parallelize',
+    'lift_copy': 'parallelize',
+    'interchange': 'parallelize',
+    'reorder': 'parallelize',
+    'collapse': 'parallelize',
+    # ``coalesce`` runs between ``post_l2m`` and ``loop_fuse`` (pipeline.py ``_coalesce``): graph
+    # prep for maximal fusion once loops are maps, so it belongs to the same super-phase as its
+    # neighbours rather than opening a new checkpoint boundary.
+    'coalesce': 'parallelize',
+    # finalize: map fusion + einsum lift + guard hoist + WCR normalize + terminal simplify / parallelize.
+    'fuse': 'finalize',
+    'lift': 'finalize',
+    'licm': 'finalize',
+    'hoist_guards': 'finalize',
+    'normalize_wcr': 'finalize',
+    'revert_nonreduction_wcr': 'finalize',
+    'relax_powers': 'finalize',
+    'end': 'finalize',
+}
+#: Recurring value-preserving structural-fixup labels that inherit the currently-open super-phase.
+_CANON_GLUE = frozenset({'cascade_iedges_up', 'ssa', 'untrivialize'})
+
+#: The four canon super-phases, in pipeline order.
+_CANON_ORDER: Tuple[str, ...] = ('normalize', 'loop_to_x', 'parallelize', 'finalize')
+
+
+def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> List[Phase]:
+    """The canonicalization recipe coarse-grouped into the four :data:`_CANON_ORDER` super-phases
+    (``normalize`` -> ``loop_to_x`` -> ``parallelize`` -> ``finalize``), so canon checkpoints at 4
+    boundaries with Loop2X (reduction/scan lifts) and Loop2Map distinct instead of ~47 fine ones.
+    Sound max-parallelism defaults (peel_limit=4, break_anti_dependence=True)."""
+    phases: List[Phase] = []
+    current = _CANON_ORDER[0]
+    for label, unit in _build_stages(target=target,
+                                     peel_limit=4,
+                                     break_anti_dependence=True,
+                                     assume_parallel_guards=assume_parallel_guards):
+        if label in _CANON_GLUE:
+            super_phase = current  # inherit the open region so recurring glue doesn't split a phase
+        else:
+            assert label in _CANON_SUPER_PHASE, (
+                f'canon stage {label!r} is unclassified -- add it to _CANON_SUPER_PHASE or _CANON_GLUE')
+            super_phase = _CANON_SUPER_PHASE[label]
+        current = super_phase
+        stage = (label, lambda sdfg, u=unit: u.apply_pass(sdfg, {}))
+        if phases and phases[-1][0] == super_phase:
+            phases[-1][1].append(stage)
+        else:
+            phases.append((super_phase, [stage]))
+    return phases
+
+
+def variant_phases(variant: str,
+                   constants: Optional[Dict[str, int]] = None,
+                   assume_parallel_guards: bool = False,
+                   offload: bool = False) -> List[Phase]:
+    """The full ordered phase list for ``variant``. ``start`` (specialize config-prop + pretreat
+    simplify/state-fusion) is ONE phase; then the variant's own coarse phases (parallelize:
+    prep/loop_to_x/parallelize; canon: normalize/loop_to_x/parallelize/finalize).
+
+    :data:`COALESCE_PHASE` follows for the :data:`COALESCE_VARIANTS` -- after the map-producing phase,
+    since inlining and map fusion have nothing to chew on until the loops are maps.
+
+    ``offload`` appends the terminal :data:`OFFLOAD_PHASE` for the :data:`OFFLOAD_VARIANTS`; every
+    earlier phase is byte-identical to the ``offload=False`` plan. ``canon_cpu`` ignores it."""
+    start: List[Stage] = specialize_stage(constants) + pretreat_stages()
+    phases: List[Phase] = [('start', start)]
+    if variant == 'parallelize':
+        phases += _parallelize_phases()
+    elif variant == 'canon_cpu':
+        phases += _canon_coarse_phases('cpu', assume_parallel_guards)
+    elif variant == 'canon_gpu':
+        phases += _canon_coarse_phases('gpu', assume_parallel_guards)
+    else:
+        raise ValueError(f'unknown variant {variant!r}; expected one of {VARIANTS}')
+    if variant in COALESCE_VARIANTS:
+        phases.append((COALESCE_PHASE, coalesce_stages()))
+    if offload and variant in OFFLOAD_VARIANTS:
+        phases.append((OFFLOAD_PHASE, offload_stage()))
+    return phases
+
+
+def variant_stages(variant: str, constants: Optional[Dict[str, int]] = None) -> List[Stage]:
+    """Flat view of :func:`variant_phases` (every stage, phase boundaries dropped)."""
+    return [stage for _, stages in variant_phases(variant, constants) for stage in stages]
+
+
+def uniquely_named(sdfg: dace.SDFG, name: str) -> dace.SDFG:
+    sdfg.name = name
+    return sdfg
+
+
+def run_candidate(sdfg: dace.SDFG, inputs: Dict, cpu_args: str, sequential: bool, tag: str) -> Dict:
+    """Run ``sdfg`` once on a private copy of ``inputs`` under ``cpu_args``, returning the mutated
+    buffers. Renamed to a fresh build dir for the run then restored, so the pipeline SDFG keeps its
+    identity. Specialization erases the species symbols, so args the SDFG no longer takes are dropped.
+    Under ``sequential`` the maps are forced sequential first -- pass a throwaway copy there so the
+    live candidate's schedules are not mutated. A DEVICE-scheduled graph is exempt: ``sequential``
+    exists to strip OpenMP reduction nondeterminism from a host run, and applying it to an offloaded
+    graph would quietly demote every kernel back to the host -- the run would then pass while proving
+    nothing about the GPU."""
+    saved_name = sdfg.name
+    sdfg.name = f'cloudsc_e2e_{tag}'
+    if sequential and not is_device_scheduled(sdfg):
+        from tests.corpus.cloudsc.generate_data_for_cloudsc import make_sequential
+        make_sequential(sdfg)
+    needed = set(sdfg.arglist().keys()) | {str(s) for s in sdfg.free_symbols}
+    args = {k: v for k, v in copy.deepcopy(inputs).items() if k in needed}
+    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    try:
+        dace.Config.set('compiler', 'cpu', 'args', value=cpu_args)
+        sdfg(**args)
+    finally:
+        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
+        sdfg.name = saved_name
+    return args
+
+
+def benchmark_candidate(sdfg: dace.SDFG,
+                        call_kwargs: Dict,
+                        reps: int = 5,
+                        warmup: int = 1,
+                        tag: str = 'bench') -> Dict[str, float]:
+    """Wall-clock one call of a FINAL ``sdfg``; return ``{'median', 'min', 'max', 'reps'}`` in seconds.
+
+    Builds ONCE and then calls the compiled object ``warmup + reps`` times, so the number excludes
+    compilation. Each call gets a private deepcopy of ``call_kwargs``, made OUTSIDE the timed region:
+    a state-carrying variant (multistep's PT/PQ/PA/PCLV, gpu_scc's tendency_loc_*) otherwise
+    integrates its own output across reps and drifts, so rep 7 measures different arithmetic than
+    rep 1 -- and denormals alone can move the time by an order of magnitude.
+
+    Reports the MEDIAN, not the mean: on a shared box one leg getting descheduled produces an
+    outlier that a mean carries straight into the scoreboard.
+
+    Flags are the CALLER's -- pair with :data:`PERF_CPU_ARGS` and ``build_type='Release'``. This runs
+    the SAME GRAPH the numeric leg validated, recompiled at a different optimization level; the FP
+    semantics are identical between the legs, only ``-O`` differs.
+
+    An offloaded graph carries its own H2D/D2H copy states, so the number includes transfers -- the
+    honest end-to-end figure, and the one a user of the artifact actually waits for.
+    """
+    saved_name = sdfg.name
+    sdfg.name = f'cloudsc_bench_{tag}'
+    samples: List[float] = []
+    try:
+        compiled = sdfg.compile()
+        for rep in range(warmup + reps):
+            args = copy.deepcopy(call_kwargs)
+            t0 = time.perf_counter()
+            compiled(**args)
+            elapsed = time.perf_counter() - t0
+            if rep >= warmup:
+                samples.append(elapsed)
+    finally:
+        sdfg.name = saved_name
+    samples.sort()
+    return {'median': samples[len(samples) // 2], 'min': samples[0], 'max': samples[-1], 'reps': float(len(samples))}
+
+
+def build_reference_outputs(reference: dace.SDFG, regime: str = 'ieee', seed: int = 0) -> Tuple[Dict, Dict]:
+    """Run the un-transformed ``reference`` ONCE under ``regime``; return ``(inputs, reference_out)``.
+    ``inputs`` is the pristine seeded input dict (candidates are re-driven on private copies of it);
+    ``reference_out`` is the reference's mutated output buffers. Shareable across variants so the raw
+    cloudsc compiles+runs a single time for the whole matrix."""
+    from tests.corpus.cloudsc.generate_data_for_cloudsc import generate_cloudsc_inputs, make_sequential
+    cpu_args, sequential, _strict, _relaxed = _regime_params(regime)
+    if sequential:
+        make_sequential(reference)
+    inputs = generate_cloudsc_inputs(reference, seed=seed)
+    reference_out = run_candidate(reference, inputs, cpu_args, sequential, tag=f'{regime}_ref')
+    return inputs, reference_out
+
+
+def numeric_check_from(inputs: Dict, reference_out: Dict, regime: str = 'ieee') -> Callable[[dace.SDFG, str], None]:
+    """A ``check(sdfg, phase_name)`` closure over a prebuilt reference (see
+    :func:`build_reference_outputs`): re-drives ``sdfg`` on the identical inputs and compares every
+    output array to ``reference_out``, so a divergence is pinned to the exact phase that introduced
+    it. Raises ``AssertionError`` on any out-of-tolerance array. Tolerance is strict (bit-exact under
+    ``ieee``) on value-preserving phases and goes relaxed -- and stays relaxed -- from the first
+    reassociating phase (see :data:`_REASSOC_PHASES`)."""
+    from tests.corpus.cloudsc.generate_data_for_cloudsc import compare_outputs
+    cpu_args, sequential, strict_tol, relaxed_tol = _regime_params(regime)
+    state = {'relaxed': False}
+
+    def check(sdfg: dace.SDFG, phase_name: str) -> None:
+        if phase_name in _REASSOC_PHASES:
+            state['relaxed'] = True
+        tol = relaxed_tol if state['relaxed'] else strict_tol
+        # ``sequential`` mutates schedules -- run on a copy so the live candidate is untouched; ``o3``
+        # (parallel) does not mutate, so run it in place (cheap).
+        target = copy.deepcopy(sdfg) if sequential else sdfg
+        out = run_candidate(target, inputs, cpu_args, sequential, tag=f'{regime}_{phase_name}')
+        report = compare_outputs(out, reference_out, rtol=tol, atol=tol)
+        worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
+        bad = {name: (ma, mr) for name, (ma, mr, ok) in report.items() if not ok}
+        if bad:
+            raise AssertionError(f'{phase_name}: outputs diverge from the un-transformed reference '
+                                 f'(tol={tol:.0e}): {bad}')
+        print(f'    numeric[{phase_name}]: worst |abs|={worst[0]:.2e} |rel|={worst[1]:.2e} tol={tol:.0e} OK')
+
+    return check
+
+
+def make_numeric_check(reference: dace.SDFG, regime: str = 'ieee', seed: int = 0) -> Callable[[dace.SDFG, str], None]:
+    """Convenience wrapper: build the reference output from ``reference`` and return the per-phase
+    check closure in one call (see :func:`build_reference_outputs` + :func:`numeric_check_from`)."""
+    inputs, reference_out = build_reference_outputs(reference, regime=regime, seed=seed)
+    return numeric_check_from(inputs, reference_out, regime=regime)
+
+
+def _plan_signature(phases: List[Phase], constants: Optional[Dict[str, int]] = None) -> str:
+    """Short digest of the phase plan (ordered names + stage counts) AND the specialize constants.
+    Baked into checkpoint filenames so a changed pipeline -- or a different constant baking (e.g.
+    ``nclv=5`` vs ``nclv=3``, which leaves the plan shape identical) -- mints fresh checkpoints
+    instead of resuming from a stale ``.sdfgz``."""
+    plan = '|'.join(f'{name}:{len(stages)}' for name, stages in phases)
+    consts = ','.join(f'{k}={v}' for k, v in sorted((constants or {}).items()))
+    return hashlib.sha1(f'{plan}#{consts}'.encode()).hexdigest()[:8]
+
+
+def _checkpoint_path(dump_dir: Path, tag: str, sig: str, idx: int, phase_name: str) -> Path:
+    return dump_dir / f'{tag}__{sig}__p{idx:02d}__{phase_name}.sdfgz'
+
+
+def load_checkpoint(ckpt: Path) -> dace.SDFG:
+    """Load a checkpoint STRICTLY -- any element the reader cannot rebuild raises instead of being
+    dropped.
+
+    ``dace.serialize.from_json`` otherwise warns and substitutes an opaque placeholder, so a graph
+    that lost elements loads "fine" and its hash looks like any other. Resuming from that is worse
+    than recomputing, and ``testing.deserialize_exception`` is exactly the knob that turns the
+    warn-and-continue into a raise."""
+    with set_temporary('testing', 'deserialize_exception', value=True):
+        return dace.SDFG.from_file(str(ckpt))
+
+
+def _checkpoint_matches(ckpt: Path, sdfg: dace.SDFG) -> bool:
+    """True iff ``ckpt`` exists and strictly deserializes to the same SDFG hash. A checkpoint that
+    fails to load counts as no-match, so the phase just re-saves instead of crashing the pipeline."""
+    if not ckpt.exists():
+        return False
+    try:
+        return load_checkpoint(ckpt).hash_sdfg() == sdfg.hash_sdfg()
+    except Exception:
+        return False
+
+
+def run_pipeline(sdfg: dace.SDFG,
+                 variant: str,
+                 dump_dir: Path,
+                 constants: Optional[Dict[str, int]] = None,
+                 tag: Optional[str] = None,
+                 numeric_check: Optional[Callable[[dace.SDFG, str], None]] = None,
+                 assume_parallel_guards: bool = False,
+                 resume: bool = True,
+                 offload: bool = False) -> dace.SDFG:
+    """Drive ``variant`` on ``sdfg`` to maximum parallelism, phase by phase.
+
+    At each phase boundary: apply the phase's stages, validate once, run ``numeric_check(sdfg,
+    phase_name)`` if wired (``None`` = structural-only), then save a ``.sdfgz`` checkpoint. On a
+    re-run (``resume``) the furthest existing checkpoint for this ``(tag, plan)`` is loaded and the
+    pipeline resumes past it. A per-phase apply/validate timing summary is printed at the end.
+
+    Resuming is strict: the checkpoint is read with deserialization errors raised rather than warned
+    (see :func:`load_checkpoint`), then validated, then re-checked with ``numeric_check`` -- so the
+    graph the run continues from is one that read back intact AND still computes the right thing. A
+    checkpoint failing any of those is skipped and an earlier one is tried.
+
+    ``offload`` appends the terminal GPU-offload phase (:data:`OFFLOAD_VARIANTS` only), checked by
+    :func:`check_offload_phase`: run on the device and numeric-checked where there is a usable GPU,
+    ``validate()`` + CUDA codegen where there is not, with the printed line naming which. The plan
+    signature covers the phase, so offload checkpoints never collide with the non-offload ones.
+    """
+    tag = tag or f'{variant}_{sdfg.name}'
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    phases = variant_phases(variant, constants, assume_parallel_guards=assume_parallel_guards, offload=offload)
+    sig = _plan_signature(phases, constants)
+
+    start = 0
+    if resume:
+        for i in range(len(phases) - 1, -1, -1):
+            ckpt = _checkpoint_path(dump_dir, tag, sig, i + 1, phases[i][0])
+            if not ckpt.exists():
+                continue
+            try:
+                sdfg = load_checkpoint(ckpt)
+                sdfg.validate()
+                # Re-check the graph we are about to build on. The phases skipped by the resume were
+                # checked when they were written, but only against the LIVE graph -- this is the one
+                # run that says the graph as READ BACK still computes the right thing.
+                if numeric_check is not None:
+                    numeric_check(sdfg, phases[i][0])
+                start = i + 1
+                print(f'{tag}: resumed from checkpoint p{i + 1:02d}_{phases[i][0]} ({ckpt.name})')
+                break
+            except Exception as exc:  # truncated / stale / lossy / no longer numeric -- try an earlier one
+                print(f'{tag}: checkpoint {ckpt.name} unusable ({type(exc).__name__}: {exc}); '
+                      'trying an earlier one')
+
+    timings: List[Tuple[str, float, float]] = []
+    for idx in range(start, len(phases)):
+        phase_name, stages = phases[idx]
+        t0 = time.perf_counter()
+        with contextlib.redirect_stdout(open(os.devnull, 'w')):
+            for _label, apply_fn in stages:
+                apply_fn(sdfg)
+        t1 = time.perf_counter()
+        sdfg.validate()
+        t2 = time.perf_counter()
+        # numeric BEFORE save: a checkpoint on disk then means "this phase passed", so resume can
+        # skip it without re-checking.
+        if phase_name == OFFLOAD_PHASE:
+            check_offload_phase(sdfg, numeric_check)
+        elif numeric_check is not None:
+            numeric_check(sdfg, phase_name)
+        ckpt = _checkpoint_path(dump_dir, tag, sig, idx + 1, phase_name)
+        if not _checkpoint_matches(ckpt, sdfg):
+            # Best-effort: a checkpoint is a resume/post-mortem aid, not correctness. A frontend
+            # whose SDFG won't serialize (e.g. Fortran ``$klon`` symbols) must not derail the
+            # numeric run.
+            try:
+                sdfg.save(str(ckpt), compress=True)
+            except Exception as exc:
+                print(f'{tag}/p{idx + 1:02d}_{phase_name}: checkpoint save skipped '
+                      f'({type(exc).__name__}: {exc})')
+        timings.append((f'p{idx + 1:02d}_{phase_name}', t1 - t0, t2 - t1))
+        print(f'{tag}/p{idx + 1:02d}_{phase_name}: apply={t1 - t0:.2f}s validate={t2 - t1:.2f}s '
+              f'stages={len(stages)} states={sdfg.number_of_nodes()} + saved')
+
+    if numeric_check is None:
+        print(f'{tag}/END: structural-only (no numeric_check wired)')
+    top = sorted(timings, key=lambda r: r[1] + r[2], reverse=True)[:8]
+    print(f'{tag}/TIMING top-{len(top)} slowest (apply+validate):')
+    for name, ap, va in top:
+        print(f'    {name}: {ap + va:.2f}s (apply={ap:.2f} validate={va:.2f})')
+    return sdfg
+
+
+def dump_root() -> Path:
+    return Path(os.environ.get('CLOUDSC_E2E_DUMP', str(Path.home() / '.cache' / 'cloudsc_e2e')))
+
+
+def _main() -> int:
+    import argparse
+    from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg, CLOUDSC_SYMBOLS
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--variant', choices=VARIANTS, default='parallelize', help='canon_* are heavy (many phases)')
+    ap.add_argument('--numeric', action='store_true', help='wire per-phase numeric check vs the un-transformed ref')
+    ap.add_argument('--regime', choices=list(_REGIME_NAMES), default='ieee', help='numeric-check build regime')
+    ap.add_argument('--no-resume', dest='resume', action='store_false', help='ignore saved checkpoints')
+    ap.add_argument('--assume-parallel-guards', action='store_true', help='drop runtime guards (unsound, max maps)')
+    ap.add_argument('--offload',
+                    action='store_true',
+                    help=f'append the GPU-offload phase ({", ".join(OFFLOAD_VARIANTS)} only); numeric-checked '
+                    'on the device where a GPU is usable, validate+CUDA-codegen checked where it is not')
+    args = ap.parse_args()
+
+    constants = {k: CLOUDSC_SYMBOLS[k] for k in ('nclv', ) if k in CLOUDSC_SYMBOLS}
+
+    numeric = None
+    if args.numeric:
+        # Build once, persist, reload twice: one instance drives the reference run, one the pipeline
+        # (the multi-minute simplify=False parse is not repeated).
+        ref_path = dump_root() / 'cloudsc_nosimplify.sdfgz'
+        ref_path.parent.mkdir(parents=True, exist_ok=True)
+        build_cloudsc_sdfg(simplify=False).save(str(ref_path), compress=True)
+        numeric = make_numeric_check(load_checkpoint(ref_path), regime=args.regime, seed=0)
+        sdfg = uniquely_named(load_checkpoint(ref_path), 'cloudsc_python')
+    else:
+        sdfg = uniquely_named(build_cloudsc_sdfg(simplify=False), 'cloudsc_python')
+
+    run_pipeline(sdfg,
+                 args.variant,
+                 dump_root(),
+                 constants=constants,
+                 tag=f'{args.variant}_python',
+                 numeric_check=numeric,
+                 assume_parallel_guards=args.assume_parallel_guards,
+                 resume=args.resume,
+                 offload=args.offload)
+    return 0
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(_main())

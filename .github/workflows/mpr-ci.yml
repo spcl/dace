@@ -1,0 +1,116 @@
+name: MPR Codegen
+
+# MPR (maximal parallel rendering) emits C++ that builds with a BARE host compiler -- no DaCe
+# include directory, no libdace, no BLAS -- and reproduces the SDFG's numbers. That contract is
+# what this workflow exists to hold: every job here compiles MPR output in an empty directory
+# with no -I flag, so a leaked runtime header fails to compile instead of silently resolving
+# against the DaCe tree the other workflows build inside.
+#
+# Its own workflow, not a cell of General Tests, for two reasons. The environment must NOT carry
+# the include paths and BLAS packages the other jobs install (a leak would go unnoticed with them
+# present), and the CloudSC leg is a whole-application build that needs a timeout no unit cell has.
+#
+# MPR renders in two languages -- C++20 and C23 -- and the codegen job runs one leg per language.
+# The split is not cosmetic: each leg builds with that language's own driver, and g++ would accept
+# most of the C rendering as C++, hiding exactly the constructs (templates, constexpr functions,
+# aligned new, std::max, references) the C dialect exists to do without.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+env:
+  # Unpinned, string-keyed set iteration order changes per run, and with it transformation order
+  # and codegen -- a red that reproduces on one runner and not the next is undebuggable.
+  PYTHONHASHSEED: '0'
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  mpr-codegen:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each leg skips the OTHER language's emission suite, so a red names the rendering that
+          # broke. Everything else (the lowering tables, the dialect printers) is parametrized over
+          # both dialects inside the tests, and runs in both legs so either is a complete gate.
+          - language: 'c++'
+            skip: '--ignore=tests/codegen/mpr/test_emission_c.py'
+          - language: 'c'
+            skip: '--ignore=tests/codegen/mpr/test_emission.py'
+
+    name: mpr-codegen (${{ matrix.language }})
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        # Deliberately minimal: libyaml + cmake only. NO BLAS, NO LAPACK -- MPR output must not
+        # reference them, and installing them would let a leaked library call link and pass.
+        apt-packages: libyaml-dev cmake
+        groups: testing
+
+    - name: MPR lowering, dialect and emission suites (${{ matrix.language }})
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        # MPR renders through the readable generator; pin it so a default change cannot silently
+        # move this suite onto the legacy one (which emits dace::CopyND and a state struct).
+        export DACE_compiler_cpu_implementation=experimental_readable
+        pytest -v --tb=short --timeout_method thread --timeout=900 -m "not gpu" \
+          ${{ matrix.skip }} tests/codegen/mpr
+
+  # CloudSC end to end: render a whole application, build it bare, and compare it against the
+  # SDFG's own compiled output on identical physical inputs. Separate job because the build alone
+  # is minutes and the rendered translation unit is large -- a failure here should be readable as
+  # "the big one broke", not as a timeout in the unit cell above.
+  mpr-cloudsc:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: libyaml-dev cmake
+        groups: testing
+
+    - name: CloudSC MPR equivalence
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        # Multithreaded like every other numerical comparison here, rather than pinned to one
+        # thread. It changes nothing today: CloudSC as built has ZERO maps -- it is all
+        # LoopRegions -- so no OpenMP construct is emitted and the two sides stay bit-exact at any
+        # thread count (measured: the machine-precision tolerance passes at four threads). The
+        # setting is here so that the day CloudSC is built with maps, this compares the build that
+        # ships; that is also the day the tolerance has to be revisited for reassociation.
+        export OMP_NUM_THREADS=4
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        export DACE_compiler_cpu_implementation=experimental_readable
+        pytest -v --tb=short --timeout_method thread --timeout=7200 \
+          -m "integration" tests/codegen/mpr/test_cloudsc.py

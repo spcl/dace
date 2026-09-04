@@ -26,10 +26,34 @@ from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
 
 
+def _is_dace_typecast(node: ast.Call) -> bool:
+    """True iff ``node`` is ``dace.<typeclass>(x)`` (a single-arg dtype cast)."""
+    return (isinstance(node.func, ast.Attribute) and astutils.rname(node.func.value) == 'dace'
+            and node.func.attr in dtypes.TYPECLASS_STRINGS and len(node.args) == 1 and not node.keywords)
+
+
+def _is_integer_typecast(node: ast.Call) -> bool:
+    """True iff ``node`` is ``dace.<integer typeclass>(x)`` (e.g. ``dace.int64(k)``)."""
+    if not _is_dace_typecast(node):
+        return False
+    try:
+        return getattr(dace, node.func.attr) in dtypes.INTEGER_TYPES
+    except Exception:  # pragma: no cover -- defensive
+        return False
+
+
+def is_safe_whole_statement_int_cast(value: ast.AST) -> bool:
+    """True iff ``value`` is a whole-statement integer typecast on a non-constant
+    argument (``dace.int64(inc)`` as the ENTIRE tasklet RHS). Only this form is
+    safe to promote: the typecast survives to the interstate assignment as a
+    symbolic ``int64(inc)`` (a C++ truncating cast). A cast nested inside a larger
+    expression (``k + dace.int64(inc)``) is NOT admitted, and a constant cast
+    (``dace.int64(2)``) folds through the separate constant path."""
+    return isinstance(value, ast.Call) and _is_integer_typecast(value) and not astutils.is_constant(value.args[0])
+
+
 class AttributedCallDetector(ast.NodeVisitor):
-    """
-    Detects calls to functions that are attributes.
-    """
+    """Detects calls to functions that are attributes."""
 
     def __init__(self):
         self.detected = False
@@ -49,11 +73,18 @@ class AttributedCallDetector(ast.NodeVisitor):
 class RemoveConstantAttributes(ast.NodeTransformer):
     """
     Removes calls to functions that are attributes, if they point to a constant value for a cast.
+
+    A non-constant integer typecast (``dace.int64(inc)``) is KEPT unevaluated: it
+    survives as a symbolic ``int64(inc)`` typecast that renders as a C++ truncating
+    cast, rather than being unwrapped (dropped).
     """
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
+            if _is_integer_typecast(node) and not astutils.is_constant(node.args[0]):
+                self.generic_visit(node)
+                return node
             val = astutils.evalnode(node, {'dace': dace})
             return astutils.create_constant(val, node)
         return self.generic_visit(node)
@@ -90,7 +121,14 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             continue
         if isinstance(desc, (dt.View, dt.StructureView)):
             continue
-        if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
+        if isinstance(desc, dt.Stream):
+            continue
+        if transients_only and not desc.transient:
+            continue
+        if not desc.transient and not isinstance(desc, dt.Scalar):
+            # A non-transient length-1 ARRAY is a buffer the caller passes by reference and reads
+            # back (``c=np.array([1], np.int32)``); only a by-value SCALAR argument is a symbol in
+            # disguise. Promoting the array would change the call interface, not just the graph.
             continue
         if desc.total_size != 1:
             continue
@@ -103,6 +141,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     for state in sdfg.states():
         candidates_in_state: Set[str] = set()
 
+        # Containers this state PRODUCES. A definition that depends on one of them cannot be
+        # hoisted into a preceding state, which is what promotion does (``state_fission`` peels the
+        # defining subgraph off in front). The per-edge checks below catch a dependence carried by a
+        # data EDGE; this set is what catches one carried by a memlet SUBSET, where the container is
+        # named as if it were a symbol and no edge records the read at all.
+        state_writes = {n.data for n in state.data_nodes() if state.in_degree(n) > 0}
+
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
                 continue
@@ -110,11 +155,38 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             if candidate not in candidates:
                 continue
 
-            # If candidate is read by a library node, skip
+            # A View bound to this candidate loses its binding: promotion rebuilds the edge from
+            # the assignment tasklet. The filter above only refuses candidates that ARE views.
+            if (any(e.dst_conn == 'views' for e in state.out_edges(node))
+                    or any(e.src_conn == 'views' for e in state.in_edges(node))):
+                candidates.remove(candidate)
+                continue
+
+            # If candidate is read by a library node, or feeds a write-conflict resolution, skip
             removed = False
             for oe in state.out_edges(node):
                 for e in state.memlet_tree(oe):
                     if isinstance(e.dst, nodes.LibraryNode):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
+                    # Step 3.3 of remove_scalar_reads writes the promoted value into an AccessNode
+                    # destination with a HOST tasklet. When that destination lives in device memory
+                    # the tasklet is a host write to a GPU container, which validation rejects
+                    # ("stored as StorageType.GPU_Global but accessed on host"). Declining to
+                    # promote leaves the scalar copy, which is correct on either device.
+                    if (isinstance(e.dst, nodes.AccessNode) and e.dst.data in sdfg.arrays
+                            and sdfg.arrays[e.dst.data].storage
+                            in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
+                    # An outgoing WCR edge makes this scalar a reduction SOURCE
+                    # (``x -(wcr)-> arr``): promoting ``x`` to a symbol rewrites
+                    # ``arr = wcr(arr, x)`` into a plain ``arr = x`` overwrite, silently
+                    # dropping the reduction. Keep it a scalar. (Mirrors the incoming-WCR
+                    # guard below, which only covers a scalar WRITTEN by a WCR.)
+                    if e.data.wcr is not None:
                         candidates.remove(candidate)
                         removed = True
                         break
@@ -126,6 +198,20 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # If candidate is read-only, continue normally
             if state.in_degree(node) == 0:
+                # A read-only occurrence still FINDS the candidate, which the closing
+                # ``candidates_seen`` intersection needs. Record it only for a NON-transient
+                # scalar: its value comes from the caller, so the promoted symbol is exact.
+                # A read-only transient has no writer anywhere, so promoting it would mint a
+                # free symbol for a value the SDFG never defines -- that one stays unseen.
+                if not sdfg.arrays[candidate].transient:
+                    candidates_in_state.add(candidate)
+                continue
+
+            # A WRITTEN non-transient is an OUTPUT of this SDFG. A symbol is not an output, so
+            # promoting one silently drops the value the caller was going to read back (an argmax's
+            # index result comes out zero). Only a read-only argument may become a symbol.
+            if not sdfg.arrays[candidate].transient:
+                candidates.remove(candidate)
                 continue
 
             # Candidate may only be accessed in a top-level scope
@@ -146,8 +232,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 continue
             edge = state.in_edges(node)[0]
 
-            # Edge must not be empty
+            # Edge must not be empty. An ordering edge defines no value, so this node is not a
+            # writer -- and a bare ``continue`` kept the candidate while skipping every remaining
+            # rejection below, leaving a scalar that nothing assigns. Promotion then strips the
+            # descriptor and Step 2 fissions out whatever the ordering edge came from and deletes
+            # it: silent wrong numbers, on a graph that still validates. Refusing the candidate is
+            # conservative -- a scalar with a real write elsewhere loses its promotion too -- but
+            # this pass has no way to tell the two apart from one node.
             if edge.data.is_empty():
+                candidates.remove(candidate)
                 continue
 
             # Edge must not be WCR
@@ -167,6 +260,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                     continue
                 # Ensure no inputs exist to the array
                 if state.in_degree(edge.src) > 0:
+                    candidates.remove(candidate)
+                    continue
+                # ... nor to anything its read subset indexes with.
+                if {str(s) for s in edge.data.free_symbols} & state_writes:
                     candidates.remove(candidate)
                     continue
             elif isinstance(edge.src, nodes.Tasklet):
@@ -195,6 +292,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                     if state.in_degree(tinput.src) > 0:
                         candidates.remove(candidate)
                         break
+                    # Same reason, one indirection out: an INDEX that is itself produced here.
+                    # ``U[argmax_index, j]`` records no read edge for ``argmax_index`` -- it is a
+                    # symbol inside the subset -- so the degree test above never sees it, and
+                    # rayleigh_ritz_rotation promoted a definition whose index the same state was
+                    # still computing. The hoisted read then indexed with the INT_MAX initialiser
+                    # and segfaulted.
+                    if {str(s) for s in tinput.data.free_symbols} & state_writes:
+                        candidates.remove(candidate)
+                        break
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
@@ -212,12 +318,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # Ensure that the candidate is not assigned through
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
-                        # symbolic module.
-                        detector = AttributedCallDetector()
-                        detector.visit(cb.code[0].value)
-                        if detector.detected:
-                            candidates.remove(candidate)
-                            continue
+                        # symbolic module -- EXCEPT a whole-statement integer
+                        # typecast (``s = dace.int64(inc)``), which survives as a
+                        # symbolic ``int64(inc)`` truncating cast.
+                        if not is_safe_whole_statement_int_cast(cb.code[0].value):
+                            detector = AttributedCallDetector()
+                            detector.visit(cb.code[0].value)
+                            if detector.detected:
+                                candidates.remove(candidate)
+                                continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()
@@ -240,17 +349,47 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 candidates.remove(candidate)
         candidates_seen |= candidates_in_state
 
-    # Filter out non-integral symbols that do not appear in inter-state edges
+    # Interstate symbols are still needed to keep read-only / interstate-only
+    # candidates in the final intersection below.
     interstate_symbols = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
+
+    # The ``integers_only`` filter targets INTEGER-LIKE scalars (bool + the
+    # integer types -- exactly ``dtypes.INTEGER_TYPES``) on the ordinary in-state
+    # promotion path: a non-integer transient scalar there gains nothing from
+    # becoming a symbol. Scalars that feed an inter-state CONDITION are EXEMPT --
+    # an upstream canon pass has already symbolicized the condition to reference
+    # the scalar, so it MUST be promoted (float included) or codegen emits an
+    # undeclared-symbol error (tsvc_2_5 ``ext_break_*`` / ``move_if_data_dep_nest``:
+    # ``a_index = a[i]; if a_index > b_index``). A complex condition scalar --
+    # mandelbrot's ``abs(Z[i]) < 2.0`` -- promotes safely because ``Abs`` of a
+    # complex value yields a real in codegen (``dace/runtime/include/dace/pyinterop.h``
+    # deduces ``Abs``'s return type via ``decltype(abs(val))``), so the guard is a
+    # ``double < double`` comparison: no complex symbol type, no array leak.
     for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
 
-    # Only keep candidates that were found in SDFG
+    # A COMPLEX scalar can never be a symbol: codegen has no complex symbol type,
+    # and promoting one whose value is an array-element read ``z = arr[idx]`` turns
+    # that read into an interstate assignment that leaks the complex array ``arr``
+    # into the (nested) SDFG's symbols as a bogus INTEGER symbol -- codegen then
+    # emits ``arr[idx]`` subscripting an ``int`` (npbench ``contour_integral``:
+    # ``z = int_pts[idx]`` with complex ``int_pts`` -> ``int_pts`` demoted to an
+    # ``int`` symbol -> ``invalid types 'int[int]' for array subscript``). This
+    # drops complex candidates EVEN on the interstate-condition path that the
+    # ``integers_only`` filter above exempts: an ``abs(z) < 1`` guard over a complex
+    # ``z`` must read ``z`` as data, never symbolicize the complex value. (Real
+    # ``abs``/mask condition scalars stay promotable -- their descriptor is bool /
+    # real, not complex.)
+    for candidate in set(candidates):
+        if sdfg.arrays[candidate].dtype.as_numpy_dtype().kind == 'c':
+            candidates.discard(candidate)
+
+    # Only keep candidates that were found in SDFG.
     candidates &= (candidates_seen | interstate_symbols)
 
     return candidates
@@ -694,6 +833,17 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
+        # Postcondition guard (checked at the end): promotion must DEFINE every
+        # symbol it introduces -- a promoted scalar's writer becomes an interstate
+        # assignment, so the new symbol is bound. Record the pre-promotion free
+        # symbols and which promotions are transient, so a promoted *transient*
+        # scalar that ends up as a NEW free (undefined) symbol -- e.g. one whose
+        # writer was removed while it was referenced only by a control-flow
+        # condition -- is caught here instead of leaking into codegen. Only
+        # transient promotions are checked (non-transient args stay arguments).
+        before_free: Set[str] = {str(s) for s in sdfg.free_symbols}
+        transient_promotions: Set[str] = {s for s in to_promote if s in sdfg.arrays and sdfg.arrays[s].transient}
+
         for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
@@ -734,8 +884,21 @@ class ScalarToSymbolPromotion(passes.Pass):
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
-                    if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
+                    # The read subset may live on ``src_subset`` (when the
+                    # memlet distinguishes src/dst) or on ``subset`` (the
+                    # common case for an AccessNode -> AccessNode copy
+                    # after canonicalize's scalar-slice fold). The Scalar
+                    # check must look at the SOURCE descriptor
+                    # (``input.data``), not the write-side descriptor
+                    # (``memlet.data`` -- often the scalar being
+                    # promoted): an array source like ``a[i]`` whose
+                    # write target is the scalar ``x`` must keep its
+                    # subscript ``[i]``, otherwise the resulting
+                    # interstate assignment ``x = a`` references the
+                    # whole array.
+                    read_subset = memlet.src_subset if memlet.src_subset is not None else memlet.subset
+                    if (read_subset is not None and not isinstance(sdfg.arrays[input.data], dt.Scalar)):
+                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, read_subset)
                     else:
                         new_isedge.data.assignments[node.data] = input.data
 
@@ -790,6 +953,19 @@ class ScalarToSymbolPromotion(passes.Pass):
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
+
+        # Postcondition: a valid promotion never leaves a promoted transient scalar
+        # as a NEW free (undefined) symbol -- every introduced symbol must be bound
+        # by the interstate assignment built from its writer. A violation means the
+        # writer was already gone before promotion (e.g. removed while the scalar was
+        # referenced only by a branch/loop condition), so the symbol has no binding;
+        # fail loudly here rather than emit an SDFG that errors at compile/run time.
+        new_free: Set[str] = {str(s) for s in sdfg.free_symbols} - before_free
+        orphaned = new_free & transient_promotions
+        if orphaned:
+            raise ValueError(f"ScalarToSymbolPromotion would introduce undefined symbol(s) {sorted(orphaned)}: "
+                             f"a promoted transient scalar has no defining assignment (its writer was removed "
+                             f"while it was still referenced by a control-flow condition).")
 
         return to_promote or None
 

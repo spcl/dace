@@ -236,6 +236,24 @@ def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     return False
 
 
+def descriptor_written_by_gpu_map(sdfg: SDFG, name: str) -> bool:
+    """True if a GPU-scheduled map writes ``name``.
+
+    :meth:`ConvertLengthOneArraysToScalars._blocked_by_unscalarizable_neighbors` already refuses a
+    descriptor a GPU map reads or holds inside its body, so a kernel output is the only device
+    adjacency a staged descriptor can still have -- and the only reason its scalar must stay in
+    device memory.
+    """
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data != name:
+                continue
+            for edge in state.in_edges(node):
+                if isinstance(edge.src, nodes.MapExit) and edge.src.map.schedule in dtypes.GPU_SCHEDULES:
+                    return True
+    return False
+
+
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -442,11 +460,14 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             elif stage_nontransients:
                 is_read = descriptor_is_read(sdfg, arr_name)
                 is_written = descriptor_is_written(sdfg, arr_name)
+                # The staged scalar is what the BODY accesses, and the copy edges below are the
+                # transfer; inheriting device storage makes every host reference to it invalid.
+                storage = arr.storage if descriptor_written_by_gpu_map(sdfg, arr_name) else dtypes.StorageType.Default
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
                                                dtype=arr.dtype,
-                                               storage=arr.storage,
+                                               storage=storage,
                                                transient=True,
                                                lifetime=arr.lifetime,
                                                debuginfo=arr.debuginfo,

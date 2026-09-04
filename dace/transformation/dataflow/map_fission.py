@@ -10,7 +10,7 @@ from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
@@ -162,6 +162,43 @@ class MapFission(transformation.SingleStateTransformation):
                 if e.dst is self.nested_sdfg and e.dst_conn is not None and e.data.subset is not None:
                     if any(str(s) in map_params for s in e.data.subset.free_symbols):
                         inputs_dep_on_map.add(e.dst_conn)
+
+            # The Fortran frontend lowers ``a(idx(i))`` to a NestedSDFG that
+            # first loads ``idx(i)`` into an internal transient and then
+            # assigns it to an indirection symbol on an interstate edge
+            # (``__sym = __tmp``). The assignment RHS is the transient, not
+            # the iterator-indexed input, so a one-hop check misses the
+            # dependence. Taint the input connectors whose incoming memlet
+            # references a map parameter and propagate the taint forward
+            # through every NestedSDFG state's dataflow: any AccessNode
+            # written (transitively) from a tainted source is itself tainted.
+            # An interstate assignment naming any tainted container cannot be
+            # hoisted out of the fissioned maps either.
+            tainted = set(inputs_dep_on_map)
+            changed = True
+            while changed:
+                changed = False
+                for st in nsdfg_node.sdfg.states():
+                    for e in st.edges():
+                        src_name = e.src.data if isinstance(e.src, nodes.AccessNode) else None
+                        dst_name = e.dst.data if isinstance(e.dst, nodes.AccessNode) else None
+                        # An access node feeding a code node taints that
+                        # code node's other outputs only transitively via the
+                        # access nodes they write; track tainted data names.
+                        carried = e.data.data
+                        feeds_tainted = (src_name in tainted) or (carried in tainted)
+                        if not feeds_tainted and isinstance(e.src, nodes.CodeNode):
+                            # A tasklet/nested node is tainted if any of its
+                            # incoming access nodes are tainted.
+                            feeds_tainted = any(
+                                isinstance(ie.src, nodes.AccessNode) and ie.src.data in tainted
+                                for ie in st.in_edges(e.src))
+                        if feeds_tainted:
+                            for nm in (dst_name, carried):
+                                if nm is not None and nm not in tainted:
+                                    tainted.add(nm)
+                                    changed = True
+
             for ise in nsdfg_node.sdfg.all_interstate_edges():
                 assign_free = set()
                 for expr in ise.data.assignments.values():
@@ -172,6 +209,8 @@ class MapFission(transformation.SingleStateTransformation):
                 if assign_free & map_params:
                     return False
                 if assign_free & inputs_dep_on_map:
+                    return False
+                if assign_free & tainted:
                     return False
 
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
@@ -205,6 +244,10 @@ class MapFission(transformation.SingleStateTransformation):
                 if ndesc.transient is False:
                     return False
 
+                # A View owns no storage, so fission cannot widen it by the map extent.
+                if isinstance(ndesc, dt.View):
+                    return False
+
             # In subgraphs, make sure transients are not used/allocated
             # in other scopes or states
             if expr_index == 0:
@@ -220,7 +263,31 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
+        if expr_index == 1 and not self.fission_makes_progress(total_components):
+            return False
+
         return True
+
+    @staticmethod
+    def fission_makes_progress(total_components) -> bool:
+        """Whether fissioning a nested SDFG would yield anything other than its input.
+
+        Fission replicates the map around each component. Two shapes produce no change, and both then
+        re-match on the result, so ``apply_transformations_repeated`` never reaches a fixpoint:
+
+        * NO component -- there is nothing to replicate the map around.
+        * exactly ONE component which is itself a nested SDFG. That is what
+          ``nest_sdfg_control_flow`` makes of a control-flow region, so apply rebuilds the same
+          map-around-nested-SDFG one nesting level deeper (TSVC s1119 renested ~490 times before
+          hitting the recursion limit).
+
+        One component of real dataflow is NOT this case: apply pushes the map inside, which is progress
+        and does not re-match.
+        """
+        flat = [component for components in total_components for component in components]
+        if not flat:
+            return False
+        return not (len(flat) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in flat[0]))
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
@@ -244,11 +311,17 @@ class MapFission(transformation.SingleStateTransformation):
         outer_map: nodes.Map = map_entry.map
         # Border-transient extent equals the iteration count per dimension.
         # Memlets that index border transients are normalized to
-        # `(p - iMin) / step` so the squeezed array remains in-bounds for
-        # strided maps. Symbolic steps are assumed non-negative.
+        # `int_floor(p - iMin, step)` so the squeezed array remains in-bounds
+        # for strided maps. Symbolic steps are assumed non-negative.
+        # `/` would be RATIONAL division: sympy distributes `(p - 1)/2` into
+        # `p/2 - 1/2`, and the surviving `1/2` both makes the index non-integer
+        # (C: "array subscript is not an integer") and shifts it by half an
+        # element. int_floor stays integral and agrees on every iterated value.
         mapsize = outer_map.range.size()
-        squeezed_idx = [(pystr_to_symbolic(p) - iMin) / step
-                        for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)]
+        squeezed_idx = [
+            int_floor(pystr_to_symbolic(p) - iMin, step)
+            for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)
+        ]
 
         # Add new symbols from outer map to nested SDFG
         # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
@@ -264,13 +337,24 @@ class MapFission(transformation.SingleStateTransformation):
                     map_syms.update(edge.data.subset.free_symbols)
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
+            # Only symbols the ENCLOSING scope actually defines can be mapped in. A map parameter is
+            # scope-defined: it exists inside its own map and nowhere else, so once a map has been
+            # pushed into a nested SDFG its iterator must appear in neither the free symbols nor the
+            # symbol mapping of anything outside it. Mapping one anyway makes it free at the parent
+            # boundary, whose mapping nothing then fills in -- an invalid SDFG that MapFission
+            # re-creates on every reapplication (TSVC s1119: 491 applications, ~490 levels deep).
+            # Indexing symbols_defined_at directly also raised KeyError for exactly this case
+            # (TSVC s114: `KeyError: '_loop_it_0'`).
+            defined_at_node = graph.symbols_defined_at(nsdfg_node)
             for sym in map_syms:
                 symname = str(sym)
                 if symname in outer_map.params:
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
+                    if symname not in defined_at_node:
+                        continue
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
+                    nsdfg_node.sdfg.symbols[symname] = defined_at_node[symname]
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
@@ -281,21 +365,21 @@ class MapFission(transformation.SingleStateTransformation):
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
-            sources = subgraph.source_nodes()
-            sinks = subgraph.sink_nodes()
 
             # Collect external edges
             if self.expr_index == 0:
                 external_edges_entry = list(state.out_edges(map_entry))
                 external_edges_exit = list(state.in_edges(map_exit))
             else:
+                # Ordering edges cross no boundary; counted as one, a happens-before edge into
+                # an INPUT connector node reads as a write leaving the nested SDFG.
                 external_edges_entry = [
-                    e for e in subgraph.edges()
-                    if (isinstance(e.src, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.src.data].transient)
+                    e for e in subgraph.edges() if (isinstance(e.src, nodes.AccessNode) and not e.data.is_empty()
+                                                    and not nsdfg_node.sdfg.arrays[e.src.data].transient)
                 ]
                 external_edges_exit = [
-                    e for e in subgraph.edges()
-                    if (isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
+                    e for e in subgraph.edges() if (isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty()
+                                                    and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
                 ]
 
             # Enclosing scope of the fissioned map (``None`` if top-level).
@@ -310,7 +394,6 @@ class MapFission(transformation.SingleStateTransformation):
             # (``path[eindex - 1]`` at entry, ``path[eindex + 1]`` at exit).
             # An empty dependency edge has a one-element path and thus no
             # outside edge: store ``None``.
-            edge_to_outer = {}
             edge_to_outer = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
@@ -440,25 +523,27 @@ class MapFission(transformation.SingleStateTransformation):
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
                     state.add_edge(component_out, None, mx, None, mm.Memlet())
-            # Connect other sources/sinks not in components (access nodes)
-            # directly to external nodes
+            # Connect the boundary edges that cross at an AccessNode directly to the external nodes.
+            # The per-component loops above consumed every boundary edge incident to a component_in/component_out,
+            # so each edge still left in ``edge_to_outer`` crosses at an AccessNode. Such a node is NOT necessarily
+            # a source/sink of the subgraph: a border transient that is read inside the map AND copied out through
+            # map_exit is neither, and keying the rewiring on source/sink membership left its boundary edge to be
+            # dropped as collateral of removing the outer map -- silently losing the copy and orphaning the outer
+            # node ('Isolated node'; TSVC s152/s221/s241/s243).
+            # The outer memlet already spans the whole map range and the border transient now carries the map
+            # dimensions, so the copy is the outer memlet with the border side left implicit (its full extent).
             if self.expr_index == 0:
-                for node in sources:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.in_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer feeder: nothing to rewire.
-                                continue
-                            memlet = dcpy(edge.data)
-                            memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
-                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
-
-                for node in sinks:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.out_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer consumer: nothing to rewire.
-                                continue
+                for node in subgraph.nodes():
+                    if not isinstance(node, nodes.AccessNode):
+                        continue
+                    for edge in state.in_edges(node):
+                        outer_edge = edge_to_outer.get(edge)  # None for internal edges and empty dependency edges
+                        if outer_edge is not None:
+                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn,
+                                           dcpy(outer_edge.data))
+                    for edge in state.out_edges(node):
+                        outer_edge = edge_to_outer.get(edge)
+                        if outer_edge is not None:
                             state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
                                            dcpy(outer_edge.data))
 
@@ -524,7 +609,10 @@ class MapFission(transformation.SingleStateTransformation):
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
                         if isinstance(desc, dt.Scalar):
-                            parent.arrays[node.data] = dcpy(outer_desc)
+                            # A connector inside the nested SDFG has no binding edge, so keep the
+                            # outer View's layout but not its View-ness.
+                            inner_desc = outer_desc.as_array() if isinstance(outer_desc, dt.View) else dcpy(outer_desc)
+                            parent.arrays[node.data] = inner_desc
                             desc = parent.arrays[node.data]
                             desc.transient = False
                         elif isinstance(desc, dt.Array):
@@ -537,6 +625,8 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
+                                if e.data.is_empty():
+                                    continue  # ordering edge: no subset
                                 e.data.subset.offset(desc.offset, False)
                                 e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is

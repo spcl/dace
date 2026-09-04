@@ -3,8 +3,8 @@
 Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.e., memory preserving) for localized
 testing or optimization.
 """
-import networkx as nx
-from networkx.algorithms.flow import edmondskarp
+from dace import graphlib as nx
+from dace.graphlib.algorithms.flow import edmondskarp
 import sympy as sp
 from collections import deque
 import copy
@@ -19,6 +19,7 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
                                                 SingleStateTransformation)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
+from dace.ordered import OrderedSet
 
 try:
     from numpy.typing import ArrayLike
@@ -213,8 +214,13 @@ class SDFGCutout(SDFG):
         if reduce_input_config:
             nodes = _reduce_in_configuration(state, nodes, use_alibi_nodes, symbols_map)
 
+        # Shared across all clone_f calls below: a MapEntry/MapExit pair references one Map object, and
+        # cloning them via separate deepcopy calls (each with its own memo) would hand them two - keeping
+        # one memo for the whole cutout preserves that shared identity.
+        clone_memo: Dict[int, Any] = {}
+
         def clone_f(x: Union[Memlet, InterstateEdge, nd.Node, ControlFlowBlock]):
-            ret = copy.deepcopy(x)
+            ret = copy.deepcopy(x, clone_memo)
             if preserve_guids:
                 ret.guid = x.guid
             return ret
@@ -544,7 +550,7 @@ def _transformation_determine_affected_nodes(sdfg: SDFG,
         preventing a transformation from affecting nodes that are not part of the pattern or subgraph they match to.
     """
     target_sdfg = sdfg
-    affected_nodes = set()
+    affected_nodes = OrderedSet()
 
     if isinstance(transformation, PatternTransformation):
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list:
@@ -709,7 +715,7 @@ def _reduce_in_configuration(state: SDFGState,
     else:
         scope_nodes = set(scope_children[source])
         scope_nodes.add(source)
-    expand_with = set()
+    expand_with = OrderedSet()
     for n in scope_nodes:
         if isinstance(n, nd.EntryNode):
             exit = state.exit_node(n)

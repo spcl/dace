@@ -1,15 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
 import numpy
 import ml_dtypes
 import re
+import types
 from sympy import Float, Integer
 from collections import OrderedDict
-from functools import wraps
-from typing import Any, Dict, TYPE_CHECKING
+from functools import lru_cache, wraps
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from dace.config import Config
 
@@ -65,6 +67,7 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
     GPU_Persistent = auto()
+    GPU_Warp = auto()
 
     Snitch = auto()
     Snitch_Multicore = auto()
@@ -76,6 +79,20 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+]
+
+GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
+    # Register is not added because register outside a kernel
+    # is a CPU stack array, and this will not work
 ]
 
 # A subset of CPU schedule types
@@ -178,7 +195,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -195,7 +213,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -294,6 +313,20 @@ _BYTES = {
     ml_dtypes.float8_e5m2: 1,
 }
 
+#: Width of Python's scalar types, per ``compiler.default_data_types``.
+_DEFAULT_DATA_TYPES = {
+    'python': {
+        int: numpy.int64,
+        float: numpy.float64,
+        complex: numpy.complex128
+    },
+    'c': {
+        int: numpy.int32,
+        float: numpy.float32,
+        complex: numpy.complex64
+    },
+}
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -303,6 +336,10 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
+    #: Class-level default so `to_string`/`to_json` stay defined for the subclasses that build
+    #: themselves without `typeclass.__init__` (`struct`, `pointer`, `vector`).
+    typename: Optional[str] = None
 
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
@@ -315,30 +352,15 @@ class typeclass(object):
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
 
-        config_data_types = Config.get('compiler', 'default_data_types')
-
-        if wrapped_type is int:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.int64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.int32
-            else:
+        # Only Python's scalar types consult the configuration; every other type paid the lookup.
+        if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
+            config_data_types = Config.get('compiler', 'default_data_types')
+            widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
+            if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is float:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.float64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.float32
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is complex:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.complex128
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.complex64
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is bool:
+            wrapped_type = widths[wrapped_type]
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
@@ -491,8 +513,9 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+    from dace.symbolic import is_symbol_leaf
+    lhs = lhs.dtype if (is_symbol_leaf(lhs) or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (is_symbol_leaf(rhs) or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -517,6 +540,16 @@ def result_type_of(lhs, *rhs):
     # Extract data sizes (seems the type itself doesn't expose this)
     size_lhs = lhs_(0).itemsize
     size_rhs = rhs_(0).itemsize
+    # ``bool`` is NumPy's lowest-rank numeric operand: ``result_type(bool, X) == X`` for
+    # any numeric X, int OR float (e.g. ``np.bool_(True) * np.int32(3)`` is ``int32(3)``).
+    # ``bool`` is NOT ``issubdtype(_, integer)``, so without this the float-precedence
+    # fallthrough below treats it as the winning "float-like" side and returns ``bool`` --
+    # truncating ``bool * int`` to 0/1 (the nussinov fp_factor ``c*t + (1-c)*e`` miscompile).
+    # The both-bool case already returned above (``lhs == rhs``).
+    if numpy.issubdtype(lhs_, numpy.bool_):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.bool_):
+        return lhs
     # Both are integers
     if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(rhs_, numpy.integer):
         # If one byte width is larger, use it
@@ -707,6 +740,9 @@ class struct(typeclass):
         # self._data = fields_and_types
         self.type = ctypes.Structure
         self.name = name
+        # `ctypes.Structure` is the same wrapped type for every struct, so the struct's own name is
+        # the only string that identifies it.
+        self.typename = name
         # TODO: Assuming no alignment! Get from ctypes
         # self.bytes = sum(t.bytes for t in fields_and_types.values())
         self.ctype = name
@@ -1207,6 +1243,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1235,12 +1272,17 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
-
+    gpuStream_t = opaque('gpuStream_t')
 _bool = bool
 
 
-def dtype_to_typeclass(dtype=None):
-    DTYPE_TO_TYPECLASS = {
+@lru_cache(maxsize=1, typed=True)
+def _dtype_to_typeclass_map() -> types.MappingProxyType:
+    """Built once. It was rebuilt -- 24 entries, 4 fresh `typeclass` objects -- on every call, which
+    measured 35.5k calls / 1.17s in one CloudSC load and 41% of every `symbol()` construction.
+    Handed out read-only, so the shared instance cannot be poisoned by a caller.
+    """
+    return types.MappingProxyType({
         _bool: typeclass(_bool),
         int: typeclass(int),
         float: typeclass(float),
@@ -1267,10 +1309,14 @@ def dtype_to_typeclass(dtype=None):
         # FIXME
         numpy.longlong: int64,
         numpy.ulonglong: uint64
-    }
+    })
+
+
+def dtype_to_typeclass(dtype=None):
+    mapping = _dtype_to_typeclass_map()
     if dtype is None:
-        return DTYPE_TO_TYPECLASS
-    return DTYPE_TO_TYPECLASS[dtype]
+        return mapping
+    return mapping[dtype]
 
 
 FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}

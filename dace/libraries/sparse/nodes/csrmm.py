@@ -8,7 +8,9 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
+from dace.libraries.sparse import sparse_dialect
 import numpy as np
+from dace.ordered import OrderedSet
 
 
 def _is_complex(dtype):
@@ -220,10 +222,7 @@ class ExpandCSRMMPure(ExpandTransformation):
         k_map_entry.add_out_connector("OUT_tmp_b_1")
 
         tasklet_ind = nstate.add_tasklet("Indirection",
-                                         inputs={
-                                             "__ind_b": None,
-                                             "index_a_cols_0": None
-                                         },
+                                         inputs=OrderedSet(('__ind_b', 'index_a_cols_0')),
                                          outputs={'lookup': None},
                                          code="lookup = __ind_b[index_a_cols_0]")
         nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
@@ -232,10 +231,8 @@ class ExpandCSRMMPure(ExpandTransformation):
         nstate.add_edge(k_map_entry, "OUT_tmp_b_1", tasklet_ind, "__ind_b",
                         mm.Memlet.simple("_b", f"k, 0:{B_rows}" if node.transB else f"0:{B_rows}, k"))
 
-        tasklet_mult = nstate.add_tasklet("spmm", {
-            "__a": None,
-            "__b": None
-        }, {"__o": None},
+        tasklet_mult = nstate.add_tasklet("spmm",
+                                          OrderedSet(('__a', '__b')), {"__o": None},
                                           code=f"__o = {node.alpha} * (__a * __b)")
         nstate.add_edge(k_map_entry, "OUT_tmp_a_vals_1", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
         nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
@@ -331,12 +328,13 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandCSRMMCuSPARSE(ExpandTransformation):
+class ExpandCSRMMGPUSparse(ExpandTransformation):
 
     environments = [environments.cuSPARSE]
 
-    @staticmethod
-    def expansion(node, state, sdfg):
+    @classmethod
+    def expansion(cls, node, state, sdfg):
+        d = cls.dialect
         node.validate(sdfg, state)
 
         operands = _get_csrmm_operands(node, state, sdfg)
@@ -351,7 +349,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
                          for desc in (arows, acols, avals, bdesc, cdesc))
 
         dtype = avals.dtype.base_type
-        func = "cusparseSpMM"
+        func = f"{d.prefix}SpMM"
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'
@@ -370,7 +368,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        call_prefix = environments.cuSPARSE.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Deal with complex input constants
@@ -384,18 +382,18 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
             beta = f'{dtype.ctype}({node.beta})'
 
         # Set pointer mode to host
-        call_prefix += f'''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_HOST);
+        call_prefix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_HOST);
         {dtype.ctype} alpha = {alpha};
         {dtype.ctype} beta = {beta};
         '''
-        call_suffix += '''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_DEVICE);'''
+        call_suffix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);'''
         alpha = f'({cdtype} *)&alpha'
         beta = f'({cdtype} *)&beta'
 
         # Set up options for code formatting
         # opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
 
-        opt = {}
+        opt = {'d': d}
 
         opt['arr_prefix'] = arr_prefix = ''
         if needs_copy:
@@ -403,17 +401,17 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
 
         opt['func'] = func
 
-        opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+        opt['opA'] = f'{d.upper}_OPERATION_NON_TRANSPOSE'
 
         if node.transB:
-            opt['opB'] = 'CUSPARSE_OPERATION_TRANSPOSE'
+            opt['opB'] = f'{d.upper}_OPERATION_TRANSPOSE'
         else:
-            opt['opB'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+            opt['opB'] = f'{d.upper}_OPERATION_NON_TRANSPOSE'
 
-        opt['layout'] = 'CUSPARSE_ORDER_ROW'
+        opt['layout'] = f'{d.upper}_ORDER_ROW'
 
-        opt['compute'] = f'CUDA_R_{to_cublas_computetype(dtype)}'
-        opt['handle'] = '__dace_cusparse_handle'
+        opt['compute'] = f'{d.datatype_prefix}_R_{to_cublas_computetype(dtype)}'
+        opt['handle'] = f'{d.handle}'
 
         opt['alpha'] = alpha
         opt['beta'] = beta
@@ -435,42 +433,42 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         opt['annz'] = avals.shape[0]
 
         call = """
-            cusparseSpMatDescr_t matA;
-            cusparseDnMatDescr_t matB, matC;
+            {d.prefix}SpMatDescr_t matA;
+            {d.prefix}DnMatDescr_t matB, matC;
             void*                dBuffer    = NULL;
             size_t               bufferSize = 0;
             // Create sparse matrix A in CSR format
-            dace::sparse::CheckCusparseError( cusparseCreateCsr(&matA, {arows}, {acols}, {annz},
+            {d.check}( {d.prefix}CreateCsr(&matA, {arows}, {acols}, {annz},
                                                 {arr_prefix}_a_rows, {arr_prefix}_a_cols, {arr_prefix}_a_vals,
-                                                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                                CUSPARSE_INDEX_BASE_ZERO, {compute}) );
+                                                {d.upper}_INDEX_32I, {d.upper}_INDEX_32I,
+                                                {d.upper}_INDEX_BASE_ZERO, {compute}) );
             // Create dense matrix B
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {brows}, {bcols}, {ldb}, {arr_prefix}_b,
+            {d.check}( {d.prefix}CreateDnMat(&matB, {brows}, {bcols}, {ldb}, {arr_prefix}_b,
                                                 {compute}, {layout}) );
             // Create dense matrix C
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {nrows}, {ncols}, {ldc}, {arr_prefix}_c,
+            {d.check}( {d.prefix}CreateDnMat(&matC, {nrows}, {ncols}, {ldc}, {arr_prefix}_c,
                                                 {compute}, {layout}) );
             // allocate an external buffer if needed
-            dace::sparse::CheckCusparseError( cusparseSpMM_bufferSize(
+            {d.check}( {d.prefix}SpMM_bufferSize(
                                             {handle},
                                             {opA},
                                             {opB},
                                             {alpha}, matA, matB, {beta}, matC, {compute},
-                                            CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) );
-            cudaMalloc(&dBuffer, bufferSize);
+                                            {d.upper}_SPMM_ALG_DEFAULT, &bufferSize) );
+            gpuMalloc(&dBuffer, bufferSize);
 
             // execute SpMM
-            dace::sparse::CheckCusparseError( cusparseSpMM({handle},
+            {d.check}( {d.prefix}SpMM({handle},
                                             {opA},
                                             {opB},
                                             {alpha}, matA, matB, {beta}, matC, {compute},
-                                            CUSPARSE_SPMM_ALG_DEFAULT, dBuffer) );
+                                            {d.upper}_SPMM_ALG_DEFAULT, dBuffer) );
 
             // destroy matrix/vector descriptors
-            dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
-            cudaFree(dBuffer);
+            {d.check}( {d.prefix}DestroySpMat(matA) );
+            {d.check}( {d.prefix}DestroyDnMat(matB) );
+            {d.check}( {d.prefix}DestroyDnMat(matC) );
+            gpuFree(dBuffer);
         """.format_map(opt)
 
         code = (call_prefix + call + call_suffix)
@@ -485,10 +483,10 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         # If buffers are not on the GPU, copy them
         if needs_copy:
             if node.beta != 0.0:
-                from dace.transformation.interstate import GPUTransformSDFG
+                from dace.transformation.passes.offloading import OffloadToAccelerator
 
                 nsdfg: dace.SDFG = ExpandCSRMMPure.expansion(node, state, sdfg)
-                nsdfg.apply_transformations(GPUTransformSDFG)
+                OffloadToAccelerator().apply_pass(nsdfg, {})
                 return nsdfg
 
             nsdfg = dace.SDFG('nested_gemm')
@@ -540,6 +538,18 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandCSRMMCuSPARSE(ExpandCSRMMGPUSparse):
+    environments = [environments.cusparse.cuSPARSE]
+    dialect = sparse_dialect.CUSPARSE
+
+
+@dace.library.expansion
+class ExpandCSRMMHipSPARSE(ExpandCSRMMGPUSparse):
+    environments = [environments.hipsparse.hipSPARSE]
+    dialect = sparse_dialect.HIPSPARSE
+
+
 @dace.library.node
 class CSRMM(dace.sdfg.nodes.LibraryNode):
     """
@@ -548,8 +558,16 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandCSRMMPure, "MKL": ExpandCSRMMMKL, "cuSPARSE": ExpandCSRMMCuSPARSE}
-    default_implementation = None
+    implementations = {
+        "pure": ExpandCSRMMPure,
+        "MKL": ExpandCSRMMMKL,
+        "cuSPARSE": ExpandCSRMMCuSPARSE,
+        "hipSPARSE": ExpandCSRMMHipSPARSE
+    }
+    # The ``sparse`` library has no config-schema entry, so an unset node resolved to nothing and
+    # raised "No implementation or default implementation specified" at codegen. ``pure`` is the
+    # dependency-free CPU lowering (row map over an nnz map).
+    default_implementation = "pure"
 
     # Object fields
     transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
@@ -563,8 +581,9 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transB=False, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
-                                 if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
+                         inputs=(OrderedSet(
+                             ('_a_rows', '_a_cols', '_a_vals', '_b', '_cin')) if beta != 0 else OrderedSet(
+                                 ('_a_rows', '_a_cols', '_a_vals', '_b'))),
                          outputs={"_c"})
         self.transB = transB
         self.alpha = alpha

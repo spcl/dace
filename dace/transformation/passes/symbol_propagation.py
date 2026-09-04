@@ -16,7 +16,7 @@ from typing import Any, Dict, Set, Optional
 from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.symbolic import pystr_to_symbolic, scalars
+from dace.symbolic import SymbolicType, equalize_symbols_across, pystr_to_symbolic, scalars
 
 
 def free_symbol_names(value) -> Set[str]:
@@ -153,6 +153,82 @@ def reads_data(value, owner: SDFG) -> bool:
     return bool(free_symbol_names(value) & set(owner.arrays))
 
 
+def consistent_bindings(sd: SDFG) -> Dict[str, Optional[str]]:
+    """Every symbol ``sd``'s interstate edges bind, mapped to the RHS all its binding edges agree
+    on -- or ``None`` where they disagree or the binding is self-referential (``i = i + 1``).
+
+    Collection only; it says what a symbol IS, not whether substituting it is safe. The
+    elimination round below adds its own scope guard on top, and
+    :func:`resolve_bindings` reads the same table without mutating anything.
+    """
+    bindings: Dict[str, Optional[str]] = {}
+    for e in sd.all_interstate_edges():
+        for lhs, rhs in e.data.assignments.items():
+            if rhs is None or lhs in free_symbol_names(rhs):
+                bindings[lhs] = None
+                continue
+            if lhs not in bindings:
+                bindings[lhs] = rhs
+            elif bindings[lhs] is not None and bindings[lhs] != rhs:
+                bindings[lhs] = None
+    return bindings
+
+
+def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8, expand_data_reads: bool = False) -> SymbolicType:
+    """``expr`` with every consistently-bound interstate symbol expanded into its RHS, to a fixed
+    point (bounded by ``rounds``).
+
+    A QUERY, not a rewrite: it returns a new expression and leaves the SDFG bit-identical.
+    :class:`SymbolPropagation` deliberately refuses to substitute a binding whose RHS names a loop
+    variable, because ``replace_dict`` would then size a descriptor by it -- so a promoted index
+    such as ``__sym_i_times_inc = i * inc`` stays opaque in the graph, and a structural matcher
+    asking ``coeff(i)`` about it reads 0, i.e. "loop-invariant". This recovers the relation for the
+    matcher without touching the descriptors.
+
+    A binding that is a BARE data read (``bsym = b_scal``, ``bsym = b[i]``) is left alone by
+    default: its value is a runtime datum, so for a structural matcher expanding it only renames
+    the symbol to a container and answers nothing. A container reached inside a larger expression
+    (``i * inc``, ``inc`` a scalar argument) is kept -- that is the spelling the index carried
+    before promotion, and the relation to the loop variable is the whole point of asking.
+
+    ``expand_data_reads`` expands those too, for the one caller that gains from it: a solver that
+    models the container itself. The frontend materializes the SAME read under a fresh name at
+    every use (a branch condition and the subscript it guards each get their own ``idx[i]``
+    symbol), so leaving them opaque hands the solver two unrelated variables where the program has
+    one value. Expanding restores the identity, and re-indexes it by the loop variable so distinct
+    iterations no longer share one opaque symbol.
+
+    :param expr: A symbolic expression (a memlet-subset bound, typically).
+    :param sd: The SDFG whose interstate edges carry the bindings.
+    :param rounds: Substitution rounds before giving up on a chain.
+    :param expand_data_reads: Also expand bindings whose RHS reads a data container.
+    :returns: The expanded expression; unresolved symbols simply stay put.
+    """
+    bindings = consistent_bindings(sd)
+    if not bindings:
+        return expr
+    resolved = expr
+    for _ in range(rounds):
+        repl = {}
+        for sym in resolved.free_symbols:
+            rhs = bindings.get(str(sym))
+            if rhs is None:
+                continue
+            if not expand_data_reads and (is_array_access(rhs) or rhs.strip() in sd.arrays):
+                continue
+            try:
+                repl[sym] = pystr_to_symbolic(rhs)
+            except Exception:  # noqa: BLE001 - an unparseable RHS just stays opaque
+                continue
+        if not repl:
+            break
+        resolved = resolved.xreplace(repl)
+    # Each RHS is parsed on its own, so one name can come back as several instances (a plain one
+    # beside a stamped one). Merge them: ``coeff`` / ``in free_symbols`` on the result go through
+    # identity, and duplicates make both answer wrong without raising.
+    return equalize_symbols_across(resolved)[0]
+
+
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -251,16 +327,7 @@ class SymbolPropagation(ppl.Pass):
         eliminated: Set[str] = set()
         for sd in sdfg.all_sdfgs_recursive():
             # Propagatable: every binding edge agrees, and the RHS is not self-referential.
-            bindings: Dict[str, Optional[str]] = {}
-            for e in sd.all_interstate_edges():
-                for lhs, rhs in e.data.assignments.items():
-                    if rhs is None or lhs in free_symbol_names(rhs):
-                        bindings[lhs] = None
-                        continue
-                    if lhs not in bindings:
-                        bindings[lhs] = rhs
-                    elif bindings[lhs] is not None and bindings[lhs] != rhs:
-                        bindings[lhs] = None
+            bindings = consistent_bindings(sd)
             # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope, so
             # ``K = i + 1`` would size a transient by a loop variable and allocate it outside.
             invariant = {str(s) for s in sd.free_symbols} | set(sd.constants_prop.keys())

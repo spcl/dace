@@ -1,0 +1,107 @@
+import copy
+import dace
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any, Dict, Optional
+
+from dace import SDFG
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl, transformation
+from dace import properties
+from dace.ordered import OrderedSet
+
+
+@transformation.explicit_cf_compatible
+class RemoveRedundantAssignmentTasklets(ppl.Pass):
+    copy_tasklet_pattern = properties.Property(dtype=str, default='', allow_none=False)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return {}
+
+    def _arr_appears_in_loop(self, arr_name: str, loop: LoopRegion):
+        pass
+
+    def _arr_appears_in_conditional(self, arr_name: str, conditional: ConditionalBlock):
+        pass
+
+    def _is_removable(self, state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
+        """Whether ``node`` is a TRULY redundant ``_out = _in`` copy that can be
+        folded into a single AccessNode -> AccessNode edge.
+
+        Only a copy between two AccessNodes with no reduction is removable.
+        A tasklet whose single input comes from a map/scope node (a map *body*,
+        e.g. the reduction body ``_s = _a``) or whose output carries a ``wcr``
+        is NOT a redundant copy: removing it would drop the map body / the
+        accumulation. (The earlier version asserted ``ie.src`` was an AccessNode
+        and dropped the ``wcr``, crashing on / silently corrupting those.)
+
+        :param state: The state owning ``node``.
+        :param node: A single-in single-out tasklet matching the copy pattern.
+        :returns: ``True`` iff it is safe to fold the copy away.
+        """
+        ie = state.in_edges(node)[0]
+        oe = state.out_edges(node)[0]
+        if not isinstance(ie.src, dace.nodes.AccessNode) or not isinstance(oe.dst, dace.nodes.AccessNode):
+            return False
+        if ie.data.wcr is not None or oe.data.wcr is not None:
+            return False
+        return True
+
+    def _apply(self, sdfg: dace.SDFG) -> int:
+        """Fold every redundant ``_out = _in`` tasklet in ``sdfg`` into a direct copy edge.
+
+        :param sdfg: The SDFG to rewrite in place, recursing into nested SDFGs.
+        :returns: Number of tasklets removed.
+        """
+        removed = 0
+        for state in sdfg.all_states():
+            nodes_to_rm = OrderedSet()
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    if len(node.in_connectors) == 1 and len(node.out_connectors) == 1:
+                        in_conn_name = next(iter(node.in_connectors.keys()))
+                        out_conn_name = next(iter(node.out_connectors.keys()))
+                        if (node.code.as_string == f"{out_conn_name} = {in_conn_name}"
+                                or node.code.as_string == f"{out_conn_name} = {in_conn_name};"
+                                or node.code.as_string == f"vector_copy({out_conn_name}, {in_conn_name});"):
+                            if self._is_removable(state, node):
+                                nodes_to_rm.add(node)
+
+            for node in nodes_to_rm:
+                ie = state.in_edges(node)[0]
+                oe = state.out_edges(node)[0]
+
+                state.remove_node(node)
+
+                state.add_edge(
+                    ie.src, None, oe.dst, oe.dst_conn,
+                    dace.memlet.Memlet(
+                        data=oe.data.data,
+                        subset=copy.deepcopy(oe.data.subset),
+                        other_subset=copy.deepcopy(ie.data.subset),
+                    ))
+
+            removed += len(nodes_to_rm)
+
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    removed += self._apply(node.sdfg)
+
+        return removed
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Remove every redundant assignment tasklet in ``sdfg``.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Number of tasklets removed, or ``None`` if there were none.
+        """
+        return self._apply(sdfg) or None
+
+    def report(self, pass_retval: Any) -> Optional[str]:
+        return f'Removed {pass_retval} redundant assignment tasklets.'

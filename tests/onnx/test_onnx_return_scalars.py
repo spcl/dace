@@ -9,9 +9,12 @@ import onnx
 
 from dace.libraries import onnx as donnx
 
+from tests.ml_gpu_utils import DEVICES, is_gpu, experimental_cuda
+
 
 @pytest.mark.onnx
-def test_onnx_return_scalars():
+@pytest.mark.parametrize("device", DEVICES)
+def test_onnx_return_scalars(device):
     # Dace programs can't return scalars.
     # this test checks that we correctly copy out the scalars using a size [1] array
 
@@ -49,13 +52,17 @@ def test_onnx_return_scalars():
     onnx.checker.check_model(model_def)
 
     # now we can test the backend
-    dace_model = donnx.ONNXModel("test_onnx_return_scalars", model_def)
+    dace_model = donnx.ONNXModel(f"test_onnx_return_scalars_{device}", model_def, cuda=is_gpu(device))
     inp = torch.arange(5).type(torch.float32)
 
-    result = dace_model(inp)
+    if is_gpu(device):
+        with experimental_cuda():
+            result = dace_model(inp.cuda())
+    else:
+        result = dace_model(inp)
     assert result.shape == (), f"Expected scalar shape (), got {result.shape}"
     assert result[()] == 1 + 2 + 3 + 4, f"Expected sum 10, got {result[()]}"
 
 
 if __name__ == "__main__":
-    test_onnx_return_scalars()
+    test_onnx_return_scalars(device="cpu")

@@ -4,7 +4,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
+from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
+                                           expanded_input_connectors)
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -32,12 +34,13 @@ class ExpandRecvMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = '1'
         buffer_offset = 0  # this is here because the frontend already changes the ptr
-        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        comm = resolve_comm(node, parent_state)
+        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, MPI_STATUS_IGNORE);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          expanded_input_connectors(node, parent_state),
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
@@ -54,7 +57,7 @@ class Recv(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_src', '_tag')), outputs={"_buffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

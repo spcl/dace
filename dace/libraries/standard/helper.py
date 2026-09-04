@@ -22,6 +22,22 @@ CPU_RESIDENT_STORAGES = frozenset({
 })
 
 
+def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
+    """
+    Return the storage a cuSOLVER/LAPACK status scalar (``devInfo``) should use so that it stays
+    host-checkable. When the matrix operand lives in GPU-resident memory, the status is placed in
+    pinned host memory (DMA-reachable from the device, so cuSOLVER can write it via the unified
+    address space while the host can still read the result). CPU-resident inputs keep their storage.
+
+    Lives here rather than in ``dace.dtypes`` because it keys off ``GPU_RESIDENT_STORAGES``
+    (``{GPU_Global, GPU_Shared}``), which is defined above -- note ``dtypes.GPU_STORAGES`` is a
+    *different*, narrower set (``{GPU_Shared}``) and is not a substitute.
+    """
+    if storage in GPU_RESIDENT_STORAGES:
+        return dtypes.StorageType.CPU_Pinned
+    return storage
+
+
 def collapse_shape_and_strides(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
@@ -94,3 +110,70 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
+# --------------------------------------------------------------------------------------------
+
+#: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node
+#: inside it few enough times to ignore, so it does not count as re-entry.
+REENTRY_SHORT_LOOP_TRIPS = 8
+
+
+def is_short_loop(loop) -> bool:
+    """Whether ``loop`` provably runs fewer than :data:`REENTRY_SHORT_LOOP_TRIPS` ascending trips.
+
+    :param loop: the :class:`~dace.sdfg.state.LoopRegion` to measure.
+    :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
+              symbolic-length loop answers ``False``.
+    """
+    from dace.transformation.passes.analysis import loop_analysis
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None:
+        return False
+    if dace.symbolic.ask('positive', dace.symbolic.simplify(stride)) is not True:
+        return False
+    trips = dace.symbolic.int_floor(end - start, stride) + 1
+    return dace.symbolic.ask('negative', dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+
+
+def is_reentered_cpu_transfer(node: nodes.LibraryNode, state: dace.SDFGState) -> bool:
+    """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
+    would be re-opened on every entry.
+
+    Same scope walk (:func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes`) as
+    :func:`~dace.transformation.auto.auto_optimize.libnode_is_sequential`, but TRIP-COUNT aware: a
+    parallel enclosing map is always a hazard (nested parallelism), while an enclosing loop counts
+    only when it is not provably short -- pinning every loop-nested transfer sequential throws
+    away real parallelism around a handful of trips.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :returns: ``True`` if an enclosing parallel map or a not-provably-short loop re-enters ``node``.
+    """
+    from dace.sdfg.state import LoopRegion
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+    for scope in get_parent_map_and_loop_scopes(state.sdfg, node, state):
+        if isinstance(scope, nodes.MapEntry):
+            if scope.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+        elif isinstance(scope, LoopRegion) and not is_short_loop(scope):
+            return True
+    return False
+
+
+def cpu_transfer_parallelizes(node: nodes.LibraryNode, state: dace.SDFGState,
+                              num_elements: dace.symbolic.SymbolicType) -> bool:
+    """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
+
+    Both reasons to take it away: provably too small to amortize a fork/join, or re-entered by an
+    enclosing parallel map / long loop that pays that fork/join again on every entry. Cheap size
+    check first, so the scope walk is skipped for a transfer that is small either way.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :param num_elements: total element count of the transfer (constant or symbolic).
+    :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
+    """
+    return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(node, state)

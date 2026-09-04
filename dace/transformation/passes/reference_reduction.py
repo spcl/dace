@@ -8,6 +8,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties
@@ -120,7 +121,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
+                    if fsyms & entry.new_symbol_names(state):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)
@@ -151,9 +152,9 @@ class ReferenceToView(ppl.Pass):
                 # set memlets, reconnecting the remaining surrounding nodes so as
                 # to not break scopes
                 edges_to_add = []
-                edges_to_remove = set()
-                nodes_to_remove = set()
-                affected_nodes = set()
+                edges_to_remove = OrderedSet()
+                nodes_to_remove = OrderedSet()
+                affected_nodes = OrderedSet()
                 for e in state.in_edges_by_connector(node, 'set'):
                     # This is a reference set edge. Consider scope and neighbors and remove set
                     if state.out_degree(e.dst) == 0:

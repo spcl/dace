@@ -1,7 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
+import re
+
 import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import scalar_to_symbol
 from dace.transformation import interstate as isxf
 
@@ -176,7 +178,15 @@ def test_promote_copy():
 
 
 def test_promote_array_assignment():
-    """ Simple promotion with array assignment. """
+    """ A FLOAT scalar read from an array and used in an inter-state condition
+    (``if j >= 0.0``) IS promotable. Scalars that feed an inter-state condition
+    are exempt from the integer-only filter: an upstream canon pass symbolicizes
+    the condition to reference the scalar, so it must be promoted (float included)
+    or code generation emits an undeclared-symbol error. Promotion is
+    value-preserving and does not leak the source array into the symbol namespace
+    (the interstate assignment ``j = A[1, 1]`` reads a fixed index; ``A`` stays an
+    array). The int64 variant (:func:`test_promote_array_assignment_tasklet`) also
+    promotes. """
 
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
@@ -185,25 +195,9 @@ def test_promote_array_assignment():
             A[:] += j
 
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
+    assert 'j' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    sdfg.apply_transformations_repeated([isxf.StateFusion, isxf.BlockFusion])
-
-    # There should be 2 states:
-    # [empty] --j=A[1, 1]--> [Conditional]
-    assert sdfg.number_of_nodes() == 2
-    # The conditional should contain one branch, with one state, with a single map from A->A inside of it.
-    cond = None
-    for n in sdfg.nodes():
-        if isinstance(n, ConditionalBlock):
-            cond = n
-            break
-    assert cond is not None
-    assert len(cond.branches) == 1
-    assert len(cond.branches[0][1].nodes()) == 1
-    assert len(cond.branches[0][1].nodes()[0].nodes()) == 5
-
-    # Program should produce correct result
+    assert 'A' not in sdfg.symbols, "the source array must not leak into the symbol namespace"
     A = np.random.rand(20, 20)
     expected = A + A[1, 1]
     sdfg(A=A)
@@ -783,11 +777,303 @@ def test_scalar_index_regression(memlet_volume_n):
     assert np.allclose(a, ref)
 
 
+def _whole_statement_cast_sdfg(cast='dace.int64'):
+    """A transient scalar written by the WHOLE-statement dtype cast ``s = <cast>(inc)``
+    on the symbol ``inc``; ``s`` is read into an interstate symbol downstream so it is
+    a promotion candidate."""
+    sdfg = dace.SDFG('cast_sdfg')
+    sdfg.add_scalar('s', dace.int64, transient=True)
+    sdfg.add_symbol('inc', dace.int64)
+    sdfg.add_symbol('out_sym', dace.int64)
+    st = sdfg.add_state()
+    w = st.add_write('s')
+    t = st.add_tasklet('t', {}, {'__o'}, f'__o = {cast}(inc)')
+    st.add_edge(t, '__o', w, None, dace.Memlet('s[0]'))
+    st2 = sdfg.add_state()
+    sdfg.add_edge(st, st2, dace.InterstateEdge(assignments={'out_sym': 's'}))
+    return sdfg
+
+
+def _midexpr_cast_sdfg(cast='dace.int64'):
+    """A transient scalar written by a MID-EXPRESSION cast ``s = k + <cast>(inc)`` --
+    the cast is nested inside a larger expression, NOT the whole statement."""
+    sdfg = dace.SDFG('midexpr_cast_sdfg')
+    sdfg.add_scalar('s', dace.int64, transient=True)
+    sdfg.add_symbol('k', dace.int64)
+    sdfg.add_symbol('inc', dace.int64)
+    sdfg.add_symbol('out_sym', dace.int64)
+    st = sdfg.add_state()
+    w = st.add_write('s')
+    t = st.add_tasklet('t', {}, {'__o'}, f'__o = k + {cast}(inc)')
+    st.add_edge(t, '__o', w, None, dace.Memlet('s[0]'))
+    st2 = sdfg.add_state()
+    sdfg.add_edge(st, st2, dace.InterstateEdge(assignments={'out_sym': 's'}))
+    return sdfg
+
+
+def test_whole_statement_int_cast_promotes_and_keeps_cast():
+    """``s = dace.int64(inc)`` (whole-statement integer cast) promotes by default;
+    the cast survives as a symbolic ``int64(inc)`` in the interstate assignment."""
+    sdfg = _whole_statement_cast_sdfg('dace.int64')
+    assert 's' in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    rhs = next(str(v) for e in sdfg.all_interstate_edges() for kk, v in (e.data.assignments or {}).items() if kk == 's')
+    assert 'int64' in rhs and 'inc' in rhs, f"cast not kept: s := {rhs}"
+
+
+def test_midexpression_int_cast_not_promoted():
+    """``s = k + dace.int64(inc)`` (cast nested in a larger expression) is unsafe:
+    it stays a scalar (not promoted), matching the whole-statement-only rule."""
+    sdfg = _midexpr_cast_sdfg('dace.int64')
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg)
+
+
+def test_whole_statement_float_cast_not_promoted():
+    """A whole-statement FLOAT cast ``s = dace.float64(inc)`` is not an integer
+    typecast, so it stays blocked (no silent float-truncation promotion)."""
+    sdfg = _whole_statement_cast_sdfg('dace.float64')
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg, integers_only=False)
+
+
+def test_promotion_rejects_orphan_condition_scalar():
+    """Postcondition: promotion never introduces an undefined free symbol.
+
+    A transient scalar referenced by a branch condition but with no writer (its
+    defining write was removed while it was referenced only by the condition --
+    the crc16 failure mode before the ``PrivatizeScalars`` fix) cannot be promoted
+    to a *bound* symbol: there is no writer to turn into an interstate assignment.
+    ``ScalarToSymbolPromotion`` must reject this loudly instead of leaking an
+    undefined symbol into codegen.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def cond_scalar(a: dace.int64[N], out: dace.int64[1]):
+        c = 0
+        for i in range(N):
+            t = a[i] & 1
+            if t:
+                c = c + 1
+        out[0] = c
+
+    sdfg = cond_scalar.to_sdfg(simplify=False)
+    # Orphan ``t``: delete its writer subgraph, leaving only the condition reference.
+    for st in list(sdfg.all_states()):
+        for an in list(st.data_nodes()):
+            if an.data == 't' and st.in_degree(an) > 0:
+                srcs = [e.src for e in st.in_edges(an)]
+                st.remove_node(an)
+                for s in srcs:
+                    if isinstance(s, dace.nodes.Tasklet) and s in st.nodes() and st.degree(s) == 0:
+                        st.remove_node(s)
+    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0 for st in sdfg.all_states()
+                                          for an in st.data_nodes())
+
+    with pytest.raises(ValueError, match='undefined symbol'):
+        scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+
+def test_complex_scalar_from_array_not_promotable():
+    """A COMPLEX scalar read from a complex array that is NOT itself an
+    inter-state condition scalar stays data. Here the guard ``abs(z) < 1`` is
+    computed into a bool ``__tmp0`` (the actual condition scalar), so ``z`` is an
+    ordinary in-state complex transient: the integer-only filter drops it and it
+    is never promoted. (A complex scalar that IS the direct condition scalar --
+    e.g. mandelbrot's ``abs(Z[i]) < 2`` guard, exercised in
+    :func:`test_abs_complex_guard_compiles_and_runs` -- promotes safely because
+    ``Abs`` of a complex yields a real in codegen.) End-to-end: no complex symbol,
+    no array-as-symbol leak, bit-exact through canonicalization. """
+    Nsym = dace.symbol('Nsym')
+
+    @dace.program
+    def cplx_cond(a: dace.complex128[Nsym], out: dace.complex128[Nsym]):
+        for i in range(Nsym):
+            z = a[i]
+            if np.absolute(z) < 1.0:
+                out[i] = z * z
+            else:
+                out[i] = z
+
+    sdfg = cplx_cond.to_sdfg(simplify=False)
+    promotable = scalar_to_symbol.find_promotable_scalars(sdfg)
+    assert not any(sdfg.arrays[s].dtype.is_complex() for s in promotable), \
+        f"a complex scalar must not be promotable; got {promotable}"
+
+    # End-to-end value preservation through canonicalization (no complex symbol,
+    # no array-as-symbol leak -> compiles + runs correctly).
+    from dace.transformation.passes.canonicalize import canonicalize
+    csdfg = cplx_cond.to_sdfg(simplify=True)
+    canonicalize(csdfg, validate=True)
+    assert not any(csdfg.arrays.get(s) is None and s == 'a' for s in csdfg.symbols), "array 'a' leaked as a symbol"
+    n = 12
+    rng = np.random.default_rng(0)
+    a = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex128)
+    ref = np.array([av * av if abs(av) < 1.0 else av for av in a], dtype=np.complex128)
+    got = np.zeros(n, np.complex128)
+    csdfg(a=a.copy(), out=got, Nsym=n)
+    assert np.allclose(got, ref)
+
+
+def test_mandelbrot2_complex_escape_pattern():
+    """The mandelbrot2 escape-iteration pattern: a complex accumulator ``Z``
+    updated under ``abs(Z) < horizon`` guards over an iteration loop. The complex
+    guard scalar must not be promoted to a symbol (same int_pts fix as
+    contour_integral). Canonicalizes, compiles and runs bit-exact vs a
+    plain-Python reference. """
+    Nsym = dace.symbol('Nsym')
+
+    @dace.program
+    def mandel(C: dace.complex128[Nsym], Zout: dace.complex128[Nsym], maxiter: dace.int64):
+        Z = np.zeros((Nsym, ), dtype=dace.complex128)
+        for it in range(maxiter):
+            for i in dace.map[0:Nsym]:
+                if np.absolute(Z[i]) < 2.0:
+                    Z[i] = Z[i] * Z[i] + C[i]
+        Zout[:] = Z
+
+    from dace.transformation.passes.canonicalize import canonicalize
+    sdfg = mandel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    # No array (complex ``C`` / ``Z`` / ``Zout``) may leak into the symbol namespace
+    # (the ``abs(Z[i]) < 2`` guard scalar must stay complex data, not a symbol).
+    assert not ({'C', 'Z', 'Zout'} & set(sdfg.symbols)), f"an array leaked as a symbol: {set(sdfg.symbols)}"
+
+    n, mit = 8, 10
+    rng = np.random.default_rng(1)
+    C = (0.5 * rng.standard_normal(n) + 0.5j * rng.standard_normal(n)).astype(np.complex128)
+    Zr = np.zeros(n, np.complex128)
+    for _ in range(mit):
+        for i in range(n):
+            if abs(Zr[i]) < 2.0:
+                Zr[i] = Zr[i] * Zr[i] + C[i]
+    Zout = np.zeros(n, np.complex128)
+    sdfg(C=C.copy(), Zout=Zout, maxiter=mit, Nsym=n)
+    assert np.allclose(Zout, Zr), f"Z mismatch: {np.abs(Zout - Zr).max():.2e}"
+
+
+def test_abs_complex_guard_compiles_and_runs():
+    """ Regression for the ``Abs`` return type: ``abs`` of a COMPLEX value used in
+    a guard (``abs(a[i]) < 2``) is a REAL comparison. Promotion folds the guard
+    into a data-dependent condition whose generated C++ is
+    ``if (Abs(<complex>) < 2.0)``. The runtime ``Abs`` must return the real
+    magnitude -- its return type is ``decltype(abs(val))``
+    (``dace/runtime/include/dace/pyinterop.h``) -- otherwise the guard is
+    ``complex < double`` and g++ rejects it with 'no match for operator<'.
+    Canonicalizes, confirms the guard survives as an ``Abs`` comparison, compiles
+    (the crux: fails if ``Abs`` returns complex) and runs bit-exact. """
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.codegen import codegen
+    N = dace.symbol('N')
+
+    @dace.program
+    def absguard(a: dace.complex128[N], out: dace.complex128[N]):
+        for i in dace.map[0:N]:
+            if np.absolute(a[i]) < 2.0:
+                out[i] = a[i] * a[i]
+            else:
+                out[i] = a[i]
+
+    sdfg = absguard.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    # The magnitude must reach the comparison as a REAL -- that is the contract ``Abs`` breaks
+    # when it returns complex. Two lowerings say it: the guard folded into an interstate
+    # condition (``Abs(<complex>) < 2.0`` inline), or the magnitude bound to a real local first
+    # (``double m; m = abs(z); if (m < 2.0)``). Assert the property, not one of the two shapes.
+    lines = [line.strip() for c in codegen.generate_code(sdfg) for line in c.clean_code.splitlines()]
+    inline = any('Abs(' in line and '<' in line for line in lines)
+    bound = next((m.group(1) for m in (re.match(r'(\w+)\s*=\s*[aA]bs\(', line) for line in lines) if m), None)
+    real_typed = bound is not None and any(re.match(rf'(double|float)\s+{bound}\s*;', line) for line in lines)
+    compared = bound is not None and any(f'{bound} <' in line for line in lines)
+    assert inline or (real_typed and compared), \
+        f"the complex magnitude must be compared as a real; got bound={bound!r} in:\n" + "\n".join(lines)
+    csdfg = sdfg.compile()  # fails to compile if Abs(complex) returns complex
+
+    n = 16
+    rng = np.random.default_rng(2)
+    a = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex128)
+    ref = np.array([av * av if abs(av) < 2.0 else av for av in a], dtype=np.complex128)
+    got = np.zeros(n, np.complex128)
+    csdfg(a=a.copy(), out=got, N=n)
+    assert np.allclose(got, ref), f"mismatch: {np.abs(got - ref).max():.2e}"
+
+
+def test_non_transient_promotion_is_read_only():
+    """A scalar ARGUMENT may become a symbol only while nothing writes it.
+
+    ``transients_only=False`` is what lets a strided gather's stride (TSVC ``s318``'s ``inc``)
+    close its induction variable: a read-only argument's value comes from the caller, so the
+    symbol is exact. A WRITTEN non-transient is an OUTPUT of the SDFG, and a symbol is not an
+    output -- promoting one silently drops the value the caller reads back.
+    """
+
+    @dace.program
+    def readonly_stride(a: dace.float64[40], out: dace.float64[20], inc: dace.int64):
+        for i in range(20):
+            out[i] = a[i * inc]
+
+    @dace.program
+    def written_result(a: dace.int64[20], total: dace.int64[1]):
+        total[0] = a[0] + 1
+
+    ro: dace.SDFG = readonly_stride.to_sdfg(simplify=False)
+    assert 'inc' not in scalar_to_symbol.find_promotable_scalars(ro)
+    assert 'inc' in scalar_to_symbol.find_promotable_scalars(ro, transients_only=False)
+
+    wr: dace.SDFG = written_result.to_sdfg(simplify=False)
+    assert 'total' not in scalar_to_symbol.find_promotable_scalars(wr, transients_only=False)
+
+
+def test_index_produced_in_the_same_state_is_not_promotable():
+    """A definition whose INDEX the same state is still computing cannot be hoisted out of it.
+
+    Promotion peels the defining subgraph off into a preceding state (``state_fission``), so every
+    input it reads has to be ready before that state runs. The index here reaches the read through a
+    memlet SUBSET rather than a data edge -- ``ya[idx, 0]`` records no read edge for ``idx`` -- so
+    the degree tests over the tasklet's input edges never see the dependence. Promoting anyway put
+    the read in front of the map that writes ``idx``, and rayleigh_ritz_rotation segfaulted on the
+    untouched initialiser. ``val`` is a float, so it is a candidate only because an interstate
+    condition reads it, which is exactly how the real kernel reached the pass.
+    """
+    sdfg = dace.SDFG('index_from_same_state')
+    sdfg.add_array('ya', [4, 1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('idx', dace.int64, transient=True)
+    sdfg.add_scalar('val', dace.float64, transient=True)
+
+    state = sdfg.add_state(is_start_block=True)
+    idx_node = state.add_access('idx')
+    state.add_mapped_tasklet('pick', {'i': '0:4'}, {'y': dace.Memlet('ya[i, 0]')},
+                             'o = i', {'o': dace.Memlet('idx[0]')},
+                             external_edges=True,
+                             output_nodes={'idx': idx_node})
+    read = state.add_tasklet('read', {'y'}, {'v'}, 'v = y')
+    state.add_edge(state.add_access('ya'), None, read, 'y', dace.Memlet('ya[idx, 0]'))
+    state.add_edge(read, 'v', state.add_access('val'), None, dace.Memlet('val[0]'))
+
+    neg, pos = sdfg.add_state('neg'), sdfg.add_state('pos')
+    sdfg.add_edge(state, neg, dace.InterstateEdge(condition='val < 0.0'))
+    sdfg.add_edge(state, pos, dace.InterstateEdge(condition='not (val < 0.0)'))
+    for branch, value in ((neg, '-1.0'), (pos, '1.0')):
+        branch.add_edge(branch.add_tasklet('w', {}, {'o'}, f'o = {value}'), 'o', branch.add_access('out'), None,
+                        dace.Memlet('out[0]'))
+
+    promotable = scalar_to_symbol.find_promotable_scalars(sdfg, integers_only=False)
+    assert 'val' not in promotable, (
+        f"'val' was promoted despite indexing with 'idx', which the same state writes: {promotable}")
+
+
 if __name__ == '__main__':
+    test_abs_complex_guard_compiles_and_runs()
+    test_complex_scalar_from_array_not_promotable()
+    test_mandelbrot2_complex_escape_pattern()
+    test_promotion_rejects_orphan_condition_scalar()
     test_find_promotable()
     test_promote_simple()
     test_promote_simple_c()
     test_promote_disconnect()
+    test_whole_statement_int_cast_promotes_and_keeps_cast()
+    test_midexpression_int_cast_not_promoted()
+    test_whole_statement_float_cast_not_promoted()
     test_promote_copy()
     test_promote_array_assignment()
     test_promote_array_assignment_tasklet()
@@ -810,3 +1096,33 @@ if __name__ == '__main__':
     test_reversed_order()
     test_scalar_index_regression(False)
     test_scalar_index_regression(True)
+    test_non_transient_promotion_is_read_only()
+    test_index_produced_in_the_same_state_is_not_promotable()
+
+
+def test_scalar_bound_to_a_view_is_not_promoted():
+    """A View owns no storage: the binding edge is what gives it one. Promoting the scalar it is
+       bound to rewrites that edge as a symbol-assignment tasklet, which is not a legal binding."""
+    sdfg = dace.SDFG('viewed_scalar')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_transient('s', [1], dace.int32)
+    sdfg.add_view('Vs', [1], dace.int32)
+
+    state = sdfg.add_state()
+    producer = state.add_tasklet('produce', {}, {'o'}, 'o = 2')
+    scalar = state.add_access('s')
+    view = state.add_access('Vs')
+    consumer = state.add_tasklet('consume', {'i'}, {'o'}, 'o = i * 10.0')
+    state.add_edge(producer, 'o', scalar, None, dace.Memlet('s[0]'))
+    state.add_edge(scalar, None, view, 'views', dace.Memlet('s[0] -> [0]'))
+    state.add_edge(view, None, consumer, 'i', dace.Memlet('Vs[0]'))
+    state.add_edge(consumer, 'o', state.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.zeros(4)
+    sdfg(A=A)
+    assert A[0] == 20.0

@@ -19,6 +19,11 @@ from dace.frontend.ml.onnx.importer import create_output_array
 from dace.libraries.torch.dispatchers import DaceTorchFunction
 from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, \
     get_arglist
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
@@ -41,7 +46,7 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
                              f"not an input or output of the PyTorch Module, and not a"
                              f" constant.")
         constants[name] = module.dace_model.clean_weights[name]
-        if fwd_arglist[name].storage in dace.dtypes.GPU_STORAGES:
+        if fwd_arglist[name].storage in GPU_RESIDENT_STORAGES:
             constants[name] = constants[name].cuda()
     return constants
 

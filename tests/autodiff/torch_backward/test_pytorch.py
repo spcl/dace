@@ -9,10 +9,9 @@ import torch.nn.functional as F
 
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
-@pytest.mark.torch
-@pytest.mark.autodiff
 def run_pytorch_module(
     module: torch.nn.Module,
     sdfg_name: str,
@@ -22,21 +21,25 @@ def run_pytorch_module(
     rtol: float = 1e-4,
     atol: float = 1e-3,
     post_onnx_hooks: list = None,
+    device: str = "cpu",
 ):
     shape = shape or (3, 5)
+    dev = torch_device(device)
 
+    module = module.to(dev)
     pt_model_for_dace = copy.deepcopy(module)
 
-    input_value = torch.rand(*shape, dtype=torch.float32)
+    input_value = torch.rand(*shape, dtype=torch.float32, device=dev)
 
     pytorch_input = torch.empty(
         *shape,
         dtype=torch.float32,
         requires_grad=False,
+        device=dev,
     )
     pytorch_input.copy_(input_value)
 
-    dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
+    dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False, device=dev)
     dace_input.copy_(input_value)
 
     pytorch_input.requires_grad = True
@@ -50,21 +53,23 @@ def run_pytorch_module(
 
     dace_module = DaceModule(
         pt_model_for_dace,
-        sdfg_name=sdfg_name,
+        sdfg_name=f"{sdfg_name}_{device}",
         simplify=False,
         backward=True,
         auto_optimize=auto_optimize,
+        cuda=is_gpu(device),
         compile_torch_extension=True,
     )
     if post_onnx_hooks is not None:
         for i, h in enumerate(post_onnx_hooks):
             dace_module.append_post_onnx_hook(str(i), h)
 
-    if use_max:
-        dace_s = dace_module(dace_input).max()
-    else:
-        dace_s = dace_module(dace_input).sum()
-    dace_s.backward()
+    with experimental_cuda():
+        if use_max:
+            dace_s = dace_module(dace_input).max()
+        else:
+            dace_s = dace_module(dace_input).sum()
+        dace_s.backward()
     torch_tensors_close("grad", pytorch_input.grad, dace_input.grad, rtol=rtol, atol=atol)
 
     for (name, dace_param), (pt_name, pt_param) in zip(module.named_parameters(), dace_module.named_parameters()):
@@ -74,7 +79,8 @@ def run_pytorch_module(
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_simple():
+@pytest.mark.parametrize("device", DEVICES)
+def test_simple(device):
 
     class Module(torch.nn.Module):
 
@@ -83,12 +89,13 @@ def test_simple():
             x = torch.log(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_simple")
+    run_pytorch_module(Module(), sdfg_name="test_simple", device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_repeated():
+@pytest.mark.parametrize("device", DEVICES)
+def test_repeated(device):
 
     class Module(torch.nn.Module):
 
@@ -97,12 +104,13 @@ def test_repeated():
             x = torch.sqrt(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_repeated")
+    run_pytorch_module(Module(), sdfg_name="test_repeated", device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_softmax():
+@pytest.mark.parametrize("device", DEVICES)
+def test_softmax(device):
 
     class Module(torch.nn.Module):
 
@@ -110,12 +118,13 @@ def test_softmax():
             x = F.softmax(x, dim=1)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_softmax", use_max=True)
+    run_pytorch_module(Module(), sdfg_name="test_softmax", use_max=True, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_reshape_on_memlet_path():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reshape_on_memlet_path(device):
     # required test: this function in a nn.Module, with apply simplify so that the reshape is
     # inlined and copy is removed
     class Module(torch.nn.Module):
@@ -124,12 +133,13 @@ def test_reshape_on_memlet_path():
             reshaped = torch.reshape(x + 1, [3, 3])
             return torch.log(reshaped) + torch.reshape(torch.tensor([[3, 2, 1]], device=reshaped.device), [3])
 
-    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9, ))
+    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9, ), device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_weights_ln():
+@pytest.mark.parametrize("device", DEVICES)
+def test_weights_ln(device):
 
     class Module(torch.nn.Module):
 
@@ -147,12 +157,13 @@ def test_weights_ln():
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_weights_ln", shape=(4, 784), auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_weights_ln", shape=(4, 784), auto_optimize=False, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_layernorm():
+@pytest.mark.parametrize("device", DEVICES)
+def test_layernorm(device):
 
     class Module(torch.nn.Module):
 
@@ -163,12 +174,13 @@ def test_layernorm():
         def forward(self, x):
             return self.ln(x)
 
-    run_pytorch_module(Module(), sdfg_name="test_layernorm", shape=(2, 3), use_max=True, atol=1e-2)
+    run_pytorch_module(Module(), sdfg_name="test_layernorm", shape=(2, 3), use_max=True, atol=1e-2, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_weights():
+@pytest.mark.parametrize("device", DEVICES)
+def test_weights(device):
 
     class Module(torch.nn.Module):
 
@@ -184,12 +196,18 @@ def test_weights():
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_weights", shape=(4, 784), use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(),
+                       sdfg_name="test_weights",
+                       shape=(4, 784),
+                       use_max=False,
+                       auto_optimize=False,
+                       device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_nested_gradient_summation():
+@pytest.mark.parametrize("device", DEVICES)
+def test_nested_gradient_summation(device):
 
     class Module(torch.nn.Module):
 
@@ -206,12 +224,14 @@ def test_nested_gradient_summation():
                        sdfg_name="test_nested_gradient_summation",
                        shape=(4, 10),
                        use_max=False,
-                       auto_optimize=False)
+                       auto_optimize=False,
+                       device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_trans_add():
+@pytest.mark.parametrize("device", DEVICES)
+def test_trans_add(device):
 
     class Module(torch.nn.Module):
 
@@ -223,12 +243,13 @@ def test_trans_add():
             x = torch.transpose(x.reshape(4, 4), 1, 0)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16, ), use_max=False)
+    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16, ), use_max=False, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_batched_matmul():
+@pytest.mark.parametrize("device", DEVICES)
+def test_batched_matmul(device):
 
     class Module(torch.nn.Module):
 
@@ -239,12 +260,13 @@ def test_batched_matmul():
         def forward(self, x):
             return self.fc1 @ x
 
-    run_pytorch_module(Module(), sdfg_name="test_batched_matmul", use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_batched_matmul", use_max=False, auto_optimize=False, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_scalar_forwarding():
+@pytest.mark.parametrize("device", DEVICES)
+def test_scalar_forwarding(device):
 
     class Module(torch.nn.Module):
 
@@ -255,12 +277,13 @@ def test_scalar_forwarding():
         def forward(self, x):
             return self.factor * x
 
-    run_pytorch_module(Module(), sdfg_name="test_scalar_forwarding", use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_scalar_forwarding", use_max=False, auto_optimize=False, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_scalar_buffer():
+@pytest.mark.parametrize("device", DEVICES)
+def test_scalar_buffer(device):
 
     class Module(torch.nn.Module):
 
@@ -271,13 +294,14 @@ def test_scalar_buffer():
         def forward(self, x):
             return self.factor * x
 
-    run_pytorch_module(Module(), sdfg_name="test_scalar_buffer", use_max=False)
+    run_pytorch_module(Module(), sdfg_name="test_scalar_buffer", use_max=False, device=device)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
 @pytest.mark.skip(reason="Requires pure implementation of expand")
-def test_simple_broadcasted_mul():
+@pytest.mark.parametrize("device", DEVICES)
+def test_simple_broadcasted_mul(device):
 
     class Module(torch.nn.Module):
 
@@ -285,20 +309,20 @@ def test_simple_broadcasted_mul():
             y = x.sum(axis=0)
             return x * y
 
-    run_pytorch_module(Module(), sdfg_name="test_simple_broadcasted_mul")
+    run_pytorch_module(Module(), sdfg_name="test_simple_broadcasted_mul", device=device)
 
 
 if __name__ == "__main__":
-    test_simple()
-    test_repeated()
-    test_softmax()
-    test_reshape_on_memlet_path()
-    test_weights_ln()
-    test_layernorm()
-    test_weights()
-    test_nested_gradient_summation()
-    test_trans_add()
-    test_batched_matmul()
-    test_scalar_forwarding()
-    test_scalar_buffer()
+    test_simple(device="cpu")
+    test_repeated(device="cpu")
+    test_softmax(device="cpu")
+    test_reshape_on_memlet_path(device="cpu")
+    test_weights_ln(device="cpu")
+    test_layernorm(device="cpu")
+    test_weights(device="cpu")
+    test_nested_gradient_summation(device="cpu")
+    test_trans_add(device="cpu")
+    test_batched_matmul(device="cpu")
+    test_scalar_forwarding(device="cpu")
+    test_scalar_buffer(device="cpu")
     # test_simple_broadcasted_mul is skipped

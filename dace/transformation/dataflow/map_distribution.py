@@ -11,6 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
+from dace.ordered import OrderedSet
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):
@@ -75,6 +76,8 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -128,18 +131,15 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
         from dace.libraries.mpi import Bcast, Scatter, Gather
 
-        inputs = set()
+        inputs = OrderedSet()
         for src, _, _, _, m in graph.in_edges(map_entry):
             if not isinstance(src, nodes.AccessNode):
                 raise NotImplementedError
             desc = src.desc(sdfg)
             if not isinstance(desc, (data.Scalar, data.Array)):
                 raise NotImplementedError
-            if list(desc.shape) != m.src_subset.size_exact():
-                # Second attempt
-                # TODO: We need a solution for symbols not matching
-                if str(list(desc.shape)) != str(m.src_subset.size_exact()):
-                    raise NotImplementedError
+            if not symbolic.same_value(list(desc.shape), m.src_subset.size_exact()):
+                raise NotImplementedError
             inputs.add(src)
 
         for inp in inputs:
@@ -157,7 +157,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
+                local_name, local_arr = sdfg.add_temp_transient([symbolic.int_floor(desc.total_size, sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
@@ -177,7 +177,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             else:
                 raise NotImplementedError
 
-        outputs = set()
+        outputs = OrderedSet()
         for _, _, dst, _, m in graph.out_edges(map_exit):
             if not isinstance(dst, nodes.AccessNode):
                 raise NotImplementedError
@@ -185,17 +185,11 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             if not isinstance(desc, data.Array):
                 raise NotImplementedError
             try:
-                if list(desc.shape) != m.dst_subset.size_exact():
-                    # Second attempt
-                    # TODO: We need a solution for symbols not matching
-                    if str(list(desc.shape)) != str(m.dst_subset.size_exact()):
-                        raise NotImplementedError
+                if not symbolic.same_value(list(desc.shape), m.dst_subset.size_exact()):
+                    raise NotImplementedError
             except AttributeError:
-                if list(desc.shape) != m.subset.size_exact():
-                    # Second attempt
-                    # TODO: We need a solution for symbols not matching
-                    if str(list(desc.shape)) != str(m.subset.size_exact()):
-                        raise NotImplementedError
+                if not symbolic.same_value(list(desc.shape), m.subset.size_exact()):
+                    raise NotImplementedError
             outputs.add(dst)
 
         for out in outputs:
@@ -203,7 +197,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
+                local_name, local_arr = sdfg.add_temp_transient([symbolic.int_floor(desc.total_size, sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
@@ -283,6 +277,8 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -344,18 +340,15 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         from dace.libraries.mpi import Bcast
         from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
 
-        inputs = set()
+        inputs = OrderedSet()
         for src, _, _, _, m in graph.in_edges(map_entry):
             if not isinstance(src, nodes.AccessNode):
                 raise NotImplementedError
             desc = src.desc(sdfg)
             if not isinstance(desc, (data.Scalar, data.Array)):
                 raise NotImplementedError
-            if list(desc.shape) != m.src_subset.size_exact():
-                # Second attempt
-                # TODO: We need a solution for symbols not matching
-                if str(list(desc.shape)) != str(m.src_subset.size_exact()):
-                    raise NotImplementedError
+            if not symbolic.same_value(list(desc.shape), m.src_subset.size_exact()):
+                raise NotImplementedError
             inputs.add(src)
 
         for inp in inputs:
@@ -382,8 +375,9 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
-                                                                                           y=(desc.shape[1]) // Py))
+                    '_set_bsizes_', {}, {'__out'},
+                    "__out[0] = {x}; __out[1] = {y}".format(x=symbolic.int_floor(desc.shape[0], Px),
+                                                            y=symbolic.int_floor(desc.shape[1], Py)))
                 graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 gdesc_name, gdesc_arr = sdfg.add_temp_transient((9, ), dtype=dace.int32)
@@ -411,7 +405,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             else:
                 raise NotImplementedError
 
-        outputs = set()
+        outputs = OrderedSet()
         for _, _, dst, _, m in graph.out_edges(map_exit):
             if not isinstance(dst, nodes.AccessNode):
                 raise NotImplementedError
@@ -419,17 +413,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             if not isinstance(desc, data.Array):
                 raise NotImplementedError
             try:
-                if list(desc.shape) != m.dst_subset.size_exact():
-                    # Second attempt
-                    # TODO: We need a solution for symbols not matching
-                    if str(list(desc.shape)) != str(m.dst_subset.size_exact()):
-                        raise NotImplementedError
+                if not symbolic.same_value(list(desc.shape), m.dst_subset.size_exact()):
+                    raise NotImplementedError
             except AttributeError:
-                if list(desc.shape) != m.subset.size_exact():
-                    # Second attempt
-                    # TODO: We need a solution for symbols not matching
-                    if str(list(desc.shape)) != str(m.subset.size_exact()):
-                        raise NotImplementedError
+                if not symbolic.same_value(list(desc.shape), m.subset.size_exact()):
+                    raise NotImplementedError
             outputs.add(dst)
 
         for out in outputs:
@@ -446,8 +434,9 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
-                                                                                           y=(desc.shape[1]) // Py))
+                    '_set_bsizes_', {}, {'__out'},
+                    "__out[0] = {x}; __out[1] = {y}".format(x=symbolic.int_floor(desc.shape[0], Px),
+                                                            y=symbolic.int_floor(desc.shape[1], Py)))
                 graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 scatter_node = BlockCyclicGather('_Gather_')
@@ -604,6 +593,8 @@ class StencilOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]
@@ -688,6 +679,8 @@ class OuterProductOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if not m.data:
+                continue
             if m.wcr:
                 return False
             desc = sdfg.arrays[m.data]

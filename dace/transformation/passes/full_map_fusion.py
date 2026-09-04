@@ -57,7 +57,8 @@ class FullMapFusion(ppl.Pass):
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
         default=True,
-        desc="If `True`, the default, then allow vertical Map fusion, see `MapFusionVertical`.",
+        desc="If `True`, the default, then allow vertical Map fusion: `MapReduceFusion` for a Map "
+        "feeding a Reduce, then `MapFusionVertical` for a Map feeding a Map.",
     )
     perform_horizontal_map_fusion = properties.Property(
         dtype=bool,
@@ -172,15 +173,23 @@ class FullMapFusion(ppl.Pass):
         object.
 
         :param sdfg: The SDFG to modify.
-        :param pipeline_results: The result of previous pipeline steps. The pass expects
-            at least the result of the `FindSingleUseData`.
+        :param pipeline_results: The result of previous pipeline steps. If the result of
+            `FindSingleUseData`, which `depends_on()` declares, is missing then the pass was
+            called standalone and runs the analysis itself.
         :return: The numbers of Maps that were fused or `None` if none were fused.
         """
         if ap.FindSingleUseData.__name__ not in pipeline_results:
-            raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
+            # Called outside a pipeline, which is a supported use; do not mutate the caller's dict.
+            pipeline_results = dict(pipeline_results)
+            pipeline_results[ap.FindSingleUseData.__name__] = ap.FindSingleUseData().apply_pass(sdfg, {})
 
         fusion_transforms = []
         if self.perform_vertical_map_fusion:
+            # First in the vertical phase: the Map feeding the Reduce is this pattern's first node,
+            # so folding it into a neighbour leaves the reduction reading a materialized array that
+            # nothing removes afterwards.
+            fusion_transforms.append(dftrans.MapReduceFusion())
+
             # We have to pass the single use data at construction. This is because that
             #  `fusion._pipeline_results` is only defined, i.e., not `None` during `apply()`
             #  but during `can_be_applied()` it is not available. Thus we have to set it here.

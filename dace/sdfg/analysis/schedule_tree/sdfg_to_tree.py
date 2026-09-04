@@ -16,7 +16,7 @@ from dace.transformation.helpers import unsqueeze_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
 
-import networkx as nx
+from dace import graphlib as nx
 import time
 import sys
 

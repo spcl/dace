@@ -12,6 +12,7 @@ from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 import copy
+from dace.ordered import OrderedSet
 
 
 @transformation.explicit_cf_compatible
@@ -68,14 +69,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
+                inputs = OrderedSet(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = OrderedSet(edge.data.data for edge in state.in_edges(map_exit) if edge.data.data is not None)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
@@ -94,8 +89,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
                 copy_mapping = {}
+                # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+                # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+                # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+                memo = {}
                 for n in body:
-                    new_n = copy.deepcopy(n)
+                    new_n = copy.deepcopy(n, memo)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 

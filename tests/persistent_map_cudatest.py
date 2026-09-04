@@ -29,6 +29,7 @@ def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic / GPU_Persistent schedules (not supported by experimental codegen)
 def test_persistent_dynamic_map():
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()
@@ -48,6 +49,7 @@ def test_persistent_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic / GPU_Persistent schedules (not supported by experimental codegen)
 def test_persistent_default():
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()

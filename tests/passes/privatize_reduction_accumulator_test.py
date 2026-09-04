@@ -1,0 +1,330 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for ``PrivatizeReductionAccumulator``.
+
+The pass converts WCR-on-array-element reductions (e.g. ``dot[0] WCR-+= val``
+inside a parallel map) into WCR-on-scalar + init + writeback. The resulting
+SDFG has a transient ``Scalar`` accumulator the OMP codegen can name in a
+``reduction(op:scalar)`` clause.
+"""
+import numpy as np
+
+import dace
+from dace.sdfg import nodes
+from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.state_fusion import StateFusion
+from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+
+N = dace.symbol("N")
+
+
+def _build_wcr_map(prog) -> dace.SDFG:
+    """Build the simplified SDFG and run the AugAssignToWCR + LoopToMap +
+    state-fusion + inline path that produces a parallel WCR-map with the WCR
+    target as an array element. This matches the canonicalize order in which
+    ``PrivatizeReductionAccumulator`` is wired."""
+    sdfg = prog.to_sdfg(simplify=True)
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=True)
+    sdfg.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
+    PatternMatchAndApplyRepeated([StateFusion()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([InlineSDFG()]).apply_pass(sdfg, {})
+    return sdfg
+
+
+def _count_wcr_edges(sdfg: dace.SDFG):
+    wcr_arr_elem = 0
+    wcr_scalar = 0
+    for st in sdfg.all_states():
+        for e in st.edges():
+            if e.data is None or e.data.wcr is None:
+                continue
+            desc = sdfg.arrays.get(e.data.data)
+            if desc is None:
+                continue
+            from dace import data
+            if isinstance(desc, data.Scalar):
+                wcr_scalar += 1
+            else:
+                wcr_arr_elem += 1
+    return wcr_arr_elem, wcr_scalar
+
+
+# ---------------------------------------------------------------------------
+# Basic shape: a dot product whose accumulator is an array slot.
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def _array_slot_dot(a: dace.float64[N], b: dace.float64[N], dot: dace.float64[N]):
+    dot[0] = 0.0
+    for i in range(N):
+        dot[0] = dot[0] + a[i] * b[i]
+
+
+def test_array_slot_dot_product_privatized():
+    """``dot[0] WCR-+= a[i]*b[i]`` -- WCR target becomes a transient Scalar,
+    init state seeds it from ``dot[0]``, writeback state copies back."""
+    sdfg = _build_wcr_map(_array_slot_dot)
+    arr_wcr_before, scalar_wcr_before = _count_wcr_edges(sdfg)
+    # Pre-condition: the AugAssignToWCR + L2M path produced an array-element
+    # WCR write.
+    assert arr_wcr_before >= 1
+    assert scalar_wcr_before == 0
+
+    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+
+    # Post-condition: the WCR target is now a Scalar, no array-elem WCR left.
+    arr_wcr_after, scalar_wcr_after = _count_wcr_edges(sdfg)
+    assert arr_wcr_after == 0
+    assert scalar_wcr_after >= 1
+
+    # New ``_priv_*`` transient scalar appears.
+    priv_arrays = sorted(k for k in sdfg.arrays if k.startswith("_priv_"))
+    assert len(priv_arrays) == 1, priv_arrays
+    from dace import data
+    assert isinstance(sdfg.arrays[priv_arrays[0]], data.Scalar)
+
+    # Numerical correctness.
+    n = 64
+    rng = np.random.default_rng(0)
+    a = rng.random(n)
+    b = rng.random(n)
+    dot = np.zeros(n)
+    sdfg(a=a, b=b, dot=dot, N=n)
+    assert np.isclose(dot[0], float((a * b).sum()))
+
+
+# ---------------------------------------------------------------------------
+# Multiple reductions in the same SDFG -- the pass must mint UNIQUE scalar
+# names across loop nests (no collisions).
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def _two_independent_reductions(a: dace.float64[N], b: dace.float64[N], dot: dace.float64[N], out: dace.float64[N]):
+    # First reduction: dot += a*b.
+    dot[0] = 0.0
+    for i in range(N):
+        dot[0] = dot[0] + a[i] * b[i]
+    # Second reduction (target lives in a DIFFERENT array): out += a.
+    out[0] = 0.0
+    for i in range(N):
+        out[0] = out[0] + a[i]
+
+
+def test_two_reductions_get_unique_scalar_names():
+    """Two parallel WCR-maps targeting different array elements -- each must
+    get its OWN transient scalar; names must not collide."""
+    sdfg = _build_wcr_map(_two_independent_reductions)
+    arr_wcr_before, _ = _count_wcr_edges(sdfg)
+    assert arr_wcr_before >= 2
+
+    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 2
+
+    priv_arrays = sorted(k for k in sdfg.arrays if k.startswith("_priv_"))
+    # Two distinct privatized scalars, no duplicate names.
+    assert len(priv_arrays) == 2
+    assert len(set(priv_arrays)) == 2
+
+    n = 64
+    rng = np.random.default_rng(1)
+    a = rng.random(n)
+    b = rng.random(n)
+    dot = np.zeros(n)
+    out = np.zeros(n)
+    sdfg(a=a, b=b, dot=dot, out=out, N=n)
+    assert np.isclose(dot[0], float((a * b).sum()))
+    assert np.isclose(out[0], float(a.sum()))
+
+
+# ---------------------------------------------------------------------------
+# Two reductions targeting the SAME array name (e.g. ``acc[0]`` and ``acc[1]``)
+# -- still must mint distinct scalar names, AND the writeback subsets must
+# point at the correct slots.
+# ---------------------------------------------------------------------------
+
+
+@dace.program
+def _two_reductions_same_array(a: dace.float64[N], b: dace.float64[N], acc: dace.float64[N]):
+    acc[0] = 0.0
+    acc[1] = 0.0
+    for i in range(N):
+        acc[0] = acc[0] + a[i] * b[i]
+    for i in range(N):
+        acc[1] = acc[1] + a[i]
+
+
+def test_two_reductions_same_array_get_unique_names():
+    """Both reductions write into different slots of the same array."""
+    sdfg = _build_wcr_map(_two_reductions_same_array)
+    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 2
+
+    priv_arrays = sorted(k for k in sdfg.arrays if k.startswith("_priv_acc"))
+    # Both scalars share the prefix '_priv_acc' but each carries a distinct
+    # suffix from ``find_new_name=True``.
+    assert len(priv_arrays) == 2
+    assert len(set(priv_arrays)) == 2
+
+    n = 64
+    rng = np.random.default_rng(2)
+    a = rng.random(n)
+    b = rng.random(n)
+    acc = np.zeros(n)
+    sdfg(a=a, b=b, acc=acc, N=n)
+    assert np.isclose(acc[0], float((a * b).sum()))
+    assert np.isclose(acc[1], float(a.sum()))
+
+
+# ---------------------------------------------------------------------------
+# Idempotence: a second invocation must NOT re-privatize already-scalar WCRs.
+# ---------------------------------------------------------------------------
+
+
+def test_idempotent_no_double_privatize():
+    sdfg = _build_wcr_map(_array_slot_dot)
+    PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    arrays_after_first = set(sdfg.arrays.keys())
+    # Second invocation: pass must NOT add any new ``_priv_`` arrays nor
+    # split any further states (the WCR target is already a Scalar).
+    lifted2 = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    assert lifted2 is None
+    assert set(sdfg.arrays.keys()) == arrays_after_first
+
+
+def test_targeted_helper_rewrites_single_wcr_edge():
+    """The targeted helper ``privatize_reduction_accumulator(state, map_exit,
+    wcr_edge)`` rewrites the one edge it is handed, with no SDFG-wide scan.
+
+    Callers that already know which WCR edge they want to privatize (e.g.,
+    ``LoopToReduce`` after emitting a Map+WCR in ``prefer='wcr-scalar'``
+    mode) should not have to run a whole-SDFG pass to apply the rewrite to
+    one specific edge.
+    """
+    from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
+        privatize_reduction_accumulator, )
+
+    sdfg = _build_wcr_map(_array_slot_dot)
+
+    # Locate THE WCR-bearing MapExit IN-edge by walking the SDFG.
+    target_state = None
+    target_map_exit = None
+    target_edge = None
+    for state in sdfg.all_states():
+        for n in state.nodes():
+            if not isinstance(n, nodes.MapExit):
+                continue
+            for e in state.in_edges(n):
+                if e.data is not None and e.data.wcr is not None:
+                    target_state = state
+                    target_map_exit = n
+                    target_edge = e
+                    break
+            if target_edge is not None:
+                break
+        if target_edge is not None:
+            break
+    assert target_edge is not None, "test setup must produce a WCR-bearing MapExit IN-edge"
+
+    arrays_before = set(sdfg.arrays.keys())
+    ok = privatize_reduction_accumulator(target_state, target_map_exit, target_edge)
+    assert ok is True, "the helper must report the rewrite landed"
+    sdfg.validate()
+    # The rewrite added a transient scalar; the original array's descriptor stays.
+    new_arrays = set(sdfg.arrays.keys()) - arrays_before
+    assert any(n.startswith("_priv_")
+               for n in new_arrays), (f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}")
+
+    # Numerical sanity: re-run the SDFG and confirm the dot product still matches.
+    n = 64
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    dot = np.zeros(n)
+    sdfg(a=a.copy(), b=b.copy(), dot=dot, N=n)
+    assert np.isclose(dot[0], float((a * b).sum()))
+
+
+def test_targeted_helper_refuses_non_wcr_edge():
+    """When the helper is handed an edge without a WCR annotation, it must
+    return ``False`` and leave the SDFG untouched -- the caller may probe
+    several candidate edges and the helper must be safe to call on
+    non-matches.
+    """
+    from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
+        privatize_reduction_accumulator, )
+
+    sdfg = _build_wcr_map(_array_slot_dot)
+    # Pick a MapExit and an OUT-edge of it -- not a WCR IN-edge, so the
+    # helper must reject.
+    target_state = None
+    target_map_exit = None
+    non_wcr_edge = None
+    for state in sdfg.all_states():
+        for n in state.nodes():
+            if not isinstance(n, nodes.MapExit):
+                continue
+            outs = list(state.out_edges(n))
+            if outs:
+                target_state = state
+                target_map_exit = n
+                non_wcr_edge = outs[0]
+                break
+        if non_wcr_edge is not None:
+            break
+    assert non_wcr_edge is not None
+    arrays_before = set(sdfg.arrays.keys())
+    ok = privatize_reduction_accumulator(target_state, target_map_exit, non_wcr_edge)
+    assert ok is False, "the helper must reject a non-WCR edge"
+    assert set(sdfg.arrays.keys()) == arrays_before
+
+
+def test_ordering_memlet_is_not_an_in_state_init():
+    """An empty memlet into a second accumulator AccessNode writes nothing, so it must not be
+    mistaken for an in-state ``acc = 0``: that drops the incoming seed."""
+    n = 16
+    sdfg = dace.SDFG("priv_ordering")
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("dot", [1], dace.float64)
+    sdfg.add_array("z", [1], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i=f"0:{n}"))
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_dot")
+    mx.add_out_connector("OUT_dot")
+    tasklet = state.add_tasklet("acc", {"__a"}, {"__o"}, "__o = __a")
+    state.add_edge(state.add_read("a"), None, me, "IN_a", dace.Memlet(f"a[0:{n}]"))
+    state.add_edge(me, "OUT_a", tasklet, "__a", dace.Memlet("a[i]"))
+    wcr = "lambda x, y: x + y"
+    state.add_edge(tasklet, "__o", mx, "IN_dot", dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(mx, "OUT_dot", state.add_write("dot"), None, dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(state.add_read("z"), None, state.add_access("dot"), None, dace.Memlet())
+    sdfg.validate()
+
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(5)
+    a = rng.random(n)
+    dot = np.array([7.0])
+    sdfg(a=a, dot=dot, z=np.zeros(1))
+    assert np.allclose(dot[0], 7.0 + a.sum()), f"seed dropped: got {dot[0]}, want {7.0 + a.sum()}"
+
+
+if __name__ == "__main__":
+    test_array_slot_dot_product_privatized()
+    test_two_reductions_get_unique_scalar_names()
+    test_two_reductions_same_array_get_unique_names()
+    test_idempotent_no_double_privatize()
+    test_targeted_helper_rewrites_single_wcr_edge()
+    test_targeted_helper_refuses_non_wcr_edge()

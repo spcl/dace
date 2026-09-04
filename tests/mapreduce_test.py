@@ -1,7 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
+import io
+
 import dace
 import numpy as np
+import dace.libraries.standard as stdlib
 from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
+from dace.transformation.passes import FullMapFusion
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -299,6 +304,88 @@ def test_mapreduce_onemap():
     onetest(mapreduce_onemap)
 
 
+def test_full_map_fusion_removes_the_reduced_intermediate():
+    """``FullMapFusion``'s vertical phase must reach a Map that feeds a Reduce, not only a Map.
+
+    ``MapFusionVertical`` matches Map -> Map, so on its own it leaves the whole reduced array
+    materialized between the two. That intermediate is the size of the input, and it is why a
+    reduction over a computed expression costs a second pass over it.
+    """
+    N = 64
+
+    @dace.program
+    def reduce_a_product(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+        out[0] = np.sum(a * b)
+
+    def sized_transients(sdfg):
+        return sorted(k for k, v in sdfg.arrays.items() if v.transient and v.total_size != 1)
+
+    without = reduce_a_product.to_sdfg(simplify=True)
+    FullMapFusion(perform_vertical_map_fusion=False).apply_pass(without, {})
+    assert sized_transients(without), 'nothing to remove: the test no longer covers the case'
+
+    with_it = reduce_a_product.to_sdfg(simplify=True)
+    FullMapFusion().apply_pass(with_it, {})
+    assert not sized_transients(with_it), f'intermediate survived: {sized_transients(with_it)}'
+    assert not [n for n, _ in with_it.all_nodes_recursive() if isinstance(n, stdlib.Reduce)]
+    assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), \
+        'the Reduce went away without leaving a WCR behind'
+
+    with_it.validate()
+    rng = np.random.default_rng(0)
+    a, b = rng.random(N), rng.random(N)
+    out = np.zeros(1)
+    with_it(a=a.copy(), b=b.copy(), out=out)
+    # A parallel WCR reassociates, so this is close, not bit-identical.
+    assert np.allclose(out[0], np.sum(a * b))
+
+
+def test_a_second_body_tasklet_does_not_break_the_match():
+    """``apply`` finds the reduced intermediate among ALL the exit's in-edges, so ``can_be_applied``
+    must too. Reading only the matched tasklet's own edges raised a bare StopIteration as soon as a
+    map body held a second tasklet writing elsewhere and the matcher bound that one -- swallowed by
+    the matcher into a printed warning, six per npbench nbody build."""
+    n = 8
+    sdfg = dace.SDFG('two_body_writers')
+    sdfg.add_array('a', (N, ), dace.float64)
+    sdfg.add_array('other', (N, ), dace.float64)
+    sdfg.add_array('out', (1, ), dace.float64)
+    sdfg.add_transient('tmp', (N, ), dace.float64)
+
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    read = state.add_read('a')
+    # Insertion order is load-bearing: the matcher reaches the non-producing tasklet first, which is
+    # exactly the binding that used to raise.
+    copy = state.add_tasklet('copy', {'inp'}, {'o'}, 'o = inp + 1.0')
+    scale = state.add_tasklet('scale', {'inp'}, {'o'}, 'o = inp * 2.0')
+    tmp = state.add_access('tmp')
+    state.add_memlet_path(read, me, copy, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(read, me, scale, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(copy, mx, state.add_write('other'), src_conn='o', memlet=dace.Memlet('other[i]'))
+    state.add_memlet_path(scale, mx, tmp, src_conn='o', memlet=dace.Memlet('tmp[i]'))
+
+    red = state.add_reduce('lambda a, b: a + b', None, identity=0)
+    state.add_edge(tmp, None, red, '_in', dace.Memlet('tmp[0:N]'))
+    state.add_edge(red, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.validate()
+
+    with contextlib.redirect_stdout(io.StringIO()) as captured:
+        applied = sdfg.apply_transformations_repeated(MapReduceFusion)
+    # The matcher prints and swallows every exception a `can_be_applied` raises, so the warning it
+    # prints is the only place the failure is observable.
+    assert 'exception' not in captured.getvalue(), captured.getvalue()
+    assert applied == 1, 'the reduction should still fuse into the map'
+    assert not [node for node in state.nodes() if isinstance(node, stdlib.Reduce)]
+
+    rng = np.random.default_rng(20260830)
+    a = rng.random(n)
+    other, out = np.zeros(n), np.zeros(1)
+    sdfg(a=a.copy(), other=other, out=out, N=n)
+    assert np.allclose(out[0], (a * 2.0).sum()), f'reduction wrong: {out[0]}'
+    assert np.allclose(other, a + 1.0), 'the second body tasklet lost its output'
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -307,3 +394,5 @@ if __name__ == "__main__":
     test_histogram()
     test_mapreduce_onemap()
     test_mapreduce_twomaps()
+    test_full_map_fusion_removes_the_reduced_intermediate()
+    test_a_second_body_tasklet_does_not_break_the_match()

@@ -304,6 +304,53 @@ DEFINE_ALL_EXT_TYPES(float32,float);
 DEFINE_ALL_EXT_TYPES(float64,double);
 
 /////////////////////////////////////////////////////////////////////////////
+// Global ::max / ::min overloads for the extended vector types.
+//
+// A ``Max``/``Min`` WCR reduction lowered to a vector width (e.g. a softmax
+// row-max on ``vec<float,4>``) resolves ``_wcr_fixed<...>::operator()`` (in
+// reduction.h) to an unqualified ``::max(a, b)``. ``max``/``min`` in math.h are
+// deliberately global (not in namespace dace), and the variadic template there
+// evaluates ``(a > b) ? a : b`` -- needing a scalar ``operator>`` the vector
+// types do not define, so it fails to compile. These non-template global
+// overloads win over that template and reduce lane-wise, matching what
+// ``halfvec.cuh`` does for the half vector types.
+//
+// vectype.cuh is included inside ``namespace dace`` (from vector.h), so close it
+// to reach global scope for the overloads, then reopen it for the code below.
+}  // namespace dace
+
+#define DACE_EXTTYPE_MINMAX(EXTTYPE, MAXEXPR, MINEXPR)                                     \
+    static DACE_HDFI dace::EXTTYPE max(const dace::EXTTYPE &a, const dace::EXTTYPE &b) {   \
+        dace::EXTTYPE r; MAXEXPR; return r; }                                             \
+    static DACE_HDFI dace::EXTTYPE min(const dace::EXTTYPE &a, const dace::EXTTYPE &b) {   \
+        dace::EXTTYPE r; MINEXPR; return r; }
+#define DACE_LANE_MAX(L) r.L = (a.L > b.L) ? a.L : b.L
+#define DACE_LANE_MIN(L) r.L = (a.L < b.L) ? a.L : b.L
+
+DACE_EXTTYPE_MINMAX(exttype_float32_1, (DACE_LANE_MAX(x)), (DACE_LANE_MIN(x)))
+DACE_EXTTYPE_MINMAX(exttype_float32_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)),
+                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
+DACE_EXTTYPE_MINMAX(exttype_float32_3, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z)),
+                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
+DACE_EXTTYPE_MINMAX(exttype_float32_4,
+                    (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
+                    (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z), DACE_LANE_MIN(w)))
+DACE_EXTTYPE_MINMAX(exttype_float64_1, (DACE_LANE_MAX(x)), (DACE_LANE_MIN(x)))
+DACE_EXTTYPE_MINMAX(exttype_float64_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)),
+                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
+DACE_EXTTYPE_MINMAX(exttype_float64_3, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z)),
+                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
+DACE_EXTTYPE_MINMAX(exttype_float64_4,
+                    (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
+                    (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z), DACE_LANE_MIN(w)))
+
+#undef DACE_EXTTYPE_MINMAX
+#undef DACE_LANE_MAX
+#undef DACE_LANE_MIN
+
+namespace dace {
+
+/////////////////////////////////////////////////////////////////////////////
 
 #define DEFINE_VECTYPE(T, N)                                           \
     template<>                                                         \

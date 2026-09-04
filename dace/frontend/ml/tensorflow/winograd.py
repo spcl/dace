@@ -5,6 +5,7 @@ import re
 from dace.memlet import Memlet
 from dace import dtypes
 from math import ceil
+from dace.ordered import OrderedSet
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):
@@ -221,7 +222,7 @@ def mm(
     # Create tasklet
     tasklet = state.add_tasklet(
         name=label + "_" + "mm_tasklet",
-        inputs={"a", "b"},
+        inputs=OrderedSet(('a', 'b')),
         outputs={"c"},
         code="""
         cublasSetStream(handle, __dace_current_stream);

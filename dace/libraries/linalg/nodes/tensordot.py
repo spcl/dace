@@ -4,10 +4,11 @@ import collections
 import dace
 
 from dace.libraries.linalg import environments
-from dace import library, nodes, properties
+from dace import library, nodes, properties, symbolic
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.ordered import OrderedSet
 
 
 @library.expansion
@@ -18,21 +19,24 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
+        # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
+        # carries, laid out the way the array it is cut from is laid out. Everything below reads
+        # these connector descriptors, so the whole expansion follows the subset from here.
         _, left_arr = sdfg.add_array("_left_tensor",
-                                     left_tensor.shape,
+                                     left_ext,
                                      left_tensor.dtype,
                                      left_tensor.storage,
                                      strides=left_tensor.strides)
         _, right_arr = sdfg.add_array("_right_tensor",
-                                      right_tensor.shape,
+                                      right_ext,
                                       right_tensor.dtype,
                                       right_tensor.storage,
                                       strides=right_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
+                                    out_ext,
                                     out_tensor.dtype,
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
@@ -41,31 +45,29 @@ class ExpandPure(ExpandTransformation):
         init_state.add_mapped_tasklet(
             f"{node.label}_init_tasklet", {
                 f"__i{i}": f"0:{symstr(s)}"
-                for i, s in enumerate(out_tensor.shape)
+                for i, s in enumerate(out_arr.shape)
             }, {},
-            '__out = 0', {
-                '__out':
-                dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_tensor.shape))])}]")
-            },
+            '__out = 0',
+            {'__out': dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_arr.shape))])}]")},
             external_edges=True)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
 
-        outer_map_shape = list([s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes])
-        outer_map_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+        outer_map_shape = list([s for i, s in enumerate(left_arr.shape) if i not in node.left_axes])
+        outer_map_shape.extend([s for i, s in enumerate(right_arr.shape) if i not in node.right_axes])
         outer_map_params = [f"__oi{i}" for i in range(len(outer_map_shape))]
         outer_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(outer_map_params, outer_map_shape)}
-        inner_map_shape = list([left_tensor.shape[i] for i in node.left_axes])
+        inner_map_shape = list([left_arr.shape[i] for i in node.left_axes])
         inner_map_params = [f"__ii{i}" for i in range(len(inner_map_shape))]
         inner_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(inner_map_params, inner_map_shape)}
 
-        left_idx = outer_map_params[:len(left_tensor.shape) - len(node.left_axes)]
+        left_idx = outer_map_params[:len(left_arr.shape) - len(node.left_axes)]
         left_dict = {j: inner_map_params[i] for i, j in enumerate(node.left_axes)}
         left_sorted_dict = collections.OrderedDict(sorted(left_dict.items()))
         for k, v in left_sorted_dict.items():
             left_idx.insert(k, v)
-        right_idx = outer_map_params[len(left_tensor.shape) - len(node.left_axes):]
+        right_idx = outer_map_params[len(left_arr.shape) - len(node.left_axes):]
         right_dict = {j: inner_map_params[i] for i, j in enumerate(node.right_axes)}
         right_sorted_dict = collections.OrderedDict(sorted(right_dict.items()))
         for k, v in right_sorted_dict.items():
@@ -103,21 +105,24 @@ class ExpandTTGT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
+        # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
+        # carries, laid out the way the array it is cut from is laid out. Everything below reads
+        # these connector descriptors, so the whole expansion follows the subset from here.
         _, left_arr = sdfg.add_array("_left_tensor",
-                                     left_tensor.shape,
+                                     left_ext,
                                      left_tensor.dtype,
                                      left_tensor.storage,
                                      strides=left_tensor.strides)
         _, right_arr = sdfg.add_array("_right_tensor",
-                                      right_tensor.shape,
+                                      right_ext,
                                       right_tensor.dtype,
                                       right_tensor.storage,
                                       strides=right_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
+                                    out_ext,
                                     out_tensor.dtype,
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
@@ -219,8 +224,8 @@ class ExpandTTGT(ExpandTransformation):
         else:
             out_shape.append(right_shape[1])
         if node.permutation and node.permutation != list(range(len(node.permutation))):
-            dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes]
-            dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+            dot_shape = [s for i, s in enumerate(left_arr.shape) if i not in node.left_axes]
+            dot_shape.extend([s for i, s in enumerate(right_arr.shape) if i not in node.right_axes])
             dot_name, dot_arr = sdfg.add_temp_transient(dot_shape, out_arr.dtype, out_arr.storage)
             out_strides = [dot_arr.strides[len(left_tt_arr.shape) - len(node.left_axes) - 1], dot_arr.strides[-1]]
             dot_vname, dot_view = sdfg.add_view('__gemm_out',
@@ -256,9 +261,9 @@ class ExpandTTGT(ExpandTransformation):
 
 
 @library.expansion
-class ExpandCuTensor(ExpandTransformation):
+class ExpandGPUTensorDot(ExpandTransformation):
     """
-    Implements the TensorDot library node using cuTENSOR v2 (cutensorContract)
+    Implements the TensorDot library node using the vendor tensor library (``Contract``)
     for CUDA-compatible GPUs. Requires cuTENSOR >= 2.0.
 
     The contraction expresses:
@@ -267,17 +272,17 @@ class ExpandCuTensor(ExpandTransformation):
     (i.e. D = alpha * A * B with beta = 0).
     """
 
-    environments = [environments.cuTensor]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        if dtype not in environments.cuTensor.TYPE_MAP:
-            raise NotImplementedError(f"cuTENSOR TensorDot does not support dtype {dtype}; supported: "
-                                      f"{sorted(str(t) for t in environments.cuTensor.TYPE_MAP)}")
-        cutensor_dtype, compute_desc, scalar_type = environments.cuTensor.TYPE_MAP[dtype]
+        if dtype not in cls.environments[0].TYPE_MAP:
+            raise NotImplementedError(f"{cls.vendor} TensorDot does not support dtype {dtype}; supported: "
+                                      f"{sorted(str(t) for t in cls.environments[0].TYPE_MAP)}")
+        tensor_dtype, compute_desc, scalar_type = cls.environments[0].TYPE_MAP[dtype]
 
         alpha = f"({scalar_type})1.0"
         beta = f"({scalar_type})0.0"
@@ -286,10 +291,10 @@ class ExpandCuTensor(ExpandTransformation):
             {scalar_type} beta = {beta};
         """
 
-        left_modes = list(range(len(left_tensor.shape)))
+        left_modes = list(range(len(left_ext)))
         right_modes = [
-            node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_tensor.shape) + i
-            for i in range(len(right_tensor.shape))
+            node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_ext) + i
+            for i in range(len(right_ext))
         ]
         out_modes = [i for i in left_modes if i not in node.left_axes]
         out_modes.extend([i for i in right_modes if i not in node.left_axes])
@@ -303,10 +308,10 @@ class ExpandCuTensor(ExpandTransformation):
         """
 
         # Modes are dense indices into the concatenated shapes, so a vector indexes them directly.
-        extents = f"std::vector<int64_t> extent({len(left_tensor.shape) + len(right_tensor.shape)});\n"
-        for i, s in zip(left_modes, left_tensor.shape):
+        extents = f"std::vector<int64_t> extent({len(left_ext) + len(right_ext)});\n"
+        for i, s in zip(left_modes, left_ext):
             extents += f"extent[{i}] = {s};\n"
-        for i, s in zip(right_modes, right_tensor.shape):
+        for i, s in zip(right_modes, right_ext):
             if i in node.right_axes:
                 continue
             extents += f"extent[{i}] = {s};\n"
@@ -328,65 +333,65 @@ class ExpandCuTensor(ExpandTransformation):
         # cuTENSOR v2: descriptors take an alignment hint (bytes) instead of
         # a per-pointer query; 256 is safe for all CUDA allocations.
         tdesc = f"""
-            cutensorTensorDescriptor_t descA, descB, descC;
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descA, modeA.size(),
-                extentA.data(), stridesA.data(), {cutensor_dtype}, 256));
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descB, modeB.size(),
-                extentB.data(), stridesB.data(), {cutensor_dtype}, 256));
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descC, modeC.size(),
-                extentC.data(), stridesC.data(), {cutensor_dtype}, 256));
+            {cls.vendor_lower}TensorDescriptor_t descA, descB, descC;
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descA, modeA.size(),
+                extentA.data(), stridesA.data(), {tensor_dtype}, 256));
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descB, modeB.size(),
+                extentB.data(), stridesB.data(), {tensor_dtype}, 256));
+            {cls.check}({cls.vendor_lower}CreateTensorDescriptor(
+                {cls.handle}, &descC, modeC.size(),
+                extentC.data(), stridesC.data(), {tensor_dtype}, 256));
         """
 
         # Contraction descriptor: D = alpha * A * B + beta * C; here D == C.
         cdesc = f"""
-            cutensorOperationDescriptor_t opDesc;
-            dace::linalg::CheckCuTensorError(cutensorCreateContraction(
-                __dace_cutensor_handle, &opDesc,
-                descA, modeA.data(), CUTENSOR_OP_IDENTITY,
-                descB, modeB.data(), CUTENSOR_OP_IDENTITY,
-                descC, modeC.data(), CUTENSOR_OP_IDENTITY,
+            {cls.vendor_lower}OperationDescriptor_t opDesc;
+            {cls.check}({cls.vendor_lower}CreateContraction(
+                {cls.handle}, &opDesc,
+                descA, modeA.data(), {cls.op_identity},
+                descB, modeB.data(), {cls.op_identity},
+                descC, modeC.data(), {cls.op_identity},
                 descC, modeC.data(),
                 {compute_desc}));
         """
 
-        workspace = """
-            cutensorPlanPreference_t planPref;
-            dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
-                __dace_cutensor_handle, &planPref,
-                CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
+        workspace = f"""
+            {cls.vendor_lower}PlanPreference_t planPref;
+            {cls.check}({cls.vendor_lower}CreatePlanPreference(
+                {cls.handle}, &planPref,
+                {cls.algo_default}, {cls.jit_default}));
             uint64_t worksize = 0;
-            dace::linalg::CheckCuTensorError(cutensorEstimateWorkspaceSize(
-                __dace_cutensor_handle, opDesc, planPref,
-                CUTENSOR_WORKSPACE_DEFAULT, &worksize));
+            {cls.check}({cls.vendor_lower}EstimateWorkspaceSize(
+                {cls.handle}, opDesc, planPref,
+                {cls.workspace_default}, &worksize));
             void *work = nullptr;
-            if (worksize > 0) cudaMalloc(&work, worksize);
+            if (worksize > 0) gpuMalloc(&work, worksize);
         """
 
-        execute = """
-            cutensorPlan_t plan;
-            dace::linalg::CheckCuTensorError(cutensorCreatePlan(
-                __dace_cutensor_handle, &plan, opDesc, planPref, worksize));
-            cutensorStatus_t err = cutensorContract(
-                __dace_cutensor_handle, plan,
+        execute = f"""
+            {cls.vendor_lower}Plan_t plan;
+            {cls.check}({cls.vendor_lower}CreatePlan(
+                {cls.handle}, &plan, opDesc, planPref, worksize));
+            {cls.vendor_lower}Status_t err = {cls.vendor_lower}Contract(
+                {cls.handle}, plan,
                 (const void*)&alpha, _left_tensor, _right_tensor,
                 (const void*)&beta,  _out_tensor,  _out_tensor,
                 work, worksize, __dace_current_stream);
-            if (err != CUTENSOR_STATUS_SUCCESS) {
-                printf("ERROR: %s\\n", cutensorGetErrorString(err));
-            }
-            cutensorDestroyPlan(plan);
-            cutensorDestroyPlanPreference(planPref);
-            cutensorDestroyOperationDescriptor(opDesc);
-            cutensorDestroyTensorDescriptor(descC);
-            cutensorDestroyTensorDescriptor(descB);
-            cutensorDestroyTensorDescriptor(descA);
-            if (work) cudaFree(work);
+            if (err != {cls.status_success}) {{
+                printf("ERROR: %s\\n", {cls.vendor_lower}GetErrorString(err));
+            }}
+            {cls.vendor_lower}DestroyPlan(plan);
+            {cls.vendor_lower}DestroyPlanPreference(planPref);
+            {cls.vendor_lower}DestroyOperationDescriptor(opDesc);
+            {cls.vendor_lower}DestroyTensorDescriptor(descC);
+            {cls.vendor_lower}DestroyTensorDescriptor(descB);
+            {cls.vendor_lower}DestroyTensorDescriptor(descA);
+            if (work) gpuFree(work);
         """
 
-        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+        code = f"{cls.environments[0].handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -397,11 +402,133 @@ class ExpandCuTensor(ExpandTransformation):
         return tasklet
 
 
+@library.expansion
+class ExpandTBLIS(ExpandTransformation):
+    """TensorDot via TBLIS ``tblis_tensor_mult`` -- native, transpose-free CPU contraction.
+
+    Reuses the cuTENSOR mode assignment, then renders integer modes as single-char index
+    labels (the einsum-style strings TBLIS consumes). ``C`` is initialized scaled by 0 so the
+    call overwrites (``C = A*B``) rather than accumulating (``C = A*B + C``).
+    """
+
+    environments = [environments.TBLIS]
+
+    # dace dtype -> (tblis init suffix, C element type)
+    TYPE_MAP = {dace.float32: ("s", "float"), dace.float64: ("d", "double")}
+
+    @staticmethod
+    def contraction_labels(num_left, num_right, left_axes, right_axes, permutation=None):
+        """Einsum-style index labels ``(idx_a, idx_b, idx_c)`` for the contraction.
+
+        Contracted right modes borrow the matching left mode's label (shared index = summed);
+        free modes get fresh labels; the output is the free-left ++ free-right modes, permuted.
+        Correct iff ``np.einsum(f'{idx_a},{idx_b}->{idx_c}', A, B)`` equals the tensordot.
+        """
+        left_modes = list(range(num_left))
+        right_modes = [left_axes[right_axes.index(i)] if i in right_axes else num_left + i for i in range(num_right)]
+        out_modes = [i for i in left_modes if i not in left_axes]
+        out_modes.extend([i for i in right_modes if i not in left_axes])
+        if permutation and permutation != list(range(len(permutation))):
+            out_modes = [out_modes[i] for i in permutation]
+        label_of = {}
+        for m in left_modes + right_modes:
+            if m not in label_of:
+                if len(label_of) >= 26:
+                    raise NotImplementedError("TBLIS TensorDot: more than 26 distinct modes")
+                label_of[m] = chr(ord('a') + len(label_of))
+        return (''.join(label_of[m] for m in left_modes), ''.join(label_of[m] for m in right_modes),
+                ''.join(label_of[m] for m in out_modes))
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
+
+        dtype = out_tensor.dtype.base_type
+        if dtype not in ExpandTBLIS.TYPE_MAP:
+            raise NotImplementedError(f"TBLIS TensorDot does not support dtype {dtype}; supported: "
+                                      f"{sorted(str(t) for t in ExpandTBLIS.TYPE_MAP)}")
+        suffix, ctype = ExpandTBLIS.TYPE_MAP[dtype]
+
+        idx_a, idx_b, idx_c = ExpandTBLIS.contraction_labels(len(left_ext), len(right_ext), node.left_axes,
+                                                             node.right_axes, node.permutation)
+
+        def carr(name, vals):
+            if len(vals) == 0:
+                return f"ptrdiff_t* {name} = nullptr;"
+            return f"ptrdiff_t {name}[] = {{{', '.join(symstr(v) for v in vals)}}};"
+
+        code = f"""
+            {carr('lenA', list(left_ext))}
+            {carr('strideA', list(left_tensor.strides))}
+            {carr('lenB', list(right_ext))}
+            {carr('strideB', list(right_tensor.strides))}
+            {carr('lenC', list(out_ext))}
+            {carr('strideC', list(out_tensor.strides))}
+            using namespace tblis;
+            tblis_tensor A, B, C;
+            tblis_init_tensor_{suffix}(&A, {len(left_ext)}, lenA, ({ctype}*)_left_tensor, strideA);
+            tblis_init_tensor_{suffix}(&B, {len(right_ext)}, lenB, ({ctype}*)_right_tensor, strideB);
+            tblis_init_tensor_scaled_{suffix}(&C, ({ctype})0, {len(out_ext)}, lenC, ({ctype}*)_out_tensor, strideC);
+            tblis_tensor_mult(NULL, NULL, &A, "{idx_a}", &B, "{idx_b}", &C, "{idx_c}");
+        """
+
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP,
+                                       side_effects=True)
+
+
+@dace.library.expansion
+class ExpandCuTensor(ExpandGPUTensorDot):
+    environments = [environments.cuTensor]
+    vendor = "cuTENSOR"
+    vendor_lower = "cutensor"
+    handle = "__dace_cutensor_handle"
+    check = "dace::linalg::CheckCuTensorError"
+    op_identity = "CUTENSOR_OP_IDENTITY"
+    algo_default = "CUTENSOR_ALGO_DEFAULT"
+    jit_default = "CUTENSOR_JIT_MODE_DEFAULT"
+    workspace_default = "CUTENSOR_WORKSPACE_DEFAULT"
+    status_success = "CUTENSOR_STATUS_SUCCESS"
+
+
+@dace.library.expansion
+class ExpandHipTensorDot(ExpandGPUTensorDot):
+    environments = [environments.hipTensor]
+    vendor = "hipTensor"
+    vendor_lower = "hiptensor"
+    handle = "__dace_hiptensor_handle"
+    check = "dace::linalg::CheckHipTensorError"
+    op_identity = "HIPTENSOR_OP_IDENTITY"
+    algo_default = "HIPTENSOR_ALGO_DEFAULT"
+    #: NONE, not DEFAULT -- hipTensor accepts the DEFAULT name and then refuses the plan at
+    #: execution, measured for every rank and dtype (see the ttranspose node).
+    jit_default = "HIPTENSOR_JIT_MODE_NONE"
+    workspace_default = "HIPTENSOR_WORKSPACE_DEFAULT"
+    status_success = "HIPTENSOR_STATUS_SUCCESS"
+
+
 @library.node
 class TensorDot(nodes.LibraryNode):
     """ Implements tensor dot-product. """
 
-    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor}
+    implementations = {
+        "pure": ExpandPure,
+        "TTGT": ExpandTTGT,
+        "cuTENSOR": ExpandCuTensor,
+        "hipTENSOR": ExpandHipTensorDot,
+        "TBLIS": ExpandTBLIS
+    }
+    # Deliberately None: the ``library.linalg.default_implementation`` config knob must stay able to
+    # select this node's TTGT / cuTENSOR / pure lowering, and a node-class default would shadow it.
+    # The library-wide default (``OpenBLAS``, meant for the LAPACK-backed Cholesky/Solve/Inv) is not
+    # one of this node's implementations; ``LibraryNode.expand`` falls back to ``pure`` for that case.
+    #
+    # TODO: no corpus kernel reaches TensorDot yet, so the fallback above is the only thing keeping
+    # ``np.tensordot`` working on CPU and it is exercised by tests alone. Pick the lowering here on
+    # merit (TTGT vs pure) once a corpus kernel actually measures it.
     default_implementation = None
 
     left_axes = properties.ListProperty(element_type=int, default=[], desc="Left tensor's contracting modes")
@@ -412,7 +539,11 @@ class TensorDot(nodes.LibraryNode):
                                           desc="Permutation of the output tensor")
 
     def __init__(self, name, left_axes=[], right_axes=[], permutation=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_left_tensor", "_right_tensor"}, outputs={"_out_tensor"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs=OrderedSet(('_left_tensor', '_right_tensor')),
+                         outputs={"_out_tensor"},
+                         **kwargs)
         self.left_axes = left_axes
         self.right_axes = right_axes
         self.permutation = permutation
@@ -420,18 +551,26 @@ class TensorDot(nodes.LibraryNode):
     def validate(self, sdfg, state):
         """
         Validates the tensor dot-product operation.
-        :return: A triple (left_tensor, right_tensor, out_tensor) for the data descriptors in the parent SDFG.
+        :return: A tuple (left_tensor, right_tensor, out_tensor, left_shape, right_shape, out_shape) -- the
+                 data descriptors in the parent SDFG, and the extents the memlets actually move.
         """
 
         left_tensor, right_tensor, out_tensor = None, None, None
+        left_shape, right_shape, out_shape = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
                 out_tensor = sdfg.arrays[e.data.data]
+                # The extents come from the SUBSET, not the descriptor: a contraction may write into
+                # a slice of a larger container, and comparing the dot-product shape against the
+                # container rejects a write that is correct.
+                out_shape = e.data.subset.size()
         for e in state.in_edges(self):
             if e.dst_conn == "_left_tensor":
                 left_tensor = sdfg.arrays[e.data.data]
+                left_shape = e.data.subset.size()
             elif e.dst_conn == "_right_tensor":
                 right_tensor = sdfg.arrays[e.data.data]
+                right_shape = e.data.subset.size()
 
         if not left_tensor or not right_tensor:
             raise ValueError("Missing the input tensors.")
@@ -444,18 +583,22 @@ class TensorDot(nodes.LibraryNode):
         # if left_tensor.storage != right_tensor.storage or left_tensor.storage != out_tensor.storage:
         #     raise ValueError("The storage of the input and output tensors must match.")
 
-        if any(a >= len(left_tensor.shape) or a < 0 for a in self.left_axes):
+        if any(a >= len(left_shape) or a < 0 for a in self.left_axes):
             raise ValueError("Axes for left tensor are out-of-bounds.")
-        if any(a >= len(right_tensor.shape) or a < 0 for a in self.right_axes):
+        if any(a >= len(right_shape) or a < 0 for a in self.right_axes):
             raise ValueError("Axes for right tensor are out-of-bounds.")
         if len(self.left_axes) != len(self.right_axes):
             raise ValueError("The input tensors must have the same number of contracting modes.")
-        if any(left_tensor.shape[l] != right_tensor.shape[r] for l, r in zip(self.left_axes, self.right_axes)):
+        # Compared by NAME: one extent reaches the two sides through different rewrites and arrives
+        # as two spellings that raw ``!=`` calls unequal, rejecting shapes that match.
+        if any(
+                symbolic.inequal_symbols(left_shape[l], right_shape[r])
+                for l, r in zip(self.left_axes, self.right_axes)):
             raise ValueError("The input tensors' contracting modes must have the same length.")
 
-        dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in self.left_axes]
-        dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in self.right_axes])
-        out_shape = list(out_tensor.shape)
+        dot_shape = [s for i, s in enumerate(left_shape) if i not in self.left_axes]
+        dot_shape.extend([s for i, s in enumerate(right_shape) if i not in self.right_axes])
+        out_shape = list(out_shape)
         if len(dot_shape) != len(out_shape):
             raise ValueError("The intermediate (dot-product) and output tensors must have the same number of modes..")
 
@@ -472,19 +615,19 @@ class TensorDot(nodes.LibraryNode):
         #     raise ValueError("The output tensor shape is not a permutation of the dot-product shape.")
 
         if not self.permutation:
-            if dot_shape != out_shape:
+            if not symbolic.shapes_equal(dot_shape, out_shape):
                 raise ValueError("The shapes of the intermediate (dot-product) and output tensors must match.")
         else:
             # NOTE: If the output tensor is transposed, then the permutation must be given explicitely. The permutation
             # can only be inferred if each tensor mode has different length, which should never be assumed.
-            if len(out_tensor.shape) != len(self.permutation):
+            if len(out_shape) != len(self.permutation):
                 raise ValueError(
                     "The permutation list property must have as many elements as the number of output tensor modes.")
-            if sorted(self.permutation) != list(range(len(out_tensor.shape))):
+            if sorted(self.permutation) != list(range(len(out_shape))):
                 raise ValueError("The permutation list property is not a perimutation of the output tensor's modes.")
             transposed_shape = [dot_shape[p] for p in self.permutation]
-            if transposed_shape != list(out_tensor.shape):
+            if not symbolic.shapes_equal(transposed_shape, out_shape):
                 raise ValueError(
                     "The permutation of the intermediate (dot-product) shape does not match the output shape.")
 
-        return left_tensor, right_tensor, out_tensor
+        return left_tensor, right_tensor, out_tensor, left_shape, right_shape, out_shape

@@ -41,7 +41,10 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  if(${DACE_FILE_TARGET} STREQUAL "cuda")
+  # ``experimental_cuda`` is a CUDA target as much as ``cuda``: the CUDA code generator
+  # defaults to the experimental implementation, so omitting it leaves the generated file
+  # compiled as plain C++, where every CUDA symbol it emits is undeclared.
+  if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
@@ -99,18 +102,25 @@ if(DACE_ENABLE_CUDA)
   string(APPEND CMAKE_CUDA_FLAGS " --expt-relaxed-constexpr")
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
-  if (DEFINED LOCAL_CUDA_ARCHITECTURES)
-    message(STATUS "Use cached CUDA architectures: '${DACE_CUDA_ARCHITECTURES_DEFAULT}'")
-
-  elseif(DACE_CUDA_ARCHITECTURES_DEFAULT)
-    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
-    message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+  # Recomputed on every configure. A CACHE entry here pinned the FIRST configure's choice: a later
+  # compiler.cuda.cuda_arch reached this file, got reported in the message, and was then ignored,
+  # so the only way to change the architecture of an existing build folder was to delete it.
+  if (DACE_CUDA_ARCHITECTURES_DEFAULT)
+    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+    message(STATUS "Compiling for CUDA architectures: ${LOCAL_CUDA_ARCHITECTURES}")
   else()
-    set(LOCAL_CUDA_ARCHITECTURES "native" CACHE STRING "Detected local GPUs for compilation")
+    set(LOCAL_CUDA_ARCHITECTURES "native")
     message(STATUS "No CUDA architecture provided, using native.")
   endif()
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
+
+  # The CUDA target forwards the same host compiler the CPU target pins as CMAKE_CXX_COMPILER.
+  # nvcc only honors one chosen BEFORE the language is enabled, so this cannot move below.
+  if(CUDA_HOST_COMPILER)
+    set(CMAKE_CUDA_HOST_COMPILER "${CUDA_HOST_COMPILER}")
+  endif()
+
   enable_language(CUDA)
   list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
   add_definitions(-DWITH_CUDA)
@@ -197,6 +207,9 @@ string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}"
 string(REPLACE " " ";" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}")
 foreach(PACKAGE_NAME ${DACE_ENV_PACKAGES})
   find_package(${PACKAGE_NAME} REQUIRED)
+  if(PACKAGE_NAME STREQUAL "MPI")
+    list(APPEND DACE_LIBS MPI::MPI_CXX)
+  endif()
 endforeach()
 # Un-escape and expand environment arguments, now that packages have been found
 foreach(VAR_NAME DACE_ENV_INCLUDES DACE_ENV_LIBRARIES DACE_ENV_COMPILE_FLAGS
@@ -284,6 +297,25 @@ if(DACE_ENABLE_HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
+# Auxiliary source files contributed by library environments (e.g. nvcc-compiled
+# ``.cu`` wrappers for libnodes whose host-side tasklet cannot directly emit a
+# CUDA kernel launch). Anything ending in ``.cu`` here also implies the SDFG
+# wants CUDA enabled.
+string(REPLACE ";" " " DACE_ENV_AUXILIARY_SOURCES_NORMALISED "${DACE_ENV_AUXILIARY_SOURCES}")
+separate_arguments(DACE_ENV_AUXILIARY_SOURCES_LIST UNIX_COMMAND "${DACE_ENV_AUXILIARY_SOURCES_NORMALISED}")
+foreach(AUX_FILE ${DACE_ENV_AUXILIARY_SOURCES_LIST})
+  if(AUX_FILE STREQUAL "")
+    continue()
+  endif()
+  if(AUX_FILE MATCHES "\\.cu$")
+    if(NOT DACE_ENABLE_CUDA)
+      set(DACE_ENABLE_CUDA ON)
+    endif()
+    set_source_files_properties("${AUX_FILE}" PROPERTIES LANGUAGE CUDA)
+  endif()
+  list(APPEND DACE_CPP_FILES "${AUX_FILE}")
+endforeach()
+
 # Additional target-specific CMake files
 foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
   include(${CMAKE_FILE})
@@ -299,6 +331,19 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 # Forbids silent decay below the required standard (e.g. falling back to an older compiler default).
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
+
+# Optional additive static archive (lib<name>.a) built from the same sources as the shared library.
+# Opt-in via compiler.static_archive; the .so is untouched.
+if (DACE_STATIC_ARCHIVE)
+    add_library(${DACE_PROGRAM_NAME}_static STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+    target_link_libraries(${DACE_PROGRAM_NAME}_static PUBLIC ${DACE_LIBS})
+    # The archive is meant to be linked INTO a shared library, so it must be position-independent.
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY POSITION_INDEPENDENT_CODE ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY OUTPUT_NAME ${DACE_PROGRAM_NAME})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD_REQUIRED ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_EXTENSIONS OFF)
+endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")

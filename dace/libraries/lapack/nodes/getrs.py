@@ -8,6 +8,7 @@ from .. import environments
 from dace import dtypes
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -82,12 +83,13 @@ class ExpandGetrsMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrsCuSolverDn(ExpandTransformation):
+class ExpandGetrsGPUSolver(ExpandTransformation):
+    """LU solve on a vendor GPU solver; the two differ only in the vocabulary below."""
 
-    environments = [environments.cusolverdn.cuSolverDn]
+    environments = []
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
                                              cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
@@ -105,11 +107,8 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         if len(desc_rhs.shape) == 1:
             stride_rhs = rows_rhs
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
-                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res);
-                """)
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_a, cols_rhs, stride_a,
+                                                                      stride_rhs)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -123,18 +122,55 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGetrsCuSolverDn(ExpandGetrsGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, rows_a, cols_rhs, stride_a, stride_rhs) -> str:
+        return f"""
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    ({ctype}*)_a, {stride_a}, _ipiv, ({ctype}*)_rhs_in, {stride_rhs}, _res);
+                """
+
+
+@dace.library.expansion
+class ExpandGetrsRocSolver(ExpandGetrsGPUSolver):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @classmethod
+    def call(cls, func, ctype, rows_a, cols_rhs, stride_a, stride_rhs) -> str:
+        # rocsolver_?getrs reports no info code, so the status the caller reads is written here.
+        return f"""
+                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
+                    __dace_rocblas_handle, rocblas_operation_none, {rows_a}, {cols_rhs},
+                    ({ctype}*)_a, {stride_a}, _ipiv, ({ctype}*)_rhs_in, {stride_rhs}));
+                DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
+                """
+
+
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrsOpenBLAS, "MKL": ExpandGetrsMKL, "cuSolverDn": ExpandGetrsCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrsOpenBLAS,
+        "MKL": ExpandGetrsMKL,
+        "cuSolverDn": ExpandGetrsCuSolverDn,
+        "rocSOLVER": ExpandGetrsRocSolver
+    }
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a", "_rhs_in", "_ipiv"}, outputs={"_rhs_out", "_res"}, **kwargs)
+        super().__init__(name,
+                         *args,
+                         inputs=OrderedSet(('_a', '_rhs_in', '_ipiv')),
+                         outputs=OrderedSet(('_rhs_out', '_res')),
+                         **kwargs)
 
     def validate(self, sdfg, state):
         """

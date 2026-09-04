@@ -102,6 +102,44 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
+
+            gpu_taskloop_heuristics:
+                type: bool
+                default: false
+                title: "Recognize kernel-launching maps as host taskloops"
+                description: >
+                    Let ``OffloadToAccelerator`` keep a map on the host when its body only launches
+                    work, rather than making every top-level map a kernel. A map qualifies when all
+                    computation under it sits inside inner maps (its own scope holds no tasklet), or
+                    when it encloses a library node that is neither a copy nor a fill -- a
+                    device-wide call such as a BLAS node cannot be issued from inside a kernel, so
+                    every map around it has to stay host code. The maps and library nodes below such
+                    a taskloop become the kernels, nested SDFGs included, which is the ICON blocking
+                    shape: the ``nblks`` map launches, the ``nproma``/``nlev`` maps compute.
+
+            canonicalization:
+                type: dict
+                title: Canonicalization pipeline defaults
+                description: >
+                    Default limits for the canonicalization / parallelization loop
+                    passes. Each seeds the matching pass Property default (read once
+                    at import); an explicit constructor argument still overrides.
+                required:
+                    unroll_limit:
+                        type: int
+                        default: 8
+                        title: Short-loop unroll limit
+                        description: >
+                            Fully unroll constant-trip loops with at most this many
+                            iterations (0 disables). Seeds ``ShortLoopUnroll.unroll_limit``.
+
+                    peel_limit:
+                        type: int
+                        default: 8
+                        title: Best-effort loop peel limit
+                        description: >
+                            Bounds the wrapping-modulo peel to 1..peel_limit iterations
+                            (0 disables). Seeds ``BestEffortLoopPeeling.peel_limit``.
     compiler:
         type: dict
         title: Compiler
@@ -114,6 +152,22 @@ required:
                 description: >
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
+
+            emit_tree_reductions:
+                type: bool
+                default: false
+                title: Emit tree reductions for parallel WCR (legacy codegen only)
+                description: >
+                    LEGACY CODE GENERATORS ONLY -- the experimental CPU/CUDA targets always
+                    tree-reduce and ignore this flag, since the fold is how they lower a
+                    reduction at all.
+                    If enabled, a conflict-free (WCR) reduction accumulator written from a
+                    parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
+                    OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a
+                    per-thread-block ``cub::BlockReduce`` (one atomic per block). If disabled,
+                    the same reduction instead lowers to a plain atomic WCR (one atomic per
+                    iteration on CPU / ``atomicAdd`` per thread on GPU) -- correct but
+                    contended. Only affects codegen; the SDFG is unchanged either way.
 
             build_folder_mode:
                 type: str
@@ -191,6 +245,32 @@ required:
                 description: >
                     CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
                     the optimization level; ``args`` add to it.
+            build_mode:
+                type: str
+                default: cmake
+                title: Build system
+                description: >
+                    How generated code is compiled. "cmake" (default) writes a
+                    CMakeLists project and runs cmake configure + build. "native"
+                    emits the g++/nvcc/link commands directly and runs them via
+                    subprocess, skipping cmake configure overhead. "native" is
+                    Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
+                    anything it cannot resolve without cmake.
+
+            static_archive:
+                type: bool
+                default: false
+                title: Also emit a static archive
+                description: >
+                    When true, the build additionally emits ``lib<name>.a`` (the
+                    compiled object files archived with ``ar rcs``) next to the
+                    runnable ``lib<name>.so``. The ``.so`` is untouched -- the SDFG
+                    still loads and runs exactly as before -- so this only ADDS an
+                    artifact. Used to link an offloaded loop-nest into a parent
+                    SDFG's shared library as a static member instead of a second
+                    dlopen. Off by default; supported in both ``native`` and
+                    ``cmake`` build modes.
+
 
             allow_shadowing:
                 type: bool
@@ -340,6 +420,16 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    simd_maps:
+                        type: bool
+                        default: true
+                        title: Vectorize innermost CPU maps with OpenMP simd
+                        description: >
+                            Runs ``MarkSIMDMaps`` before code generation, which sets
+                            ``Map.omp_simd`` on the innermost Sequential and CPU_Multicore maps
+                            whose body holds no further loop or map. Set false to emit no
+                            ``simd`` clause; maps already carrying ``omp_simd`` still render it.
+
                     openmp_sections:
                         type: bool
                         default: false
@@ -366,6 +456,522 @@ required:
                             CopyLibraryNode before expansion. An implicit copy is a write no node
                             performs, so an empty memlet ordering that write has nothing to point
                             at; giving the copy a node is what makes it orderable.
+
+                            Applies to the CLASSIC CPU generator only, and defaults ON there.
+                            Turning it off gives back output byte-identical to upstream, which is
+                            what makes the classic path an A/B reference for the new generators;
+                            the cost of off is that a dtype-converting copy has no lowering at all
+                            on that path and reaches the compiler as a CopyND template call whose
+                            source and destination types disagree. The experimental readable CPU
+                            generator and the experimental CUDA generator REQUIRE the lowering --
+                            every copy has to be a node an ordering edge can point at -- and run
+                            it regardless of this key.
+
+                    parallel_min_work_per_region:
+                        type: int
+                        default: 256
+                        title: Parallel region break-even iterations
+                        description: >
+                            Iterations a top-level map must have to pay for the fork/join of
+                            its own OpenMP region. The cpu_specialize band sequentializes a
+                            parallel map whose iteration count is PROVABLY below this. A
+                            symbolic count is assumed big enough and stays parallel. An
+                            enclosing loop is NOT a reason to sequentialize: it multiplies
+                            the parallel and the sequential cost alike. 0 disables the size
+                            rule, leaving only the nested-parallelism rule.
+
+                    implementation:
+                        type: str
+                        default: experimental_readable
+                        title: CPU code generator implementation
+                        description: >
+                            Selects the CPU code generator. ``legacy`` uses the classic
+                            connector-based tasklet codegen (copy-in / compute / copy-out
+                            blocks). ``experimental_readable`` emits human-readable code: one
+                            ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
+                            function per array, connector-free tasklets that access arrays
+                            directly, and ``const``/``constexpr`` initialization for
+                            write-once data. This flag also governs GPU-kernel tasklets,
+                            which are emitted through the shared CPU generator instance.
+
+                    codegen_params:
+                        type: dict
+                        title: CPU codegen parameters
+                        description: >
+                            Tuning knobs for the CPU code generators. Each names a source-level form
+                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
+                            published mean coefficient of variation across semantically-equivalent
+                            loop forms is ~17% for clang ("compiler instability", Gong et al.
+                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
+                            kernel-dependent. So none of these is hardcoded: every default reproduces
+                            the legacy generator's existing output, and each knob exists to be SWEPT
+                            and MEASURED per target rather than argued from first principles.
+
+                            EVERY key here MUST state which generator(s) it affects, on an
+                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
+                            (see ``compiler.cpu.implementation``). A knob that names only
+                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
+                            byte-identical.
+                        required:
+                            const_scalar_abi:
+                                type: str
+                                default: by_ref
+                                title: Read-only scalar calling convention
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always binds by
+                                    reference and ignores this key).
+
+                                    How the readable generator binds a READ-ONLY scalar: ``by_ref``
+                                    emits ``const T& x`` (the legacy convention -- forming the
+                                    reference never copies), ``by_value`` emits ``const T x`` (a
+                                    copy). Semantically identical, and the faster one is NOT fixed:
+                                    LLVM #121262 is the same axis with the REFERENCE winning, while
+                                    Lemire measured by-reference 4.5x SLOWER on an aliasing-bound
+                                    loop. Measured here: on Neoverse-V2 + clang the two forms lower a
+                                    masked sum-reduction differently (``ld1w p/z`` + ``sel`` +
+                                    unpredicated ``fadd`` vs ``ldr z`` + merging-predicated ``fadd``),
+                                    correlating with ~17%. NOTE: Arm's Neoverse-V2 optimization guide
+                                    (Table 3-25) lists identical latency/throughput/pipelines for ALL
+                                    FADD forms, so that delta is NOT explained by published
+                                    instruction costs -- the mechanism is OPEN (a predicate-pipe
+                                    dependency in the accumulate chain is the leading candidate) and
+                                    code layout has not been excluded. Default ``by_ref`` matches
+                                    legacy.
+                            index_ctype:
+                                type: str
+                                default: int64
+                                title: Index-function integer type
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic instead of emitting ``<array>_idx`` helpers, so it has
+                                    no index type to pick and ignores this key).
+
+                                    The integer type the generated ``<array>_idx`` / ``<array>_size``
+                                    helpers compute a flat index in: ``int64`` emits ``int64_t`` (the
+                                    default), ``int32`` emits ``int32_t``. Both are the exact-width
+                                    ``<cstdint>`` types, already in scope via ``dace/dace.h``. The
+                                    spelling is deliberate: ``long long`` is only guaranteed to be AT
+                                    LEAST 64 bits, so it does not state the width this key names.
+
+                                    UNSAFE ABOVE 2**31: ``int32`` silently WRAPS past 2147483647, and
+                                    the bound is on the ELEMENT COUNT, not the byte size -- an int8
+                                    array overflows at just 2 GiB of data (float32 at 8 GiB, float64
+                                    at 16 GiB). It is therefore never selected automatically: the
+                                    generator cannot prove a symbolic shape stays under the bound, and
+                                    an overflow here corrupts data with no diagnostic. Set it only for
+                                    an SDFG whose extents you know.
+
+                                    Do not expect a win by default. Measured on x86-64 (Zen 4), most
+                                    kernels land inside a 0.5-6% noise floor, and the deltas that do
+                                    clear it point OPPOSITE ways (gcc/gather -26% for int32, but
+                                    clang/stencil +12% against it) -- a knob to sweep, not a default to
+                                    flip. It is also NOT an ABI axis: templating or overloading the
+                                    helpers on the index type was measured and rejected, because GCC's
+                                    identical-code folding collapses the instantiations back onto one
+                                    body (``<stencil3d_v3_c32>: jmp <stencil3d_v2_c32>``) while C++
+                                    argument deduction silently picks 32-bit math from the generated
+                                    ``for (auto i = 0; ...)`` call sites -- an explicit knob cannot do
+                                    that behind your back.
+                            heap_ptr_restrict:
+                                type: str
+                                default: restrict
+                                title: __restrict__ on heap array pointers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy does not emit the
+                                    fused ``T* ptr = alloc`` declaration this qualifies).
+
+                                    Whether a heap-allocated array pointer is declared
+                                    ``T* __restrict__ p`` (``restrict``, the default) or ``T* p``
+                                    (``none``). ``restrict`` promises the pointer does not alias, which
+                                    is what lets the vectorizer prove independence -- the default and
+                                    the faster bet. It is NEVER applied to a ``may_alias`` descriptor
+                                    regardless of this key: that array is deliberately reachable through
+                                    a second pointer, so promising no-alias would be a miscompile, not a
+                                    win. The effect is genuinely BIMODAL when it does apply (46 tests
+                                    faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
+                                    vectorization via GVN load-PRE in llvm#38583), which is why it is a
+                                    knob and not a hardcode. ``restrict`` reproduces today's output.
+                            split_nsdfg_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level nested SDFG as its own translation unit
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    Split codegen output so that each TOP-LEVEL nested SDFG becomes its
+                                    own ``.cpp``. When on, ``OutlineTopLevelNests`` first wraps every
+                                    top-level map-nest / loop region of the root SDFG in a ``no_inline``
+                                    nested SDFG, and each such nest is emitted to
+                                    ``src/cpu/nsdfg/<label>.cpp`` instead of being written into the one
+                                    frame ``.cpp``. The frame keeps a forward declaration and the call.
+
+                                    This is a BUILD-PARALLELISM tactic, not a codegen-quality one: one
+                                    huge TU is compiled by exactly one core, so a big SDFG serializes
+                                    the build. N translation units let the CMake Ninja generator (used
+                                    automatically when ``ninja`` is on PATH) compile them concurrently.
+
+                                    The nest function is called across the TU boundary as a normal
+                                    IN-BINARY function -- forward-declared, external linkage, and
+                                    ``DACE_HIDDEN`` (hidden visibility) so it stays out of the shared
+                                    library's public ABI. It is NOT a separate ``.so`` and is NOT
+                                    ``dlopen``ed; the static linker resolves the cross-object call.
+                                    (Unrelated to ``NestedSDFG.ext_sdfg_path``, which is a runtime lazy
+                                    LOADER and does not touch codegen.)
+
+                                    COST: splitting puts the nest body behind a TU boundary, so the
+                                    compiler can no longer inline it into the frame or specialize it on
+                                    the call site. Recover that with ThinLTO -- add ``-flto=thin`` to
+                                    ``compiler.cpu.args`` and to ``compiler.linker.args``, which keeps
+                                    the cross-TU inlining while staying parallel and bounded in memory.
+                                    NEVER use plain ``-flto`` (monolithic LTO): it merges every TU into
+                                    one serial link-time module, which both destroys the parallelism
+                                    this knob buys and can exhaust RAM on a small machine. ThinLTO is
+                                    strictly OPT-IN and CORRECTNESS DOES NOT DEPEND ON IT -- it only
+                                    affects whether the cross-TU call is re-inlined.
+
+                                    Default ``false`` reproduces today's output BYTE-IDENTICALLY for
+                                    both generators: every split path is gated on this key, so when it
+                                    is off the nest bodies are written inline into the single frame
+                                    ``.cpp`` exactly as before.
+                            external_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level GPU nest as its own standalone SDFG + translation unit
+                                description: >
+                                    Applies to: legacy AND experimental cuda backends.
+
+                                    Model 2 of the per-translation-unit split, for GPU. Where
+                                    ``split_nsdfg_translation_units`` relocates a CPU-only nest's function
+                                    into its own ``.cpp`` (still one codegen pass, one ``.cu`` for the whole
+                                    program), THIS key lifts each top-level nest that contains GPU work into a
+                                    STANDALONE SDFG that is code-generated on its OWN -- a separate codegen
+                                    pass, hence its OWN ``.cu`` with only that nest's kernels. Both cuda
+                                    generators emit exactly one ``.cu`` per generate_code invocation, so one
+                                    ``.cu`` per top-level GPU kernel is only reachable this way; it needs no
+                                    change to either cuda backend.
+
+                                    The parent calls each child through the child SDFG's PUBLIC extern-C
+                                    handle ABI -- ``__dace_init_<child>`` / ``__program_<child>`` /
+                                    ``__dace_exit_<child>`` -- forward-declared and resolved in-binary by the
+                                    static linker (the same one-``.so`` contract as
+                                    ``split_nsdfg_translation_units``; NOT a separate library, NOT
+                                    ``dlopen``). Device pointers are passed straight through: parent and
+                                    child share the process's CUDA context, so a device allocation is valid
+                                    across the call.
+
+                                    DEPTH 1: a child is generated with this key forced off, so a nest inside
+                                    a child is not itself lifted again.
+
+                                    Default ``false`` reproduces today's output byte-identically: the lift
+                                    and the recursive per-child codegen are both gated on this key.
+                            inline_full_array_nsdfg:
+                                type: bool
+                                default: false
+                                title: Inline a full-array nested SDFG as a __restrict__ pointer alias
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    A nested SDFG (e.g. an outlined map nest) is normally emitted as its own
+                                    C++ function that the parent calls with the connector arrays as
+                                    arguments. When this key is on, a nested SDFG whose EVERY connector binds
+                                    a WHOLE outer array -- full range, offset 0, and the nested array has the
+                                    same shape and strides -- is instead emitted INLINE at the call site: no
+                                    function, no argument marshaling, just one pointer alias per connector,
+
+                                        T* __restrict__ <connector> = <outer array>;
+
+                                    (and nothing at all when the connector already has the same name as the
+                                    outer array). ``__restrict__`` records that the alias does not overlap the
+                                    other connectors -- the no-alias hint the function-argument form gets for
+                                    free -- so the optimizer keeps vectorizing across the (now inlined) body.
+
+                                    Only whole-array connectors qualify: a sub-range needs offset/stride math,
+                                    a scalar is passed by value, and a WCR output must go through the atomic
+                                    resolve path -- each of those keeps the function form. Because it inlines,
+                                    it shares ``inline_sdfgs``' constraint that a nested transient must not
+                                    shadow a name already live in the parent scope.
+
+                                    Default ``false`` keeps the function form, byte-identical to today.
+                            index_fn_qualifier:
+                                type: str
+                                default: inline_constexpr
+                                title: Qualifier on generated index/size helpers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic and emits no ``<array>_idx`` / ``<array>_size`` helpers).
+
+                                    The linkage/inlining qualifier on the generated index and size
+                                    helpers. ``inline_constexpr`` (the default) emits
+                                    ``static DACE_HDFI constexpr`` -- ``inline`` is a hint the backend
+                                    already honours for these tiny functions at -O2, so they are inlined
+                                    and the access reads as ``p[i*S+j]`` to the vectorizer.
+                                    ``always_inline`` additionally attaches
+                                    ``__attribute__((always_inline))`` to FORCE inlining regardless of
+                                    the inliner's cost model -- useful only where a helper is (wrongly)
+                                    left out of line, which pins a vectorization precondition. Inlining
+                                    is the precondition for every downstream idiom/vectorization
+                                    decision, so leaving these helpers un-inlined is the failure mode
+                                    this guards against. ``inline_constexpr`` reproduces today's output.
+                            loop_index_type:
+                                type: str
+                                default: auto
+                                title: Map-loop induction variable type
+                                description: >
+                                    Applies to: legacy AND experimental_readable (both emit map loops
+                                    through the same emitter in cpu.py).
+
+                                    The declared type of a map loop's induction variable. ``auto`` (the
+                                    default) deduces it from the lower bound -- for the usual ``0`` that
+                                    makes it ``int``, i.e. 32-bit index math. ``int64`` emits
+                                    ``int64_t`` and ``int32`` emits ``int32_t`` explicitly (the
+                                    exact-width ``<cstdint>`` types, in scope via ``dace/dace.h``).
+
+                                    NOTE the ``auto`` default is 32-bit index math for the usual lower
+                                    bound of ``0``, so a map over ``0:N`` with N above 2**31 WRAPS. That
+                                    is an argument for defaulting to ``int64``, but this key reaches the
+                                    SHARED map-loop emitter, so changing its default would change legacy
+                                    output for every user, and a wider counter is not free (see below).
+                                    It stays ``auto`` until a sweep says otherwise.
+
+                                    Widening the induction variable can let TBAA disprove aliasing so a
+                                    store sinks out of the loop, and it changes the no-wrap facts SCEV
+                                    and the vectorizer rely on -- but a wider counter is also more
+                                    register pressure and, on a 32-bit-safe loop, pure cost. The sign is
+                                    not fixed; sweep it. This is DISTINCT from ``index_ctype``, which
+                                    types the generated helper bodies, not the loop variable; if the two
+                                    disagree the loop index converts at the call. ``auto`` reproduces
+                                    today's output byte-for-byte, so legacy is unaffected by default.
+                            loop_bound_cmp:
+                                type: str
+                                default: lt
+                                title: Map-loop bound comparison
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    How a map loop's exit test is spelled, for the identical iteration
+                                    space: ``lt`` emits ``i < end + 1`` (the default), ``le`` emits
+                                    ``i <= end`` (same range, without the ``+ 1`` add), ``ne`` emits
+                                    ``i != end + 1``.
+
+                                    ``ne`` supports any stride. A naive ``i != end + 1`` is correct only
+                                    when the stride divides the range -- otherwise the counter steps
+                                    OVER that bound, never compares equal, and the loop does not
+                                    terminate. So for a non-unit stride the bound is normalised to the
+                                    first value the counter actually LANDS on at or past the end,
+                                    ``begin + int_ceil(end + 1 - begin, skip) * skip``, which it is
+                                    guaranteed to hit exactly. Even so, ``ne`` forces the optimizer to
+                                    prove termination before it may vectorize or unroll, where ``<``
+                                    hands SCEV a trip count directly -- so ``ne`` is the pessimistic end
+                                    of this axis and exists to be measured, not recommended. ``lt``
+                                    reproduces today's output byte-for-byte.
+                            loop_decl_style:
+                                type: str
+                                default: for_init
+                                title: Map-loop induction variable declaration placement
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    Where a map loop's induction variable is declared, for the identical
+                                    loop: ``for_init`` (the default) declares it in the for-statement's
+                                    init clause, ``for (auto i = 0; ...)``; ``hoisted`` declares it ahead
+                                    of the loop, ``auto i = 0; for (; ...)``.
+
+                                    The variable's lifetime is the only difference: hoisted, it outlives
+                                    the loop, which is what makes this a style axis at all -- a longer
+                                    live range is a different input to register allocation. It also means
+                                    two sibling maps sharing a parameter name would collide, so hoisting
+                                    forces the map's encapsulating scope to be emitted (that brace is
+                                    exactly what bounds a declaration made ahead of the loop headers).
+
+                                    Applies to SEQUENTIAL maps only. An OpenMP pragma must be
+                                    immediately followed by a CANONICAL loop whose init clause declares
+                                    the induction variable, so hoisting it leaves the pragma facing a
+                                    declaration and the compiler rejects it outright ("loop nest
+                                    expected"). A CPU_Multicore / CPU_Persistent map therefore keeps
+                                    ``for_init`` regardless of this key. ``for_init`` reproduces today's
+                                    output byte-for-byte.
+                            loop_access_form:
+                                type: str
+                                default: indexed
+                                title: Sequential-loop array access form
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy emits no readable
+                                    ``<array>_idx`` access path to rewrite, so it ignores this key and
+                                    stays byte-identical for every value).
+
+                                    How arrays indexed at the loop counter are accessed inside a
+                                    SEQUENTIAL map loop: ``indexed`` (the default) recomputes the flat
+                                    index every iteration -- ``C[C_idx(i)] = A[A_idx(i)] + B[B_idx(i)]``;
+                                    ``ptr_increment`` walks each such array with a base pointer advanced
+                                    by its constant per-iteration stride --
+                                    ``T* pC = C; ...; for (...) { *pC = *pA + *pB; pC += 1; pA += 1; }``.
+                                    Both cover the identical memory accesses in the identical order.
+
+                                    This is a READABILITY / variant-space form, NOT a speed lever: the
+                                    backend canonicalizes the two directions into one (indvars raises a
+                                    pointer recurrence to a subscript, LSR lowers a subscript back to a
+                                    walking GEP, and x86-64 scaled-index addressing makes the index math
+                                    free), so no speedup is claimed or expected -- it exists to emit a
+                                    visibly different but equivalent form.
+
+                                    SEQUENTIAL constructs only, and gated exactly as the hoisted
+                                    declaration is: an OpenMP (``CPU_Multicore`` / ``CPU_Persistent``)
+                                    map keeps the canonical indexed loop the parallel-for pragma requires
+                                    (a walking pointer is a loop-carried dependency the parallelism
+                                    forbids), so it is unaffected. It is applied only where a simple
+                                    pointer walk is provably equivalent -- a single 1-D sequential map
+                                    whose one tasklet indexes plain arrays affinely in the loop counter,
+                                    with no WCR. Any other shape (a multi-dimensional or mixed-variable
+                                    index, an indirect/gather or non-affine subscript, a WCR output, a
+                                    non-unit-tasklet scope) falls back to ``indexed`` for that construct
+                                    rather than emitting a walk. ``indexed`` reproduces today's output
+                                    byte-for-byte.
+                            decl_placement:
+                                type: str
+                                default: eager
+                                title: Declaration placement (declare near use)
+                                description: >
+                                    Applies to: legacy AND experimental_readable for LOOP COUNTERS (the
+                                    loop emitter is shared); experimental_readable ONLY for SCALARS
+                                    (legacy hoists every scope transient's declaration to its scope top
+                                    and ignores this key for them). ``eager`` leaves LEGACY output
+                                    byte-identical; for the readable generator it is the default, so it
+                                    reproduces today's readable output by definition -- but read the
+                                    ``scalar_init_style`` interaction below before assuming that means
+                                    the legacy spelling.
+
+                                    Where a declaration is emitted relative to its first use: ``eager``
+                                    (the default) declares at the top of its scope, as the legacy
+                                    generator does; ``late`` moves each declaration as close to its
+                                    first use as it is PROVABLY SOUND to move it.
+
+                                    INTERACTION with ``scalar_init_style``, which is NOT orthogonal for
+                                    scalars and cannot be: ``fused`` (NOT that key's default -- it
+                                    defaults to ``split``) makes a scalar's declaration BE its first
+                                    write, so the declaration is at the write by construction and there is
+                                    no separate line for ``eager`` to hoist. ``decl_placement`` governs
+                                    only the declarations that remain separate -- loop counters, and the
+                                    scalars ``fused`` cannot fold (a braced first-use tasklet). For those,
+                                    ``fused`` still emits the ``T x;`` at first use rather than the scope
+                                    top, since a candidate it meant to fold is one it means to declare
+                                    near its write. So under ``scalar_init_style: fused`` a
+                                    braced-first-use scalar is NOT declared at its scope top; the default
+                                    ``split`` declares every scalar there.
+
+                                    Two constructs are covered, and each has its own soundness gate --
+                                    anything that does not
+                                    pass its gate keeps the eager declaration, so ``late`` is a
+                                    best-effort form, never a promise that nothing is hoisted.
+
+                                    LOOP COUNTERS. A ``LoopRegion`` counter is declared at the top of the
+                                    generated function today (``int64_t i;``, then ``for (i = 0; ...)``)
+                                    no matter how deep its loop is -- the furthest-from-use declaration
+                                    the generator emits. ``late`` declares it in the loop's own for-init
+                                    clause instead, ``for (int64_t i = 0; ...)``, which also scopes it
+                                    to the loop. Sound only when the counter is genuinely loop-local:
+                                    exactly ONE LoopRegion owns the name, the loop is not ``inverted``
+                                    (an inverted loop emits its init BEFORE the loop brace, where a
+                                    declaration is not loop-scoped), the init statement is a plain
+                                    ``i = <expr>``, and NOTHING outside the loop uses the counter -- DaCe
+                                    permits a subsequent block to read a counter's final value, which
+                                    for-init scoping would break, so it is checked rather than assumed.
+                                    Map induction variables are NOT covered here: they already default to
+                                    a for-init declaration, and ``loop_decl_style`` is their axis.
+
+                                    SCALARS. A MUTABLE scope-lifetime value scalar (a ``dace.data.Scalar``
+                                    transient that is reassigned, so it is not the ``const T x = expr;``
+                                    write-once form the ``MarkConstInit`` path already declares at its
+                                    definition) is deferred to the line immediately before the first
+                                    tasklet that uses it. Sound only for a plain transient value scalar
+                                    whose every access lives in ONE scope and is a direct-child tasklet of
+                                    that scope, so the deferred declaration lands in the same brace as --
+                                    and before -- every use. Any other shape (a write-once const scalar, a
+                                    len-1 array, a heap/device/GPU-global scalar, a scalar crossing states
+                                    or map/nested-SDFG/copy boundaries, or one used across scopes) stays
+                                    eager. NOTE that this gate is narrow enough that most scalars a
+                                    front-end emits do not meet it: one inside a map scope, or one live
+                                    across states, keeps its eager declaration.
+
+                                    This is a READABILITY / live-range form, not a speed lever -- the
+                                    backend sinks a dead declaration to first use regardless.
+                            scalar_init_style:
+                                type: str
+                                default: split
+                                title: Mutable scalar declaration / first-write fusion
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always declares a scope
+                                    transient at its scope top, separately from every write, and ignores
+                                    this key -- its output stays byte-identical for every value).
+
+                                    Whether a MUTABLE scalar's declaration and its FIRST write are emitted
+                                    as one binding: ``split`` emits the legacy pair, ``T x;`` at the scope
+                                    top and ``x = expr;`` where the write happens; ``fused`` (the default)
+                                    emits ``T x = expr;`` -- the declaration IS the first write.
+
+                                    NOTE this default does NOT reproduce legacy's spelling, unlike the
+                                    rest of the group: the readable generator deliberately prefers the
+                                    fused binding, since declaring a name at its defining write is the
+                                    whole point of a readable form and it shortens the live range. Legacy
+                                    is untouched either way -- it ignores this key entirely -- so the
+                                    byte-identity rule that governs legacy is not at stake here. Set
+                                    ``split`` to recover the legacy pair from the readable generator.
+
+                                    This is the mutable counterpart of the ``const T x = expr;`` binding
+                                    that write-once scalars already get from ``MarkConstInit``; a scalar
+                                    that is reassigned cannot be ``const``, but its first write can still
+                                    define it. Later writes stay plain ``x = expr;``.
+
+                                    Fusion is decided at EMISSION, not predicted: a declaration folded
+                                    into a tasklet that turns out to need its own ``{ ... }`` block would
+                                    be scoped to that block and invisible to later readers, and whether a
+                                    tasklet is emitted brace-free is not known until its body has been
+                                    lowered. So a candidate whose first-use tasklet is braced (or whose
+                                    statement does not spell the write) falls back to a plain ``T x;``
+                                    line immediately ahead of that tasklet rather than being fused. The
+                                    declaration is therefore always emitted, exactly once.
+
+                                    Candidates are gated as in ``decl_placement`` (a plain transient value
+                                    scalar whose every access is a direct-child tasklet of ONE scope, live
+                                    in a single state, never read before it is written), minus ``setzero``
+                                    scalars, whose ``T x = 0;`` init already IS a fused declaration.
+                            const_init:
+                                type: str
+                                default: 'on'
+                                title: const/constexpr initialization of write-once data
+                                description: >
+                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
+                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
+                                    enters that block, so its output stays byte-identical for every value).
+
+                                    Whether a transient that is written once and thereafter only read is
+                                    classified for ``const``/``constexpr`` emission: ``on`` (the default)
+                                    runs :class:`~dace.transformation.passes.mark_const_init.MarkConstInit`;
+                                    ``off`` skips it, so every such transient stays a mutable buffer filled
+                                    at runtime.
+
+                                    NOTE the default is ``on``: this pass ALREADY runs today, so ``on``
+                                    is what reproduces today's
+                                    output byte-for-byte. The key exists to take it OUT, which is what
+                                    makes the readable generator's two const forms separable from the rest
+                                    of the group when sweeping -- a compile-time fill (``constexpr T x[N] =
+                                    {...}``, promoted to an SDFG constant, its now-dead runtime writes
+                                    removed) and a single-runtime-write binding (``const T x = expr;``) are
+                                    both suppressed by ``off``.
+
+                                    This is NOT a pure spelling axis, unlike most of this group: a
+                                    ``constexpr_static`` fill deletes the initializing writes altogether,
+                                    so ``off`` emits strictly more work. It is a knob because ``const`` is
+                                    a promise to the backend whose value is not fixed -- it can unlock
+                                    constant folding and hoisting, or merely bloat the initializer.
+
+                                    The ``const T x = expr;`` binding follows the same emission-time rule
+                                    as ``scalar_init_style = fused`` below: a binding folded into a tasklet
+                                    that turns out to need its own ``{ ... }`` block would be scoped to that
+                                    block and invisible to later readers, so a candidate whose writing
+                                    tasklet is braced falls back to a plain ``T x;`` line immediately ahead
+                                    of that tasklet, with the write kept inside.
 
             #############################################
             # GPU (CUDA/HIP) compiler
@@ -429,7 +1035,7 @@ required:
                             Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
                             Can be set to 'max' to maximize occupancy.
-                        default: '32,1,1'
+                        default: '128,1,1'
 
                     dynamic_map_block_size:
                         type: str
@@ -482,7 +1088,7 @@ required:
                             Maximum number of concurrent CUDA/HIP streams to
                             generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
-                        default: 0
+                        default: -1
 
                     syncdebug:
                         type: bool
@@ -539,6 +1145,17 @@ required:
                             index types are needed to address memory offsets that are beyond the 32-bit
                             range, or to reduce memory usage.
 
+                    # New configs, needed for ExperimentalCUDACodeGen
+                    implementation:
+                        type: str
+                        title: CUDA codegen implementation
+                        description: >
+                            Choose between available CUDA code generation implementations.
+                            "legacy" is the stable implementation; "experimental" is a
+                            work-in-progress rewrite (ExperimentalCUDACodeGen).
+                        enum: [legacy, experimental]
+                        default: experimental
+
                     allow_implicit_memlet_to_map:
                         type: bool
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
@@ -549,6 +1166,75 @@ required:
                             explicitly copy the data around. If this value is ``false`` the code generator
                             will raise an exception if such a Memlet is encountered. This allows the user
                             to have full control over all Maps in the SDFG.
+
+                    gpu_index_type:
+                        type: str
+                        title: Thread/block/warp index data type
+                        default: int32
+                        description: >
+                            Defines the data type for a thread, block and warp index in the generated code.
+                            The type is based on the type-classes in ``dace.dtypes``. For example,
+                            ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
+                            index types are needed to address memory offsets that are beyond the 32-bit
+                            range, or to reduce memory usage. This replaces ``thread_id_type`` in
+                            ``ExperimentalCUDACodeGen`` , as the new name more accurately reflects its broader
+                            usage.
+
+                    cuda_warp_size:
+                        type: int
+                        title: CUDA warp size
+                        description: >
+                            Defines the warp size used during CUDA code generation. The default and current
+                            standard value for CUDA is 32. This should only be changed if future CUDA
+                            architectures explicitly alter the warp size. Modifying this value arbitrarily may
+                            result in incorrect or unknown behavior, and is therefore strongly discouraged.
+                        default: 32
+
+                    hip_warp_size:
+                        type: int
+                        title: HIP warp size
+                        description: >
+                            Specifies the warp size (also known as wavefront size) for HIP code generation.
+                            The default value for AMD GPUs is typically 64. This setting should only be modified
+                            if you have a clear understanding of what you are doing.
+                        default: 64
+
+                    auto_syncthreads_insertion:
+                        type: bool
+                        title: Insert Default __syncthreads() Tasklets
+                        description: >
+                            If enabled, inserts default __syncthreads() tasklets during preprocessing
+                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
+                            This is a simple safeguard for correctness - it may not be complete, but it
+                            does the job for basic SDFGs. Disable if you handle synchronization manually
+                            or use other mechanisms like async copies or pipelines.
+                        default: true
+
+                    synchronize_on_exit:
+                        type: bool
+                        title: Synchronize GPU stream at SDFG exit
+                        description: >
+                            If enabled (default), AutoSingleStreamGPUScheduler appends a
+                            cudaStreamSynchronize at every GPU sink state, making each GPU SDFG
+                            synchronous on return. Disable only when the host application shares one
+                            GPU stream across all SDFG calls (so GPU->GPU hand-off is stream-ordered)
+                            and synchronizes at its own host-read boundaries -- this removes the
+                            per-SDFG host stall for GPU-resident pipelines (e.g. icon4py), which is
+                            the dominant cost on launch-bound stencils. Sink states that write
+                            host-visible (CPU) outputs are ALWAYS synchronized regardless of this
+                            setting, so numpy / copy-out SDFGs stay correct.
+                        default: true
+
+                    gpu_stream_name:
+                        type: str
+                        title: Name for the GPU stream object
+                        description: >
+                            GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously
+                            and in parallel. This field specifies the naming convention for the GPU stream array and its connectors
+                            in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the
+                            stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
+                            connector for gpu_streams[0].
+                        default: gpu_streams,gpu_stream
 
             #############################################
             # MPI compiler
@@ -851,6 +1537,7 @@ required:
                 description: >
                     Check for potential race conditions during validation.
 
+
     #############################################
     # Features for unit testing
 
@@ -882,6 +1569,29 @@ required:
                 description: >
                     If False (default), saving an SDFG keeps only the modified non-default properties. If True,
                     saves all fields.
+
+    #############################################
+    # Graph backend
+
+    graph:
+        type: dict
+        title: Graph
+        description: Settings for DaCe's internal graph representation and algorithms.
+        required:
+            backend:
+                type: str
+                default: 'networkx'
+                title: Graph backend
+                description: >
+                    Backend used for DaCe's internal graph data structures and algorithms
+                    ('networkx' for the reference/safe implementation, or 'rustworkx' for
+                    an accelerated, opt-in implementation -- requires the 'fastgraph' extra).
+                    Applies uniformly: algorithm calls made through an SDFG's or state's
+                    '.nx'/'._nx' escape hatch are also accelerated under 'rustworkx' (via an
+                    on-the-fly, currently uncached conversion), except for the couple of
+                    algorithms rustworkx has no implementation of at all (transitive closure,
+                    max-flow/min-cut), which always use networkx regardless of this setting;
+                    see dace/graphlib for details.
 
     #############################################
     # DaCe library settings

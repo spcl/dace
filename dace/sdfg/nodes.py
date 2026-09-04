@@ -3,6 +3,7 @@
     dataflow multigraph representation. """
 
 import ast
+import collections.abc
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -37,12 +38,30 @@ class Node(object):
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
     guid = Property(dtype=str, allow_none=False)
+    gpu_stream_id = Property(dtype=int,
+                             default=None,
+                             allow_none=True,
+                             desc="GPU stream assignment from the experimental-codegen stream "
+                             "scheduler. None when unassigned. Persisted across save/load.")
+    specialization_hint = Property(dtype=str,
+                                   default=None,
+                                   allow_none=True,
+                                   desc="A note about how this node got its shape, recorded where "
+                                   "it applies. Two kinds: a device specialization a canonicalizing "
+                                   "pass considered and did not take (canonicalization picks the "
+                                   "most parallel form; the hint says what a target-specific pass "
+                                   "could trade it for and on which device the trade pays), and the "
+                                   "kind of loop a scope is -- parallel, sequential with a proven "
+                                   "carried dependence, or neither proven (AnnotateLoopKinds). "
+                                   "Rendered as a comment by the standalone (MPR) rendering and "
+                                   "ignored everywhere else. Never a directive: nothing in the "
+                                   "pipeline dispatches on it. None when nothing was recorded.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
-        if isinstance(in_connectors, (set, list, KeysView)):
+        if isinstance(in_connectors, (collections.abc.Set, list, KeysView)):
             in_connectors = {k: None for k in in_connectors}
-        if isinstance(out_connectors, (set, list, KeysView)):
+        if isinstance(out_connectors, (collections.abc.Set, list, KeysView)):
             out_connectors = {k: None for k in out_connectors}
 
         self.in_connectors = in_connectors or {}
@@ -260,6 +279,10 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
+    def new_symbol_names(self, state) -> Set[str]:
+        """ Returns the names :meth:`new_symbols` defines, without inferring their types. """
+        return set()
+
     def infer_connector_types(self, sdfg, state):
         """
         Infers and fills remaining connectors (i.e., set to None) with their
@@ -309,8 +332,20 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+        node._gpu_stream_id = self._gpu_stream_id
 
         node._guid = graph.generate_element_id(node)
+
+        # The assignments above are a hot-path shortcut over the base class's copy of __dict__, and
+        # a shortcut that lists fields by hand goes stale: a Property added to Node later is not
+        # copied, and reading it on the copy raises AttributeError instead of returning its default
+        # -- which is how ``specialization_hint`` disappeared from every deepcopied AccessNode.
+        # Backfill whatever the enumeration missed so the next Property cannot repeat it.
+        copied = vars(node)
+        for name in type(self).__properties__:
+            field = f'_{name}'
+            if field not in copied:
+                copied[field] = dcpy(vars(self).get(field), memo=memo)
 
         return node
 
@@ -384,6 +419,10 @@ class CodeNode(Node):
         """True if running this node may do more than write its outputs."""
         return False
 
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """True if this node's side effect must not be reordered relative to others."""
+        return self.has_side_effects(sdfg)
+
 
 @make_properties
 class Tasklet(CodeNode):
@@ -414,6 +453,13 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+    ordered_side_effects = Property(dtype=bool,
+                                    allow_none=True,
+                                    default=None,
+                                    desc='Whether this side effect is observable relative to other side '
+                                    'effects (and so must not be reordered or merged with them), as opposed '
+                                    'to merely not being visible in its outputs. Defaults to None, which '
+                                    'assumes ordered whenever the tasklet has side effects at all.')
     ignored_symbols = SetProperty(element_type=str,
                                   desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
@@ -503,6 +549,16 @@ class Tasklet(CodeNode):
                         if cname in sdfg.symbols or cname in sdfg.arrays:
                             return True
         return False
+
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """
+        Returns True if this tasklet's side effect is observable relative to other side effects, and so
+        must not be reordered or merged with them. ``ordered_side_effects`` overrides the default, which
+        is to assume ordered whenever the tasklet has side effects at all.
+        """
+        if self.ordered_side_effects is not None:
+            return self.ordered_side_effects
+        return self.has_side_effects(sdfg)
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
@@ -681,6 +737,12 @@ class NestedSDFG(CodeNode):
             isinstance(node, CodeNode) and not isinstance(node, NestedSDFG) and node.has_side_effects(parent.sdfg)
             for node, parent in self.sdfg.all_nodes_recursive())
 
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """True if any nested node has an ordered side effect. ``sdfg`` unused: inner ones apply."""
+        return any(
+            isinstance(node, CodeNode) and not isinstance(node, NestedSDFG)
+            and node.has_ordered_side_effects(parent.sdfg) for node, parent in self.sdfg.all_nodes_recursive())
+
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
 
@@ -768,9 +830,9 @@ class NestedSDFG(CodeNode):
                 raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
                                  f"output ({outputs}) arrays")
 
-        # Validate undefined symbols
+        # Validate undefined symbols; NoneSymbol is an optional-array marker, not a runtime symbol.
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors and k != 'NoneSymbol')
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
@@ -789,6 +851,11 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
+    @property
+    def dynamic_input_connectors(self) -> Set[str]:
+        """ Input connectors carrying dynamic scope inputs rather than a memlet path. """
+        return set(c for c in self.in_connectors if not c.startswith('IN_'))
 
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
@@ -867,7 +934,7 @@ class MapEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
@@ -890,6 +957,14 @@ class MapEntry(EntryNode):
 
         return result
 
+    def new_symbol_names(self, state) -> Set[str]:
+        dyn_inputs = self.dynamic_input_connectors
+        # Zipped as in new_symbols: a param without a matching range defines nothing.
+        return ({p
+                 for p, _ in zip(self._map.params, self._map.range)}
+                | {e.dst_conn
+                   for e in state.in_edges(self) if e.dst_conn in dyn_inputs})
+
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbol names that are used within the Map scope created by this MapEntry
@@ -904,7 +979,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -937,6 +1012,9 @@ class MapEntry(EntryNode):
                 continue
 
             free_symbols |= e.data.used_symbols(all_symbols, e)
+
+        # Update with the symbols needed by the map
+        free_symbols |= self.free_symbols
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(parent_sdfg.constants.keys()))
@@ -1038,10 +1116,17 @@ class Map(object):
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
-    omp_chunk_size = Property(dtype=int,
-                              default=0,
-                              desc="OpenMP schedule chunk size",
-                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_chunk_size = SymbolicProperty(default=0,
+                                      desc="OpenMP schedule chunk size; 0 emits no chunk clause. May be "
+                                      "SYMBOLIC: OpenMP evaluates chunk_size as an integer expression at "
+                                      "run time, so a chunk derived from the map's own trip count and "
+                                      "omp_get_max_threads() adapts to the problem and the team instead of "
+                                      "baking one machine's constant into the graph",
+                                      serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_simd = Property(dtype=bool,
+                        default=False,
+                        desc="Vectorize the innermost loop with an OpenMP simd clause",
+                        serialize_if=lambda m: m.omp_simd)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
@@ -1067,6 +1152,20 @@ class Map(object):
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    is_warp_tile = Property(dtype=bool,
+                            default=False,
+                            desc="This map's iterations are meant to be spread across the threads of one GPU "
+                            "thread block. It is a REQUEST carried through the device offload, not a schedule: "
+                            "the offload assigns every nested scope Sequential (a kernel launch inside a kernel "
+                            "is not expressible), which is correct and stays that way, so a pass that wants a "
+                            "thread-block schedule cannot ask for one before the offload runs -- a GPU schedule "
+                            "set that early is rejected outright. PromoteWarpTiles reads this afterwards and "
+                            "gives the map GPU_ThreadBlock. Only set it on a map proven data-parallel: it is a "
+                            "promise about the map, and the promotion trusts it.",
+                            serialize_if=lambda m: m.is_warp_tile)
+
+    vectorize = Property(dtype=bool, default=False)
 
     def __init__(self,
                  label,
@@ -1194,7 +1293,7 @@ class ConsumeEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         result = set(self._consume.num_pes.free_symbols)
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
@@ -1206,7 +1305,7 @@ class ConsumeEntry(EntryNode):
         result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
 
         # Add dynamic inputs
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
 
         # Try to get connector type from connector
         for e in state.in_edges(self):
@@ -1214,6 +1313,10 @@ class ConsumeEntry(EntryNode):
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         return result
+
+    def new_symbol_names(self, state) -> Set[str]:
+        dyn_inputs = self.dynamic_input_connectors
+        return {self._consume.pe_index} | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
 
 @dace.serialize.serializable
@@ -1364,6 +1467,33 @@ class LibraryNode(CodeNode):
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
+    #: Whether this node must be expanded before other library nodes in the same state.
+    #: Set on nodes whose expansion *reads* neighbouring library nodes and therefore needs
+    #: to see them un-expanded -- e.g. ``BackwardPass``, which differentiates the forward
+    #: subgraph and has per-library-node backward rules (a ``Reduce`` it can differentiate
+    #: directly becomes an opaque C++ tasklet once expanded). ``SDFG.expand_library_nodes``
+    #: honours this ordering. Class-level attribute rather than a Property: it describes the
+    #: node type, is not part of the serialised SDFG, and lets the core stay unaware of the
+    #: libraries that set it.
+    expand_before_peers: bool = False
+
+    #: Connector names whose descriptor must stay in HOST memory whatever the node's schedule is.
+    #: A node whose expansion is a device kernel can still keep part of its interface on the host:
+    #: ``ScatterConflictCheck`` tags on the device out of the CUB scratch pool but reads its flag,
+    #: and sizes its buffer from a scratch array, on the host. An offloader that moves every array a
+    #: node touches onto the device therefore has to be told. Class-level attribute for the same
+    #: reason as ``expand_before_peers``: it describes the node type, not a serialised value.
+    host_connectors: frozenset = frozenset()
+
+    #: Whether device auto-selection (``auto_optimize.set_fast_implementations``) may overwrite
+    #: :attr:`implementation`. False for nodes whose lowering is chosen DELIBERATELY by a
+    #: transformation rather than by the target device -- the tile ops, whose backend is picked from
+    #: the vectorizer's ``target_isa``. Auto-selection would silently reset those to the generic
+    #: fallback and the ISA-native path would vanish with no error. Same class-level-attribute
+    #: rationale as :attr:`expand_before_peers`: it describes the node type, is not serialised, and
+    #: keeps the core unaware of the libraries that set it.
+    auto_select_implementation: bool = True
+
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
@@ -1381,6 +1511,10 @@ class LibraryNode(CodeNode):
         when expanded. ``sdfg`` is unused; taken to match :class:`CodeNode`.
         """
         return False
+
+    def has_ordered_side_effects(self, sdfg) -> bool:
+        """Returns True if this library node's side effect must not be reordered relative to others."""
+        return self.has_side_effects(sdfg)
 
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
@@ -1476,10 +1610,12 @@ class LibraryNode(CodeNode):
             except KeyError:
                 config_override = False
         # If not explicitly set, try the node default
+        from_library_default = False
         if target_implementation is None:
             target_implementation = type(self).default_implementation
             # If no node default, try library default
             if target_implementation is None:
+                from_library_default = True
                 import dace.library  # Avoid cyclic dependency
                 lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)._dace_library_name]
                 target_implementation = lib.default_implementation
@@ -1490,7 +1626,17 @@ class LibraryNode(CodeNode):
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
         if target_implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+            # A LIBRARY-wide default names one vendor backend for a whole package, so it can name an
+            # implementation a particular node does not have (``linalg`` defaults to the LAPACK-backed
+            # ``OpenBLAS`` for Cholesky/Solve/Inv, which ``TensorDot`` does not implement). That default
+            # was meant for the node's siblings, so fall back to this node's portable lowering instead of
+            # failing to expand. An implementation set on the node itself, or a node-class default, is a
+            # deliberate choice and still raises -- a typo there must not be silently downgraded.
+            if from_library_default and 'pure' in self.implementations:
+                target_implementation = 'pure'
+            else:
+                raise KeyError("Unknown implementation for node {}: {}".format(
+                    type(self).__name__, target_implementation))
         transformation_type = type(self).implementations[target_implementation]
         cfg_id = actual_state.parent_graph.cfg_id
         state_id = actual_state.block_id

@@ -1,11 +1,48 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-from dace import sdfg as sd, properties
+
+import sympy
+from dace import sdfg as sd, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
+
+
+def flatten_and(expr: sympy.Basic) -> list[sympy.Basic]:
+    """All conjuncts of a (possibly nested) conjunction, flattened. Accepts dace's own ``AND`` as well as
+    ``sympy.And``."""
+    if isinstance(expr, (sympy.And, symbolic.AND)):
+        conjuncts = []
+        for arg in expr.args:
+            conjuncts.extend(flatten_and(arg))
+        return conjuncts
+    return [expr]
+
+
+def simplify_conjunction(cond_str: str) -> str:
+    """Minimal equivalent of a fused-branch conjunction string built by the branch cartesian product:
+    ``'False'`` if a conjunct and its negation both appear (unsatisfiable cross-term), the de-duplicated
+    form if a conjunct repeats (identical fused guards), else ``cond_str`` unchanged."""
+    try:
+        expr = symbolic.pystr_to_symbolic(cond_str)
+    except Exception:  # noqa: BLE001 -- an unparsable guard is simply not simplifiable
+        return cond_str
+    conjuncts = flatten_and(expr)
+    if len(conjuncts) <= 1:
+        return cond_str
+    for i, ci in enumerate(conjuncts):
+        neg = sympy.Not(ci)
+        if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
+            return 'False'
+    uniq = []
+    for c in conjuncts:
+        if not any(c == u for u in uniq):
+            uniq.append(c)
+    if len(uniq) == len(conjuncts):
+        return cond_str
+    return ' and '.join(f'({u})' for u in uniq)
 
 
 @properties.make_properties
@@ -77,6 +114,15 @@ class ConditionFusion(xf.MultiStateTransformation):
             self.fuse_nested_conditions(sdfg, self.cblck1)
 
     def fuse_consecutive_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock, cblck2: ConditionalBlock):
+        """Merge ``cblck2`` into ``cblck1``.
+
+        Two guarded blocks with the same guard (``if c: A`` then ``if c: B``) become ``if c: A; B``,
+        and opposite guards (``if c: A`` then ``if not c: B``) become ``if c: A else: B``. Anything
+        else falls back to the cartesian product of the two branch sets below.
+        """
+        if self.merge_matching_guards(cblck1, cblck2):
+            return
+
         # Check if cblck1 has a single sink node for each branch
         assert all([len(cfg.sink_nodes()) == 1 for _, cfg in cblck1.branches])
 
@@ -172,6 +218,17 @@ class ConditionFusion(xf.MultiStateTransformation):
             outer_cfg.add_edge(cblck1, e.dst, copy.deepcopy(e.data))
         outer_cfg.remove_node(cblck2)
 
+        # Simplify the fused branch conditions: drop a branch whose condition is an unsatisfiable
+        # cartesian cross-term, collapse a redundant ``(c) and (c)`` to the minimal predicate.
+        for cnd, cfg in list(cblck1.branches):
+            if cnd is None or len(cblck1.branches) <= 1:
+                continue
+            simplified = simplify_conjunction(cnd.as_string)
+            if simplified == 'False':
+                cblck1.remove_branch(cfg)
+            elif simplified != cnd.as_string:
+                cnd.as_string = simplified
+
         # If a branch is empty (single empty state), remove branch (implicit else)
         implicit_else = False
         for _, cfg in cblck1.branches:
@@ -191,12 +248,70 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
-        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
-        sdutil.set_nested_sdfg_parent_references(sdfg)
+        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
+        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
+        # nested-SDFG back-references when they claim a block, so the blind
+        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
+        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
+        # still do.
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg
+
+    def merge_matching_guards(self, cblck1: ConditionalBlock, cblck2: ConditionalBlock) -> bool:
+        """Merge two single-guard blocks whose guards are equal or opposite. ``False`` if they are not."""
+        if len(cblck1.branches) != 1 or len(cblck2.branches) != 1:
+            return False
+        condition, body = cblck1.branches[0]
+        other_condition, other_body = cblck2.branches[0]
+        if condition is None or other_condition is None or not body.sink_nodes():
+            return False
+
+        if self.conditions_are_equal(condition, other_condition):
+            outer_cfg = cblck1.parent_graph
+            self.splice_after(body, other_body, outer_cfg.edges_between(cblck1, cblck2)[0].data)
+        elif self.conditions_are_complementary(condition, other_condition):
+            cblck1.add_branch(None, copy.deepcopy(other_body))
+        else:
+            return False
+
+        outer_cfg = cblck1.parent_graph
+        for edge in outer_cfg.out_edges(cblck2):
+            outer_cfg.add_edge(cblck1, edge.dst, copy.deepcopy(edge.data))
+        outer_cfg.remove_node(cblck2)
+        return True
+
+    @staticmethod
+    def splice_after(target: ControlFlowRegion, source: ControlFlowRegion, link: sd.InterstateEdge) -> None:
+        """Append copies of ``source``'s blocks after ``target``'s sink, keeping ``source``'s edges."""
+        sink = target.sink_nodes()[0]
+        mapping = {}
+        for node in source.nodes():
+            new_node = copy.deepcopy(node)
+            target.add_node(new_node, ensure_unique_name=True)
+            mapping[node] = new_node
+        target.add_edge(sink, mapping[source.start_block], copy.deepcopy(link))
+        for node in source.nodes():
+            for edge in source.in_edges(node):
+                target.add_edge(mapping[edge.src], mapping[node], copy.deepcopy(edge.data))
+
+    @staticmethod
+    def conditions_are_equal(first: CodeBlock, second: CodeBlock) -> bool:
+        """Whether two branch guards are the same predicate."""
+        try:
+            return bool(symbolic.pystr_to_symbolic(first.as_string) == symbolic.pystr_to_symbolic(second.as_string))
+        except Exception:  # noqa: BLE001 -- an unparsable guard is simply not mergeable
+            return False
+
+    @staticmethod
+    def conditions_are_complementary(first: CodeBlock, second: CodeBlock) -> bool:
+        """Whether two branch guards are exact opposites, so the second becomes an ``else``."""
+        try:
+            a = symbolic.pystr_to_symbolic(first.as_string)
+            b = symbolic.pystr_to_symbolic(second.as_string)
+            return sympy.simplify(sympy.Equivalent(sympy.Not(a), b)) == sympy.true
+        except Exception:  # noqa: BLE001 -- an unparsable guard is simply not mergeable
+            return False
 
     def fuse_nested_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock):
         nbranch = cblck1.parent_graph
@@ -278,9 +393,12 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
-        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
-        sdutil.set_nested_sdfg_parent_references(sdfg)
+        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
+        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
+        # nested-SDFG back-references when they claim a block, so the blind
+        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
+        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
+        # still do.
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg

@@ -20,8 +20,7 @@ int main(int argc, char **argv) {
 
     // Find architecture, ignoring anything that succeeds a colon
     void *colon = memchr(prop.gcnArchName, ':', 256);
-    if (colon)
-      *(char *)colon = '\0';
+    if (colon) *(char *)colon = '\0';
 
     std::string str = prop.gcnArchName;
     architectures.insert(str);

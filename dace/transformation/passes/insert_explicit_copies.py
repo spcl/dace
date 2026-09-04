@@ -14,8 +14,15 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
-    """Derive the absent side of a copy memlet: the full array when volumes are not
-    provably unequal, else ``src_subset``.
+    """Derive the absent side of a copy memlet.
+
+    A copy edge that names only one side moves ``src_subset``'s volume; the legacy generator
+    (``cpp.memlet_copy_to_absolute_strides``) drives the copy shape from that known side. So the
+    derived side is a region of ``src_subset``'s shape at the array origin -- EXCEPT when the whole
+    destination array provably holds exactly that volume, which is the reshape case (a ``[20]`` into a
+    ``[4, 5]``): there the full array is the intended target. A merely *unprovable* equality
+    (``i + 1`` vs ``20``, symbolic) is NOT a reshape -- taking the full array would copy the wrong
+    element count (and read out of bounds on the smaller side), so it falls to ``src_subset``.
 
     :param src_subset: the known (source) side of the copy.
     :param dst_desc: descriptor whose subset is being derived.
@@ -24,7 +31,7 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     dst_range = subsets.Range.from_array(dst_desc)
     # Equalize first: two instances of the same symbol name make equal() answer None on identical counts.
     src_count, dst_count = symbolic.equalize_symbols(src_subset.num_elements(), dst_range.num_elements())
-    if symbolic.equal(src_count, dst_count) is not False:
+    if symbolic.equal(src_count, dst_count) is True:
         return dst_range
     return src_subset
 
@@ -77,11 +84,19 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
-    """Replaces implicit copy patterns with ``CopyLibraryNode`` instances: direct
-    ``AccessNode -> AccessNode`` edges (View endpoints included), and stage-in/stage-out through
-    chained ``MapEntry``/``MapExit`` (libnode placed inside the map scope)."""
+    """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
 
-    # Other storages (TensorCore_*, FPGA_*, Snitch_*) use their own codegen ``copy_memory`` hook.
+    Detected patterns:
+    - ``AccessNode -> AccessNode`` (direct copy edge).
+    - ``AccessNode <-> View <-> AccessNode`` data-movement edge -- View treated as a normal array endpoint.
+    - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed inside the innermost map
+      scope, wired to the MapEntry output connector.
+    - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric, wired to the outermost MapExit.
+    """
+
+    # Storages whose copies CopyLibraryNode can lower. Other storages
+    # (e.g. TensorCore_*, FPGA_*, Snitch_*) belong to custom codegen
+    # targets that handle copies via their own ``copy_memory`` hook.
     _STANDARD_STORAGES = (CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES
                           | {dtypes.StorageType.Default, dtypes.StorageType.Register})
 
@@ -132,19 +147,21 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.wcr is not None:
                 continue
 
-            # A reference-set edge assigns a POINTER; rewriting it would drop the ``set`` connector.
+            # A set binds a pointer, not data: lifting it drops the ``set`` connector.
             if edge.dst_conn == 'set':
                 continue
 
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
 
-            # A view's alias (view-defining) edge references the underlying buffer, not data -- skip.
+            # A view's alias (view-defining) edge references the underlying
+            # buffer rather than moving data -- skip it.
             if any(
                     isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
                     for an in (src_node, dst_node)):
                 continue
 
+            # We only copy array-like data (Array / Scalar), not streams.
             if not isinstance(src_desc, (data.Array, data.Scalar)) \
                     or not isinstance(dst_desc, (data.Array, data.Scalar)):
                 continue
@@ -153,22 +170,21 @@ class InsertExplicitCopies(ppl.Pass):
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
-            # A dtype-converting copy is a cast, not a byte move: CopyLibraryNode (memcpy)
-            # cannot express it, so leave it for tasklet lowering (mirrors _lift_staging_edge).
-            if src_desc.dtype != dst_desc.dtype:
-                continue
-
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # Self-copy: subset is the dst side; otherwise the memlet path maps ``data`` to an endpoint.
-            if src_name == dst_name:
-                src_subset, dst_subset = memlet.other_subset, memlet.subset
-            else:
-                src_subset = memlet.get_src_subset(edge, state)
-                dst_subset = memlet.get_dst_subset(edge, state)
+            # Resolve src and dst subset. ``get_src_subset`` / ``get_dst_subset`` are the only correct
+            # readers of the ``subset`` / ``other_subset`` pair: which side ``subset`` names is carried
+            # by the memlet's own ``_is_data_src`` flag, NOT derivable from the endpoint names. A
+            # self-copy is no exception -- both endpoints match ``memlet.data``, so the flag is what
+            # decides, and ``try_initialize`` defaults it to src-relative. This is what the legacy
+            # generator lowers a copy edge with (``cpp.memlet_copy_to_absolute_strides``); reading
+            # the pair positionally instead reverses every src-relative self-copy.
+            src_subset = memlet.get_src_subset(edge, state)
+            dst_subset = memlet.get_dst_subset(edge, state)
 
-            # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
+            # Derive any side the memlet did not carry from the array shape (handles
+            # implicit copies between different-shaped but same-volume arrays).
             if src_subset is None:
                 src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
             if dst_subset is None:
@@ -233,6 +249,7 @@ class InsertExplicitCopies(ppl.Pass):
         :returns: True iff the edge was lifted.
         """
         sdfg = state.sdfg
+        # Inner side: edge.dst for stage-in, edge.src for stage-out.
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
@@ -260,7 +277,8 @@ class InsertExplicitCopies(ppl.Pass):
             return False
 
         outer_memlet = edge.data
-        # May be dst-relative (subset in ``other_subset``); resolve via ``get_src/dst_subset``.
+        # The memlet may be dst-relative (subset in ``other_subset``); resolve it in the
+        # outer array's index space via ``get_src/dst_subset``.
         if stage_in:
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
@@ -270,8 +288,7 @@ class InsertExplicitCopies(ppl.Pass):
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
-        # When the memlet already names both sides that mapping IS the copy -- deriving from the
-        # outer subset instead silently retargets the write.
+        # When the memlet names both sides that mapping IS the copy; deriving one retargets the write.
         if stage_in:
             inner_subset = outer_memlet.get_dst_subset(edge, state)
         else:

@@ -1,0 +1,362 @@
+import dace
+from typing import Dict, List, Any, Tuple
+from dace.sdfg.graph import Edge, EdgeT
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
+from dataclasses import dataclass
+import copy
+from sympy import simplify
+
+
+@dataclass
+class SplitDimensions(ppl.Pass):
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def __init__(self, split_map: Dict[str, Tuple[List[bool], List[int]]], verbose: bool = False):
+        self._split_map = split_map
+        self._verbose = verbose
+
+    def _split_dimension(sefl, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
+                         factor: int):
+        # outer block count: int_floor if evenly divisible else int_ceil; never `/` or `//`
+        if isinstance(dim_expr, dace.symbolic.symbol):
+            return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
+        elif isinstance(dim_expr, int):
+            if dim_expr % factor == 0:
+                return dace.symbolic.pystr_to_symbolic(f"int_floor({dim_expr}, {factor})")
+            else:
+                return dace.symbolic.pystr_to_symbolic(f"int_ceil({dim_expr}, {factor})")
+        elif isinstance(dim_expr, dace.symbolic.SymExpr):
+            # mirrors the Symbol branch above
+            divisible = simplify(dim_expr.expr % factor) == 0
+            if divisible:
+                return dace.symbolic.SymExpr(f"int_floor({dim_expr}, {factor})")
+            else:
+                return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
+        else:
+            raise ValueError(f"Dimension in array.shape must be int, "
+                             f"symbol or symexpr {arr} ({arr.shape}) dimension "
+                             f"{dim_expr} is {type(dim_expr)}")
+
+    def _split_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
+                          factor: int, is_perfect_match: bool, inner_block_replacement_map: Dict[str, str]):
+        step_expr = s / factor
+        try:
+            int_step_expr = int(step_expr)
+            if int_step_expr == 0:
+                int_step_expr += 1
+            step_expr = int_step_expr
+        except Exception as exc:
+            step_expr = f"max({step_expr}, 1)"
+
+        if is_perfect_match:
+            symbolified_inner_block_replacement_map = {
+                dace.symbolic.symbol(k): dace.symbolic.SymExpr(v)
+                for k, v in inner_block_replacement_map.items()
+            }
+            new_b = b.subs(symbolified_inner_block_replacement_map)
+            new_e = e.subs(symbolified_inner_block_replacement_map)
+            return (dace.symbolic.SymExpr(f"({new_b / factor})"), dace.symbolic.SymExpr(f"({new_e / factor})"),
+                    dace.symbolic.SymExpr(f"{step_expr}"))
+        else:
+            return (dace.symbolic.SymExpr(f"int_floor({b}, {factor})"),
+                    dace.symbolic.SymExpr(f"int_floor({e}, {factor})"), dace.symbolic.SymExpr(f"{step_expr}"))
+
+    def _modulo_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
+                           factor: int, is_perfect_match: bool, inner_block_replacement_map: Dict[str, str]):
+        if is_perfect_match is True:
+            symbolified_inner_block_replacement_map = {
+                dace.symbolic.symbol(k): dace.symbolic.SymExpr(k) - dace.symbolic.SymExpr(v)
+                for k, v in inner_block_replacement_map.items()
+            }
+            # non-unit range: overapproximate to full block below
+            range_len = dace.symbolic.int_floor((e + 1) - b,
+                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
+            if range_len == 1:
+                assert e == b
+                assert s == 1
+                new_b = b.subs(symbolified_inner_block_replacement_map)
+                new_e = e.subs(symbolified_inner_block_replacement_map)
+                new_s = dace.symbolic.SymExpr(f"{s}")
+            else:
+                # >1-elem range: collapse to whole block; safe since only the start pointer is used downstream
+                new_b = b.subs(symbolified_inner_block_replacement_map)
+                new_e = e.subs(symbolified_inner_block_replacement_map)
+                new_s = dace.symbolic.SymExpr(f"{s}")
+            return (new_b, new_e, new_s)
+        else:
+            # non-unit range: overapproximate to full block below
+            range_len = dace.symbolic.int_floor((e + 1) - b,
+                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
+            if range_len == 1:
+                assert e == b
+                assert s == 1
+                new_b = dace.symbolic.SymExpr(f"(({b}) % {factor})")
+                new_e = dace.symbolic.SymExpr(f"(({e}) % {factor})")
+                new_s = dace.symbolic.SymExpr(f"{s}")
+            else:
+                # >1-elem range: collapse to whole block; safe since only the start pointer is used downstream
+                new_b = dace.symbolic.SymExpr(f"(({b}) % {factor})")
+                new_e = dace.symbolic.SymExpr(f"(({e}) % {factor})")
+                new_s = dace.symbolic.SymExpr(f"{s}")
+            return (new_b, new_e, new_s)
+
+    def _eval_map_range(self, range_exprs, inner_params, outer_map_params):
+        """Evaluate range length/step with inner+outer params=0, other symbols=INT_MAX."""
+        all_symbols = set().union(*[e.free_symbols for e in range_exprs])
+        subs_dict = {}
+
+        for name in inner_params + outer_map_params:
+            sym = dace.symbolic.symbol(name)
+            subs_dict[sym] = 0
+
+        for sym in all_symbols:
+            if sym not in subs_dict:
+                subs_dict[sym] = 2**32 - 1
+
+        evaluated = [int(dace.symbolic.simplify(e.subs(subs_dict))) for e in range_exprs]
+        b, e, s = evaluated
+        return ((e + 1) - b), s == 1
+
+    def _is_perfect_block_match(self, state: dace.SDFGState, edge: Edge[EdgeT], node: dace.nodes.Node,
+                                block_shape: Tuple[int]):
+        if self._verbose:
+            print(f"[BlockMatch] Called for edge({edge}), node({node})")
+        entry_node = state.entry_node(node)
+        if entry_node is None:
+            if self._verbose:
+                print("[BlockMatch] No inner map found → node is not inside a map.")
+            return False, None
+
+        twice_entry_node = state.entry_node(entry_node)
+        if twice_entry_node is None:
+            if self._verbose:
+                print(f"[BlockMatch] No outer map found → inner map not nested. {entry_node} -> {twice_entry_node}")
+            return False, None
+
+        if not isinstance(entry_node, dace.nodes.MapEntry) or not isinstance(twice_entry_node, dace.nodes.MapEntry):
+            if self._verbose:
+                print("[BlockMatch] One of the nodes is not a MapEntry.")
+            return False, None
+
+        inner_map_params, inner_map_range = entry_node.map.params, entry_node.map.range
+        outer_map_params, outer_map_range = twice_entry_node.map.params, twice_entry_node.map.range
+
+        if len(inner_map_params) != len(block_shape):
+            if self._verbose:
+                print(f"[BlockMatch] Inner map param count {len(inner_map_params)} "
+                      f"≠ block_shape length {len(block_shape)}.")
+            return False, None
+
+        for (b, e, s), blk in zip(inner_map_range, block_shape):
+            over_range, step_is_one = self._eval_map_range([b, e, s], inner_map_params, outer_map_params)
+            if not step_is_one:
+                if self._verbose:
+                    print(f"[BlockMatch] Inner step size for {b}:{e}:{s} is not 1.")
+                return False, None
+            if over_range != blk:
+                if self._verbose:
+                    print(f"[BlockMatch] Inner range {over_range} ≠ block size {blk} "
+                          f"for {b}:{e}:{s}. ({inner_map_range}) ({inner_map_params})")
+                return False, None
+
+        inner_block_replacement_map = dict()
+        for p, (b, e, s), blk in zip(inner_map_params, inner_map_range, block_shape):
+            over_range, step_is_one = self._eval_map_range([b, e, s], inner_map_params, outer_map_params)
+            assert over_range == blk
+
+            matching_step_size = None
+            matching_outer_param = None
+            for (ob, oe, os), outer_param in zip(outer_map_range, outer_map_params):
+                if str(b) == outer_param:
+                    if matching_step_size is not None:
+                        if self._verbose:
+                            print(f"[BlockMatch] Ambiguous match for {b}: "
+                                  f"already matched with step {matching_step_size}.")
+                        return False, None
+                    matching_step_size = os
+                    matching_outer_param = outer_param
+
+            if matching_step_size is None:
+                if self._verbose:
+                    print(f"[BlockMatch] No outer param matched inner begin {b}.")
+                return False, None
+
+            if matching_step_size != blk:
+                if self._verbose:
+                    print(f"[BlockMatch] Outer step {matching_step_size} ≠ "
+                          f"block size {blk} for inner {b}.")
+                return False, None
+
+            inner_block_replacement_map[p] = matching_outer_param
+
+        if self._verbose:
+            print("[BlockMatch] Perfect block match found.")
+        return True, inner_block_replacement_map
+
+    def _split_dimensions(self, arr: dace.data.Data, masks: List[int],
+                          factors: List[bool]) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
+        # unsplit dims (or block count) first, then split factors appended at the end
+        new_shape = []
+        for (dim_len, mask, factor) in zip(arr.shape, masks, factors):
+            if mask == False:
+                new_shape.append(dim_len)
+            else:
+                new_shape.append(self._split_dimension(arr, dim_len, factor))
+        for (dim_len, mask, factor) in zip(arr.shape, masks, factors):
+            if mask == True:
+                new_shape.append(factor)
+
+        return new_shape
+
+    def _split_range_expressions(self, subset: dace.subsets.Range, masks: List[int], factors: List[bool],
+                                 edge: Edge[EdgeT], state: dace.SDFGState) -> dace.subsets.Range:
+        new_range_list = []
+        # overapproximate partial-block accesses; TODO: whole-dimension range optimization
+        src = edge.src
+        dst = edge.dst
+        node = None
+        # node for block-match can't be an entry/exit node (prefer tasklets/access nodes)
+        if not isinstance(src, (dace.nodes.EntryNode, dace.nodes.ExitNode)):
+            node = src
+        elif not isinstance(dst, (dace.nodes.EntryNode, dace.nodes.ExitNode)):
+            node = dst
+        if node is None and isinstance(dst, dace.nodes.EntryNode):
+            node = dst
+        if node is None and isinstance(src, dace.nodes.ExitNode):
+            node = src
+
+        block_shape = [f for f, m in zip(factors, masks) if m is True]
+
+        if node is None:
+            is_perfect_match, repl_map = False, None
+        else:
+            is_perfect_match, repl_map = self._is_perfect_block_match(state, edge, node, block_shape)
+
+        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
+            if mask == False:
+                new_range_list.append((b, e, s))
+            else:
+                new_range_list.append(self._split_range_expr(b, e, s, factor, is_perfect_match, repl_map))
+        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
+            if mask == True:
+                new_b, new_e, new_s = self._modulo_range_expr(b, e, s, factor, is_perfect_match, repl_map)
+                new_range_list.append((new_b, new_e, new_s))
+
+        return dace.subsets.Range(new_range_list)
+
+    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
+        arr = sdfg.arrays[arr_name]
+        datadesc = copy.deepcopy(arr)
+        datadesc.shape = tuple(new_dimensions)
+        sdfg.remove_data(arr_name, validate=False)
+        sdfg.add_array(
+            name=arr_name,
+            shape=new_dimensions,
+            dtype=datadesc.dtype,
+            transient=datadesc.transient,
+            storage=datadesc.storage,
+            lifetime=datadesc.lifetime,
+            alignment=datadesc.alignment,
+            debuginfo=datadesc.debuginfo,
+            find_new_name=False,
+        )
+
+    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
+        self._replace_array(sdfg, arr_name, new_dimensions)
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
+                    if arr_name in in_map:
+                        self._replace_array_recursive(node.sdfg, in_map[arr_name], new_dimensions)
+                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
+                    if arr_name in out_map:
+                        self._replace_array_recursive(node.sdfg, out_map[arr_name], new_dimensions)
+
+    def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
+        # rewrites memlets/subsets for arr_name after its shape was split
+        for state in sdfg.all_states():
+            for edge in state.edges():
+                if edge.data is not None and edge.data.data == arr_name:
+                    new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
+                    # preserve wcr/wcr_nonatomic/dynamic -- omitting would silently drop reductions
+                    new_memlet = dace.memlet.Memlet(data=edge.data.data,
+                                                    subset=new_range,
+                                                    other_subset=copy.deepcopy(edge.data.other_subset),
+                                                    wcr=edge.data.wcr,
+                                                    wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                    dynamic=edge.data.dynamic)
+                    edge.data = new_memlet
+                if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name:
+                    if edge.data is not None and edge.data.other_subset is not None:
+                        raise Exception("TODO: Support for Other subsets - I hate other subsets")
+            for node in state.nodes():
+                if not isinstance(node, dace.nodes.NestedSDFG):
+                    continue
+                # same inner name on in+out edges (read-write array): recurse once, not twice
+                inner_names = set()
+                for ie in state.in_edges(node):
+                    if ie.data is not None and ie.data.data == arr_name:
+                        inner_names.add(ie.dst_conn)
+                for oe in state.out_edges(node):
+                    if oe.data is not None and oe.data.data == arr_name:
+                        inner_names.add(oe.src_conn)
+                for inner in inner_names:
+                    self._replace_memlets_recursive(node.sdfg, inner, masks, factors)
+
+    def split_array_accesses(self, expr_str: str, name: str, masks: List[bool], factors: List[int]) -> str:
+        """``expr_str`` with every ``name[...]`` access reindexed; the rest of the expression is kept."""
+
+        def split_indices(indices):
+            if len(indices) != len(masks):
+                raise ValueError(f'{name} is accessed with {len(indices)} indices, but its split map has '
+                                 f'{len(masks)} dimensions')
+            # mirrors _split_range_expr/_modulo_range_expr: masked dims are divided, unmasked ones kept,
+            # and one tile index per masked dim is appended. int_floor, never `//`: sympy floor is
+            # dropped by sym2cpp.
+            outer = [dace.symbolic.int_floor(b, f) if m else b for b, m, f in zip(indices, masks, factors)]
+            return outer + [b % f for b, m, f in zip(indices, masks, factors) if m]
+
+        return rewrite_subscript_indices(expr_str, name, split_indices)
+
+    def _replace_interstate_edges_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
+        # same index rewrite as _replace_memlets_recursive, but for interstate edge assignments
+        for edge in sdfg.all_interstate_edges():
+            if edge.data is not None:
+                assert isinstance(edge.data, dace.InterstateEdge)
+                new_assignments = dict()
+                for k, v in edge.data.assignments.items():
+                    assert k != arr_name  # arrays can't be assignment targets
+                    new_assignments[k] = self.split_array_accesses(v, arr_name, masks, factors)
+
+                edge.data.assignments = new_assignments
+
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
+                    if arr_name in in_map:
+                        self._replace_interstate_edges_recursive(node.sdfg, in_map[arr_name], masks, factors)
+                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
+                    if arr_name in out_map:
+                        self._replace_interstate_edges_recursive(node.sdfg, out_map[arr_name], masks, factors)
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+        # split each array's dims per its mask/factors, padding non-divisible sizes via int_ceil
+        for array_name, (masks, factors) in self._split_map.items():
+            arr = sdfg.arrays[array_name]
+            if len(masks) != len(arr.shape) or len(factors) != len(arr.shape):
+                raise ValueError("Mask and factors must have the same length as the number of dimensions of the array")
+            new_shape = self._split_dimensions(arr, masks, factors)
+
+            self._replace_array_recursive(sdfg, array_name, new_shape)
+            self._replace_memlets_recursive(sdfg, array_name, masks, factors)
+            self._replace_interstate_edges_recursive(sdfg, array_name, masks, factors)
+
+        return 0

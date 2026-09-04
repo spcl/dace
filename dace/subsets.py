@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import List, Optional, Sequence, Set, Union
+from typing import Dict, List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -127,6 +127,16 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
                 return False
 
     return True
+
+
+def _hashable_bound(bound):
+    """``bound`` with every symbol reduced to a bare same-named one, so instances of a name hash alike."""
+    if not isinstance(bound, sp.Basic):
+        return bound
+    free = bound.free_symbols
+    if not free:
+        return bound
+    return bound.xreplace({s: sp.Symbol(s.name) for s in free})
 
 
 class Subset(object):
@@ -271,7 +281,12 @@ class Subset(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of undefined symbols in this subset. """
-        raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
+        return set(self.symbols)
+
+    @property
+    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+        """ Returns the symbol instance this subset carries for each of its undefined symbol names. """
+        raise NotImplementedError('symbols not implemented by "%s"' % type(self).__name__)
 
 
 def _simplified_str(val):
@@ -302,22 +317,27 @@ def tuple_to_symexpr(val):
     A ``(main, approx)`` tuple becomes a ``SymExpr``; anything else -- a Python ``int``, a
     string, an already-symbolic value -- goes through ``pystr_to_symbolic``.
     """
-    return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
+    return symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val)
 
 
 def symbolic_range_tuple(value):
-    """Coerce a whole ``(start, end, step[, tile])`` range tuple to symbolic bounds.
+    """Coerce an assigned range entry so its bounds stay symbolic.
 
     ``Range`` promises symbolic bounds -- ``ndrange()`` is annotated ``SymbolicType`` and callers
     act on it, calling ``.match()``, ``.subs()`` or ``.free_symbols`` without checking. A raw
     Python ``int`` reaching a bound therefore does not fail where it was stored but much later,
     in an unrelated pass, as ``'int' object has no attribute 'match'``.
+
+    A ``(start, end, step[, tile])`` tuple is coerced element-wise. A single expression is also
+    accepted and coerced as-is: the indirection rewrite in the Python frontend assigns one index
+    expression per dimension (``newsubset[dim] = r.subs(...)``), so rejecting that shape would
+    break a legitimate caller rather than catch a mistake.
     """
-    if not isinstance(value, (tuple, list)):
-        raise TypeError(f'Expected a 3- or 4-tuple range, got {type(value).__name__}')
-    if len(value) not in (3, 4):
-        raise ValueError('Expected 3-tuple or 4-tuple')
-    return tuple(tuple_to_symexpr(v) for v in value)
+    if isinstance(value, (tuple, list)):
+        if len(value) not in (3, 4):
+            raise ValueError('Expected 3-tuple or 4-tuple')
+        return tuple(tuple_to_symexpr(v) for v in value)
+    return tuple_to_symexpr(value)
 
 
 @dace.serialize.serializable
@@ -331,10 +351,7 @@ class Range(Subset):
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
             parsed_ranges.append((tuple_to_symexpr(r[0]), tuple_to_symexpr(r[1]), tuple_to_symexpr(r[2])))
-            if len(r) == 3:
-                parsed_tiles.append(symbolic.pystr_to_symbolic(1))
-            else:
-                parsed_tiles.append(symbolic.pystr_to_symbolic(r[3]))
+            parsed_tiles.append(symbolic.pystr_to_symbolic(1) if len(r) == 3 else tuple_to_symexpr(r[3]))
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
@@ -384,7 +401,10 @@ class Range(Subset):
         return result
 
     def __hash__(self):
-        return hash(tuple(r for r in self.ranges))
+        # Symbols reduced to bare names, matching __eq__: two Ranges that compare equal must hash
+        # equal, or they miss each other in every dict and set they are keyed by. Equalizing inside
+        # one expression is not enough -- the two instances live in DIFFERENT objects here.
+        return hash(tuple(tuple(_hashable_bound(b) for b in r) for r in self.ranges))
 
     def __add__(self, other):
         return Range(
@@ -561,11 +581,11 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
-    def free_symbols(self) -> Set[str]:
-        result = set()
+    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+        result = {}
         for dim in self.ranges:
             for d in dim:
-                result |= symbolic.symlist(d).keys()
+                result.update(symbolic.symlist(d))
         return result
 
     def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
@@ -658,7 +678,7 @@ class Range(Subset):
                 if token[i] == ',' and count == 0:
                     # Split the token to token[:i] and token[i+1:]
                     # Append token[:i] to the current range dimension
-                    uni_dim_tokens.append(token[0:i])
+                    uni_dim_tokens.append(token[0:i].strip())
                     # Append current range dimension to the list of lists
                     multi_dim_tokens.append(uni_dim_tokens)
                     # Start a new range dimension
@@ -676,8 +696,10 @@ class Range(Subset):
                 # Move to the next character
                 i += 1
 
-            # Append token to the current range dimension
-            uni_dim_tokens.append(token)
+            # Strip here, once, rather than at each parse site below: splitting on ':' and ',' leaves
+            # the separator whitespace on the tokens, so "i, j-1" yields " j-1". A leading space is
+            # an indent to a real Python parser; sympy only tolerates it because it parses via eval().
+            uni_dim_tokens.append(token.strip())
 
         # Append current range dimension to the list of lists
         multi_dim_tokens.append(uni_dim_tokens)
@@ -687,7 +709,7 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
+                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0])
                 ranges.append((value, value, 1))
                 continue
                 #return Range(ranges)
@@ -701,7 +723,7 @@ class Range(Subset):
                 if len(expr) == 1:
                     tokens.append(expr[0])
                 elif len(expr) == 2:
-                    tokens.append((expr[0], expr[1]))
+                    tokens.append((expr[0].strip(), expr[1].strip()))
                 else:
                     raise SyntaxError("Invalid range: {}".format(multi_dim_tokens))
             # Parse tokens
@@ -768,6 +790,7 @@ class Range(Subset):
     def __setitem__(self, key, value):
         # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
         # quietly put Python ints into a container whose contract says symbolic.
+        # A 4-tuple carries the tile size, which lives in its own list rather than in ``ranges``.
         def coerce(idx, v):
             if isinstance(v, (tuple, list)):
                 v = symbolic_range_tuple(v)
@@ -784,12 +807,23 @@ class Range(Subset):
         return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
+        # By NAME, not by sympy identity. A name denotes one value in an SDFG, but a bound rebuilt
+        # by a pass and one reparsed from a string are distinct sympy objects, so raw '==' called
+        # two spellings of `0:N` different -- while covers() and intersects() called them the same.
         if not isinstance(other, Range):
             return False
         if len(self.ranges) != len(other.ranges):
             return False
-        return all([(rb == orb and re == ore and rs == ors)
-                    for (rb, re, rs), (orb, ore, ors) in zip(self.ranges, other.ranges)])
+        for mine, theirs in zip(self.ranges, other.ranges):
+            for a, b in zip(mine, theirs):
+                # Equalize, then compare STRUCTURALLY. A simplify-based test would call
+                # structurally different bounds equal, and no structural __hash__ could agree.
+                # Bounds are not always sympy: a raw int reaches here and equalizing would raise.
+                if isinstance(a, sp.Basic) and isinstance(b, sp.Basic):
+                    a, b = symbolic.equalize_symbols_across(a, b)
+                if a != b:
+                    return False
+        return True
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -955,6 +989,15 @@ class Range(Subset):
                 if not (cond1 and cond2):
                     return False
             except TypeError:  # cannot determine truth value of Relational
+                # Sympy gives up on a bound holding a floor/ceiling it cannot evaluate, so an
+                # index-set split at ``int_floor(N, 2)`` reads as "may overlap" though its halves
+                # provably cannot. Retry both separation directions under the rounding relaxation
+                # -- proving ``a - b - 1 >= 0`` proves ``a > b`` for any reals, so this only turns
+                # a previous "undecided" into "disjoint" and never overrides a decided answer.
+                if ((symbolic.has_rounding(rng[0] - orng[1]) or symbolic.has_rounding(orng[0] - rng[1]))
+                        and (symbolic.provably_nonnegative(rng[0] - orng[1] - 1)
+                             or symbolic.provably_nonnegative(orng[0] - rng[1] - 1))):
+                    return False
                 type_error = True
 
         if type_error:
@@ -1029,6 +1072,16 @@ class Range(Subset):
 
         # All dimensions are full size - this is contiguous
         return True
+
+    def union(self, other: 'Range') -> 'Range':
+        new_subset_list = list()
+        for (b, e, s), (ob, oe, os) in zip(self, other):
+            new_b = sp.Min(b, ob).simplify()
+            new_e = sp.Max(e, oe).simplify()
+            new_subset_list.append((new_b, new_e, s))
+            if s != os:
+                raise Exception("For Range union strides of the two ranges need to be equal")
+        return Range(new_subset_list)
 
 
 @dace.serialize.serializable
@@ -1136,10 +1189,10 @@ class SubsetUnion(Subset):
             return None
 
     @property
-    def free_symbols(self) -> Set[str]:
-        result = set()
+    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+        result = {}
         for subset in self.subset_list:
-            result |= subset.free_symbols
+            result.update(subset.symbols)
         return result
 
     def replace(self, repl_dict):

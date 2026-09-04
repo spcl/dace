@@ -8,7 +8,8 @@ from dace import library, nodes
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (_is_cross_cpu_gpu, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
+from dace.libraries.standard.nodes.copy.common import (_is_cross_cpu_gpu, copy_assignment_code, INPUT_CONNECTOR_NAME,
+                                                       OUTPUT_CONNECTOR_NAME)
 
 if TYPE_CHECKING:
     pass
@@ -41,5 +42,5 @@ class ExpandTasklet(ExpandTransformation):
         return nodes.Tasklet(node.name,
                              inputs={INPUT_CONNECTOR_NAME: inp.dtype},
                              outputs={OUTPUT_CONNECTOR_NAME: out.dtype},
-                             code=f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}",
+                             code=copy_assignment_code(inp, out, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME),
                              language=dace.Language.Python)

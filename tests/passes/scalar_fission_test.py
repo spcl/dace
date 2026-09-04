@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -299,20 +300,162 @@ def test_branch_subscopes_fission(with_raising):
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
 
 
-if __name__ == '__main__':
-    test_scalar_fission(False)
-    test_branch_subscopes_nofission(False)
-    test_branch_subscopes_fission(False)
-    test_scalar_fission(True)
-    test_branch_subscopes_nofission(True)
-    test_branch_subscopes_fission(True)
+def _build_outer_inner_scalar_sdfg():
+    """Build a minimal SDFG that ``ScalarFission`` would rename, with the
+    scalar carried across a NestedSDFG boundary.
+
+    Shape:
+      outer SDFG
+        state s_init: A[0]   -> seed -> X (transient scalar, OUTER)
+        state s_use:  X (read) -> NestedSDFG(in_conn='X', body reads inner X
+                                              and writes inner Y)
+                                  -> Y (transient scalar, OUTER)
+                                  -> consumer tasklet -> B[0]
+        state s_wb:   X (read) -> writeback into B[1]
+
+    Plus the NestedSDFG carries ``X`` as a symbol_mapping entry to test the
+    fifth requirement (symbol_mapping update on rename).
+    """
+    sdfg = dace.SDFG('cross_nsdfg_scalar')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    sdfg.add_scalar('X', dace.float64, transient=True)
+    sdfg.add_scalar('Y', dace.float64, transient=True)
+    sdfg.add_symbol('xsym', dace.int64)
+
+    # s_init: write X from A[0]
+    s_init = sdfg.add_state('s_init', is_start_block=True)
+    a_r = s_init.add_read('A')
+    x_w = s_init.add_write('X')
+    seed = s_init.add_tasklet('seed', {'_in'}, {'_out'}, '_out = _in')
+    s_init.add_edge(a_r, None, seed, '_in', dace.Memlet('A[0]'))
+    s_init.add_edge(seed, '_out', x_w, None, dace.Memlet('X[0]'))
+
+    # NestedSDFG body: read X, write Y = X * 2.0
+    body = dace.SDFG('body')
+    body.add_scalar('X', dace.float64)
+    body.add_scalar('Y', dace.float64)
+    body.add_symbol('xsym', dace.int64)
+    bs = body.add_state('only', is_start_block=True)
+    bx = bs.add_read('X')
+    by = bs.add_write('Y')
+    bt = bs.add_tasklet('mul', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    bs.add_edge(bx, None, bt, '_in', dace.Memlet('X[0]'))
+    bs.add_edge(bt, '_out', by, None, dace.Memlet('Y[0]'))
+
+    # s_use: X -> NestedSDFG -> Y -> consume -> B[0]
+    s_use = s_init.parent.add_state('s_use')
+    sdfg.add_edge(s_init, s_use, dace.InterstateEdge())
+    x_r = s_use.add_read('X')
+    y_w = s_use.add_access('Y')
+    nsdfg = s_use.add_nested_sdfg(body, inputs={'X'}, outputs={'Y'}, symbol_mapping={'xsym': 'xsym'})
+    s_use.add_edge(x_r, None, nsdfg, 'X', dace.Memlet('X[0]'))
+    s_use.add_edge(nsdfg, 'Y', y_w, None, dace.Memlet('Y[0]'))
+    b_w0 = s_use.add_write('B')
+    consume = s_use.add_tasklet('consume', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s_use.add_edge(y_w, None, consume, '_in', dace.Memlet('Y[0]'))
+    s_use.add_edge(consume, '_out', b_w0, None, dace.Memlet('B[0]'))
+
+    # s_wb: write X back into B[1]
+    s_wb = sdfg.add_state('s_wb')
+    sdfg.add_edge(s_use, s_wb, dace.InterstateEdge())
+    x_r2 = s_wb.add_read('X')
+    b_w1 = s_wb.add_write('B')
+    wb = s_wb.add_tasklet('wb', {'_in'}, {'_out'}, '_out = _in')
+    s_wb.add_edge(x_r2, None, wb, '_in', dace.Memlet('X[0]'))
+    s_wb.add_edge(wb, '_out', b_w1, None, dace.Memlet('B[1]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_scalar_fission_propagates_rename_into_nsdfg():
+    """Pin the cross-SDFG-rename bug in ``ScalarFission`` /
+    ``PrivatizeScalars``: when the matcher renames a scalar that
+    crosses a ``NestedSDFG`` boundary, it must update on EVERY side:
+
+    * outer ``AccessNode.data``
+    * outer arrays catalog
+    * outer memlets referencing the scalar
+    * NestedSDFG input/output **connector name** matching the scalar
+    * NestedSDFG inner **arrays catalog** entry for the scalar
+    * NestedSDFG inner ``AccessNode.data`` for every inner access
+    * NestedSDFG inner memlets referencing the scalar
+    * NestedSDFG ``symbol_mapping`` (both as key and value expression
+      if the scalar appears there)
+
+    Without all six updates the SDFG fails ``validate()``.
+
+    This test forces an actual rename by inserting a SECOND dominating
+    write to ``X`` (in ``s_use``), which makes ``ScalarFission`` split
+    ``X`` into per-scope copies.
+    """
+    sdfg = _build_outer_inner_scalar_sdfg()
+    # Force a non-trivial fission: add a second write to X inside s_use
+    # AFTER the NestedSDFG reads it, so X has TWO dominating-write scopes
+    # (s_init's write and s_use's write). The first dominating write's
+    # shadowed reads + s_use's write trigger the rename path.
+    s_use = next(s for s in sdfg.states() if s.label == 's_use')
+    a_node = next(s for s in sdfg.states() if s.label == 's_init').nodes()
+    # Take the last node in s_use (the B-write) and chain a second X write
+    # off the consume tasklet so X gets written twice (once in init, once
+    # in use), forcing the dominating-write split.
+    y_an = next(n for n in s_use.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == 'Y')
+    x_w2 = s_use.add_access('X')
+    set_one = s_use.add_tasklet('set_one', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s_use.add_edge(y_an, None, set_one, '_in', dace.Memlet('Y[0]'))
+    s_use.add_edge(set_one, '_out', x_w2, None, dace.Memlet('X[0]'))
+    sdfg.validate()
+
+    PrivatizeScalars = __import__('dace.transformation.passes.scalar_fission',
+                                  fromlist=['PrivatizeScalars']).PrivatizeScalars
+
+    pre_arrays_outer = set(sdfg.arrays.keys())
+    nsdfg_node = next(n for n in s_use.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    pre_arrays_inner = set(nsdfg_node.sdfg.arrays.keys())
+
+    PrivatizeScalars().apply_pass(sdfg, {})
+
+    # ScalarFission must rename X under the dominating-write shape.
+    post_arrays_outer = set(sdfg.arrays.keys())
+    new_arrays = post_arrays_outer - pre_arrays_outer
+    assert new_arrays, ('ScalarFission must rename X under a second-dominating-write shape; '
+                        f'no new arrays created (have {post_arrays_outer}).')
+    assert all(n.startswith('X') for n in new_arrays), f'unexpected new arrays {new_arrays}'
+
+    # Cross-NSDFG contract: every cross edge into or out of the NSDFG
+    # must (a) reference an outer AccessNode whose data exists in the
+    # outer arrays catalog, and (b) the connector name on the NSDFG side
+    # must EQUAL the outer AccessNode's data (DaCe binds connector -> inner
+    # descriptor by name), and (c) the inner arrays catalog must contain
+    # that name (no dangling descriptor).
+    for e in s_use.in_edges(nsdfg_node):
+        if not isinstance(e.src, dace.nodes.AccessNode):
+            continue
+        if e.src.data == 'A':  # cross edges from the unrelated A array don't apply
+            continue
+        outer_name = e.src.data
+        conn_name = e.dst_conn
+        assert outer_name in sdfg.arrays, f'outer array {outer_name!r} not in catalog'
+        assert conn_name == outer_name, (f'NestedSDFG input connector {conn_name!r} does not match outer '
+                                         f'AccessNode data {outer_name!r}; cross-NSDFG rename failed')
+        assert conn_name in nsdfg_node.sdfg.arrays, (f'inner arrays catalog missing {conn_name!r}; '
+                                                     f'cross-NSDFG rename did not propagate the descriptor')
+    # The inner SDFG must contain NO dangling AccessNode whose data was
+    # removed from its arrays catalog.
+    for st in nsdfg_node.sdfg.states():
+        for an in st.data_nodes():
+            assert an.data in nsdfg_node.sdfg.arrays, (f'inner AccessNode {an.data!r} not in inner '
+                                                       f'arrays catalog')
+    # Final invariant: the SDFG must validate end-to-end.
+    sdfg.validate()
 
 
 def ordering_edge_between_writes_sdfg() -> dace.SDFG:
-    """One real write to ``s``, then a second ``s`` node reached only by ordering edges.
+    """Two real writes to ``s``, with an ordering edge landing on the second one's node.
 
-    The empty memlets transfer nothing, so that node is a READ of the preceding write, not a
-    dominating write of its own.
+    The eigh_test shape: the empty memlet transfers nothing, so the node it reaches is a READ of the
+    preceding write, not a write of its own.
     """
     sdfg = dace.SDFG('ordering_edge_between_writes')
     sdfg.add_array('A', [1], dace.float64)
@@ -325,6 +468,7 @@ def ordering_edge_between_writes_sdfg() -> dace.SDFG:
     written = state.add_access('s')
     ordered = state.add_access('s')
     order_src = state.add_access('order')
+    out_write = state.add_write('out')
 
     init = state.add_tasklet('init', {'i'}, {'o'}, 'o = i * 2.0')
     side = state.add_tasklet('side', {'i'}, {'o'}, 'o = i')
@@ -337,13 +481,26 @@ def ordering_edge_between_writes_sdfg() -> dace.SDFG:
     state.add_edge(written, None, ordered, None, dace.Memlet())
     state.add_edge(order_src, None, ordered, None, dace.Memlet())
     state.add_edge(ordered, None, consumer, 'i', dace.Memlet('s[0]'))
-    state.add_edge(consumer, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(consumer, 'o', out_write, None, dace.Memlet('out[0]'))
 
     second = sdfg.add_state_after(state, 'second')
+    reread = second.add_read('s')
     tail = second.add_tasklet('tail', {'i'}, {'o'}, 'o = i')
-    second.add_edge(second.add_read('s'), None, tail, 'i', dace.Memlet('s[0]'))
+    second.add_edge(reread, None, tail, 'i', dace.Memlet('s[0]'))
     second.add_edge(tail, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
     return sdfg
+
+
+def assert_memlets_name_an_endpoint(sdfg: dace.SDFG) -> None:
+    """Every data memlet names the container of the AccessNode it touches."""
+    for sub in sdfg.all_sdfgs_recursive():
+        for state in sub.states():
+            for edge in state.edges():
+                if edge.data.data is None:
+                    continue
+                endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
+                assert not endpoints or edge.data.data in endpoints, (
+                    f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
 
 
 def test_ordering_edge_does_not_start_a_version():
@@ -358,14 +515,7 @@ def test_ordering_edge_does_not_start_a_version():
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
     sdfg.validate()
-
-    for state in sdfg.states():
-        for edge in state.edges():
-            if edge.data.data is None:
-                continue
-            endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
-            assert not endpoints or edge.data.data in endpoints, (
-                f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
+    assert_memlets_name_an_endpoint(sdfg)
 
     minted = set(sdfg.arrays.keys()) - before
     assert not minted, f'the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}'
@@ -374,3 +524,320 @@ def test_ordering_edge_does_not_start_a_version():
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=A, out=out)
     assert out[0] == 6.0, f'got {out[0]}'
+
+
+def test_rename_node_memlets_follows_an_earlier_version():
+    """The rename guard must accept a memlet already pointing at an earlier version of the name.
+
+    A node renamed twice in one pass no longer carries the ORIGINAL container on its memlets, and a
+    guard comparing only against that name skips them -- leaving an edge whose memlet matches
+    neither endpoint.
+    """
+    sdfg = dace.SDFG('rename_alias')
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_scalar('s_0', dace.float64, transient=True)
+    sdfg.add_scalar('s_1', dace.float64, transient=True)
+    state = sdfg.add_state('main', is_start_block=True)
+    node = state.add_access('s_0')
+    sink = state.add_tasklet('sink', {'i'}, {}, 'pass')
+    state.add_edge(node, None, sink, 'i', dace.Memlet('s_0[0]'))
+
+    node.data = 's_1'
+    ScalarFission().rename_node_memlets(state, node, {'s', 's_0'}, 's_1')
+
+    assert state.out_edges(node)[0].data.data == 's_1', 'a memlet on an already-renamed node stayed stale'
+
+
+if __name__ == '__main__':
+    test_scalar_fission(False)
+    test_branch_subscopes_nofission(False)
+    test_branch_subscopes_fission(False)
+    test_scalar_fission(True)
+    test_branch_subscopes_nofission(True)
+    test_branch_subscopes_fission(True)
+    test_scalar_fission_propagates_rename_into_nsdfg()
+    test_ordering_edge_does_not_start_a_version()
+    test_rename_node_memlets_follows_an_earlier_version()
+
+
+def test_privatize_loop_local_undominated_through_map_scope():
+    """A loop-local scalar accumulated through a MAP scope (WCR write via ``map_exit``),
+    written in both branches of a conditional (undominated / ``None`` write-scope) and
+    read after the merge, must be privatized WITHOUT leaving an ``IN_x``/``OUT_x`` name
+    mismatch across the map's exit. The undominated privatization path must rename the
+    FULL memlet path (inner ``tasklet->exit`` edge AND outer ``exit->access-node`` edge),
+    not just the immediate edge -- otherwise the scope node's pass-through data keeps the
+    old name and the SDFG fails validation. Regression: polybench ``durbin`` (loop-local
+    reduction accumulator ``sum``).
+    """
+    from dace.sdfg.state import LoopRegion
+
+    sdfg = dace.SDFG('durbin_undominated_through_map')
+    sdfg.add_array('data', [8, 8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg.add_symbol('i', dace.int64)
+    loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    guard = loop.add_state('guard', is_start_block=True)
+    brA = loop.add_state('brA')
+    brB = loop.add_state('brB')
+    after = loop.add_state('after')
+    loop.add_edge(guard, brA, dace.InterstateEdge(condition='i > 0'))
+    loop.add_edge(guard, brB, dace.InterstateEdge(condition='i <= 0'))
+    loop.add_edge(brA, after, dace.InterstateEdge())
+    loop.add_edge(brB, after, dace.InterstateEdge())
+    for state in (brA, brB):
+        d = state.add_access('data')
+        me, mx = state.add_map('m', dict(k='0:8'))
+        t = state.add_tasklet('acc', {'d'}, {'a'}, 'a = d')
+        a = state.add_access('acc')
+        state.add_memlet_path(d, me, t, dst_conn='d', memlet=dace.Memlet('data[i, k]'))
+        state.add_memlet_path(t, mx, a, src_conn='a', memlet=dace.Memlet('acc[0]', wcr='lambda x, y: x + y'))
+    ra = after.add_access('acc')
+    tr = after.add_tasklet('rd', {'a'}, {'o'}, 'o = a')
+    ro = after.add_access('out')
+    after.add_edge(ra, None, tr, 'a', dace.Memlet('acc[0]'))
+    after.add_edge(tr, 'o', ro, None, dace.Memlet('out[i]'))
+    sdfg.validate()
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+
+    # The loop-local scalar was privatized (undominated path) ...
+    assert any(a != 'acc' and a.startswith('acc') for a in sdfg.arrays)
+    # ... and the FULL memlet path was renamed, so the SDFG still validates (no
+    # IN_x(old)/OUT_x(new) mismatch across the map exit).
+    sdfg.validate()
+
+
+def loop_region_versions_sdfg(condition: str) -> dace.SDFG:
+    """``for i in <condition>: A = 1; out[0] = A; A = 2; out[1] = A`` then ``out[2] = A``.
+
+    Every top-level block is a ``LoopRegion``, so the read in ``end`` has a dominating write only
+    if a region may be one. Both body writes are also read in their own state, so neither is a
+    fake shadow of the other.
+    """
+    tag = ''.join(c if c.isalnum() else '_' for c in condition)
+    sdfg = dace.SDFG(f'loop_region_scalar_versions_{tag}')
+    sdfg.add_array('out', [3], dace.float64)
+    sdfg.add_scalar('A', dace.float64, transient=True)
+    sdfg.add_symbol('i', dace.int64)
+
+    loop = LoopRegion('loop', condition, 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    previous = None
+    for idx, value in enumerate((1.0, 2.0)):
+        state = loop.add_state(f'body{idx}', is_start_block=previous is None)
+        if previous is not None:
+            loop.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+        access = state.add_access('A')
+        writer = state.add_tasklet(f'w{idx}', {}, {'a'}, f'a = {value}')
+        reader = state.add_tasklet(f'r{idx}', {'a'}, {'o'}, 'o = a')
+        out = state.add_access('out')
+        state.add_edge(writer, 'a', access, None, dace.Memlet('A[0]'))
+        state.add_edge(access, None, reader, 'a', dace.Memlet('A[0]'))
+        state.add_edge(reader, 'o', out, None, dace.Memlet(f'out[{idx}]'))
+
+    end = sdfg.add_state('end')
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    end_read = end.add_access('A')
+    end_tasklet = end.add_tasklet('re', {'a'}, {'o'}, 'o = a')
+    end_out = end.add_access('out')
+    end.add_edge(end_read, None, end_tasklet, 'a', dace.Memlet('A[0]'))
+    end.add_edge(end_tasklet, 'o', end_out, None, dace.Memlet('out[2]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_loop_region_write_versions_scalar():
+    """The last write of a provably nonempty loop body roots the read after the loop.
+
+    Without that, the read in ``end`` is undominated and the two body writes are coarsened into
+    its scope, leaving one equivalence class and nothing to version.
+    """
+    sdfg = loop_region_versions_sdfg('i < 10')
+    renamed = Pipeline([ScalarFission()]).apply_pass(sdfg, {})['ScalarFission']
+    sdfg.validate()
+    assert len(renamed['A']) == 2, f'expected one container per body write, got {dict(renamed)}'
+
+
+@pytest.mark.parametrize('condition, trips', (('i < 10', 10), ('i < 0', 0)))
+def test_loop_region_write_versions_scalar_value_preserving(condition, trips):
+    want = np.array([1.0, 2.0, 2.0] if trips else [0.0, 0.0, 0.0])
+
+    reference = loop_region_versions_sdfg(condition)
+    reference.name = f'scalar_fission_region_reference_{trips}'
+    base = np.zeros(3)
+    reference.compile()(out=base)
+    assert np.allclose(base, want, rtol=1e-12, atol=1e-12), 'fixture does not compute what the test claims'
+
+    sdfg = loop_region_versions_sdfg(condition)
+    sdfg.name = f'scalar_fission_region_value_{trips}'
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    got = np.zeros(3)
+    sdfg.compile()(out=got)
+    assert np.allclose(got, want, rtol=1e-12, atol=1e-12)
+
+
+def wcr_loop_accumulator_sdfg(name):
+    """``acc = 100``; ``chk[0] = acc``; then for i: ``acc += A[i]``; ``out[i] = acc``.
+
+    The in-loop read of ``acc`` is dominated by the WCR write inside the loop body, so that
+    write becomes its own write-scope key. It is a read-modify-write, though: versioning it
+    restarts the accumulator from never-written storage and drops the seed.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('chk', [1], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    t_seed = init.add_tasklet('seed', {}, {'o'}, 'o = 100.0')
+    init.add_edge(t_seed, 'o', init.add_access('acc'), None, dace.Memlet('acc[0]'))
+
+    # A read of the seed, so the seeding write is a write-scope of its own and the fission
+    # path (more than one dominating scope) is actually reached.
+    pre = sdfg.add_state('pre')
+    sdfg.add_edge(init, pre, dace.InterstateEdge())
+    t_peek = pre.add_tasklet('peek', {'i'}, {'o'}, 'o = i')
+    pre.add_edge(pre.add_read('acc'), None, t_peek, 'i', dace.Memlet('acc[0]'))
+    pre.add_edge(t_peek, 'o', pre.add_write('chk'), None, dace.Memlet('chk[0]'))
+
+    loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+
+    body = loop.add_state('body', is_start_block=True)
+    t_add = body.add_tasklet('add', {'a'}, {'o'}, 'o = a')
+    body.add_edge(body.add_read('A'), None, t_add, 'a', dace.Memlet('A[i]'))
+    body.add_edge(t_add, 'o', body.add_access('acc'), None, dace.Memlet('acc[0]', wcr='lambda x, y: x + y'))
+
+    tail = loop.add_state('tail')
+    loop.add_edge(body, tail, dace.InterstateEdge())
+    t_store = tail.add_tasklet('store', {'a'}, {'o'}, 'o = a')
+    tail.add_edge(tail.add_read('acc'), None, t_store, 'a', dace.Memlet('acc[0]'))
+    tail.add_edge(t_store, 'o', tail.add_write('out'), None, dace.Memlet('out[i]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def wcr_between_plain_writes_sdfg(name, wcr):
+    """``s = A[0]``; ``m1 = s``; ``s <op>= 2``; ``m2 = s``; ``s = 5``; ``out = s``.
+
+    Three dominating write-scopes, the middle one a read-modify-write when ``wcr`` is set.
+
+    :param name: SDFG name.
+    :param wcr: Write-conflict-resolution lambda source for the middle write, or ``None`` for a
+                plain (killing) write.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('m1', [1], dace.float64)
+    sdfg.add_array('m2', [1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    t_init = init.add_tasklet('t_init', {'i'}, {'o'}, 'o = i')
+    init.add_edge(init.add_read('A'), None, t_init, 'i', dace.Memlet('A[0]'))
+    init.add_edge(t_init, 'o', init.add_access('s'), None, dace.Memlet('s[0]'))
+
+    peek1 = sdfg.add_state('peek1')
+    sdfg.add_edge(init, peek1, dace.InterstateEdge())
+    t_p1 = peek1.add_tasklet('t_p1', {'i'}, {'o'}, 'o = i')
+    peek1.add_edge(peek1.add_read('s'), None, t_p1, 'i', dace.Memlet('s[0]'))
+    peek1.add_edge(t_p1, 'o', peek1.add_write('m1'), None, dace.Memlet('m1[0]'))
+
+    upd = sdfg.add_state('upd')
+    sdfg.add_edge(peek1, upd, dace.InterstateEdge())
+    t_upd = upd.add_tasklet('t_upd', {}, {'o'}, 'o = 2.0')
+    upd.add_edge(t_upd, 'o', upd.add_access('s'), None, dace.Memlet('s[0]', wcr=wcr))
+
+    peek2 = sdfg.add_state('peek2')
+    sdfg.add_edge(upd, peek2, dace.InterstateEdge())
+    t_p2 = peek2.add_tasklet('t_p2', {'i'}, {'o'}, 'o = i')
+    peek2.add_edge(peek2.add_read('s'), None, t_p2, 'i', dace.Memlet('s[0]'))
+    peek2.add_edge(t_p2, 'o', peek2.add_write('m2'), None, dace.Memlet('m2[0]'))
+
+    reset = sdfg.add_state('reset')
+    sdfg.add_edge(peek2, reset, dace.InterstateEdge())
+    t_reset = reset.add_tasklet('t_reset', {}, {'o'}, 'o = 5.0')
+    reset.add_edge(t_reset, 'o', reset.add_access('s'), None, dace.Memlet('s[0]'))
+
+    use = sdfg.add_state('use')
+    sdfg.add_edge(reset, use, dace.InterstateEdge())
+    t_use = use.add_tasklet('t_use', {'i'}, {'o'}, 'o = i')
+    use.add_edge(use.add_read('s'), None, t_use, 'i', dace.Memlet('s[0]'))
+    use.add_edge(t_use, 'o', use.add_write('out'), None, dace.Memlet('out[0]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_accumulator_in_loop_not_versioned():
+    """A WCR accumulator whose result is read inside the loop must not be versioned.
+
+    Without the guard the pass split ``acc`` into ``acc``/``acc_0``/``acc_1``; the loop then
+    accumulated into the never-seeded ``acc_1`` and produced ``[1, 3, 6, ... 36]`` instead of
+    ``[101, 103, 106, ... 136]`` -- the seed was silently dropped.
+    """
+    sdfg = wcr_loop_accumulator_sdfg('wcr_loop_accumulator')
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.arange(1.0, 9.0, dtype=np.float64)
+    chk = np.zeros(1, dtype=np.float64)
+    out = np.zeros(8, dtype=np.float64)
+    sdfg(A=A, chk=chk, out=out)
+    assert np.allclose(out, 100.0 + np.cumsum(A)), f'WCR accumulator computed {out.tolist()}'
+    assert chk[0] == 100.0
+    assert set(sdfg.arrays.keys()) == before, (f'ScalarFission versioned a WCR accumulator: '
+                                               f'{sorted(set(sdfg.arrays.keys()) - before)}')
+
+
+def test_wcr_write_between_plain_writes_not_versioned():
+    """A WCR write between two plain writes must not start a version.
+
+    Without the guard the three scopes became ``s``/``s_0``/``s_1``/``s_2``, the ``CR: Product``
+    combined against never-written storage and ``m2`` came out ``0.0`` instead of ``6.0``. The
+    trailing plain write is a legitimate version boundary, but the chain it would cut runs
+    through the WCR write, so the whole container is left alone.
+    """
+    sdfg = wcr_between_plain_writes_sdfg('wcr_between_plain', 'lambda x, y: x * y')
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.array([3.0], dtype=np.float64)
+    m1 = np.zeros(1, dtype=np.float64)
+    m2 = np.zeros(1, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, m1=m1, m2=m2, out=out)
+    assert (m1[0], m2[0], out[0]) == (3.0, 6.0, 5.0), f'got {m1[0]}, {m2[0]}, {out[0]}'
+    assert set(sdfg.arrays.keys()) == before, (f'ScalarFission versioned a WCR-updated scalar: '
+                                               f'{sorted(set(sdfg.arrays.keys()) - before)}')
+
+
+def test_plain_writes_still_fission():
+    """Guard against over-reach: the same shape with a plain middle write MUST still fission."""
+    sdfg = wcr_between_plain_writes_sdfg('plain_between_plain', None)
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert set(sdfg.arrays.keys()) - before, 'plain dominating writes must still be versioned'
+
+    A = np.array([3.0], dtype=np.float64)
+    m1 = np.zeros(1, dtype=np.float64)
+    m2 = np.zeros(1, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, m1=m1, m2=m2, out=out)
+    assert (m1[0], m2[0], out[0]) == (3.0, 2.0, 5.0), f'got {m1[0]}, {m2[0]}, {out[0]}'

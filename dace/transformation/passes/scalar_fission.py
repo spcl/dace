@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
@@ -22,8 +23,27 @@ class ScalarFission(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.AccessNodes
 
+    def shadow_analysis(self) -> type:
+        """The write-shadow-scope analysis whose result drives this pass.
+
+        :returns: The analysis ``Pass`` subclass to read ``pipeline_results`` from.
+        """
+        return ap.ScalarWriteShadowScopes
+
+    def accepts(self, desc) -> bool:
+        """Whether ``desc`` is a container this pass may fission.
+
+        Scalars accept every size-1 transient: any write to one is a full write, so the analysis'
+        dominance-only shadowing is already a must-def. :class:`ArrayFission` overrides both this
+        and :func:`shadow_analysis`.
+
+        :param desc: The data descriptor to test.
+        :returns: ``True`` if the container may be fissioned.
+        """
+        return desc.transient and desc.total_size == 1
+
     def depends_on(self):
-        return [ap.ScalarWriteShadowScopes]
+        return [self.shadow_analysis()]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """
@@ -37,58 +57,622 @@ class ScalarFission(ppl.Pass):
         """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
-        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
+        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[self.shadow_analysis().__name__][sdfg.cfg_id]
+
+        # A control-flow condition (branch condition, loop bound/condition) is a
+        # code block that READS every data container it names -- its value must
+        # outlive the condition. Such a scalar is not a privatizable per-iteration
+        # temporary but a pending ``ScalarToSymbolPromotion`` target. Fission would
+        # rename its writer without rewriting the condition (region meta-code is not
+        # a dataflow edge, so it is invisible to the write-shadow analysis and to
+        # the rename below), orphaning the reference into an undefined symbol. Treat
+        # condition-referenced scalars as used and leave them untouched.
+        cond_referenced: Set[str] = set()
+        for region in sdfg.all_control_flow_regions():
+            for cb in region.get_meta_codeblocks():
+                cond_referenced |= cb.get_free_symbols()
+        cond_referenced &= set(sdfg.arrays.keys())
+
+        # A scalar threaded through a single ``NestedSDFG`` inout connector is a
+        # loop-carried value whose read and write share one storage location (the
+        # connector); versioning its two sides into different containers is invalid
+        # (see ``_inout_nsdfg_carried``). Leave it untouched, like ``cond_referenced``.
+        inout_carried: Set[str] = self._inout_nsdfg_carried(sdfg)
 
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
-            # If this isn't a scalar or an array of size 1, don't do anything.
-            if desc.total_size != 1:
+            # Only containers this pass owns; a non-transient one may be used externally.
+            if not self.accepts(desc):
                 continue
 
-            # If there is only one scope, don't do anything.
-            if len(write_scope_dict) <= 1:
+            # A scalar read by a control-flow condition is used, not a privatizable
+            # temporary -- leave it for symbol promotion (see ``cond_referenced``).
+            if name in cond_referenced:
                 continue
 
-            # Don't rename anything that's not transient, as it may be used externally.
-            if not desc.transient:
+            # A scalar read AND written through a single NestedSDFG inout connector is
+            # a carried value shared across both sides of that one connector; fission
+            # would give the read side (``beta_0``) a different version from the write
+            # side (``beta_1``) while the connector must name ONE array on both sides,
+            # producing an invalid inout connector. Leave it (see ``_inout_nsdfg_carried``).
+            if name in inout_carried:
+                continue
+
+            # Privatize the undominated (``None``) scope -- accesses whose reads are
+            # not dominated by a single write, e.g. a scalar written in every
+            # branch of a conditional and read after the merge (the cloudsc
+            # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
+            # so each enclosing loop gets its own copy -- scalar privatization.
+            if None in write_scope_dict:
+                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results)
+
+            # A write-conflict-resolution write does not KILL the previous value, it reads it
+            # (see :meth:`is_wcr_write`), so it cannot start a new single-assignment version.
+            # Skipping just that one scope is not enough: the write before it would still be
+            # versioned while the WCR write kept the old name, cutting the chain between them. So a
+            # container with a version-starting WCR write is left whole. (The undominated
+            # privatization above is unaffected: it renames a loop's entire access group at once,
+            # a pure alpha-rename that stays correct for an accumulator.)
+            if any(w is not None and self.is_wcr_write(w[0], w[1]) for w in write_scope_dict):
+                continue
+
+            # If there is only one (dominating) scope, no further fission is needed.
+            if len([w for w in write_scope_dict if w is not None]) <= 1:
                 continue
 
             for write, shadowed_reads in write_scope_dict.items():
                 if write is not None and len(shadowed_reads) > 0:
                     newdesc = desc.clone()
-                    # Versions already minted for ``name`` count as the container too: a node renamed
-                    # twice in one pass no longer carries the ORIGINAL name on its memlets, and a guard
-                    # comparing only against that name leaves them naming neither endpoint.
+                    # Versions already minted count too: a node can be renamed twice in one pass.
                     aliases = {name} | set(results[name])
                     newname = sdfg.add_datadesc(name, newdesc, find_new_name=True)
 
                     # Replace the write and any connected memlets with writes to the new data container.
                     write_node = write[1]
                     write_node.data = newname
-                    for iedge in write[0].in_edges(write_node):
-                        if iedge.data.data in aliases:
-                            iedge.data.data = newname
-                    for oeade in write[0].out_edges(write_node):
-                        if oeade.data.data in aliases:
-                            oeade.data.data = newname
+                    self.rename_node_memlets(write[0], write_node, aliases, newname)
 
                     # Replace all dominated reads and connected memlets.
+                    affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
                     for read in shadowed_reads:
                         if isinstance(read[1], nd.AccessNode):
                             read_node = read[1]
                             read_node.data = newname
-                            for iedge in read[0].in_edges(read_node):
-                                if iedge.data.data in aliases:
-                                    iedge.data.data = newname
-                            for oeade in read[0].out_edges(read_node):
-                                if oeade.data.data in aliases:
-                                    oeade.data.data = newname
+                            self.rename_node_memlets(read[0], read_node, aliases, newname)
+                            if isinstance(read[0], SDFGState):
+                                affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
 
+                    # Propagate the rename across every NestedSDFG boundary
+                    # touched by the renamed accesses: connector names, inner
+                    # arrays catalog, inner accesses + memlets, symbol_mapping.
+                    self._propagate_rename_into_nsdfgs(affected_states, name, newname)
                     results[name].add(newname)
         return results
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+    @staticmethod
+    def is_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
+        """Whether ``node`` is written through a write-conflict-resolution memlet.
+
+        A WCR edge (``CR: Sum``, ``CR: Product``, ``CR: Min`` ...) is a READ-MODIFY-WRITE of its
+        destination: the resolution combines the incoming value with what the container already
+        holds. ``ScalarWriteShadowScopes`` sees only the write and reports it as a dominating one,
+        so fission would start a new version there -- and the resolution would then combine against
+        that fresh, never-written version instead of the value the previous write left behind.
+
+        The exposure is real rather than hypothetical: every in-pipeline caller runs this pass
+        BEFORE ``AugAssignToWCR``, when an accumulator is still a plain read-tasklet-write chain
+        and no WCR edge exists. The readable CPU generator's ``ssa_loop_scalars`` step re-runs it at
+        CODEGEN time, on a graph where those chains are already WCR memlets. On CLOUDSC full_cpu
+        that fissioned the ``ZQSAT`` saturation accumulator (``CR: Product`` / ``CR: Min``) and
+        moved 10 output arrays by up to 2.1e+01.
+
+        :param state: The state holding ``node``.
+        :param node: The written access node.
+        :returns: ``True`` if any incoming memlet carries a write-conflict resolution.
+        """
+        return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(node))
+
+    @staticmethod
+    def _inout_nsdfg_carried(sdfg: SDFG) -> Set[str]:
+        """Names threaded through a single ``NestedSDFG`` inout connector.
+
+        A connector present in BOTH ``in_connectors`` and ``out_connectors`` reads
+        and writes ONE inner array through one boundary; when both its outer sides
+        reference the same array (``beta`` in / ``beta`` out) that array is a
+        loop-carried value shared across the connector, not a privatizable
+        per-iteration temporary. The write-shadow analysis, blind to that join,
+        would give the read a different version (``beta_0``) from the write
+        (``beta_1``); renaming the boundary memlets then leaves the connector --
+        which must name the SAME array on both sides -- reading ``beta_0`` and
+        writing ``beta_1``, an invalid inout connector (``NestedSDFG.validate``).
+        This is aggravated when the NSDFG sits inside a Map: its edges terminate at
+        the MapEntry/MapExit, so ``_propagate_rename_into_nsdfgs`` (which renames the
+        connector only when the edge's own endpoint is the renamed AccessNode) never
+        fires, while ``_rename_memlet_path`` still renames the pass-through memlets.
+        Collect such names so the caller leaves them for the carry handling.
+        """
+        carried: Set[str] = set()
+        for state in sdfg.all_states():
+            for n in state.nodes():
+                if not isinstance(n, nd.NestedSDFG):
+                    continue
+                for conn in n.in_connectors.keys() & n.out_connectors.keys():
+                    in_arrays = {
+                        e.data.data
+                        for e in state.in_edges(n) if e.dst_conn == conn and e.data is not None and e.data.data
+                    }
+                    out_arrays = {
+                        e.data.data
+                        for e in state.out_edges(n) if e.src_conn == conn and e.data is not None and e.data.data
+                    }
+                    carried |= in_arrays & out_arrays
+        return carried
+
+    def rename_node_memlets(self, state: SDFGState, node: nd.AccessNode, aliases: Set[str], new: str) -> None:
+        """Point every memlet on ``node``'s edges that still names one of ``aliases`` at ``new``.
+
+        A node renamed twice in one pass no longer names the ORIGINAL container, so a guard on that
+        name alone leaves an edge whose memlet names neither endpoint.
+
+        :param state: The state holding ``node``.
+        :param node: The access node whose ``data`` was just set to ``new``.
+        :param aliases: The original container name plus every version already minted for it.
+        :param new: The container name to rename onto.
+        """
+        for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
+            if edge.data.data in aliases:
+                self._rename_memlet_path(state, edge, edge.data.data, new, node)
+
+    @staticmethod
+    def _rename_memlet_path(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:
+        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE belonging
+        to ``node``'s access.
+
+        An access-node write/read that flows THROUGH a scope boundary (MapExit /
+        MapEntry) has more than one edge carrying the same data: the inner edge
+        to/from the tasklet and the outer edge to/from the AccessNode, joined at the
+        scope's connector. Renaming only the outermost edge -- the historical
+        behavior -- left the inner edge, and therefore the scope node's pass-through
+        data, as ``old``, yielding an ``IN_x(old) -> OUT_x(new)`` mismatch across the
+        MapExit that fails validation.
+
+        The TREE, not the path: one outer edge can fan out to several consumers
+        inside the scope (an array read like ``pn[i+1, j]`` and ``pn[i-1, j]``
+        both arriving through one ``OUT_pn`` connector). ``memlet_path`` is a single
+        linear route and renames only one of those branches, leaving its siblings
+        naming a container their endpoint no longer references.
+
+        The tree STOPS at another AccessNode of ``old``: a staging copy puts two separate
+        accesses of the same container in one tree, versioned separately by the shadow analysis.
+        """
+        for pe in state.memlet_tree(edge):
+            if pe.data is None or pe.data.data != old:
+                continue
+            if any(n is not node and isinstance(n, nd.AccessNode) and n.data == old for n in (pe.src, pe.dst)):
+                continue
+            pe.data.data = new
+
+    # ------------------------------------------------------------------ #
+    #  Privatization of undominated (None-scope) loop-local scalars
+    # ------------------------------------------------------------------ #
+
+    def _privatize_loop_local_undominated(self, sdfg: SDFG, name: str, accesses: Set[Tuple], results):
+        """Give a separate container to each loop's copy of a scalar whose reads
+        are not dominated by a single write (the ``None`` write-scope), when it
+        is provably loop-local. This is scalar privatization; it is legal only if
+        the scalar has **no upward-exposed use** in that loop (it is definitely
+        written before any read on every path -- e.g. written in all branches of
+        a conditional, read after the merge). A scalar that may be read before it
+        is written (a non-exhaustive ``if``) is loop-carried and is left alone.
+
+        The same must hold for every OTHER loop touching the scalar, or the groups are not
+        independent and privatizing one of them breaks a def-use chain into another --
+        see :func:`_carrier_free`.
+
+        :param sdfg: The SDFG being modified.
+        :param name: The size-1 transient scalar.
+        :param accesses: The ``None``-scope ``(block, node-or-edge)`` accesses.
+        :param results: Accumulator mapping the original name to new names.
+        """
+        # The ``None`` scope is ONE equivalence class, and splitting it per loop is only
+        # value-preserving when no value crosses a group boundary (see ``_carrier_free``).
+        if not self._carrier_free(sdfg, name):
+            return
+
+        by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
+        for block, node in accesses:
+            # ``_carrier_free`` already established that every access sits inside a loop and that
+            # no loop reads ``name`` before defining it, which is this group's legality condition.
+            by_loop[self._innermost_loop(block)].append((block, node))
+
+        for loop_accesses in by_loop.values():
+            newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
+            affected_states: Set[SDFGState] = set()
+            for block, node in loop_accesses:
+                if isinstance(node, nd.AccessNode):
+                    node.data = newname
+                    # Rename along the FULL memlet path, not just the immediate edge:
+                    # an access that flows through a MapEntry/MapExit has an inner and
+                    # an outer edge carrying the same data, and renaming only one leaves
+                    # the scope node's pass-through as ``name`` (IN_x(old)->OUT_x(new)
+                    # mismatch / dangling reference once ``name`` is later removed). Same
+                    # fix as the dominated-write path above. (polybench ``durbin``: the
+                    # loop-local reduction accumulator ``sum``.)
+                    for e in block.in_edges(node):
+                        if e.data.data == name:
+                            self._rename_memlet_path(block, e, name, newname, node)
+                    for e in block.out_edges(node):
+                        if e.data.data == name:
+                            self._rename_memlet_path(block, e, name, newname, node)
+                    if isinstance(block, SDFGState):
+                        affected_states.add(block)
+                elif isinstance(node, InterstateEdge):
+                    node.replace_dict({name: newname})
+            self._propagate_rename_into_nsdfgs(affected_states, name, newname)
+            results[name].add(newname)
+
+    def _carrier_free(self, sdfg: SDFG, name: str) -> bool:
+        """Whether no value of ``name`` can flow from one loop to another, or out to non-loop scope.
+
+        The undominated (``None``) write scope is one equivalence class of accesses the shadow
+        analysis could not attribute to any dominating write. Handing each enclosing loop its own
+        copy is value-preserving only when no value crosses a group boundary; otherwise the
+        producing group is renamed away from the consuming one, and the consumer is left reading a
+        container nobody writes any more.
+
+        That was exactly the npbench ``vadv`` shape. Every top-level block of that SDFG is a
+        ``LoopRegion``, and ``_find_dominating_write`` used to accept only an ``SDFGState`` as a
+        dominating write state, so a value produced in one top-level loop (``data_col``, written by
+        the first step of the backward substitution) and consumed by the next landed wholly in the
+        ``None`` scope.
+        The producing loop has no upward-exposed use of its own and was therefore privatized alone,
+        severing the chain -- a silent miscompile, since the consuming loop still validates.
+
+        ``must_write_state`` now roots that shape properly, so ``vadv`` no longer reaches here at
+        all. This gate stays because it guards the general case, not that one instance: whatever
+        the analysis still cannot attribute remains ONE equivalence class with no def-use
+        guarantee, and over the four corpora the gate refuses 11 array and 23 scalar containers
+        that do reach it.
+
+        Establishing "dead after this loop" properly means liveness across the whole control-flow
+        hierarchy. Instead, require the stronger and much cheaper property that EVERY access of
+        ``name`` -- not only the undominated ones -- lives inside a loop that definitely defines it
+        before reading it. Then no group can observe another group's value, every group is closed
+        under def-use, and privatizing them independently cannot move a value. Anything else is
+        refused wholesale rather than split.
+
+        :param sdfg: The SDFG being modified.
+        :param name: The data container to test.
+        :returns: ``True`` if the undominated groups of ``name`` may be privatized independently.
+        """
+        loops: Set[LoopRegion] = set()
+        for state in sdfg.all_states():
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                loop = self._innermost_loop(state)
+                if loop is None:
+                    return False
+                loops.add(loop)
+        # Interstate-edge reads are accesses too, and one at non-loop scope consumes whatever the
+        # loops left behind just as a top-level AccessNode would.
+        for edge in sdfg.all_interstate_edges():
+            if not any(str(s) == name for s in edge.data.free_symbols):
+                continue
+            loop = self._innermost_loop(edge.src)
+            if loop is None:
+                return False
+            loops.add(loop)
+        return all(self._no_upward_exposed_use(loop, name, defined_on_entry=False) for loop in loops)
+
+    @staticmethod
+    def _propagate_rename_into_nsdfgs(states, old_name: str, new_name: str) -> None:
+        """Propagate a scalar rename across every ``NestedSDFG`` boundary
+        whose input/output connector matches ``old_name``.
+
+        The outer-side rename (``AccessNode.data``, surrounding memlets) is
+        not enough when the renamed scalar crosses into a ``NestedSDFG``:
+        the inner SDFG references the scalar by connector name, which
+        binds to its own arrays catalog entry of the same name. Without
+        propagation the inner SDFG ends up dangling (inner descriptor
+        keyed on the old name, outer side rewired to the new name).
+
+        For every NSDFG in ``states`` that has a connector named
+        ``old_name``, this helper:
+
+        * renames the IN / OUT connector ``old_name -> new_name``
+        * updates the connecting outer memlet's ``data`` if it still
+          references ``old_name``
+        * runs ``SDFG.replace_dict({old_name: new_name})`` on the inner
+          SDFG, which renames the inner arrays catalog entry, every
+          inner ``AccessNode.data``, every inner memlet, and any
+          symbol references including ``symbol_mapping`` values
+        * updates the ``symbol_mapping`` itself if ``old_name`` appears
+          as a KEY (the inner symbol name binding)
+
+        :param states: The set of outer ``SDFGState`` instances where
+                       the rename happened. Only NSDFGs reachable from
+                       these states get the propagation.
+        :param old_name: The original scalar name.
+        :param new_name: The renamed scalar name.
+        """
+        if not states or old_name == new_name:
+            return
+        for state in states:
+            for n in state.nodes():
+                if not isinstance(n, nd.NestedSDFG):
+                    continue
+                # Rename a connector only when the OUTER AccessNode wired to it was renamed
+                # to ``new_name`` by THIS scope. Under per-scope fission the same NSDFG read
+                # is visited once per scope; an unconditional ``old_name -> new_name`` binds
+                # the connector to whichever scope runs first (e.g. ``X_0``) even when the
+                # feeding AccessNode belongs to another scope (``X_1``), leaving a
+                # connector/AccessNode name mismatch that fails validation. Tie each
+                # connector rename to its edge's renamed endpoint.
+                in_match = old_name in n.in_connectors and any(
+                    e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name
+                    for e in state.in_edges(n))
+                out_match = old_name in n.out_connectors and any(
+                    e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name
+                    for e in state.out_edges(n))
+                if not (in_match or out_match or old_name in n.symbol_mapping):
+                    continue
+                # 1. Rename the connector.
+                if in_match:
+                    n.in_connectors[new_name] = n.in_connectors.pop(old_name)
+                if out_match:
+                    n.out_connectors[new_name] = n.out_connectors.pop(old_name)
+                # 2. Update the outer-side edge (connector name + memlet) for the edges whose
+                #    renamed endpoint drove the connector rename.
+                if in_match:
+                    for e in state.in_edges(n):
+                        if e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name:
+                            e.dst_conn = new_name
+                            if e.data is not None and e.data.data == old_name:
+                                e.data.data = new_name
+                if out_match:
+                    for e in state.out_edges(n):
+                        if e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name:
+                            e.src_conn = new_name
+                            if e.data is not None and e.data.data == old_name:
+                                e.data.data = new_name
+                # 3. Propagate INSIDE the NestedSDFG. We do this manually
+                #    (no ``SDFG.replace_dict``) to avoid its symbolic-
+                #    replacement pathway tripping on the scalar's free-
+                #    symbol typeclass coercion.
+                inner = n.sdfg
+                if old_name in inner.arrays:
+                    inner.arrays[new_name] = inner.arrays.pop(old_name)
+                    for inner_state in inner.states():
+                        for inn in inner_state.data_nodes():
+                            if inn.data == old_name:
+                                inn.data = new_name
+                        for ie in inner_state.edges():
+                            if ie.data is not None and ie.data.data == old_name:
+                                ie.data.data = new_name
+                # Interstate edges in the inner SDFG (rare for a scalar-
+                # carrier shape but cheap to cover).
+                for ise in inner.all_interstate_edges():
+                    if any(str(s) == old_name for s in ise.data.free_symbols):
+                        ise.data.replace_dict({old_name: new_name})
+                # 4. Symbol_mapping uses inner-side symbol names as keys
+                #    (when the scalar appears as a symbol there). If the
+                #    inner symbol was named ``old_name``, update the key.
+                if old_name in n.symbol_mapping:
+                    n.symbol_mapping[new_name] = n.symbol_mapping.pop(old_name)
+                # Recurse: inner NestedSDFGs may themselves carry the
+                #    scalar across another boundary.
+                ScalarFission._propagate_rename_into_nsdfgs(set(inner.states()), old_name, new_name)
+
+    @staticmethod
+    def _innermost_loop(block) -> Optional[LoopRegion]:
+        """Find the innermost loop enclosing a block.
+
+        :param block: The control-flow block to search from.
+        :returns: The innermost enclosing ``LoopRegion``, or ``None`` if the block
+                  is not inside any loop.
+        """
+        region = block.parent_graph
+        while region is not None:
+            if isinstance(region, LoopRegion):
+                return region
+            region = region.parent_graph
+        return None
+
+    def _no_upward_exposed_use(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> bool:
+        """Test scalar-privatization legality: ``name`` has no upward-exposed use
+        in ``region``, i.e. every read is preceded by a write on every path
+        (``name`` is definitely assigned before use). Path-insensitive must-def
+        analysis -- a non-exhaustive conditional does not establish a definition.
+
+        :param region: The region (typically a loop) to test.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is already defined on entry.
+        :returns: ``True`` if ``name`` has no upward-exposed use (privatizable).
+        """
+        return self._analyze_region(region, name, defined_on_entry)[1]
+
+    def _analyze_region(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> Tuple[bool, bool]:
+        """Forward must-def analysis of ``name`` over ``region``.
+
+        The fixpoint is seeded pessimistically (``False`` off the entry), so
+        cycles and unanalyzable shapes stay conservative -- a possibly-carried
+        scalar is never reported as privatizable.
+
+        :param region: The region to analyze.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is defined on entry to ``region``.
+        :returns: ``(definitely_defined_at_exit, no_upward_exposed_use)``.
+        """
+        blocks = list(region.nodes())
+        if not blocks:
+            return defined_on_entry, True
+        bdef = {b: self._block_defines(b, name) for b in blocks}
+        start = region.start_block
+        defn = {b: False for b in blocks}
+        for _ in range(len(blocks) + 1):
+            changed = False
+            for b in blocks:
+                if b is start:
+                    nv = defined_on_entry
+                else:
+                    preds = [e.src for e in region.in_edges(b)]
+                    nv = all(defn[p] or bdef[p] for p in preds) if preds else False
+                if nv != defn[b]:
+                    defn[b] = nv
+                    changed = True
+            if not changed:
+                break
+        no_ue = all(not self._block_ue(b, name, defn[b]) for b in blocks)
+        # An interstate edge naming ``name`` in its condition or an assignment READS it, right
+        # after its source block. ``_block_ue`` walks blocks only, so without this a region whose
+        # ONLY read is such an edge -- ``if I[i]:`` inside a loop lowers to exactly that -- reports
+        # no upward-exposed use, and ``_carrier_free`` then lets the reader be privatized away from
+        # its writer into a container nobody writes.
+        no_ue = no_ue and all(defn[e.src] or bdef[e.src]
+                              for e in region.edges() if any(str(sym) == name for sym in e.data.free_symbols))
+        sinks = [b for b in blocks if region.out_degree(b) == 0]
+        must_def_exit = bool(sinks) and all(defn[b] or bdef[b] for b in sinks)
+        return must_def_exit, no_ue
+
+    def _block_defines(self, block, name: str) -> bool:
+        """Whether ``block`` definitely writes ``name`` on every path through it.
+        A conditional defines only if it is exhaustive (has an ``else``) and every
+        branch defines; a loop may run zero times and so never definitely defines.
+
+        :param block: The control-flow block.
+        :param name: The scalar data container.
+        :returns: ``True`` if ``name`` is written on every path through ``block``.
+        """
+        if isinstance(block, SDFGState):
+            return self._state_defines(block, name)
+        if isinstance(block, ConditionalBlock):
+            has_else = any(cond is None for cond, _ in block.branches)
+            return has_else and all(self._analyze_region(br, name, False)[0] for _, br in block.branches)
+        if isinstance(block, LoopRegion):
+            return False
+        if isinstance(block, ControlFlowRegion):
+            return self._analyze_region(block, name, False)[0]
+        return False
+
+    def _block_ue(self, block, name: str, defined_on_entry: bool) -> bool:
+        """Whether ``block`` has an upward-exposed read of ``name``.
+
+        :param block: The control-flow block.
+        :param name: The scalar data container.
+        :param defined_on_entry: Whether ``name`` is already defined on entry.
+        :returns: ``True`` if a read of ``name`` may execute before any write.
+        """
+        if defined_on_entry:
+            return False
+        if isinstance(block, SDFGState):
+            return self._state_reads_before_write(block, name)
+        if isinstance(block, ConditionalBlock):
+            return any(not self._analyze_region(br, name, False)[1] for _, br in block.branches)
+        if isinstance(block, ControlFlowRegion):
+            return not self._analyze_region(block, name, False)[1]
+        return True  # unknown block type -> conservative
+
+    @staticmethod
+    def _state_defines(state: SDFGState, name: str) -> bool:
+        """Whether ``state`` writes ``name`` (has a non-empty write to it).
+
+        :param state: The state to inspect.
+        :param name: The scalar data container.
+        :returns: ``True`` if ``name`` is written in ``state``.
+        """
+        return any(n.data == name and any(not e.data.is_empty() for e in state.in_edges(n)) for n in state.data_nodes())
+
+    @staticmethod
+    def _state_reads_before_write(state: SDFGState, name: str) -> bool:
+        """Whether ``state`` has an upward-exposed read of ``name``: an access
+        node that is read (has out-edges) but not written in the state (no
+        non-empty in-edge) reads the value coming from before the state.
+
+        :param state: The state to inspect.
+        :param name: The scalar data container.
+        :returns: ``True`` if a read precedes any write of ``name`` in ``state``.
+        """
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            written = any(not e.data.is_empty() for e in state.in_edges(node))
+            if state.out_degree(node) > 0 and not written:
+                return True
+        return False
+
+
+@transformation.explicit_cf_compatible
+class PrivatizeScalars(ppl.Pipeline):
+    """Give every write-before-read transient scalar its own name (scalar privatization).
+
+    A self-contained pipeline that runs :class:`ScalarFission` together with the
+    analysis it depends on (``ScalarWriteShadowScopes`` and that pass's own
+    dependencies), so it can be applied on its own --
+    ``PrivatizeScalars().apply_pass(sdfg, {})`` -- or dropped in as a single
+    element of a larger pipeline such as simplify. ``ScalarFission`` declares
+    those dependencies but cannot resolve them outside a pipeline.
+
+    A size-1 transient reused as a per-iteration temporary is written before it
+    is read on every iteration, so the iterations share only its *name*, not a
+    real value. Splitting each dominating write into its own container removes
+    that false write-after-write, which is what otherwise makes a shared
+    loop-local scalar block ``LoopToMap``.
+    """
+
+    def __init__(self):
+        super().__init__([ScalarFission()])
+
+
+@transformation.explicit_cf_compatible
+class ArrayFission(ScalarFission):
+    """
+    Fission transient ARRAYS that every write provably overwrites in full, into separate data
+    containers -- the array analogue of :class:`ScalarFission`.
+
+    The renaming machinery is identical to the scalar case; what differs is the premise it needs.
+    Versioning a container per dominating write is only value-preserving when that write is a
+    must-def of the whole container, which is automatic for a scalar and has to be *proven* for an
+    array. The proof lives entirely in :class:`~dace.transformation.passes.analysis.analysis.
+    ArrayWriteShadowScopes`, which reports an array only when every one of its writes covers the
+    full extent (all dimensions, unit stride, no WCR, not dynamic, not through a NestedSDFG
+    connector). A partially written array, an array written only under a condition, or one whose
+    extent cannot be simplified to the declared shape is never reported and so is never touched.
+    """
+
+    def shadow_analysis(self) -> type:
+        return ap.ArrayWriteShadowScopes
+
+    def accepts(self, desc) -> bool:
+        # Size-1 containers stay with ``ScalarFission``; the analysis has already discharged the
+        # full-overwrite proof for everything else it reports.
+        return desc.transient and desc.total_size != 1
+
+    def report(self, pass_retval: Any) -> Optional[str]:
+        return f'Renamed {len(pass_retval)} arrays: {pass_retval}.'
+
+
+@transformation.explicit_cf_compatible
+class PrivatizeArrays(ppl.Pipeline):
+    """Give every provably fully-overwritten transient array its own name (array privatization).
+
+    The array sibling of :class:`PrivatizeScalars`: a self-contained pipeline running
+    :class:`ArrayFission` together with the analysis it depends on, so it can be applied on its own
+    -- ``PrivatizeArrays().apply_pass(sdfg, {})`` -- or dropped into a larger recipe.
+
+    A transient array reused as a per-iteration temporary (``Tz = np.zeros(...)`` at the top of a
+    loop body) is fully written before it is read on every iteration, so the iterations share only
+    its *name*. Splitting each dominating write into its own container removes that false
+    write-after-write, which is what otherwise makes a shared temporary look loop-carried. Unlike
+    the scalar case the sharing is only false when the write covers the entire array, so the
+    underlying analysis refuses every array it cannot prove that for.
+    """
+
+    def __init__(self):
+        super().__init__([ArrayFission()])

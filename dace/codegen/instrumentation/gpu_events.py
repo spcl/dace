@@ -1,12 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Union
-from dace import config, dtypes, registry
+from typing import Optional, Union
+from dace import config, dtypes, registry, subsets
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+
+
+def _point_index(subset: subsets.Subset) -> Optional[int]:
+    """Integer index named by a one-dimensional, single-point subset.
+
+    ``gpu_streams[i]`` in/out-edges (``stream_lowering_helpers._build_chain``
+    and friends) are always built from ``dace.Memlet(f"gpu_streams[{i}]")``,
+    a bare integer index. The memlet parser turns that into a one-element
+    ``Range``, not a plain scalar, so it cannot be handed to ``int()``
+    directly. A subset that is not exactly one point in one dimension cannot
+    name a single stream slot; return ``None`` instead of guessing.
+    """
+    if subset.dims() != 1 or subset.num_elements() != 1:
+        return None
+    return int(subset.min_element()[0])
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
@@ -128,7 +143,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                                 'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
@@ -138,7 +153,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(cfg, state, entry_node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(s).__name__, s.label), cfg, state, entry_node), cfg,
                                state_id, node)
@@ -152,7 +167,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
@@ -164,7 +179,70 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'e' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(node).__name__, node.label), cfg, state, node), cfg,
                                state_id, node)
+
+    def _get_gpu_stream(self, state: SDFGState, node: nodes.Node) -> int:
+        """
+        Return the GPU stream ID assigned to a given node.
+
+        - In the CUDACodeGen, the stream ID is stored as the private attribute
+          ``_cuda_stream`` on the node.
+        - In the ExperimentalCUDACodeGen, streams are explicitly assigned to tasklets
+          and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For
+          other node types, no reliable stream assignment is available.
+
+        Parameters
+        ----------
+        state : SDFGState
+            The state containing the node.
+        node : dace.sdfg.nodes.Node
+            The node for which to query the GPU stream.
+
+        Returns
+        -------
+        int
+            The assigned GPU stream ID, or ``-1`` if none could be determined.
+            ``-1`` is not a scope to skip: ``_record_event`` maps it (and any
+            stream when ``max_concurrent_streams`` is negative) to ``nullptr``,
+            the backend's default stream, so the event is always recorded.
+        """
+        if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
+            stream = getattr(node, '_cuda_stream', -1)
+            return stream
+
+        def _stream_from_in_edges(target: nodes.Node) -> int:
+            for in_edge in state.in_edges(target):
+                src = in_edge.src
+                if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t
+                        and not in_edge.data.is_empty()):
+                    idx = _point_index(in_edge.data.subset)
+                    if idx is not None:
+                        return idx
+            return -1
+
+        stream = _stream_from_in_edges(node)
+
+        # MapExit's out-edge to gpu_streams carries an empty dependency memlet
+        # (see ``stream_lowering_helpers._build_chain``). Resolve via the matching
+        # MapEntry, which has the real ``gpu_streams[i]`` in-edge.
+        if stream == -1 and isinstance(node, nodes.MapExit):
+            entry = state.entry_node(node)
+            if entry is not None:
+                stream = _stream_from_in_edges(entry)
+
+        # Defensive out-edge fallback for non-Exit nodes only (Exit nodes' stream
+        # out-edges are always empty by construction).
+        if stream == -1 and not isinstance(node, nodes.ExitNode):
+            for out_edge in state.out_edges(node):
+                dst = out_edge.dst
+                if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t
+                        and not out_edge.data.is_empty()):
+                    idx = _point_index(out_edge.data.subset)
+                    if idx is not None:
+                        stream = idx
+                        break
+
+        return stream

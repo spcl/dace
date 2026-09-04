@@ -12,7 +12,7 @@ import dataclasses
 
 from collections import OrderedDict
 from numbers import Integral
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Sequence, Set, Tuple, Union
 
 import numpy as np
 import sympy as sp
@@ -90,7 +90,7 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
@@ -129,6 +129,11 @@ class Data:
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
         raise NotImplementedError
 
+    #: Sources of ``free_symbols``, all tuples or sympy expressions: reassigning one is the only way
+    #: any can change, so that is what drops the memo. Structure overrides and computes fresh.
+    SYMBOL_SOURCE_ATTRIBUTES = frozenset({'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype'})
+    _free_symbols_memo = None
+
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         """
         Returns a set of symbols that are used by this data descriptor.
@@ -141,14 +146,22 @@ class Data:
         result = set()
         if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
             for s in self.shape:
-                if isinstance(s, sp.Basic):
+                if isinstance(s, symbolic.SymbolicBasic):
                     result |= set(s.free_symbols)
         return result
 
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        return self.used_symbols(all_symbols=True)
+        if self._free_symbols_memo is None:
+            # Frozen: the answer is shared, so one caller's edit would be every later caller's.
+            self._free_symbols_memo = frozenset(self.used_symbols(all_symbols=True))
+        return self._free_symbols_memo
+
+    def __setattr__(self, name, value):
+        if name in Data.SYMBOL_SOURCE_ATTRIBUTES:
+            object.__setattr__(self, '_free_symbols_memo', None)
+        object.__setattr__(self, name, value)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -248,6 +261,18 @@ class Scalar(Data):
 
     allow_conflicts = Property(dtype=bool, default=False)
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this value is written exactly once '
+                          'and then read-only, so the experimental code generator may emit it '
+                          'as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "value, constexpr initializer) or 'const_runtime' (const binding of "
+                               "a runtime value).")
+
     def __init__(self,
                  dtype,
                  transient=False,
@@ -255,8 +280,12 @@ class Scalar(Data):
                  allow_conflicts=False,
                  location=None,
                  lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+                 debuginfo=None,
+                 const_init=False,
+                 const_init_kind='none'):
         self.allow_conflicts = allow_conflicts
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
         shape = [1]
         super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -274,9 +303,16 @@ class Scalar(Data):
     def __repr__(self):
         return 'Scalar (dtype=%s)' % self.dtype
 
+    def is_packed_fortran_strides(self) -> bool:
+        # A scalar is a single element; any layout question is trivially yes.
+        return True
+
+    def is_packed_c_strides(self) -> bool:
+        return True
+
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
-                      self.debuginfo)
+                      self.debuginfo, self.const_init, self.const_init_kind)
 
     @property
     def strides(self):
@@ -351,6 +387,171 @@ class Scalar(Data):
         return True
 
 
+def packed_c_strides(shape: Sequence[Any]) -> Tuple[Any, ...]:
+    """Row-major strides for ``shape``, with the trailing dimension contiguous.
+
+    Free-standing because packedness is a property of a REGION, not only of a container: a library
+    node moving a subset has to ask about the extents its memlet carries, which no descriptor holds.
+    """
+    strides = [1]
+    accum = 1
+    # Iterate in reversed order except the first dimension
+    for s in reversed(shape[1:]):
+        accum *= s
+        strides.insert(0, accum)
+    return tuple(strides)
+
+
+def packed_fortran_strides(shape: Sequence[Any]) -> Tuple[Any, ...]:
+    """Column-major strides for ``shape``, with the leading dimension contiguous."""
+    strides = [1]
+    accum = 1
+    for s in shape[:-1]:
+        accum *= s
+        strides.append(accum)
+    return tuple(strides)
+
+
+def extent_cmp(a: Any, b: Any) -> Union[int, None]:
+    """``-1`` / ``0`` / ``1`` for ``a`` less than / equal to / greater than ``b``, or None if undecidable.
+
+    The reshape factoring below has to know which side of a running product to grow. Concrete extents
+    compare directly; symbolic ones fall back to a RATIO, which needs no ordering assumption on the
+    symbols and refuses anything that is not a whole multiple.
+    """
+    if symbolic.equal(a, b) is True:
+        return 0
+    sa, sb = sp.sympify(a), sp.sympify(b)
+    if sa.is_Number and sb.is_Number:
+        return -1 if sa < sb else 1
+    if extent_multiple(a, b):
+        return -1
+    if extent_multiple(b, a):
+        return 1
+    return None
+
+
+def extent_multiple(small: Any, large: Any) -> bool:
+    """True when ``large`` is provably ``small`` times an integer factor of at least two.
+
+    The reshape factoring below has to know which side of a product to grow, and extents are
+    symbolic often enough that a subtraction's sign is undecidable. A RATIO needs no ordering
+    assumption: ``B*OH*OW`` over ``B`` is ``OH*OW``, and a concrete pair like 6 and 4 is rejected by
+    the denominator test rather than mistaken for a multiple.
+    """
+    if symbolic.equal(small, large) is True:
+        return False
+    ratio = symbolic.simplify(sp.sympify(large) / sp.sympify(small))
+    if sp.denom(ratio) != 1:
+        return False
+    if ratio.is_Integer:
+        return ratio >= 2
+    return bool(ratio.free_symbols)  # a symbolic factor: provably a whole multiple, size unknown
+
+
+def nocopy_reshape_strides(old_shape: Sequence[Any],
+                           old_strides: Sequence[Any],
+                           new_shape: Sequence[Any],
+                           fortran_order: bool = False) -> Tuple[Union[List[Any], None], bool]:
+    """Strides viewing ``old_shape``/``old_strides`` as ``new_shape``, as ``(strides, decided)``.
+
+    numpy's own rule (``_attempt_nocopy_reshape``), not the far stricter "the source is packed": the
+    source axes collapse into maximal stride-contiguous groups, and the reshape is a view exactly when
+    the new shape factors into those groups. Splitting the contiguous trailing axis of a strided slice
+    stays a view, and answering "copy" there is not merely slower -- a write through the result has to
+    reach the source, and a copy silently drops it.
+
+    Three outcomes, and the third exists only because extents here are SYMBOLIC:
+
+    * ``([...], True)``  -- a view, with these strides;
+    * ``(None, True)``   -- provably a copy, exactly as numpy would copy;
+    * ``(None, False)``  -- undecidable. A read may copy, since the values are the same either way,
+      but a WRITE through the result is a coin flip between two different programs and is refused.
+    """
+    # A contiguous source in the REQUESTED order reshapes to anything of the same size, whatever the
+    # extents are -- numpy takes this path before it ever tries to factor. Without it every symbolic
+    # pair the factoring cannot order, ``(N, M) -> (M, N)`` among them, comes back "undecidable" for
+    # a source that is not ambiguous at all.
+    if fortran_order:
+        if strides_equal(packed_fortran_strides(old_shape), old_strides):
+            return [prod(new_shape[:i]) for i in range(len(new_shape))], True
+    elif strides_equal(packed_c_strides(old_shape), old_strides):
+        return [prod(new_shape[i + 1:]) for i in range(len(new_shape))], True
+
+    # A length-1 axis has an arbitrary stride and constrains nothing, so numpy drops it first.
+    kept = [(e, st) for e, st in zip(old_shape, old_strides) if symbolic.equal(e, 1) is not True]
+    olddims = [e for e, _ in kept]
+    oldstrides = [st for _, st in kept]
+    newstrides: List[Any] = [1] * len(new_shape)
+
+    oi, oj, ni, nj = 0, 1, 0, 1
+    while ni < len(new_shape) and oi < len(olddims):
+        np_, op = new_shape[ni], olddims[oi]
+        order = extent_cmp(np_, op)
+        while order != 0:
+            if order is None:
+                return None, False  # cannot tell which side of the product to grow
+            if order < 0:
+                if nj >= len(new_shape):
+                    return None, True  # the new shape ran out: it does not factor into the source
+                np_ *= new_shape[nj]
+                nj += 1
+            else:
+                if oj >= len(olddims):
+                    return None, True
+                op *= olddims[oj]
+                oj += 1
+            order = extent_cmp(np_, op)
+
+        # The source axes this group spans must be contiguous AMONG THEMSELVES, or no stride walks it.
+        for ok in range(oi, oj - 1):
+            if fortran_order:
+                contiguous = symbolic.equal(oldstrides[ok + 1], olddims[ok] * oldstrides[ok])
+            else:
+                contiguous = symbolic.equal(oldstrides[ok], olddims[ok + 1] * oldstrides[ok + 1])
+            if contiguous is not True:
+                # False is numpy's own "these axes cannot be combined"; None is ours alone.
+                return None, contiguous is False
+
+        if fortran_order:
+            newstrides[ni] = oldstrides[oi]
+            for nk in range(ni + 1, nj):
+                newstrides[nk] = newstrides[nk - 1] * new_shape[nk - 1]
+        else:
+            newstrides[nj - 1] = oldstrides[oj - 1]
+            for nk in range(nj - 1, ni, -1):
+                newstrides[nk - 1] = newstrides[nk] * new_shape[nk]
+        ni, nj = nj, nj + 1
+        oi, oj = oj, oj + 1
+
+    # Trailing length-1 axes of the new shape: any stride walks them, so reuse the last one.
+    last = newstrides[ni - 1] if ni >= 1 else 1
+    if fortran_order and ni >= 1:
+        last = last * new_shape[ni - 1]
+    for nk in range(ni, len(new_shape)):
+        newstrides[nk] = last
+    return newstrides, True
+
+
+def strides_equal(packed, actual) -> bool:
+    """Stride-tuple equality that survives canonicalization.
+
+    ``RelaxIntegerPowers`` respells a packed ``N**2`` stride as ``ipow(N, 2)``, which is structurally
+    unequal but the same value -- comparing raw would misread a genuinely packed array as padded. The
+    structural fast path keeps the common case off sympy; an un-comparable expression refuses conservatively.
+    """
+    packed, actual = tuple(packed), tuple(actual)
+    if packed == actual:
+        return True
+    if len(packed) != len(actual):
+        return False
+    try:
+        return all(
+            symbolic.simplify(symbolic.relax_ipow(p) - symbolic.relax_ipow(a)).is_zero for p, a in zip(packed, actual))
+    except (TypeError, AttributeError):
+        return False
+
+
 @make_properties
 class Array(Data):
     """
@@ -376,7 +577,7 @@ class Array(Data):
          selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
          no alignment requirements.
          The GPU backend ignores the alignment hint entirely. The CPU backend will use aligned ``new`` allocations if
-         requested and C++17 and later is used, otherwise normal ``new`` expressions are used.
+         requested, otherwise normal ``new`` expressions are used.
        * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
          element's index after padding and alignment. This mimics a language feature prominent in scientific languages
          such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
@@ -441,6 +642,18 @@ class Array(Data):
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this array is written exactly once '
+                          '(possibly partially, the rest implicitly zero) and then read-only, so '
+                          'the experimental code generator may emit it as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "values, constexpr initializer list with zero-filled unwritten "
+                               "elements) or 'const_runtime' (const binding of a runtime value).")
+
     def __init__(self,
                  dtype,
                  shape,
@@ -457,13 +670,17 @@ class Array(Data):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 const_init=False,
+                 const_init_kind='none'):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
 
         if start_offset is not None:
             self.start_offset = start_offset
@@ -490,6 +707,7 @@ class Array(Data):
 
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(shape)
 
         self.validate()
 
@@ -499,7 +717,8 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.const_init,
+                          self.const_init_kind)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -534,10 +753,10 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for off in self.offset):
             raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
@@ -552,7 +771,9 @@ class Array(Data):
             return False
 
         for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
+            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
+            # `positive` assumption has no analogue in an engine that carries the range in the type,
+            # where re-declaring a symbol with a different range is a conflict, not a refinement.
             if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
@@ -625,19 +846,15 @@ class Array(Data):
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         for s in self.strides:
-            if isinstance(s, sp.Expr):
+            if isinstance(s, symbolic.SymbolicExpr):
                 result |= set(s.free_symbols)
         for o in self.offset:
-            if isinstance(o, sp.Expr):
+            if isinstance(o, symbolic.SymbolicExpr):
                 result |= set(o.free_symbols)
         if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
-            if isinstance(self.total_size, sp.Expr):
+            if isinstance(self.total_size, symbolic.SymbolicExpr):
                 result |= set(self.total_size.free_symbols)
         return result
-
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
 
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
@@ -667,6 +884,7 @@ class Array(Data):
         # Clear cached values and recompute
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(self.shape)
         self._packed_c_strides = self._get_packed_c_strides()
         self._packed_fortran_strides = self._get_packed_fortran_strides()
 
@@ -684,9 +902,24 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
+    def refresh_packed_strides_cache(self) -> None:
+        """Drop both cached packed-stride tuples if they were built from a different shape.
+
+        Only ``set_shape`` refreshed them before, but plenty of passes assign ``.shape`` directly -- and a
+        symbol replacement (canonicalize re-registers symbols carrying nonnegative assumptions) rebuilds the
+        shape entries as NEW sympy objects even where the names are unchanged. A stale cache then compares
+        unequal to identical strides, so a packed array reads as padded and callers such as ``copy_node`` /
+        ``subsets`` choose a layout path on a false answer.
+        """
+        if self._packed_strides_shape != tuple(self.shape):
+            self._packed_c_strides = None
+            self._packed_fortran_strides = None
+            self._packed_strides_shape = tuple(self.shape)
+
     def _get_packed_fortran_strides(self) -> Tuple[int]:
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_fortran_strides is None:
             strides = [1]
             accum = 1
@@ -699,26 +932,18 @@ class Array(Data):
 
     def _get_packed_c_strides(self) -> Tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
-        # Strides increase along the trailing dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_c_strides is None:
-            strides = [1]
-            accum = 1
-            # Iterate in reversed order except the first dimension
-            for s in reversed(self.shape[1:]):
-                accum *= s
-                strides.insert(0, accum)
-            self._packed_c_strides = tuple(strides)
+            self._packed_c_strides = packed_c_strides(self.shape)
         return self._packed_c_strides
 
     def is_packed_fortran_strides(self) -> bool:
         """Return True if strides match Fortran-contiguous (column-major) layout."""
-        strides = self._get_packed_fortran_strides()
-        return tuple(strides) == tuple(self.strides)
+        return strides_equal(self._get_packed_fortran_strides(), self.strides)
 
     def is_packed_c_strides(self) -> bool:
-        """Return True if strides match Fortran-contiguous (row-major) layout."""
-        strides = self._get_packed_c_strides()
-        return tuple(strides) == tuple(self.strides)
+        """Return True if strides match C-contiguous (row-major) layout."""
+        return strides_equal(self._get_packed_c_strides(), self.strides)
 
 
 @make_properties
@@ -888,7 +1113,9 @@ class Stream(Data):
             return False
 
         for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
+            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
+            # `positive` assumption has no analogue in an engine that carries the range in the type,
+            # where re-declaring a symbol with a different range is a conflict, not a refinement.
             if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
@@ -921,17 +1148,13 @@ class Stream(Data):
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
-        if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
+        if (self.transient or all_symbols) and isinstance(self.buffer_size, symbolic.SymbolicExpr):
             result |= set(self.buffer_size.free_symbols)
         for o in self.offset:
-            if isinstance(o, sp.Expr):
+            if isinstance(o, symbolic.SymbolicExpr):
                 result |= set(o.free_symbols)
 
         return result
-
-    @property
-    def free_symbols(self):
-        return self.used_symbols(all_symbols=True)
 
 
 @make_properties
@@ -975,7 +1198,7 @@ class Structure(Data):
                 fields_and_types[k] = v.dtype
             elif isinstance(v, dtypes.typeclass):
                 fields_and_types[k] = v
-            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+            elif isinstance(v, (symbolic.SymbolicBasic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
             elif isinstance(v, (int, np.integer)):

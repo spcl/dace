@@ -7,20 +7,20 @@ from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
 import re
-import sympy as sp
 import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
+from functools import lru_cache
 from packaging.version import parse as parse_version
 from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dace.data import Data as dData
+    pass
 
 T = TypeVar('T')
 
@@ -33,13 +33,24 @@ def _is_symbolic_converter(converter) -> bool:
 def _is_symbolic_type(tp) -> bool:
     if tp is symbolic.SymExpr:
         return True
-    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+    return isinstance(tp, type) and issubclass(tp, symbolic.SymbolicBasic)
 
 
 def _coerce_symbolic_property_value(value):
-    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+    if isinstance(value, (symbolic.SymExpr, symbolic.SymbolicBasic)):
         return value
     return pystr_to_symbolic(value, simplify=False)
+
+
+#: First version whose symbolic properties carry the typed wire format.
+_TYPED_SYMBOLIC_WIRE_VERSION = parse_version("2.0.0a4")
+
+
+@lru_cache(maxsize=None, typed=True)
+def _parsed_version(version: str):
+    """One version string per load, but it was parsed -- twice -- per deserialized property: 208k
+    calls and 12.5% of a CloudSC load."""
+    return parse_version(version)
 
 
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
@@ -51,7 +62,10 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if _parsed_version(version) < _TYPED_SYMBOLIC_WIRE_VERSION:
+        # A `$`-escape below the wire version proves the stamp lied: no writer that old could emit one.
+        if symbolic.has_serialized_symbol_escape(value):
+            return symbolic.deserialize_symbolic(value)
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
@@ -74,6 +88,10 @@ class PropertyError(Exception):
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
+
+    #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
+    attr_name: Optional[str] = None
+    private_name: Optional[str] = None
 
     def __init__(
             self,
@@ -176,19 +194,21 @@ class Property(Generic[T]):
             # Called on the class rather than an instance, so return the
             # property object itself
             return self
-        # If a custom getter is specified, use it
-        if self.getter:
-            return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
+        # ``_getter`` directly, not the ``getter`` Python property in front of it: this runs on every
+        # attribute read of every property-bearing object, and the wrapper is a whole frame per read.
+        if self._getter is not None:
+            return self._getter(obj)
         # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+        name = self.private_name
+        if name is None:
+            raise RuntimeError("Attribute name not set")
+        return getattr(obj, name)
 
     def __set__(self, obj, val):
-        # If custom setter is specified, use it
-        if self.setter:
-            return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
+        # ``_setter`` directly, for the same reason as ``_getter`` in ``__get__``.
+        if self._setter is not None:
+            return self._setter(obj, val)
+        if self.private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -218,7 +238,7 @@ class Property(Generic[T]):
                 and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        setattr(obj, self.private_name, val)
 
     # Python Properties of this Property class
 
@@ -329,9 +349,14 @@ class Property(Generic[T]):
 
 
 def _property_generator(instance):
+    # Read the backing attribute (prop.private_name, precomputed) straight from __dict__ on the common
+    # path; only fall back to the descriptor (custom getter / default) when it is absent. Avoids the
+    # per-property hasattr try/except and the "_" + name string rebuild in this hot serialize loop.
+    idict = instance.__dict__
     for name, prop in type(instance).__properties__.items():
-        if hasattr(instance, "_" + name):
-            yield prop, getattr(instance, "_" + name)
+        pname = prop.private_name
+        if pname in idict:
+            yield prop, idict[pname]
         else:
             yield prop, getattr(instance, name)
 
@@ -346,6 +371,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.private_name = "_" + name  # precomputed: __get__/__set__ must not rebuild it per access
         prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
@@ -574,6 +600,11 @@ class TransformationHistProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError('TransformationHistProperty expects a list input, got %s' % data)
+        # A history entry names its transformation class, and both the serializer registry and
+        # subclass discovery only know classes whose module was imported. Local import because
+        # dace.transformation imports this module.
+        from dace.transformation.transformation import load_builtin_transformations
+        load_builtin_transformations()
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
@@ -866,6 +897,7 @@ class SetProperty(Property):
 
     Despite its name, the property models a `frozenset`, this means that the set can
     not be modified in place. Instead a new value has to be assigned to the property.
+    The stored value is a `frozenset` (see `__set__`), so it is handed out unprotected.
     """
 
     def __init__(
@@ -922,14 +954,6 @@ class SetProperty(Property):
         if l is None:
             return None
         return frozenset(l)
-
-    def __get__(self, obj, objtype=None):
-        val = super(SetProperty, self).__get__(obj, objtype)
-        if val is None:
-            return val
-
-        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
-        return val
 
     def __set__(self, obj, val):
         if val is None:
@@ -1231,10 +1255,12 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+        if (val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        # A sympy number is a ``Number`` too, and re-parsing it through ``str`` ROUNDS it to 15
+        # significant digits -- loading an SDFG whose factor is 1/21 stored back a different double.
+        if isinstance(val, (Number, str)) and not isinstance(val, symbolic.SymbolicExpr):
             val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)
@@ -1397,12 +1423,9 @@ class TypeProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
-class TypeClassProperty(Property):
+class TypeClassProperty(Property[typeclass]):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
-
-    def __get__(self, obj, objtype=None) -> typeclass:
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):
@@ -1439,11 +1462,8 @@ class TypeClassProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
-class NestedDataClassProperty(Property):
+class NestedDataClassProperty(Property['dData']):
     """ Custom property type for nested data. """
-
-    def __get__(self, obj, objtype=None) -> 'dData':
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):

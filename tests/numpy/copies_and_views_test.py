@@ -267,6 +267,64 @@ def test_strided_copy_map_symbolic_1():
     _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
 
 
+@dace.program
+def rebind_same_view(A: dace.int64[10]):
+    v = A[1:-1]
+    v += 1
+    v = A[1:-1]  # the same slice of the same array: nothing about v changes
+    v += 2
+
+
+def test_rebind_view_to_the_same_slice():
+    """Re-viewing a slice a name already views is a no-op, but it was refused.
+
+    Each ``A[1:-1]`` builds its own anonymous view, so the two results differ by NAME while the data
+    they see does not -- and the check only recognised a rebind to the whole of the same array.
+    """
+    sdfg = rebind_same_view.to_sdfg(simplify=False)
+    # The no-op rebind must not mint a second descriptor for v; both writes go through the one view.
+    assert [n for n in sdfg.arrays if n == 'v' or n.startswith('v_')] == ['v']
+
+    val = np.arange(10)
+    sdfg(A=val)
+    ref = np.arange(10)
+    rebind_same_view.f(ref)
+    assert np.array_equal(val, ref)
+
+
+@dace.program
+def rebind_whole_array_view(A: dace.int64[10]):
+    v = A
+    v += 1
+    v = A
+    v += 2
+
+
+def test_rebind_view_to_the_whole_array():
+    """The spelling that was already accepted, so widening the check keeps accepting it."""
+    val = np.arange(10)
+    rebind_whole_array_view(val)
+    ref = np.arange(10)
+    rebind_whole_array_view.f(ref)
+    assert np.array_equal(val, ref)
+
+
+def test_rebind_view_to_a_different_slice_is_still_refused():
+    """A DIFFERENT slice is a real rebind: the name would need a second descriptor, and a read after
+    a conditional that rebinds it in one branch would need a phi. Neither is a no-op, so the error
+    stands -- this pins the widened check to the case where the two views are interchangeable."""
+
+    @dace.program
+    def rebind_other_view(A: dace.int64[10]):
+        v = A[1:-1]
+        v += 1
+        v = A[0:8]
+        v += 2
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='Cannot reassign View'):
+        rebind_other_view.to_sdfg(simplify=False)
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()
@@ -277,6 +335,9 @@ if __name__ == '__main__':
     test_is_a_copy()
     test_needs_view()
     test_needs_copy()
+    test_rebind_view_to_the_same_slice()
+    test_rebind_view_to_the_whole_array()
+    test_rebind_view_to_a_different_slice_is_still_refused()
 
     test_strided_copy()
     test_strided_copy_symbolic_0()

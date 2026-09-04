@@ -14,6 +14,7 @@ from dace.sdfg import infer_types
 from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
+from dace.ordered import OrderedSet
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
 
@@ -102,7 +103,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 continue
 
             # Remove nodes while preserving scopes
-            scopes_to_reconnect: Set[nodes.Node] = set()
+            scopes_to_reconnect: OrderedSet[nodes.Node] = OrderedSet()
             for node in state.nodes():
                 # Look for scope exits that will be disconnected
                 if isinstance(node, nodes.ExitNode) and node not in dead_nodes:
@@ -143,8 +144,11 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                 if not leaf.data.is_empty():
                                     predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
-                            # Pruning connectors on tasklets sometimes needs to change their code
-                            elif isinstance(leaf.src, nodes.Tasklet):
+                            # Pruning connectors on tasklets sometimes needs to change their code.
+                            # A ``None`` src_conn is a dependency/empty edge with no connector to
+                            # prune, so skip the type-inference hint (which cannot infer a type for a
+                            # missing connector and would raise) and just drop the memlet path below.
+                            elif isinstance(leaf.src, nodes.Tasklet) and leaf.src_conn is not None:
                                 ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
                                 # Add definition
                                 if leaf.src.code.language == dtypes.Language.CPP:
@@ -217,8 +221,28 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         # * Dead tasklets may not contain any callbacks
         # * Library nodes being dead depend on configuration (and side-effects)
 
-        # Check that all successors are dead
-        if any(succ not in dead_nodes for succ in state.successors(node)):
+        # Check that all successors are dead. AccessNodes get one exception: an outgoing EMPTY edge
+        # only enforces execution order (no data flows on it), so a live successor reached solely
+        # that way does not keep an otherwise-unread AccessNode alive, provided its producers die too.
+        # Scope-structural nodes (map entries/exits, tasklets, library nodes) keep the strict rule:
+        # their empty edges can express scope membership, not just ordering, and dropping one could
+        # orphan the scope (e.g. a MapEntry feeding a live Tasklet through an empty dependency edge).
+        if isinstance(node, nodes.AccessNode):
+            for e in state.out_edges(node):
+                if e.dst in dead_nodes:
+                    continue
+                if not e.data.is_empty():
+                    return False
+                # An empty edge between two AccessNodes of the same data forwards the value through
+                # the shared descriptor; the destination is a real consumer even though no memlet
+                # carries the data. Treat it as live so an initializing access node is not removed
+                # while a sibling access node still reads the same data.
+                if isinstance(e.dst, nodes.AccessNode) and e.dst.data == node.data:
+                    return False
+                # The ordering only vanishes with the producer; one with another successor survives it.
+                if any(succ is not node for pe in state.in_edges(node) for succ in state.successors(pe.src)):
+                    return False
+        elif any(succ not in dead_nodes for succ in state.successors(node)):
             return False
 
         # Determine on a case-by-case basis
@@ -281,6 +305,20 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                     if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
                         return False
+
+            # Same-data access nodes exchange values through the DESCRIPTOR, not an edge, so
+            # out-edges alone cannot decide deadness: only a proven full overwrite hides this write.
+            if node.data in access_set[0]:
+                readers = [
+                    o for o in state.data_nodes()
+                    if o is not node and o.data == node.data and o not in dead_nodes and any(
+                        not e.data.is_empty() for e in state.out_edges(o)) and not any(
+                            ap.writes_whole_array(state, e, desc) for e in state.in_edges(o))
+                ]
+                # An upstream reader runs BEFORE this write and cannot observe it.
+                upstream = sdutil.find_upstream_nodes(node, state) if readers else ()
+                if any(r not in upstream for r in readers):
+                    return False
 
             # If it is a stream and is read somewhere in the state, it may be popped after pushing
             if isinstance(desc, data.Stream) and node.data in access_set[0]:
