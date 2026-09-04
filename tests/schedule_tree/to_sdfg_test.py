@@ -13,7 +13,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 import pytest
 
 
-def test_state_boundaries_none():
+def test_state_boundaries_none() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -31,7 +31,7 @@ def test_state_boundaries_none():
     assert tn.StateBoundaryNode not in [type(n) for n in stree.children]
 
 
-def test_state_boundaries_waw():
+def test_state_boundaries_waw() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -49,7 +49,7 @@ def test_state_boundaries_waw():
 
 
 @pytest.mark.parametrize('overlap', (False, True))
-def test_state_boundaries_waw_ranges(overlap):
+def test_state_boundaries_waw_ranges(overlap: bool) -> None:
     # Manually create a schedule tree
     N = dace.symbol('N')
     stree = tn.ScheduleTreeRoot(
@@ -72,7 +72,7 @@ def test_state_boundaries_waw_ranges(overlap):
         assert [tn.TaskletNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
-def test_state_boundaries_war():
+def test_state_boundaries_war() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -91,7 +91,7 @@ def test_state_boundaries_war():
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
-def test_state_boundaries_read_write_chain():
+def test_state_boundaries_read_write_chain() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -113,7 +113,7 @@ def test_state_boundaries_read_write_chain():
     assert [tn.TaskletNode, tn.TaskletNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
-def test_state_boundaries_data_race():
+def test_state_boundaries_data_race() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -138,7 +138,7 @@ def test_state_boundaries_data_race():
             tn.TaskletNode] == [type(n) for n in stree.children]
 
 
-def test_state_boundaries_cfg():
+def test_state_boundaries_cfg() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -163,7 +163,7 @@ def test_state_boundaries_cfg():
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.ForScope] == [type(n) for n in stree.children]
 
 
-def test_state_boundaries_state_transition():
+def test_state_boundaries_state_transition() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name='tester',
@@ -188,7 +188,7 @@ def test_state_boundaries_state_transition():
 
 
 @pytest.mark.parametrize('boundary', (False, True))
-def test_state_boundaries_propagation(boundary):
+def test_state_boundaries_propagation(boundary: bool) -> None:
     # Manually create a schedule tree
     N = dace.symbol('N')
     stree = tn.ScheduleTreeRoot(
@@ -220,7 +220,7 @@ def test_state_boundaries_propagation(boundary):
 
 
 @pytest.mark.parametrize("control_flow", (True, False))
-def test_create_state_boundary_state_transition(control_flow: bool):
+def test_create_state_boundary_state_transition(control_flow: bool) -> None:
     sdfg = dace.SDFG("tester")
     state = sdfg.add_state("start", is_start_block=True)
     bnode = tn.StateBoundaryNode(control_flow)
@@ -235,7 +235,7 @@ def test_create_state_boundary_empty_memlet():
     t2s._StreeToSDFG(boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
 
 
-def test_create_tasklet_raw():
+def test_create_tasklet_raw() -> None:
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
@@ -248,7 +248,7 @@ def test_create_tasklet_raw():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     assert len(sdfg.states()) == 1
     state = sdfg.states()[0]
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
@@ -267,7 +267,7 @@ def test_create_tasklet_raw():
             (second_tasklet, write_node)] == [(edge.src, edge.dst) for edge in state.edges()]
 
 
-def test_create_tasklet_waw():
+def test_create_tasklet_waw() -> None:
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
@@ -279,7 +279,7 @@ def test_create_tasklet_waw():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     assert len(sdfg.states()) == 2
     s1, s2 = sdfg.states()
 
@@ -290,7 +290,7 @@ def test_create_tasklet_waw():
     assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
 
 
-def test_create_tasklet_war():
+def test_create_tasklet_war() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [20])},
@@ -303,7 +303,7 @@ def test_create_tasklet_war():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     sdfg_states = list(sdfg.states())
     assert len(sdfg_states) == 1
@@ -315,7 +315,7 @@ def test_create_tasklet_war():
             if isinstance(node, nodes.AccessNode)] == ["A", "A"], "Expect two AccessNodes for A."
 
 
-def test_create_loop_for():
+def test_create_loop_for() -> None:
     for_scope = tn.ForScope(
         loop=LoopRegion(label="my_for_loop",
                         loop_var="i",
@@ -329,7 +329,7 @@ def test_create_loop_for():
     )
 
     stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[for_scope])
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
     assert len(loops) == 1, "SDFG contains one LoopRegion"
@@ -351,8 +351,9 @@ def test_create_loop_for():
 
 
 def test_create_loop_for_same_name() -> None:
+    label = "same_label"
     loop_1 = tn.ForScope(
-        loop=LoopRegion(label="same_label",
+        loop=LoopRegion(label=label,
                         loop_var="i",
                         initialize_expr=CodeBlock("i = 0 "),
                         condition_expr=CodeBlock("i < 3"),
@@ -362,7 +363,7 @@ def test_create_loop_for_same_name() -> None:
         ],
     )
     loop_2 = tn.ForScope(
-        loop=LoopRegion(label="same_label",
+        loop=LoopRegion(label=label,
                         loop_var="i",
                         initialize_expr=CodeBlock("i = 0 "),
                         condition_expr=CodeBlock("i < 3"),
@@ -376,11 +377,13 @@ def test_create_loop_for_same_name() -> None:
         containers={'A': data.Array(dace.float64, [20])},
         children=[loop_1, loop_2],
     )
-    sdfg = stree.as_sdfg(validate=False, simplify=False)
-    assert sdfg.is_valid()
+    sdfg = stree.as_sdfg(validate=True)
+
+    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label == label, sdfg.sdfg_list))) == 1
+    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label != label, sdfg.sdfg_list))) == 1
 
 
-def test_create_loop_while():
+def test_create_loop_while() -> None:
     while_scope = tn.WhileScope(
         children=[
             tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
@@ -394,7 +397,7 @@ def test_create_loop_while():
 
     stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[while_scope])
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
     assert len(loops) == 1, "SDFG contains one LoopRegion"
@@ -431,7 +434,7 @@ def test_create_if_else():
             ]),
         ])
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
@@ -474,7 +477,7 @@ def test_create_if_elif_else() -> None:
             ])
         ])
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
@@ -484,7 +487,7 @@ def test_create_if_elif_else() -> None:
     assert len(block.branches) == 3, "Block contains three branches"
 
 
-def test_create_if_without_else():
+def test_create_if_without_else() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
@@ -498,7 +501,7 @@ def test_create_if_without_else():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
     assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
@@ -513,7 +516,7 @@ def test_create_if_without_else():
     assert tasklets[0].label == "bla", "Branch contains Tasklet('bla')"
 
 
-def test_create_map_scope_write():
+def test_create_map_scope_write() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
@@ -527,11 +530,15 @@ def test_create_map_scope_write():
         ],
     )
 
-    sdfg = stree.as_sdfg()
-    sdfg.validate()
+    sdfg = stree.as_sdfg(validate=True)
+
+    states = sdfg.states()
+    assert len(states) == 1
+    assert [type(node)
+            for node in states[0].nodes()] == [nodes.MapEntry, nodes.Tasklet, nodes.MapExit, nodes.AccessNode]
 
 
-def test_create_map_scope_read():
+def test_create_map_scope_read() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
@@ -546,7 +553,7 @@ def test_create_map_scope_read():
         ],
     )
 
-    sdfg = stree.as_sdfg(simplify=False)
+    sdfg = stree.as_sdfg(simplify=False, validate=True)
     sdfg.validate()
 
 
@@ -562,11 +569,11 @@ def test_create_map_scope_hello_world():
         ],
     )
 
-    sdfg = stree.as_sdfg(simplify=False)
+    sdfg = stree.as_sdfg(simplify=False, validate=True)
     sdfg.validate()
 
 
-def test_create_map_scope_read_after_write():
+def test_create_map_scope_read_after_write() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -585,11 +592,11 @@ def test_create_map_scope_read_after_write():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_create_map_scope_write_after_read():
+def test_create_map_scope_write_after_read() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [20])},
@@ -604,11 +611,11 @@ def test_create_map_scope_write_after_read():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_create_map_scope_copy():
+def test_create_map_scope_copy() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -626,11 +633,11 @@ def test_create_map_scope_copy():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_create_map_scope_double_memlet():
+def test_create_map_scope_double_memlet() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -647,11 +654,11 @@ def test_create_map_scope_double_memlet():
                         ])
         ])
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_create_map_scope_write_in_two_tasklets():
+def test_create_map_scope_write_in_two_tasklets() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -669,11 +676,11 @@ def test_create_map_scope_write_in_two_tasklets():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_create_nested_map_scope():
+def test_create_nested_map_scope() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
@@ -693,11 +700,64 @@ def test_create_nested_map_scope():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_double_map_with_for_loop():
+def test_read_after_write_nested_SDFG() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float32, [60], transient=True),
+            'B': data.Array(dace.float32, [60]),
+        },
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_A", "i", sbs.Range.from_string("0:60"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("fill", {}, {"out"}, "out = 42.42"), {}, {"out": dace.Memlet("A[i]")})
+                ],
+            ),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:2"))),
+                children=[
+                    tn.IfScope(
+                        condition=CodeBlock("B[0] < 0"),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 0"), {},
+                                           {"out": dace.Memlet("B[0]")})
+                        ],
+                    ),
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:10"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1.0"), {},
+                                           {"out": dace.Memlet("A[i*15+j*3]")})
+                        ],
+                    ),
+                    tn.MapScope(node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("10:20"))),
+                                children=[
+                                    tn.TaskletNode(nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
+                                                   {"read": dace.Memlet("A[k]")}, {"out": dace.Memlet("B[k]")})
+                                ])
+                ],
+            ),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(validate=True)
+
+    # Make sure we keep the initialization of A = 42.42
+    assert len(
+        list(
+            filter(lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
+                   [node for node, _ in sdfg.all_nodes_recursive()]))) == 1
+    # Ensure that A isn't transient in the nested SDFG
+    nested_sdfg = list(filter(lambda node: node.label == "nested_sdfg", sdfg.sdfg_list))[0]
+    assert not nested_sdfg.arrays["A"].transient
+
+
+def test_double_map_with_for_loop() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [60])},
@@ -728,11 +788,11 @@ def test_double_map_with_for_loop():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     assert sdfg.is_valid()
 
 
-def test_triple_map_flat_if():
+def test_triple_map_flat_if() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [60])},
@@ -766,11 +826,11 @@ def test_triple_map_flat_if():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_triple_map_nested_if():
+def test_triple_map_nested_if() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [60])},
@@ -813,11 +873,11 @@ def test_triple_map_nested_if():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_triple_map_if_condition_outside():
+def test_triple_map_if_condition_outside() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -856,12 +916,11 @@ def test_triple_map_if_condition_outside():
         ],
     )
 
-    sdfg = stree.as_sdfg(simplify=False)
-    sdfg.validate()
+    sdfg = stree.as_sdfg(simplify=False, validate=True)
     sdfg.compile()
 
 
-def test_create_nested_map_scope_multi_read():
+def test_create_nested_map_scope_multi_read() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -886,11 +945,11 @@ def test_create_nested_map_scope_multi_read():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_map_with_state_boundary_inside():
+def test_map_with_state_boundary_inside() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
@@ -905,11 +964,11 @@ def test_map_with_state_boundary_inside():
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
     sdfg.validate()
 
 
-def test_map_calculate_temporary_in_two_loops():
+def test_map_calculate_temporary_in_two_loops() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
@@ -940,14 +999,13 @@ def test_map_calculate_temporary_in_two_loops():
         ],
     )
 
-    sdfg = stree.as_sdfg(simplify=True)
-    sdfg.validate()
+    sdfg = stree.as_sdfg(simplify=True, validate=True)
 
     assert [node.name for node, _ in sdfg.all_nodes_recursive()
             if isinstance(node, nodes.Tasklet)] == ["beginning", "end", "read_temp"]
 
 
-def test_edge_assignment_read_after_write():
+def test_edge_assignment_read_after_write() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={},
@@ -958,13 +1016,13 @@ def test_edge_assignment_read_after_write():
         ],
     )
 
-    sdfg = stree.as_sdfg(simplify=False)
+    sdfg = stree.as_sdfg(simplify=False, validate=True)
 
     assert [node.name for node in sdfg.nodes()] == ["tree_root", "state_boundary", "state_boundary_0"]
     assert [edge.data.assignments for edge in sdfg.edges()] == [{"my_condition": "True"}, {"condition": "my_condition"}]
 
 
-def test_assign_nodes_force_state_transition():
+def test_assign_nodes_force_state_transition() -> None:
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
@@ -980,7 +1038,7 @@ def test_assign_nodes_force_state_transition():
     assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
-def test_assign_nodes_multiple_force_one_transition():
+def test_assign_nodes_multiple_force_one_transition() -> None:
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
@@ -999,7 +1057,7 @@ def test_assign_nodes_multiple_force_one_transition():
             for child in stree.children] == [tn.AssignNode, tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
-def test_assign_nodes_avoid_duplicate_boundaries():
+def test_assign_nodes_avoid_duplicate_boundaries() -> None:
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
@@ -1030,7 +1088,7 @@ def test_multiple_copy_nodes() -> None:
         ],
     )
 
-    sdfg = stree.as_sdfg()
+    sdfg = stree.as_sdfg(validate=True)
 
     states = sdfg.states()
     assert len(states) == 1, "expect one state"
