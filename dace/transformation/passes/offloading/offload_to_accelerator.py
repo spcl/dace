@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from dace.ordered import OrderedSet
 
-from dace import dtypes, properties, data, Memlet, subsets
+from dace import dtypes, properties, data, Memlet, subsets, symbolic
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes, SDFG, InterstateEdge
@@ -240,11 +240,86 @@ class OffloadToAccelerator(ppl.Pass):
         self.find_taskloops(sdfg)
         self.assign_schedules(sdfg)
 
+        # Read before any copy is placed: the staging below renames the accesses this looks at.
+        self.no_copy_in_needed = self.overwritten_before_any_read(sdfg)
+
         self.place_single_sided_data(sdfg)
         self.place_and_copy(sdfg)
         self.offload_host_level_bodies(sdfg)
         self.scalarize_locals_of_removed_trivial_maps(sdfg)
         self.refuse_by_value_scalars_the_device_writes(sdfg)
+
+    def overwritten_before_any_read(self, sdfg: SDFG) -> OrderedSet[str]:
+        """Signature arrays whose value on entry cannot be observed, so staging them down is dead work.
+
+        A container that nothing ever READS -- no access node with an out-edge anywhere, no interstate
+        edge naming it -- carries no information into the program. Copying it to the device before a
+        kernel overwrites it is a full transfer of data that is then discarded, which for a
+        write-only output is the whole array on every call.
+
+        The copy is only dead if the device also writes ALL of it. The copy-out sends the entire
+        device buffer back, so a partially written one would deliver whatever the allocation held for
+        the rest -- and it is precisely the copy-in that makes those elements round-trip unchanged
+        today. A single write whose subset covers the descriptor is therefore required, not merely a
+        write.
+
+        :param sdfg: SDFG to analyse.
+        :returns: Names for which no host-to-device copy is needed.
+        """
+        dead: OrderedSet[str] = OrderedSet()
+        for name, desc in sdfg.arrays.items():
+            if desc.transient or isinstance(desc, (data.View, data.Stream)) or self._is_scalar(name, sdfg):
+                continue
+            if self.read_anywhere(sdfg, name) or not self.written_in_full(sdfg, name):
+                continue
+            dead.add(name)
+        return dead
+
+    def read_anywhere(self, sdfg: SDFG, name: str) -> bool:
+        """True if anything reads ``name``: an access node with an out-edge, or an interstate edge.
+
+        Interstate reads are invisible to an access-node walk -- a condition or an assignment naming
+        the container has no node of its own -- so they are asked for separately, the way
+        :meth:`read_outside_a_kernel` asks.
+        """
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                if any(node.data == name and state.out_degree(node) > 0 for node in state.data_nodes()):
+                    return True
+            if any(name in edge.data.used_arrays(nested.arrays) for edge in nested.all_interstate_edges()):
+                return True
+        return False
+
+    def written_in_full(self, sdfg: SDFG, name: str) -> bool:
+        """True if one write to ``name`` provably touches every element of its descriptor.
+
+        A covering SUBSET is not enough. An indirect write -- ``A[x[i], y[j]]`` -- carries the whole
+        array as its subset because that is where it MIGHT land, while its volume says how many
+        elements it actually writes; ``tests/transformations/gpu_transform_test.py``'s
+        ``write_subset_dynamic`` covers 20x20 and writes 256 of the 400. Trusting the subset alone
+        there drops the copy-in and hands the caller uninitialised memory for the rest, so the
+        volume has to agree with the descriptor as well.
+
+        The union of several partial writes could also cover the array, but a single covering write
+        is what a map over the full range emits and is the only shape worth trusting here: getting
+        this wrong is silent, so the analysis declines rather than reasons.
+        """
+        desc = sdfg.arrays[name]
+        whole = subsets.Range.from_array(desc)
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                for edge in state.in_edges(node):
+                    memlet = edge.data
+                    if memlet.dynamic or memlet.wcr is not None:
+                        continue
+                    written = memlet.get_dst_subset(edge, state)
+                    if written is None or not written.covers(whole):
+                        continue
+                    if symbolic.equal(memlet.volume, desc.total_size, is_length=False):
+                        return True
+        return False
 
     def kernel_local_len1_arrays(self, sdfg: SDFG) -> OrderedSet[str]:
         """Length-1 transients written inside a TRIVIAL SEQUENTIAL map that a kernel encloses.
@@ -1614,7 +1689,8 @@ class OffloadToAccelerator(ppl.Pass):
             gpu_copies = {
                 name
                 for name in node.cpu_set & next.gpu_set
-                if not self.is_array_stored_on_GPU(sdfg, name) or self._get_host_name(name) in written
+                if (not self.is_array_stored_on_GPU(sdfg, name) or self._get_host_name(name) in written)
+                and name not in self.no_copy_in_needed
             }
             if gpu_copies:
                 self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
