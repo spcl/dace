@@ -31,7 +31,8 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes.scan import Scan
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.canonicalize.pipeline import _build_stages, canonicalize
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
@@ -55,23 +56,12 @@ def _carried_sequentially(sdfg: dace.SDFG) -> int:
     return _loop_regions(sdfg) + sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
 
 
-@pytest.mark.parametrize("kernel", ["fission_dep_then_indep", "fission_dep_const_offset"])
-def test_fission_splits_recurrence_from_parallel_body(kernel):
-    program = _program(kernel)
+def _assert_matches_oracle(program, canon):
+    """The canonicalized kernel must reproduce the numpy oracle element for element.
 
-    # Baseline: loop-to-map on the fused body parallelizes nothing (the carry blocks it).
-    baseline = program.to_sdfg(simplify=True)
-    PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(baseline, {})
-    assert _top_maps(baseline) == 0, "the recurrence-carrying fused loop must not map as-is"
-
-    # Canonicalized: fission -> one parallel map (independent body) + one sequential loop (recurrence).
-    canon = program.to_sdfg(simplify=True)
-    with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
-    assert _top_maps(canon) >= 1, "fission must lift the independent statement to a parallel map"
-    assert _carried_sequentially(canon) >= 1, "the recurrence must survive as a sequential loop or a Scan"
-
-    # Value-preserving vs the numpy oracle.
+    Structure is read off ``canon`` BEFORE this runs: compiling is one-way, and the SDFG a
+    ``CompiledSDFG`` still points at is not the object to inspect afterwards.
+    """
     arrays, scalars = tsvc_2_5.make_inputs(program)
     oracle = getattr(tsvc_2_5_numpy, "ref_" + program.name.rsplit("tsvc_2_5_", 1)[-1])
     pool = {
@@ -95,12 +85,89 @@ def test_fission_splits_recurrence_from_parallel_body(kernel):
     symbols = {s: tsvc_2_5.SIZES[s] for s in tsvc_2_5.SIZES if s in free}
     got = {n: a.copy() for n, a in arrays.items()}
     with contextlib.redirect_stdout(io.StringIO()):
-        canon.compile()(**got, **scalars, **symbols)
+        csdfg = canon.compile()
+    csdfg(**got, **scalars, **symbols)
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue
         assert np.allclose(ref[name], got[name], rtol=1e-9, atol=1e-9, equal_nan=True), \
             f"{program.name}/{name}: fissioned canon diverges from numpy oracle"
+
+
+@pytest.mark.parametrize("kernel", ["fission_dep_then_indep", "fission_dep_const_offset"])
+def test_fission_splits_recurrence_from_parallel_body(kernel):
+    program = _program(kernel)
+
+    # Baseline: loop-to-map on the fused body parallelizes nothing (the carry blocks it).
+    baseline = program.to_sdfg(simplify=True)
+    PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(baseline, {})
+    assert _top_maps(baseline) == 0, "the recurrence-carrying fused loop must not map as-is"
+
+    # Canonicalized: fission -> one parallel map (independent body) + one sequential loop (recurrence).
+    canon = program.to_sdfg(simplify=True)
+    with contextlib.redirect_stdout(io.StringIO()):
+        canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+    assert _top_maps(canon) >= 1, "fission must lift the independent statement to a parallel map"
+    assert _carried_sequentially(canon) >= 1, "the recurrence must survive as a sequential loop or a Scan"
+
+    _assert_matches_oracle(program, canon)
+
+
+def _split_only(program):
+    """``program`` run through the recipe up to and including ``SplitStatements``.
+
+    The full recipe lowers the split's loops to maps and lifts the recurrence to a ``Scan``, so
+    how many loops the split itself emitted -- and which array each writes -- is only readable here.
+    """
+    sdfg = program.to_sdfg(simplify=True)
+    for _label, unit in _build_stages():
+        unit.apply_pass(sdfg, {})
+        if isinstance(unit, SplitStatements):
+            break
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def _loop_writes(sdfg):
+    """The non-transient arrays each residual loop stores to, sorted per loop and across loops."""
+    out = []
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if not (isinstance(region, LoopRegion) and region.loop_variable):
+            continue
+        out.append(
+            sorted({
+                node.data
+                for state in region.all_states()
+                for node in state.data_nodes()
+                if not state.sdfg.arrays[node.data].transient and any(e.data is not None and not e.data.is_empty()
+                                                                      for e in state.in_edges(node))
+            }))
+    return sorted(out)
+
+
+def test_fission_dep_then_indep_yields_one_loop_per_statement():
+    """``a[i] = a[i-1] + x[i]; b[i] = y[i]*2`` -- the UNORDERED-sibling case, asserted structurally.
+
+    The two groups share no array at all, so no order between the clones has to be proved and the
+    split is the plainest one the pass documents. What it must produce is exactly two loops, one
+    writing ``a`` and one writing ``b`` -- and after the rest of the recipe, ``b``'s loop is a
+    parallel map and ``a``'s is a ``Scan``, with no sequential ``LoopRegion`` left at all. The
+    existing test above admits ``>= 1`` of each, which an un-split loop that merely mapped its
+    tail would also satisfy.
+    """
+    program = _program("fission_dep_then_indep")
+
+    split = _split_only(program)
+    assert _loop_writes(split) == [["a"], ["b"]], "the split must emit one loop per output statement"
+
+    canon = program.to_sdfg(simplify=True)
+    with contextlib.redirect_stdout(io.StringIO()):
+        canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+    assert _loop_regions(canon) == 0, "nothing may stay a sequential loop: b maps, a becomes a Scan"
+    assert _top_maps(canon) == 1, "the independent statement is the one map"
+    assert sum(1 for n, _ in canon.all_nodes_recursive() if isinstance(n, Scan)) == 1, \
+        "the prefix-sum recurrence must be lifted to exactly one Scan"
+    _assert_matches_oracle(program, canon)
 
 
 if __name__ == "__main__":

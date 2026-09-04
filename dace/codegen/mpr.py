@@ -91,6 +91,7 @@ LIBRARY_NODE_DESCRIPTIONS: Dict[str, str] = {
     'Barrier': 'MPI_Barrier: synchronize the communicator',
     'BatchedMatMul': 'batched matrix product: one gemm per batch index',
     'Bcast': 'MPI_Bcast: broadcast from the root rank',
+    'BlacsGridInit': 'Cblacs_gridinit: build a BLACS process grid on a communicator',
     'BlockCyclicGather': 'gather block-cyclic (ScaLAPACK) distributed data',
     'BlockCyclicScatter': 'scatter data in the block-cyclic (ScaLAPACK) distribution',
     'BlockGather': 'gather block-distributed data onto one rank',

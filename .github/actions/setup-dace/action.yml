@@ -15,9 +15,12 @@ inputs:
   pip-packages:
     description: Extra packages installed into the environment before DaCe itself.
     default: pytest-xdist
-  extras:
-    description: DaCe extras for the editable install.
+  groups:
+    description: Dependency groups (comma-separated) to sync -- see [dependency-groups] in pyproject.toml.
     default: testing
+  extras:
+    description: DaCe extras (comma-separated) to sync -- see [project.optional-dependencies].
+    default: ''
   codecov:
     description: Also fetch the codecov uploader into the workspace.
     default: 'false'
@@ -41,7 +44,14 @@ runs:
         sudo dpkg-reconfigure man-db
         sudo apt-get update
         sudo apt-get install -y ${{ inputs.apt-packages }}
-        uv sync --extra ${{ inputs.extras }}
+        # `testing` / `ml-testing` / `linting` / `docs` are dependency GROUPS, not extras
+        # (upstream moved them in spcl/dace#2514); `ml` / `mpi` / `gpu` / `fastgraph` are extras.
+        sync_args=()
+        IFS=',' read -ra _groups <<< "${{ inputs.groups }}"
+        for g in "${_groups[@]}"; do [ -n "$g" ] && sync_args+=(--group "$g"); done
+        IFS=',' read -ra _extras <<< "${{ inputs.extras }}"
+        for e in "${_extras[@]}"; do [ -n "$e" ] && sync_args+=(--extra "$e"); done
+        uv sync "${sync_args[@]}"
         uv pip install ${{ inputs.pip-packages }}
 
     - name: Put the uv environment on PATH

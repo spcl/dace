@@ -3,10 +3,10 @@ import collections
 import copy
 import pathlib
 import re
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import dace
-from dace import config, data, dtypes, mpr_lowering
+from dace import config, data, dtypes, mpr_lowering, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -15,12 +15,39 @@ from dace.transformation.passes.analysis.scopes import (AccessInstances, Allocat
                                                         SymbolScopes)
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
+from dace.ordered import OrderedSet
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.canonicalize import supply_num_threads
+
+#: Guarded so a build without OpenMP still compiles; ``1`` is the honest count there, not a guess.
+#: ``omp_get_max_threads`` reports the POOL size outside a parallel region, which is where this is
+#: emitted -- the top of the program function, before any region opens and before any allocation.
+NUM_THREADS_DECL = """#ifdef _OPENMP
+    const {ctype} {name} = omp_get_max_threads();
+#else
+    const {ctype} {name} = 1;
+#endif"""
+
+NUM_THREADS_INCLUDE = """#ifdef _OPENMP
+#include <omp.h>
+#endif"""
+
+
+def num_threads_is_used(sdfg: SDFG) -> bool:
+    """Whether anything in ``sdfg`` or its nested SDFGs reads the reserved thread-count symbol.
+
+    ``all_symbols=False`` is the load-bearing argument: ``free_symbols`` counts every name in
+    ``sdfg.symbols``, so a symbol that is merely DECLARED reads as used and every program would pay
+    for a definition it never names. The narrower set covers descriptor sizes, which is the use that
+    has no other spelling -- a per-thread buffer is read by the ALLOCATION, not by an edge, a memlet
+    or a tasklet.
+    """
+    return symbolic.NUM_THREADS_SYMBOL in {str(sym) for sym in sdfg.used_symbols(all_symbols=False)}
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -41,7 +68,9 @@ class DaCeCodeGenerator(object):
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
         self.environments: List[Any] = []
-        self.targets: Set[TargetCodeGenerator] = set()
+        # OrderedSet for the same reason as used_targets: codegen.py iterates this to order
+        # the preprocess() calls, and a TargetCodeGenerator hashes by id().
+        self.targets: Set[TargetCodeGenerator] = OrderedSet()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
                                                  bool]]] = collections.defaultdict(list)
@@ -51,7 +80,10 @@ class DaCeCodeGenerator(object):
         # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
         # of the same name, and only one of them may qualify. Empty under the default ``eager``.
         self.loop_local_counters: Dict[Tuple[int, str], str] = {}
-        self.fsyms: Dict[int, Set[str]] = {}
+        # id(obj) -> (obj, result). The object itself is kept alive here so its address
+        # cannot be recycled by a later, unrelated object for as long as the entry lives
+        # (a WeakValueDictionary would not do this: it lets obj die and the id go stale).
+        self.fsyms: Dict[int, Tuple[Any, FrozenSet[str]]] = {}
         # Filled by determine_allocation_lifetime; targets read it through symbol_scopes.defined_at,
         # which falls back to symbols_defined_at for anything built after the pass ran.
         self.symbol_scopes: Dict = {}
@@ -91,15 +123,20 @@ class DaCeCodeGenerator(object):
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
+    def free_symbols(self, obj: Any) -> FrozenSet[str]:
         k = id(obj)
-        if k in self.fsyms:
-            return self.fsyms[k]
+        cached = self.fsyms.get(k)
+        if cached is not None and cached[0] is obj:
+            return cached[1]
         if hasattr(obj, 'used_symbols'):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
-        self.fsyms[k] = result
+        # Frozen so a caller's `fsyms |= ...` rebinds its own local name instead of
+        # mutating the shared cache entry (frozenset has no __ior__, so `|=` falls
+        # back to `fsyms = fsyms | ...`, which creates a new object).
+        result = frozenset(result)
+        self.fsyms[k] = (obj, result)
         return result
 
     ##################################################################
@@ -188,13 +225,18 @@ class DaCeCodeGenerator(object):
 
         #########################################################
         # Custom types
-        datatypes = set()
+        # OrderedSet, not set: typeclass.__hash__ folds in hash(self.type), which for a struct is
+        # the default id()-based hash of ctypes.Structure -- that id() moves with ASLR run to run,
+        # so a plain set() emitted these definitions in a different order every process even under
+        # a fixed PYTHONHASHSEED. Insertion order here is first-occurrence order in the SDFG, which
+        # is deterministic.
+        datatypes = OrderedSet()
         # Types of this SDFG
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted = set()
+        emitted = OrderedSet()
 
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if isinstance(dtype, dtypes.pointer):
@@ -1164,6 +1206,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
+        # ORDER IS THE POINT: a per-thread buffer's size names this symbol and allocations are
+        # emitted at program entry, ahead of every state, so nothing the graph runs can define it in
+        # time. Only the top level declares it -- nested SDFGs inline into this same function.
+        if is_top_level and num_threads_is_used(sdfg):
+            global_stream.write(NUM_THREADS_INCLUDE, sdfg)
+            callsite_stream.write(
+                NUM_THREADS_DECL.format(ctype=supply_num_threads.symbol_dtype(sdfg).ctype,
+                                        name=symbolic.NUM_THREADS_SYMBOL), sdfg)
+
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
@@ -1189,9 +1240,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_end = loop_analysis.get_loop_end(cfr)
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
-                        sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                         infer_expr_type(l_step, global_symbols),
-                                                         infer_expr_type(l_end, global_symbols))
+                        # Only the readable parts: ``get_loop_end`` is None for any condition that
+                        # is not ``i <op> X``. See ``LoopRegion.new_symbols``, which carries the
+                        # same guard -- this is the second place the same three expressions are
+                        # inferred from, and it crashed for the same reason.
+                        parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
+                        if not parts:
+                            continue
+                        sym_type = dtypes.result_type_of(*(infer_expr_type(part, global_symbols) for part in parts))
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]

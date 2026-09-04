@@ -850,15 +850,23 @@ inline T product(const U *in, long n, long s, T seed) {
 
 // min/max carry no ``simd``: no vectorizer folds the NaN-swallowing ``(b < a) ? b : a`` without
 // reassociating comparisons, and clang warns about the transformation it refused. Measured free.
+// The ``reduction(op : acc)`` clause and the bare operator below are ILL-FORMED for a rejected T
+// (no ``operator<``/``&``/``&&`` for a class type such as complex) -- and on this compiler, a hard
+// error raised from THAT statement suppresses the ``static_assert`` above rather than joining it, so
+// the user sees the pragma's generic complaint instead of the runtime's named one. ``if constexpr``
+// keeps the policy-violating statement out of the instantiation entirely: the assert is then the
+// only diagnostic. Guard, don't restructure -- the taken branch is untouched for every legal T.
 template <typename T, typename U>
 inline T min(const U *in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_real<T>::value && is_real<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for reduction(min : acc)
-    for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i]));
-  } else {
+      for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i]));
+    } else {
 #pragma omp parallel for reduction(min : acc)
-    for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i * s]));
+      for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i * s]));
+    }
   }
   return acc;
 }
@@ -866,12 +874,14 @@ inline T min(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T max(const U *in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_real<T>::value && is_real<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for reduction(max : acc)
-    for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i]));
-  } else {
+      for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i]));
+    } else {
 #pragma omp parallel for reduction(max : acc)
-    for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i * s]));
+      for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i * s]));
+    }
   }
   return acc;
 }
@@ -881,13 +891,15 @@ inline T max(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T bitwise_and(const U *in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
 #pragma omp declare reduction(dace_band : T : omp_out = static_cast<T>(omp_out &omp_in)) initializer(omp_priv = static_cast<T>(-1))
-  if (s == 1) {
+    if (s == 1) {
 #pragma omp parallel for simd reduction(dace_band : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i]);
-  } else {
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i]);
+    } else {
 #pragma omp parallel for reduction(dace_band : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i * s]);
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i * s]);
+    }
   }
   return acc;
 }
@@ -895,12 +907,14 @@ inline T bitwise_and(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T bitwise_or(const U *in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for simd reduction(| : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i]);
-  } else {
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i]);
+    } else {
 #pragma omp parallel for reduction(| : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i * s]);
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i * s]);
+    }
   }
   return acc;
 }
@@ -908,12 +922,14 @@ inline T bitwise_or(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T bitwise_xor(const U *in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for simd reduction(^ : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i]);
-  } else {
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i]);
+    } else {
 #pragma omp parallel for reduction(^ : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i * s]);
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i * s]);
+    }
   }
   return acc;
 }
@@ -921,12 +937,14 @@ inline T bitwise_xor(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T logical_and(const U *in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_real<T>::value && is_real<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for simd reduction(&& : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i]);
-  } else {
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i]);
+    } else {
 #pragma omp parallel for reduction(&& : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i * s]);
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i * s]);
+    }
   }
   return acc;
 }
@@ -934,12 +952,14 @@ inline T logical_and(const U *in, long n, long s, T seed) {
 template <typename T, typename U>
 inline T logical_or(const U *in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
-  if (s == 1) {
+  if constexpr (is_real<T>::value && is_real<U>::value) {
+    if (s == 1) {
 #pragma omp parallel for simd reduction(|| : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i]);
-  } else {
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i]);
+    } else {
 #pragma omp parallel for reduction(|| : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i * s]);
+      for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i * s]);
+    }
   }
   return acc;
 }
@@ -964,39 +984,64 @@ inline T product(const U *in, long n, long s, T seed) {
       [](T a, T b) { return static_cast<T>(a * b); });
 }
 
+// Same ``if constexpr`` guard as the parallel shape above: the lambda body below is ill-formed for
+// a rejected T (no ``&``/``&&`` for a class type), and instantiating it alongside the ``static_assert``
+// in ``real_seed``/``bitwise_seed`` lets the compiler's own operator error mask the runtime's named
+// one. Keeping the fold out of the instantiation for a policy-violating T leaves only the assert.
 template <typename T, typename U>
 inline T min(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
+  T acc = detail::real_seed<T, U>(seed);
+  if constexpr (is_real<T>::value && is_real<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T max(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
+  T acc = detail::real_seed<T, U>(seed);
+  if constexpr (is_real<T>::value && is_real<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T bitwise_and(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a & b); });
+  T acc = detail::bitwise_seed<T, U>(seed);
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a & b); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T bitwise_or(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a | b); });
+  T acc = detail::bitwise_seed<T, U>(seed);
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a | b); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T bitwise_xor(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a ^ b); });
+  T acc = detail::bitwise_seed<T, U>(seed);
+  if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a ^ b); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T logical_and(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a && b); });
+  T acc = detail::real_seed<T, U>(seed);
+  if constexpr (is_real<T>::value && is_real<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a && b); });
+  return acc;
 }
 
 template <typename T, typename U>
 inline T logical_or(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a || b); });
+  T acc = detail::real_seed<T, U>(seed);
+  if constexpr (is_real<T>::value && is_real<U>::value)
+    acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a || b); });
+  return acc;
 }
 
 }  // namespace seq

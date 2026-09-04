@@ -802,6 +802,211 @@ def test_view_edge_into_map_exit():
     np.testing.assert_allclose(b_arr[:, 1], a_arr + 1.0)
 
 
+def test_plane_view_copied_by_dst_keyed_memlet():
+    """A plane view read by a COPY whose memlet names the destination must keep its plane.
+
+    ``data_col = np.array(dcol[:, :, K-1])`` (npbench vadv) lands as ``V -> B`` with the memlet
+    keyed to ``B``, so the view side is unspelled -- and splicing the view out used to rewire the
+    edge to the 3-D ``A`` with that side STILL unspelled, dropping which plane is copied. Nothing
+    rejected the result: ``B`` is 2-D and the memlet names ``B``, so validation checked the only
+    side that was spelled, and the plane was lost silently until a later pass materialised the copy.
+    """
+    M, N, K, PLANE = 4, 5, 3, 2
+    sdfg = dace.SDFG('test_plane_view_dst_keyed')
+    sdfg.add_array('A', [M, N, K], dace.float64)
+    sdfg.add_array('B', [M, N], dace.float64)
+    sdfg.add_view('V', [M, N], dace.float64, strides=[N * K, K])
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    v = state.add_access('V')
+    b = state.add_write('B')
+
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{M}, 0:{N}, {PLANE}', other_subset=f'0:{M}, 0:{N}'))
+    # Keyed to the DESTINATION, with no other_subset: the shape the numpy frontend emits for a copy.
+    state.add_edge(v, None, b, None, Memlet(data='B', subset=f'0:{M}, 0:{N}'))
+
+    sdfg.validate()
+
+    A = np.arange(M * N * K, dtype=np.float64).reshape(M, N, K)
+    B_ref = np.zeros((M, N), dtype=np.float64)
+    sdfg(A=A.copy(), B=B_ref)
+    np.testing.assert_allclose(B_ref, A[:, :, PLANE])
+
+    assert _count_views(sdfg) == 1
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    assert _count_views(sdfg) == 0
+
+    # STRUCTURAL: the surviving A -> B edge must still say WHICH plane it reads. An unspelled
+    # source side here is the silent miscompile this test exists for, so assert the subset text.
+    copy_edges = [
+        e for s in sdfg.states() for e in s.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'B'
+    ]
+    assert len(copy_edges) == 1
+    src_subset = copy_edges[0].data.get_src_subset(copy_edges[0], sdfg.states()[0])
+    assert src_subset is not None, 'RemoveViews dropped the view plane from the copy memlet'
+    assert src_subset.dims() == 3
+    assert str(src_subset) == f'0:{M}, 0:{N}, {PLANE}'
+
+    B_new = np.zeros((M, N), dtype=np.float64)
+    sdfg(A=A.copy(), B=B_new)
+    np.testing.assert_allclose(B_new, A[:, :, PLANE])
+
+
+def _empty_edges(state):
+    """``(src.data, dst.data)`` for every ordering (empty-memlet) edge in ``state``."""
+    return [(e.src.data, e.dst.data) for e in state.edges() if e.data.is_empty()]
+
+
+def test_read_view_keeps_ordering_edge():
+    """An ordering edge into a read view must survive the view's removal.
+
+    ``X --(empty)--> V`` says X runs before whoever reads V. ``_reconnect_edges`` only re-homes
+    the view's OUT-edges for a read view, so the in-edge was left on the node and destroyed by
+    ``remove_node`` -- and nothing rejected the result, because X keeps its other edges and the
+    graph stays valid. The constraint just disappeared, so the writer of X could be scheduled
+    after the read of A.
+    """
+    N = 8
+    sdfg = dace.SDFG('read_view_ordering')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('X', [N], dace.float64)
+    sdfg.add_view('V', [N], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    v = state.add_access('V')
+    b = state.add_write('B')
+    x = state.add_access('X')
+    # X is produced here, so dropping the ordering edge leaves a VALID graph: silent misordering.
+    t = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    state.add_edge(t, 'o', x, None, Memlet(data='X', subset='0'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{N}'))
+    state.add_nedge(x, v, Memlet())
+    state.add_nedge(v, b, Memlet(data='V', subset=f'0:{N}'))
+    sdfg.validate()
+
+    assert _count_views(sdfg) == 1
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    # STRUCTURAL: the constraint now lands on the view's READER, which is what X preceded.
+    assert _empty_edges(state) == [('X', 'B')]
+    # ... and NOT on the viewed array, which would be a strictly stronger claim.
+    assert not state.edges_between(x, a)
+    assert dangling_connectors(sdfg) == []
+
+
+def test_write_view_keeps_ordering_edge():
+    """Mirror of :func:`test_read_view_keeps_ordering_edge` for a write view.
+
+    ``V --(empty)--> Y`` says whoever writes V runs before Y. For a write view
+    ``_reconnect_edges`` only re-homes IN-edges, so this one was dropped with the node.
+    """
+    N = 8
+    sdfg = dace.SDFG('write_view_ordering')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('Y', [N], dace.float64)
+    sdfg.add_view('V', [N], dace.float64)
+
+    state = sdfg.add_state()
+    b = state.add_read('B')
+    v = state.add_access('V')
+    a = state.add_write('A')
+    y = state.add_access('Y')
+    # Y is consumed here, so dropping the ordering edge leaves a VALID graph.
+    t = state.add_tasklet('consume', {'i'}, {}, 'pass')
+    state.add_edge(y, None, t, 'i', Memlet(data='Y', subset='0'))
+    state.add_nedge(b, v, Memlet(data='B', subset=f'0:{N}'))
+    state.add_edge(v, 'views', a, None, Memlet(data='A', subset=f'0:{N}'))
+    state.add_nedge(v, y, Memlet())
+    sdfg.validate()
+
+    assert _count_views(sdfg) == 1
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    # STRUCTURAL: the constraint lands on the view's WRITER, not on the viewed array A.
+    assert _empty_edges(state) == [('B', 'Y')]
+    assert not state.edges_between(a, y)
+    assert dangling_connectors(sdfg) == []
+
+
+def test_ordering_edge_never_rehomed_onto_the_viewed_array():
+    """The ordering edge goes to the view's readers, because the viewed array can CYCLE.
+
+    Here ``A -> X`` already exists, so re-homing ``X --(empty)--> V`` onto the view edge's
+    neighbour ``A`` would mint ``X -> A`` and close ``A -> X -> A``. Re-homing onto the reader
+    ``B`` cannot: ``X -> V -> B`` already made B reachable from X, so ``X -> B`` adds no
+    reachability and no cycle the graph did not already have.
+    """
+    N = 8
+    sdfg = dace.SDFG('ordering_cycle_risk')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('X', [N], dace.float64)
+    sdfg.add_view('V', [N], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    v = state.add_access('V')
+    b = state.add_write('B')
+    x = state.add_access('X')
+    state.add_nedge(a, x, Memlet(data='A', subset=f'0:{N}'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{N}'))
+    state.add_nedge(x, v, Memlet())
+    state.add_nedge(v, b, Memlet(data='V', subset=f'0:{N}'))
+    sdfg.validate()
+
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    assert _count_views(sdfg) == 0
+
+    state = sdfg.states()[0]
+    assert not state.has_cycles()
+    assert not state.edges_between(x, a)
+    assert _empty_edges(state) == [('X', 'B')]
+    # ``validate`` rejects a cyclic state, so this is the end-to-end check on the choice.
+    sdfg.validate()
+
+
+def test_view_with_ordering_edge_and_no_reader_is_kept():
+    """With no reader to carry the constraint, the view is KEPT rather than removed.
+
+    ``A -> V`` plus ``X --(empty)--> V`` and nothing else: there is no successor of V to re-home
+    ``X -> V`` onto, and ``X -> A`` is the strictly stronger claim this pass must not invent.
+    Refusing the removal is the only choice that neither drops nor strengthens the constraint.
+    """
+    N = 8
+    sdfg = dace.SDFG('ordering_no_reader')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('X', [N], dace.float64)
+    sdfg.add_view('V', [N], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    v = state.add_access('V')
+    x = state.add_access('X')
+    t = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    state.add_edge(t, 'o', x, None, Memlet(data='X', subset='0'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{N}'))
+    state.add_nedge(x, v, Memlet())
+
+    assert _count_views(sdfg) == 1
+    RemoveViews().apply_pass(sdfg, {})
+    assert _count_views(sdfg) == 1, 'RemoveViews must refuse a view whose ordering edge has no home'
+
+    state = sdfg.states()[0]
+    assert _empty_edges(state) == [('X', 'V')]
+    assert len(state.edges_between(a, v)) == 1
+
+
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -823,3 +1028,8 @@ if __name__ == '__main__':
     test_view_in_interstate_edge()
     test_view_edge_from_map_entry()
     test_view_edge_into_map_exit()
+    test_plane_view_copied_by_dst_keyed_memlet()
+    test_read_view_keeps_ordering_edge()
+    test_write_view_keeps_ordering_edge()
+    test_ordering_edge_never_rehomed_onto_the_viewed_array()
+    test_view_with_ordering_edge_and_no_reader_is_kept()

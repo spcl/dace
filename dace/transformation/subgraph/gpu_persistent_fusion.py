@@ -19,7 +19,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     This transformation takes a given subgraph of an SDFG and fuses the
     given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
-    the GPUTransformSDFG transformation).
+    ``apply_gpu_transformations``).
 
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be

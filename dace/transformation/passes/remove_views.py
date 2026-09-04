@@ -44,7 +44,7 @@ import functools
 import operator
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, config, data as dt, dtypes, properties, subsets, symbolic
+from dace import SDFG, SDFGState, Memlet, config, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -57,6 +57,23 @@ def _fmt_desc(desc, name):
     """One-line summary of a data descriptor."""
     kind = type(desc).__name__
     return f'{name}: {kind}{list(desc.shape)} strides={list(desc.strides)}'
+
+
+def _ordering_side(
+    state: SDFGState,
+    view_node: nd.AccessNode,
+    view_edge: gr.MultiConnectorEdge,
+    is_viewed_src: bool,
+) -> Tuple[List[gr.MultiConnectorEdge], List[gr.MultiConnectorEdge]]:
+    """Splits ``view_node``'s non-view edges by what :meth:`RemoveViews._reconnect_edges` does.
+
+    :return: ``(ordering, carriers)``. ``carriers`` are the edges the splice re-homes onto the
+             view edge's neighbour; ``ordering`` are the edges on the opposite side, which carry
+             no data (empty memlets are ordering constraints) and are re-homed onto the carriers.
+    """
+    in_edges = [e for e in state.in_edges(view_node) if e is not view_edge]
+    out_edges = [e for e in state.out_edges(view_node) if e is not view_edge]
+    return (in_edges, out_edges) if is_viewed_src else (out_edges, in_edges)
 
 
 def _classify_view(
@@ -106,6 +123,14 @@ def _classify_view(
 
     if viewed_subset is None:
         viewed_subset = subsets.Range.from_array(viewed_desc)
+
+    # An empty memlet is an ORDERING edge. On the side the splice ignores (in-edges of a read
+    # view, out-edges of a write view) it is re-homed onto the carriers -- so a view with no
+    # carrier has nowhere to put the constraint, and a non-empty edge there is not an ordering
+    # edge at all. Refuse both rather than drop the constraint with the node.
+    ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+    if ordering and (not carriers or any(not e.data.is_empty() for e in ordering)):
+        return None
 
     return viewed_node, view_edge, viewed_subset, is_viewed_src
 
@@ -776,6 +801,19 @@ class RemoveViews(ppl.Pass):
                         print(f'[{_PASS}]       memlet {m.data}:'
                               f' {old_other}'
                               f' -> other_subset={m.other_subset}')
+                elif m.data is not None:
+                    # A copy keyed to the OTHER endpoint leaves this side UNSPELLED, meaning the
+                    # view's full range -- so the view's own indices live nowhere else on the edge.
+                    # Both branches above miss it, and splicing the view out then rewires the edge
+                    # to the viewed array with that side still unspelled: a 2-D view of A[:, :, K-1]
+                    # silently becomes a 2-D read of the 3-D A, losing which plane is copied.
+                    # Spell it, exactly as the ``m.subset is None`` case above does for the near side.
+                    # ``m.data is None`` is an EMPTY memlet -- an ordering edge that moves no bytes
+                    # and must keep both sides unspelled.
+                    m.other_subset = copy.deepcopy(viewed_subset)
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]       memlet {m.data}:'
+                              f' other_subset=None -> other_subset={m.other_subset}')
 
     def _reconnect_edges(self, state, view_node, view_edge, is_viewed_src):
         """Splice ``view_node`` out of its own edges, then drop the defining edge.
@@ -788,7 +826,14 @@ class RemoveViews(ppl.Pass):
         an AccessNode, and leaves the scope node's own connector pair with no edge -- the
         "Dangling in-connector" validation failure. For a view edge that really does start (or end)
         at the viewed AccessNode the neighbour IS that node, so the direct case is unchanged.
+
+        The opposite side carries only ordering edges (empty memlets). ``X -> V`` on a read view
+        means "X before the view's readers", so that constraint is re-homed onto the readers --
+        NOT onto the view edge's neighbour ``A``, which would mean "X before A" and is strictly
+        stronger. ``_classify_view`` has already refused the case with no carrier to hold it.
         """
+        ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+        far_ends = [e.dst if is_viewed_src else e.src for e in carriers]
         if is_viewed_src:
             for e in list(state.out_edges(view_node)):
                 if e is view_edge:
@@ -813,6 +858,19 @@ class RemoveViews(ppl.Pass):
                           f' -> {view_edge.dst}:{view_edge.dst_conn}')
                 state.remove_edge(e)
                 state.add_edge(e.src, e.src_conn, view_edge.dst, view_edge.dst_conn, e.data)
+        # ``X -> V -> C`` already implied X before C, so the re-homed ``X -> C`` adds no
+        # reachability and cannot close a cycle the graph did not already have.
+        for oe in ordering:
+            near = oe.src if is_viewed_src else oe.dst
+            for far in far_ends:
+                if far is near:
+                    continue
+                u, v = (near, far) if is_viewed_src else (far, near)
+                if not state.edges_between(u, v):
+                    state.add_nedge(u, v, Memlet())
+                    if _DEBUGPRINT:
+                        print(f'[{_PASS}]       ordering edge re-homed: {u} -> {v}')
+            state.remove_edge(oe)
         if view_edge in state.edges():
             state.remove_edge(view_edge)
 

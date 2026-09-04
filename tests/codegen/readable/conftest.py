@@ -17,8 +17,13 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 # Pin 1 OpenMP thread: reduction order must be deterministic for the bit-exact legacy-vs-experimental compare.
-# Forced, not setdefault: CI runners export OMP_NUM_THREADS=8, and a live libgomp team breaks the
-# fork-based isolation this directory uses. A single thread means no worker team exists to strand.
+# Forced, not setdefault: the root conftest sets a multi-thread count on purpose, and a live libgomp
+# team breaks the fork-based isolation this directory uses. A single thread means no worker team
+# exists to strand.
+# This write alone does NOT pin the count -- libgomp caches OMP_NUM_THREADS in its initialiser, so
+# once collection has mapped it (importing dace/numpy anywhere in the tree does) it never re-reads
+# the variable. ``run_isolated`` pins the loaded runtime directly; this write is what governs a
+# runtime the generated kernel dlopens later.
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import numpy as np
@@ -131,14 +136,23 @@ def run_isolated(build_and_run, timeout=300):
     fork from that state deadlocks the child on libgomp's team barrier (the top-level conftest
     guards ``os.fork`` against exactly this). Pausing the pools first is semantically transparent
     -- the next parallel region rebuilds the team -- and makes the fork safe.
+
+    The child pins the thread count to 1 before it builds anything. The module-level
+    ``OMP_NUM_THREADS`` write cannot do that on its own: libgomp reads the variable once, in its
+    initialiser, and a full-tree collection maps libgomp long before this directory's conftest runs
+    -- which is how a 4-thread team survived the pin in CI and let the two generators accumulate the
+    dot products of ``polybench/lu`` in different orders. Pinning in the child rather than the
+    parent keeps the root conftest's deliberate multi-thread count for every other test in the
+    worker.
     """
-    from dace.transformation.layout.isolation import pause_openmp_pools
+    from dace.transformation.layout.isolation import pause_openmp_pools, set_openmp_thread_count
     pause_openmp_pools()
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
     pid = os.fork()
     if pid == 0:  # child
         try:
+            set_openmp_thread_count(1)
             outputs = build_and_run()
             np.savez(path, **{name: to_host(value) for name, value in outputs.items()})
             os._exit(0)

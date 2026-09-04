@@ -168,7 +168,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
                      axes=axes,
                      identity=val_identity_value)
     reduce_val.add_node(val_red)
-    reduce_val.add_edge(reduce_val.add_read("_x"), None, val_red, "_in_data",
+    reduce_val.add_edge(reduce_val.add_read("_x"), None, val_red, "_in",
                         dace.Memlet.from_array("_x", sdfg.arrays["_x"]))
     reduce_val.add_edge(val_red, "_out", reduce_val.add_access("__best_val"), None,
                         dace.Memlet.from_array("__best_val", sdfg.arrays["__best_val"]))
@@ -204,7 +204,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
                      axes=axes,
                      identity=idx_sentinel)
     reduce_idx.add_node(idx_red)
-    reduce_idx.add_edge(reduce_idx.add_read("__idx_candidates"), None, idx_red, "_in_data",
+    reduce_idx.add_edge(reduce_idx.add_read("__idx_candidates"), None, idx_red, "_in",
                         dace.Memlet.from_array("__idx_candidates", sdfg.arrays["__idx_candidates"]))
     reduce_idx.add_edge(idx_red, "_out", reduce_idx.add_access("__best_idx"), None,
                         dace.Memlet.from_array("__best_idx", sdfg.arrays["__best_idx"]))

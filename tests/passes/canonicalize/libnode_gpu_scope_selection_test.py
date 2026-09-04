@@ -11,6 +11,7 @@ therefore decides from the enclosing scopes instead, which is what the cases bel
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.dot import Dot
+from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
@@ -25,8 +26,8 @@ def toplevel_sequential_reduce() -> dace.SDFG:
     node = Reduce('reduce_sum', wcr='lambda a, b: a + b', axes=None, identity=0.0)
     node.schedule = dtypes.ScheduleType.Sequential
     state.add_node(node)
-    state.add_edge(state.add_access('A'), None, node, None, dace.Memlet('A[0:256]'))
-    state.add_edge(node, None, state.add_access('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(state.add_access('A'), None, node, '_in', dace.Memlet('A[0:256]'))
+    state.add_edge(node, '_out', state.add_access('out'), None, dace.Memlet('out[0]'))
     sdfg.validate()
     return sdfg, node
 
@@ -43,8 +44,8 @@ def in_kernel_sequential_reduce() -> dace.SDFG:
     node.schedule = dtypes.ScheduleType.Sequential
     row = state.add_access('row')
     state.add_memlet_path(state.add_read('A'), entry, row, memlet=dace.Memlet('A[i, 0:256]', other_subset='0:256'))
-    state.add_edge(row, None, node, None, dace.Memlet('row[0:256]'))
-    state.add_memlet_path(node, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'))
+    state.add_edge(row, None, node, '_in', dace.Memlet('row[0:256]'))
+    state.add_memlet_path(node, exit_node, state.add_write('out'), memlet=dace.Memlet('out[i]'), src_conn='_out')
     sdfg.validate()
     return sdfg, node
 
@@ -83,11 +84,26 @@ def test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion():
     assert node.implementation == 'pure', node.implementation
 
 
+def vendor_blas() -> str:
+    """The GPU BLAS this host's backend selects -- ``cuBLAS`` on CUDA, ``rocBLAS`` on HIP.
+
+    Asked rather than assumed: ``canonicalize_fast_library_priority`` takes its GPU row straight
+    from ``auto_optimize``, which is keyed on ``get_gpu_backend()``. Hardcoding one vendor makes the
+    test assert the machine it was written on -- it failed here reading ``rocBLAS`` on an AMD node,
+    which is the pipeline doing exactly the right thing.
+    """
+    from dace.codegen.common import get_gpu_backend
+    try:
+        return 'rocBLAS' if get_gpu_backend() == 'hip' else 'cuBLAS'
+    except Exception:  # noqa: BLE001 -- no backend configured; the CUDA row is the historical default
+        return 'cuBLAS'
+
+
 def test_a_loop_does_not_make_its_body_device_code():
     """A loop re-enters the node, which is why it is ``Sequential`` -- it does not put it on a device."""
     sdfg, node = dot_in_a_host_loop()
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
-    assert node.implementation == 'cuBLAS', node.implementation
+    assert node.implementation == vendor_blas(), node.implementation
 
 
 def merge_in_a_host_loop():
@@ -131,8 +147,68 @@ def test_a_pure_only_node_in_a_host_loop_becomes_a_kernel():
     assert all(m.schedule == dtypes.ScheduleType.GPU_Device for m in maps), [str(m.schedule) for m in maps]
 
 
+def arg_reduce_at_host_level(stride: int = 1, transform: str = ''):
+    """An ``ArgReduce`` nobody encloses, reading ``a[0:N:stride]`` through ``transform``."""
+    sdfg = dace.SDFG(f'arg_reduce_{stride}_{transform or "id"}')
+    sdfg.add_array('a', [768], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    # Host scalars, per ``ArgReduce.host_connectors``: every expansion answers on the host.
+    sdfg.add_array('val', [1], dace.float64)
+    sdfg.add_array('idx', [1], dace.int64)
+    state = sdfg.add_state()
+    node = ArgReduce('argmax', op='max', transform=transform)
+    node.schedule = dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_in', dace.Memlet(f'a[0:768:{stride}]'))
+    state.add_edge(node, '_out_val', state.add_write('val'), None, dace.Memlet('val[0]'))
+    state.add_edge(node, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+    sdfg.validate()
+    return sdfg, node
+
+
+def test_a_contiguous_arg_reduce_takes_the_cub_expansion():
+    # Unit stride and no transform is exactly what gpucub::DeviceReduce::ArgMax reads, so the
+    # host-level node takes the device library call like any other.
+    sdfg, node = arg_reduce_at_host_level()
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'CUDA', node.implementation
+
+
+def cuda_unit(sdfg):
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        return '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+
+
+def test_a_strided_arg_reduce_still_takes_the_cub_expansion():
+    """A strided ``_in`` is a device lowering too: CUB reduces over an input ITERATOR, not a pointer.
+
+    tsvc s318 spells its operand ``argmax |a[inc*i]|``, and the answer used to be the ``pure`` serial
+    scan because ``ExpandArgReduceCUDA`` refused anything it could not hand CUB as a raw pointer.
+    ``dace::cub::gather_iterator`` presents ``j -> base[j * stride]`` instead, so the same one
+    streaming pass serves it and the selector no longer has a refusal to route around.
+    """
+    sdfg, node = arg_reduce_at_host_level(stride=3)
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'CUDA', node.implementation
+    device_code = cuda_unit(sdfg)
+    assert 'gather_iterator<::dace::cub::IdentityXf>' in device_code, device_code
+    assert '__ar_best' not in device_code, ('the serial scan is still emitted, so the node did not take the '
+                                            f'device library call:\n{device_code}')
+
+
+def test_a_transformed_arg_reduce_gathers_through_its_transform():
+    # The transform is read per element, which the gather functor composes rather than refuses -- and
+    # it must not depend on the stride being the thing that is odd, so this one is contiguous.
+    sdfg, node = arg_reduce_at_host_level(transform='abs')
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation == 'CUDA', node.implementation
+    assert 'gather_iterator<::dace::cub::AbsXf>' in cuda_unit(sdfg)
+
+
 if __name__ == '__main__':
     test_a_sequential_node_at_a_host_level_calls_the_device_library()
+    test_a_contiguous_arg_reduce_takes_the_cub_expansion()
+    test_a_strided_arg_reduce_still_takes_the_cub_expansion()
+    test_a_transformed_arg_reduce_gathers_through_its_transform()
     test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion()
     test_a_loop_does_not_make_its_body_device_code()
     test_a_pure_only_node_in_a_host_loop_becomes_a_kernel()

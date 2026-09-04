@@ -104,12 +104,16 @@ def test_canonicalize_picks_the_backend_s_own_vendor_libraries(backend, vendors,
     assert {'GPUAuto', 'CUB', 'CUDA'} <= set(priority)
 
 
+#: A header only the CUDA toolkit ships. ``dace/cuda/...`` is backend-neutral and must not match.
+CUDA_TOOLKIT_HEADER = re.compile(r'\bcuda_\w+\.hp?p?\b|\bcub/cub\.cuh\b')
+
+
 def preprocess_gpu_header(device_compiler_macro: str, tmp_path: pathlib.Path) -> subprocess.CompletedProcess:
     """Preprocess the tile-op GPU header with only the HIP fp16/fp8 headers stubbed out.
 
-    Every CUDA-toolkit header is deliberately left unstubbed, so the run fails exactly when one of
-    them is reachable -- which is the property under test, and one no amount of string matching over
-    ``#if`` nesting decides correctly.
+    Every CUDA-toolkit header is deliberately left unstubbed, and ``-H`` names each header the
+    preprocessor opens, so :func:`cuda_headers_reached` answers the question on a host that has the
+    toolkit as well as on one that does not -- see there.
     """
     for stub in ('hip/hip_fp16.h', 'hip/hip_fp8.h'):
         path = tmp_path / stub
@@ -117,24 +121,37 @@ def preprocess_gpu_header(device_compiler_macro: str, tmp_path: pathlib.Path) ->
         path.write_text('#pragma once\n')
     cxx = os.environ.get('CXX', 'g++')
     cmd = [
-        cxx, '-E', '-x', 'c++', '-std=c++17', f'-D{device_compiler_macro}', '-I',
+        cxx, '-E', '-H', '-x', 'c++', '-std=c++17', f'-D{device_compiler_macro}', '-I',
         str(tmp_path),
         str(TILE_OPS_GPU_HEADER), '-o', os.devnull
     ]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def cuda_headers_reached(result: subprocess.CompletedProcess) -> list:
+    """Toolkit headers the preprocess opened, together with any whose lookup it failed.
+
+    A returncode alone cannot decide this. Where the toolkit is installed the include RESOLVES and
+    the run succeeds, so a leak reads as a pass; where it is absent the run stops at the first
+    missing header and never reports the rest. ``-H`` names every header actually opened, and the
+    "No such file" line names the one that was looked for, so both spellings of "the header was
+    reached" count and the verdict no longer depends on what the host happens to have installed.
+    """
+    return sorted({m.group(0) for line in result.stderr.splitlines() for m in [CUDA_TOOLKIT_HEADER.search(line)] if m})
+
+
 def test_tile_op_gpu_header_reaches_no_cuda_only_include_under_hipcc(tmp_path) -> None:
     result = preprocess_gpu_header('__HIPCC__', tmp_path)
-    assert result.returncode == 0, (
-        'dace/tile_ops/cuda.h reaches a CUDA-toolkit header when the device compiler is hipcc:\n'
-        f'{result.stderr}')
+    reached = cuda_headers_reached(result)
+    assert result.returncode == 0 and not reached, (
+        f'dace/tile_ops/cuda.h reaches {reached or "a CUDA-toolkit header"} when the device compiler '
+        f'is hipcc:\n{result.stderr}')
 
 
 def test_the_preprocessor_probe_would_notice_a_cuda_only_include(tmp_path) -> None:
-    """Negative control: under ``__CUDACC__`` the same probe must fail, or it proves nothing."""
+    """Negative control: under ``__CUDACC__`` the same probe must see the include, or it proves nothing."""
     result = preprocess_gpu_header('__CUDACC__', tmp_path)
-    assert result.returncode != 0 and 'cuda_fp16.h' in result.stderr, (
+    assert 'cuda_fp16.h' in cuda_headers_reached(result), (
         'the probe no longer detects an unstubbed CUDA include, so its HIP twin is vacuous')
 
 

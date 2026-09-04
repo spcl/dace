@@ -363,6 +363,9 @@ class ONNXModel:
 
         # add weights
         self.weights: Dict[str, torch.Tensor] = {}  #: mapping from weight name to array
+        #: mapping from a staged copy of a weight to the weight it copies; see
+        #: :meth:`register_staged_weights`
+        self.staged_weights: Dict[str, str] = {}
         for init in graph.initializer:
             self._add_constant_tensor(init, storage)
 
@@ -518,6 +521,7 @@ class ONNXModel:
             # generator expects.
             self.sdfg.apply_gpu_transformations(simplify=False)
             self.sdfg.simplify(skip={'ArrayElimination', 'ReferenceToView'})
+            self.register_staged_weights()
 
     def _add_constant_tensor(self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]],
                              storage: dtypes.StorageType):
@@ -608,9 +612,40 @@ class ONNXModel:
                                 transient=transient,
                                 storage=storage)
 
+    def register_staged_weights(self) -> None:
+        """Record every transient that only ever holds a whole copy of a weight.
+
+        Offloading stages a host-read constant into a new transient and repoints the host readers
+        at it, so the constant survives under a name the model never chose. The ONNX pure
+        expansions gate on ``clean_weights[edge.src.data]`` to read a compile-time input (an
+        ``axes``, a ``starts``), so without the staged name they decline on GPU and leave autodiff
+        an ONNX node with no differentiable form.
+        """
+        weights = {clean_onnx_name(name): value for name, value in self.weights.items()}
+        writes = collections.Counter(edge.dst.data for state in self.sdfg.states() for edge in state.edges()
+                                     if isinstance(edge.dst, nodes.AccessNode) and not edge.data.is_empty())
+        for state in self.sdfg.states():
+            for edge in state.edges():
+                # An empty memlet is an ordering edge: it writes nothing and has no subset to measure.
+                if not (isinstance(edge.src, nodes.AccessNode)
+                        and isinstance(edge.dst, nodes.AccessNode)) or edge.data.is_empty():
+                    continue
+                source, staged = edge.src.data, edge.dst.data
+                if source not in weights or staged in weights:
+                    continue
+                desc = self.sdfg.arrays[staged]
+                # Only a transient written exactly once, by a copy of the whole weight, is that
+                # weight under another name. Anything else can hold a different value by the time
+                # a reader reaches it, and a constant read out of it would be a wrong number.
+                if not desc.transient or writes[staged] != 1 or edge.data.num_elements() != desc.total_size:
+                    continue
+                self.staged_weights[staged] = source
+
     @property
     def clean_weights(self):
-        return {clean_onnx_name(k): v for k, v in self.weights.items()}
+        weights = {clean_onnx_name(k): v for k, v in self.weights.items()}
+        weights.update((staged, weights[source]) for staged, source in self.staged_weights.items())
+        return weights
 
     def compile_and_init(self) -> compiled_sdfg.CompiledSDFG:
         """ Compile the SDFG and load parameters into GPU memory. """

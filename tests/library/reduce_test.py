@@ -21,8 +21,8 @@ def make_sdfg():
     A = st.add_access('A')
     C = st.add_access('C')
     R = st.add_reduce('lambda x, y: x + y', [1, 2, 3], 0)
-    st.add_nedge(A, R, Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
-    st.add_nedge(R, C, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
+    st.add_edge(A, None, R, '_in', Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
+    st.add_edge(R, '_out', C, None, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
 
     return g, R
 
@@ -67,8 +67,8 @@ def test_expansion_inside_a_map_does_not_shadow_its_parameter(implementation):
     entry, exit_ = state.add_map('outer', {'_o0': f'0:{N}'})
     red = state.add_reduce('lambda a, b: a + b', axes=(0, ), identity=0.0)
     red.implementation = implementation
-    state.add_memlet_path(state.add_read('inp'), entry, red, memlet=Memlet('inp[0:%d, _o0]' % M))
-    state.add_memlet_path(red, exit_, state.add_write('out'), memlet=Memlet('out[_o0]'))
+    state.add_memlet_path(state.add_read('inp'), entry, red, memlet=Memlet('inp[0:%d, _o0]' % M), dst_conn='_in')
+    state.add_memlet_path(red, exit_, state.add_write('out'), memlet=Memlet('out[_o0]'), src_conn='_out')
     sdfg.validate()
 
     sdfg.expand_library_nodes()
@@ -124,15 +124,14 @@ def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
     """The GPU-auto expansion may FLATTEN the planner input (``(M, N, K) -> (M*N, K)``); the
     reassigned shape/strides must be accompanied by a matching-rank offset, or the descriptor is
     invalid and the host-side inline at codegen dies with 'Offset must be the same size as shape'
-    (samples/optimization/matmul.py under GPUTransformSDFG). Codegen-only: no GPU needed."""
-    from dace.transformation.interstate import GPUTransformSDFG
+    (samples/optimization/matmul.py, offloaded). Codegen-only: no GPU needed."""
 
     @dace.program
     def flat_reduce(inp_tensor: dace.float64[16, 8, 32], out_matrix: dace.float64[16, 8]):
         out_matrix[:] = np.sum(inp_tensor, axis=2)
 
     sdfg = flat_reduce.to_sdfg(simplify=True)
-    assert sdfg.apply_transformations(GPUTransformSDFG) == 1
+    assert sdfg.apply_gpu_transformations() == 1
     sdfg.expand_library_nodes()
     for sub in sdfg.all_sdfgs_recursive():
         for name, desc in sub.arrays.items():

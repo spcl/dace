@@ -14,7 +14,7 @@ def _test_kernel_transient(persistent: bool):
 
     sdfg = nested.to_sdfg()
     # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
-    sdfg.apply_gpu_transformations(register_transients=not persistent)
+    sdfg.apply_gpu_transformations()
 
     # Distinct per variant: these differ only in generated code, so sharing a name would put them in
     # one build folder and let two of them clobber each other's build when run in parallel.
@@ -59,7 +59,7 @@ def _test_transient(persistent: bool):
     sdfg = transient.to_sdfg()
     sdfg.name = 'nested_transient_persistent' if persistent else 'nested_transient'
     # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
-    sdfg.apply_gpu_transformations(register_transients=not persistent)
+    sdfg.apply_gpu_transformations()
 
     if persistent:
         # Mark any GPU-side transient created by apply_gpu_transformations as persistent.
@@ -105,7 +105,7 @@ def _test_double_transient(persistent: bool):
         sdfg.simplify()
 
     # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
-    sdfg.apply_gpu_transformations(register_transients=not persistent)
+    sdfg.apply_gpu_transformations()
 
     if persistent:
         # Mark any GPU-side transient created by apply_gpu_transformations as persistent.

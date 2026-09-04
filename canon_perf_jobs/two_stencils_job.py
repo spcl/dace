@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Optimize the npbench cavity_flow and channel_flow kernels with MPI suppressed."""
+"""Optimize the npbench cavity_flow and channel_flow kernels with MPI suppressed.
+
+A job script, run by hand -- NOT a test. Named ``test_two_stencils.py`` it matched
+pytest.ini's ``python_files``, and being the only such name outside ``tests/`` it was the first
+test module any unqualified run imported -- ahead of every module that imports dace. Its module
+body then applied to the whole session: ``MPI4PY_RC_INITIALIZE=0`` (which is how MPI came up
+single-threaded), an empty ``CUDA_VISIBLE_DEVICES``, and an ``OMPI_MCA_btl`` of its own. Keep the
+name out of ``python_files``.
+"""
 import os
 import sys
 from pathlib import Path
 
-# --- SET THIS TO YOUR DACE REPO PATH ---
-DACE_REPO = Path('/home/primrose/Work/dace')
-# ---------------------------------------
+# The checkout this job script lives in, so the ``tests.corpus.*`` imports below resolve.
+DACE_REPO = Path(__file__).resolve().parent.parent
 
 # 1. Suppress MPI / UCX / HWLOC initialization hangs BEFORE any imports
 os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')

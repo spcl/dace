@@ -352,8 +352,11 @@ class LoopToTranspose(ppl.Pass):
 
         def _is_full(rng_list, desc) -> bool:
             for (lo, hi, st), sz in zip(rng_list, desc.shape):
+                # Bounds are rebuilt from the loop's reparsed ranges, the shape carries the declared
+                # assumptions: two instances of one name that never cancel.
+                end, sz_eq = symbolic.equalize_symbols_across(hi, sz)
                 if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
-                        symbolic.simplify(hi - (sz - 1)) != 0:
+                        symbolic.simplify(end - (sz_eq - 1)) != 0:
                     return False
             return True
 

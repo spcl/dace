@@ -165,8 +165,10 @@ def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
         return False
     # Loop must sweep the array's full extent [0, M) with unit stride, else some element is
     # left uninitialised (garbage the guard would still sort) or the coverage is non-contiguous.
-    extent = desc.shape[0]
-    if symbolic.simplify(init) != 0 or symbolic.simplify(stride - 1) != 0 or symbolic.simplify(end - (extent - 1)) != 0:
+    # The loop end comes back from a reparsed CodeBlock while the shape carries the declared
+    # assumptions, so one name yields two sympy instances whose difference never cancels.
+    hi, extent = symbolic.equalize_symbols_across(end, desc.shape[0])
+    if symbolic.simplify(init) != 0 or symbolic.simplify(stride - 1) != 0 or symbolic.simplify(hi - (extent - 1)) != 0:
         return False
 
     # Write position must be the bare point ``[loop_var]`` so sweeping j covers exactly [0, M).

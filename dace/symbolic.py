@@ -25,6 +25,12 @@ from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 # Unreferenced HERE, and `ruff-check --fix` runs in pre-commit -- without the noqa it deletes them.
 from dace.symbolic_engine import Boolean as SymbolicBoolean, Expr as SymbolicExpr  # noqa: F401
 
+#: The OpenMP thread count, defined by frame code rather than passed in. Sizing a per-thread
+#: buffer needs the value at ALLOCATION time, but the count is an OpenMP runtime property and must
+#: not enter the ABI -- ``SDFG.arglist`` drops every ``__dace``-prefixed name, so this is usable in
+#: a shape without appearing in any signature. Always defined, so a pass may use it unconditionally.
+NUM_THREADS_SYMBOL = '__dace_num_threads'
+
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
@@ -34,6 +40,11 @@ class _SymbolDTypeContext(threading.local):
 
         # The lowest level in the stack is reserved for "no stack active".
         self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
+        # Parallel stack of hashable fingerprints. ``pystr_to_symbolic`` is cached on the text
+        # alone, but the same text names a different symbol under a different authority, so the
+        # fingerprint goes in the key. Maintained on push/pop -- computing it per parse would put
+        # a sort on one of the hottest paths in the compiler.
+        self.key_stack: List[Tuple] = [()]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
@@ -46,6 +57,7 @@ class _SymbolDTypeContext(threading.local):
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
         })
         self.ctx_stack.append(new_stack_level)
+        self.key_stack.append(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items())))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -53,6 +65,7 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
+        self.key_stack.pop()
         return self
 
     def get(self) -> types.MappingProxyType:
@@ -60,6 +73,10 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 0:
             raise IndexError("Symbol type stack is empty.")
         return self.ctx_stack[-1]
+
+    def cache_key(self) -> Tuple:
+        """Hashable stand-in for the active authority, for use in a parse cache key."""
+        return self.key_stack[-1]
 
     @staticmethod
     def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
@@ -1127,7 +1144,20 @@ def sympy_to_dace(exprs, symbol_map=None):
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
                         # Substituted back into a sympy tree: a foreign leaf converts straight back.
-                        repl[atom] = sympy_symbol(atom.name, **atom.assumptions0)
+                        # DTYPE FROM THE ENCLOSING SCOPE, not the default. A symbol's dtype is part
+                        # of its identity (``symbol._hashable_content``), and a bound recovered from
+                        # a STRING-backed property (a loop's init / condition / update) is re-parsed
+                        # here, so minting it at ``DEFAULT_SYMBOL_TYPE`` puts a second ``N`` in a
+                        # graph whose descriptors carry the declared one. ``N - N`` then never
+                        # cancels -- not even under ``simplify`` -- and every proof that compares a
+                        # bound against a subset fails on a well-formed program: the modular-wrap
+                        # split rejects its own split point (ext_modular_wrap, 250x slower) and the
+                        # 2-D arg-reduce match rejects a nest that does cover the whole array
+                        # (TSVC s3110 / s13110). The authority only ever OVERRIDES: a name no
+                        # enclosing scope declares keeps the default, so an unscoped parse is
+                        # unchanged.
+                        declared = _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name)
+                        repl[atom] = sympy_symbol(atom.name, declared, **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]
@@ -2249,20 +2279,40 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    # A denominator DaCe can divide by: a symbol, an integer, or a rounding call, which is itself
+    # an integer division and so is just as dividable. Admitting the rounding call here is what
+    # makes ``a / b`` and ``e / b`` cover a rounding over a rounding, of EITHER kind -- the four
+    # arms that used to name one head on both sides only ever matched the matching pair, so
+    # ``ceiling(N / int_floor(M, T))`` fell through all of them and survived.
     # ``b != 1``: a rounding call with nothing to divide by is not an integer division. Without it
     # ``floor(sin(x))`` matches ``floor(e / b)`` with ``b = 1`` and becomes ``int_floor(sin(x), 1)``,
     # which prints as a division by one -- the rounding silently dropped (spcl/dace#2524).
-    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
+    b = sympy.Wild(
+        'b', properties=[lambda k: (k.is_Symbol or k.is_Integer or isinstance(k, (int_ceil, int_floor))) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
-    int_ceil = sympy.Function('int_ceil')
-    int_floor = sympy.Function('int_floor')
+    # Every rounding head named below -- in ``b``'s property and in the arms -- is the REAL class,
+    # never ``sympy.Function('int_ceil')``. An undefined function of the same name prints
+    # identically and reports the same ``.func`` name, but is a different class, so a pattern built
+    # from it matches nothing an SDFG carries. A surviving ``ceiling`` prints as C++ ``ceil()``
+    # wrapped around a TRUNCATING integer division (wrong when inexact, and a non-integer loop
+    # predicate OpenMP rejects), so such a miss is a silent miscompile, not a cosmetic one.
 
     processed = 1
     while processed > 0:
         processed = 0
         for ceil in nexpr.find(sympy.ceiling):
+            # A known-integer argument has nothing to round: the call is the identity. Resolving it
+            # HERE rather than only at print time means every consumer of the expression -- range
+            # propagation, validation, symbol comparison -- sees the integer form too, not just the
+            # emitted C++. ``is_integer`` is only trustworthy on a deserialized expression because
+            # the serializer preserves it (spcl/dace#2550); on a freshly built one it is None and
+            # the match arms below do the work instead.
+            if ceil.args[0].is_integer:
+                nexpr = nexpr.subs(ceil, ceil.args[0])
+                processed += 1
+                continue
             # Before matching: a distributed rational sum would otherwise match ``a / b`` with
             # ``b = 1`` and keep its Rationals, which C++ truncates term by term.
             frac = recombined_fraction(ceil.args[0])
@@ -2280,12 +2330,6 @@ def sympy_intdiv_fix(expr):
             m = ceil.match(sympy.ceiling(int_ceil(c, d) / b))
             if m is not None:
                 nexpr = nexpr.subs(ceil, int_ceil(int_ceil(m[c], m[d]), m[b]))
-                processed += 1
-                continue
-            # Ceiling of ceiling: "ceil(a / ceil(c/d))"
-            m = ceil.match(sympy.ceiling(a / int_ceil(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(ceil, int_ceil(m[a], int_ceil(m[c], m[d])))
                 processed += 1
                 continue
             # Match ceiling of multiplication with our custom integer functions
@@ -2306,6 +2350,11 @@ def sympy_intdiv_fix(expr):
                 processed += 1
                 continue
         for floor in nexpr.find(sympy.floor):
+            # See the ceiling branch: a known-integer argument makes the rounding the identity.
+            if floor.args[0].is_integer:
+                nexpr = nexpr.subs(floor, floor.args[0])
+                processed += 1
+                continue
             # See the ceiling branch: recombine before matching, or the Rationals survive into the
             # numerator and each truncates on its own in C++.
             frac = recombined_fraction(floor.args[0])
@@ -2323,12 +2372,6 @@ def sympy_intdiv_fix(expr):
             m = floor.match(sympy.floor(int_floor(c, d) / b))
             if m is not None:
                 nexpr = nexpr.subs(floor, int_floor(int_floor(m[c], m[d]), m[b]))
-                processed += 1
-                continue
-            # Floor of floor: "floor(a / floor(c/d))"
-            m = floor.match(sympy.floor(a / int_floor(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c], m[d])))
                 processed += 1
                 continue
             # floor with composite expression
@@ -2724,6 +2767,20 @@ def _construct_function_uncached(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
+# Operator-derived ``__``-prefixed variants for ``_SerializedSymbolicParser._functions``.
+# Defined at module level because Python name-mangles identifiers starting with ``__``
+# when they appear textually inside a class body.
+_SERIALIZED_OPERATOR_FUNCTIONS = {
+    '__int_floor': __int_floor,
+    '__bitwise_and': __bitwise_and,
+    '__bitwise_or': __bitwise_or,
+    '__bitwise_xor': __bitwise_xor,
+    '__bitwise_invert': __bitwise_invert,
+    '__left_shift': __left_shift,
+    '__right_shift': __right_shift,
+}
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -2931,6 +2988,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'id': sympy.Symbol('id'),
         'diag': sympy.Symbol('diag'),
         'jn': sympy.Symbol('jn'),
+        **_SERIALIZED_OPERATOR_FUNCTIONS,
     }
     _constants = {
         'True': sympy.true,
@@ -3344,12 +3402,14 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy.simplify(expr) if isinstance(expr, sympy.Basic) else expr.simplify()
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
-        return _pystr_to_symbolic_cached(expr, simplify)
+        # The authority is part of the key: the same text names a symbol of a different dtype under
+        # a different scope, and a cache keyed on the text alone would hand back the other scope's.
+        return _pystr_to_symbolic_cached(expr, simplify, _SERIALIZATION_SYMBOL_DTYPES.cache_key())
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
+def _pystr_to_symbolic_cached(expr, simplify=None, authority_key: Tuple = ()) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
 
@@ -3370,7 +3430,10 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
         if dtypes.validate_name(expr):
-            return symbol(expr)
+            # A bare name short-circuits the whole parse, so it needs the scope authority here too
+            # -- otherwise the commonest spelling of all (a loop bound that IS just ``N``) is the
+            # one place the stamping does not reach. See ``sympy_to_dace``.
+            return symbol(expr, _SERIALIZATION_SYMBOL_DTYPES.get().get(expr))
 
     symbol_map = symbol_map or {}
 
@@ -3643,6 +3706,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         lowered = self._mpr_call(name, [self._print(a) for a in expr.args])
         if lowered is not None:
             return lowered
+        # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
+        # must be qualified for the same reason a tasklet body's are (mpr_lowering states it): bare,
+        # they bind to ``std::``, whose overloads are ambiguous for a 16-bit float. The Pow path
+        # above already emits ``dace::math::sqrt`` for ``x**Rational(1, 2)``; this covers the same
+        # function arriving as a CALL -- ``math.sqrt(x)``, or a sympy ``exp`` from a substitution --
+        # which the base printer would otherwise write out under its bare sympy name.
+        qualified = mpr_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
+        if qualified is not None:
+            return '%s(%s)' % (qualified, ', '.join(self._print(a) for a in expr.args))
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
@@ -3665,6 +3737,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         """
         if not self.cpp_mode:
             return super()._print_Function(expr)
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
         lowered = self._mpr_call('ceiling', [self._print(expr.args[0])])
         if lowered is not None:
             return lowered
@@ -3732,6 +3810,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         """
         if not self.cpp_mode:
             return super()._print_Function(expr) if hasattr(super(), "_print_Function") else super()._print_floor(expr)
+        # The counterpart of the ceiling short-circuit: libm ``floor`` returns a double just as
+        # ``ceil`` does, so a known-integer argument must stand on its own here too. #2550 gave this
+        # to ceilings only, which left ``floor(int_floor(N, 2) + 1)`` emitting a floating call.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
         arg = expr.args[0]
         # Try to combine to a single ``Rational(num, den)``: when arg is
         # ``a/b + c/d + ...`` sympy's ``.together()`` rewrites to a
@@ -3905,37 +3988,18 @@ def infer_fp_ctype(expr) -> Optional[str]:
 
 
 @lru_cache(maxsize=16384, typed=True)
-def symstr(sym,
-           arrayexprs: Optional[FrozenSet[str]] = None,
-           cpp_mode=False,
-           dialect: Optional[mpr_lowering.Dialect] = None,
-           fp_ctype: Optional[str] = None) -> str:
-    """
-    Convert a symbolic expression to a compilable expression.
-
-    :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy
-                       user-functions back to array expressions.
-    :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
-                     returns a Python expression.
-    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
-                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved here and handed to the
-                    memoized printer as an argument: it has to reach the cache key or one dialect
-                    would serve the other's cached answer.
-    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
-                     becomes a division of THAT type rather than a truncating integer division
-                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
-                     integer division, which index arithmetic needs. In the cache key for the
-                     same reason ``dialect`` is.
-    :return: Expression in string format depending on the value of ``cpp_mode``.
-    """
+def _symstr(sym,
+            arrayexprs: Optional[FrozenSet[str]] = None,
+            cpp_mode=False,
+            dialect: Optional[mpr_lowering.Dialect] = None,
+            fp_ctype: Optional[str] = None) -> str:
+    """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
+    included, so nothing here may read an ambient value."""
 
     # Inferred, not required from the caller: every consumer of a symbolic expression would
     # otherwise have to thread a dtype down, and the one that forgot would silently emit a
     # truncating integer division. An explicit fp_ctype still wins, for a caller that knows the
     # surrounding type better than the expression does (a float32 accumulator over int operands).
-    if dialect is None:
-        dialect = mpr_lowering.active_dialect()
     if cpp_mode and fp_ctype is None:
         fp_ctype = infer_fp_ctype(sym)
 
@@ -3971,6 +4035,43 @@ def symstr(sym,
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
         return '(' + sstr + ')'
+
+
+def symstr(sym,
+           arrayexprs: Optional[FrozenSet[str]] = None,
+           cpp_mode=False,
+           dialect: Optional[mpr_lowering.Dialect] = None,
+           fp_ctype: Optional[str] = None) -> str:
+    """
+    Convert a symbolic expression to a compilable expression.
+
+    :param sym: Symbolic expression to convert.
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
+                       user-functions back to array expressions.
+    :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
+                     returns a Python expression.
+    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
+                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved HERE, in front of the
+                    memoized body, because the cache key is the ARGUMENTS: an omitted dialect
+                    resolved inside would give every ambient-dialect caller one shared entry, and
+                    a standalone render would then serve ``std::exp`` back to the runtime printer.
+                    This is the same shape ``dace.codegen.common.sym2cpp`` already has.
+    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
+                     becomes a division of THAT type rather than a truncating integer division
+                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
+                     integer division, which index arithmetic needs. In the cache key for the
+                     same reason ``dialect`` is.
+    :return: Expression in string format depending on the value of ``cpp_mode``.
+    """
+    if dialect is None:
+        dialect = mpr_lowering.active_dialect()
+    return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype)
+
+
+#: The wrapper is what callers hold, so the cache controls have to live on it too -- clearing
+#: ``symstr``'s cache is what a dialect test does between primings.
+symstr.cache_clear = _symstr.cache_clear
+symstr.cache_info = _symstr.cache_info
 
 
 def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str, str],
@@ -4349,6 +4450,14 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
 
     if any([args is None for args in args]):
         return False
+
+    # A NAME denotes one value in an SDFG, but sympy folds dtype and assumptions into symbol
+    # identity, so the same name minted twice (a bound reparsed from a CodeBlock vs a declared
+    # shape extent) yields two symbols that never cancel -- and this returns None, which every
+    # caller reading ``is True`` treats as "not equal" and silently refuses on. Equalize first, so
+    # the answer is about the VALUES rather than about which instance the caller happened to hold.
+    if all(isinstance(arg, sympy.Basic) for arg in args):
+        args = list(equalize_symbols_across(*args))
 
     facts = []
     if is_length:

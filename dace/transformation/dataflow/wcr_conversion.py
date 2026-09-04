@@ -1224,7 +1224,10 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # symbolically and PROCEED only when the write is provably within its volume;
         # an undecidable or provably-larger difference (the over-approximated /
         # dynamic case) refuses, keeping the WCR.
-        diff = symbolic.simplify(edge.data.subset.num_elements() - edge.data.volume)
+        # ``volume`` is a separately stored property -- reparsed on deserialization, recomputed by
+        # passes -- so its symbols need not be the subset's own instances of the same names.
+        written, volume = symbolic.equalize_symbols_across(edge.data.subset.num_elements(), edge.data.volume)
+        diff = symbolic.simplify(written - volume)
         within_volume = (diff <= 0) == True  # noqa: E712 -- sympy Relational, not a bool
         if not within_volume or edge.data.dynamic is True:
             return False

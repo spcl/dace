@@ -23,7 +23,9 @@ Two rewrites, in order:
    directly. The single-consumer / single-producer guard keeps
    SSA-like reassignment chains intact (``c1 = c[i]; ...; c1 =
    c1*d1*e1 + ...`` -- bypassing would fold two assignments onto one
-   AccessNode and pick up the wrong value).
+   AccessNode and pick up the wrong value). A producer that ACCUMULATES
+   into the transient is refused outright: its seed is a separate store
+   the bypass cannot carry along.
 
 The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
 be scatter / gather staging, so they stay untouched. Mirrors
@@ -35,6 +37,7 @@ import dace
 from dace import subsets
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             no_duplicate_connector_edges,
@@ -98,6 +101,22 @@ def _accessed_in_other_states(inner_sdfg: SDFG, data_name: str, current_state: S
             if n.data == data_name:
                 return True
     return False
+
+
+def _accumulates_into_destination(pe) -> bool:
+    """True iff producer edge ``pe`` folds into what its destination ALREADY holds.
+
+    Re-pointing a write at a different buffer is value-preserving only when the
+    write fully DEFINES the subset it covers. An accumulation does not: it reads
+    the destination's prior contents, so its seed is a separate write that the
+    bypass would leave behind on the abandoned node. Two accumulating forms reach
+    this pass -- a WCR memlet, and a ``Reduce`` library node carrying no
+    ``identity`` (``ExpandReducePure`` emits an initialization state only when an
+    identity exists, so an identity-free node reduces into the output in place).
+    """
+    if pe.data is not None and pe.data.wcr is not None:
+        return True
+    return isinstance(pe.src, Reduce) and pe.src.identity is None
 
 
 @transformation.explicit_cf_compatible
@@ -201,7 +220,10 @@ class BypassTrivialAssignTasklets(ppl.Pass):
           consumer / multi-producer patterns include SSA-like
           reassignment chains where the bypass would silently fold
           separate assignments onto one AccessNode and pick the wrong
-          value -- leave those alone).
+          value -- leave those alone);
+        * no producer of ``src`` ACCUMULATES into it (see
+          :func:`_accumulates_into_destination`) -- such a write is seeded by a
+          separate store the bypass cannot carry along.
 
         Preference: route the source's producer to write into the
         destination AccessNode (preserving downstream consumers of
@@ -248,7 +270,19 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 isinstance(pe.src, (dace.nodes.MapEntry, dace.nodes.MapExit)) for pe in istate.in_edges(src_an))
             dst_at_scope = any(
                 isinstance(de.dst, (dace.nodes.MapEntry, dace.nodes.MapExit)) for de in istate.out_edges(dst_an))
-            if src_desc.transient and istate.in_edges(src_an) and not src_xstate and not src_at_scope:
+            # Accumulating-producer guard: the src branch below re-points the producer's
+            # write onto ``dst_an``, which is only value-preserving when that write
+            # DEFINES the value. An accumulator instead folds into the destination's prior
+            # contents and is seeded by a separate write to the transient (``s = 0.0``,
+            # then an identity-free ``Reduce`` sums into ``s``); the splice strands that
+            # seed on the dead transient and accumulates into the caller's live array
+            # instead -- ``out[i] += sum(a[i, :])``, a running program with wrong numbers
+            # (tsvc_2_5 reduce_inner_carry). The cross-state guard above used to hide this
+            # while the seed and the reduce sat in separate states; state fusion put them
+            # in one, so the accumulation has to be checked for on its own terms.
+            src_accumulated = any(_accumulates_into_destination(pe) for pe in istate.in_edges(src_an))
+            if (src_desc.transient and istate.in_edges(src_an) and not src_xstate and not src_at_scope
+                    and not src_accumulated):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 # Carry BOTH sides of the bypassed chain on the new memlet so
                 # ``an_side_subset`` can return the lane-dep subset for the

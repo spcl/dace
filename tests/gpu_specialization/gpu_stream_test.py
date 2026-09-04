@@ -79,7 +79,11 @@ def test_extended():
 
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
-    gpu_stream_pipeline.apply_pass(sdfg, {})
+    # ``compiler.cuda.max_concurrent_streams`` defaults to -1 -- the default stream alone -- so a
+    # test about TWO streams has to ask for them. The strategy reads the setting when the pass runs,
+    # not when it was built, so wrapping the apply is enough.
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
+        gpu_stream_pipeline.apply_pass(sdfg, {})
 
     state = sdfg.states()[0]
 

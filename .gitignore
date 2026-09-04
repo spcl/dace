@@ -271,3 +271,7 @@ performance_regression_jobs/cloudsc_variants/cache/
 # than tidied away because `git add -A` would otherwise commit nested checkouts into the tree.
 /perf_ab/
 issues/
+
+# Core dumps from forked kernel processes (fork isolation is deliberate; the cores are not).
+core_nid*
+core.*

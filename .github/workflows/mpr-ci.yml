@@ -62,7 +62,7 @@ jobs:
         # Deliberately minimal: libyaml + cmake only. NO BLAS, NO LAPACK -- MPR output must not
         # reference them, and installing them would let a leaked library call link and pass.
         apt-packages: libyaml-dev cmake
-        extras: testing
+        groups: testing
 
     - name: MPR lowering, dialect and emission suites (${{ matrix.language }})
       run: |
@@ -95,16 +95,20 @@ jobs:
       with:
         python-version: '3.14'
         apt-packages: libyaml-dev cmake
-        extras: testing
+        groups: testing
 
     - name: CloudSC MPR equivalence
       run: |
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
         export OMP_STACKSIZE=64M
-        # Single-threaded: the reference and the rendering are compared at machine precision, and a
-        # parallel reduction reorders floating-point accumulation run to run.
-        export OMP_NUM_THREADS=1
+        # Multithreaded like every other numerical comparison here, rather than pinned to one
+        # thread. It changes nothing today: CloudSC as built has ZERO maps -- it is all
+        # LoopRegions -- so no OpenMP construct is emitted and the two sides stay bit-exact at any
+        # thread count (measured: the machine-precision tolerance passes at four threads). The
+        # setting is here so that the day CloudSC is built with maps, this compares the build that
+        # ships; that is also the day the tolerance has to be revisited for reassociation.
+        export OMP_NUM_THREADS=4
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
         export DACE_compiler_cpu_implementation=experimental_readable

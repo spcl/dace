@@ -86,35 +86,39 @@ def test_extended():
 
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
-    gpu_stream_pipeline.apply_pass(sdfg, {})
+    # ``compiler.cuda.max_concurrent_streams`` defaults to -1 -- the default stream alone -- so a
+    # test about TWO streams has to ask for them, over the WHOLE body: codegen reads the setting
+    # again and asserts one stream against an SDFG carrying two if the compile falls outside.
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
+        gpu_stream_pipeline.apply_pass(sdfg, {})
 
-    state = sdfg.states()[0]
+        state = sdfg.states()[0]
 
-    syncs = _sync_tasklets(state)
-    # Per-state syncs are fused into a single tasklet that synchronizes
-    # every stream the state needs to wait on, with one
-    # ``__stream_<id>`` ``gpuStream_t`` connector per stream id (the
-    # offset into the ``gpu_streams`` array).
-    assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}"
-    sync = syncs[0]
-    assert sync.side_effects is True
-    assert state.out_degree(sync) == 0
-    assert len(sync.in_connectors) == 2
-    for conn_name, conn_type in sync.in_connectors.items():
-        assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
-        assert conn_type == dace.dtypes.gpuStream_t
+        syncs = _sync_tasklets(state)
+        # Per-state syncs are fused into a single tasklet that synchronizes
+        # every stream the state needs to wait on, with one
+        # ``__stream_<id>`` ``gpuStream_t`` connector per stream id (the
+        # offset into the ``gpu_streams`` array).
+        assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}"
+        sync = syncs[0]
+        assert sync.side_effects is True
+        assert state.out_degree(sync) == 0
+        assert len(sync.in_connectors) == 2
+        for conn_name, conn_type in sync.in_connectors.items():
+            assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
+            assert conn_type == dace.dtypes.gpuStream_t
 
-    # Memcpy tasklets emitted by the non-library GPU transformation still
-    # need a stream connector (the library-node expansion handles its own
-    # during codegen).
-    memcopy_tasklets = [
-        n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
-    ]
-    for tasklet in memcopy_tasklets:
-        assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
-                                                 " and one for the copy source/destination.")
+        # Memcpy tasklets emitted by the non-library GPU transformation still
+        # need a stream connector (the library-node expansion handles its own
+        # during codegen).
+        memcopy_tasklets = [
+            n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
+        ]
+        for tasklet in memcopy_tasklets:
+            assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
+                                                     " and one for the copy source/destination.")
 
-    sdfg.compile()
+        sdfg.compile()
 
 
 @pytest.mark.gpu

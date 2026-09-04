@@ -10,6 +10,8 @@ on:
 
 env:
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -33,7 +35,8 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         pip-packages: flake8 pytest-xdist coverage
-        extras: ml-testing,ml
+        groups: ml-testing
+        extras: ml
         codecov: 'true'
 
     - name: Test with pytest

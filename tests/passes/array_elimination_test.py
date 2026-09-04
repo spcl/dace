@@ -301,9 +301,115 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
                                     'check sibling transients with both source AND sink in the same state.')
 
 
+def test_slice_view_fold_preserves_anti_dependence_on_output():
+    """Reduced from HPCAgent-Bench ``daubechies_dwt2d``. A NAMED full-array view of an output
+    (``block = out[:]``) is read twice through strided slices and the results are then stored back
+    into overlapping columns of ``out``. The read of ``out`` must happen BEFORE the first store.
+
+    ``RemoveSliceView`` folds ``block``/``out_0`` into ``out`` and re-attaches their data edges at
+    the END of ``out``'s adjacency, behind the empty ordering edge that fences the store. Codegen
+    emits a state in depth-first topological order, so the store to ``out[:, 0:4]`` moved ahead of
+    the ``7.0 * out[:, 1::2]`` read and the second half of the transform read back its own output.
+    ArrayElimination must decline the fold while ``out`` is read and written in the same state.
+    """
+    import numpy as np
+
+    @dace.program
+    def war(out: dace.float64[8, 8]):
+        block = out[:8, :8]
+        lo = 2.0 * block[:, 0:8:2] + 3.0 * block[:, 1:8:2]
+        hi = 5.0 * block[:, 0:8:2] + 7.0 * block[:, 1:8:2]
+        out[:8, 0:4] = lo
+        out[:8, 4:8] = hi
+
+    rng = np.random.default_rng(0)
+    inp = rng.random((8, 8))
+    expected = inp.copy()
+    war.f(expected)
+
+    sdfg = war.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Structural: the named view of ``out`` must survive, and codegen's depth-first topological
+    # order must reach the read of ``out`` before every store into it.
+    surviving = {
+        n.data
+        for state in sdfg.all_states()
+        for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
+    }
+    assert 'block' in surviving, ('ArrayElimination folded the named view ``block`` into ``out`` even though ``out`` '
+                                  'is read and written in the same state -- the fold re-orders the read behind the '
+                                  f'store; surviving views: {sorted(surviving)}')
+
+    checked = False
+    for state in sdfg.all_states():
+        writes = [
+            n for n in state.data_nodes() if n.data == 'out' and state.in_degree(n) > 0 and state.out_degree(n) == 0
+        ]
+        reads = [n for n in state.data_nodes() if n.data == 'out' and state.in_degree(n) == 0]
+        if not writes or not reads:
+            continue
+        views = [
+            n for n in state.data_nodes()
+            if isinstance(sdfg.arrays[n.data], dace.data.View) and sdutil.get_last_view_node(state, n) in reads
+        ]
+        order = list(sdutil.dfs_topological_sort(state))
+        last_read = max(order.index(v) for v in views)
+        first_write = min(order.index(w) for w in writes)
+        assert last_read < first_write, ('codegen order puts the store into ``out`` ahead of the read of '
+                                         '``out`` -- the anti-dependence is gone')
+        checked = True
+    assert checked, 'expected a state that reads ``out`` and stores back into it'
+
+    # Codegen text: the ``7.0 *`` multiply reads ``out``; it must be emitted before the store of ``lo``.
+    code = [c.clean_code for c in sdfg.generate_code() if c.title == 'Frame'][0]
+    read_pos = code.rindex('7.0 *')
+    write_pos = code.index('copy_lo_to_out', code.index('__program_'))
+    assert read_pos < write_pos, 'generated code stores into ``out`` before the read of ``out``'
+
+    # Values: bit-exact against the NumPy reference.
+    got = inp.copy()
+    sdfg(out=got)
+    assert np.array_equal(got, expected), f'wrong numbers, max deviation {np.abs(got - expected).max()}'
+
+
+def test_slice_view_fold_still_removes_a_safe_view():
+    """The anti-dependence guard must not blunt the pass: a named view of a container that is only
+    READ in the state carries no write-after-read, so ``RemoveSliceView`` must still fold it away
+    and the view descriptor must disappear.
+    """
+    import numpy as np
+
+    @dace.program
+    def safe(inp: dace.float64[8, 8], out: dace.float64[8, 4]):
+        block = inp[:8, :8]
+        out[:] = 2.0 * block[:, 0:8:2] + 3.0 * block[:, 1:8:2]
+
+    sdfg = safe.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    views = {
+        n.data
+        for state in sdfg.all_states()
+        for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
+    }
+    assert not views & {'block', 'inp_0'}, (f'ArrayElimination stopped removing safe slice views: {sorted(views)} -- '
+                                            'the anti-dependence guard must only fire when the viewed container is '
+                                            'also written in the state')
+
+    rng = np.random.default_rng(1)
+    inp = rng.random((8, 8))
+    got = np.zeros((8, 4))
+    sdfg(inp=inp, out=got)
+    assert np.array_equal(got, 2.0 * inp[:, 0:8:2] + 3.0 * inp[:, 1:8:2])
+
+
 if __name__ == '__main__':
     test_redundant_simple()
     test_merge_simple()
     test_source_merge_refuses_when_data_is_also_written()
     test_sink_merge_refuses_when_data_is_also_read()
     test_source_merge_allowed_when_write_is_in_another_state()
+    test_source_merge_preserves_carrier_raw_order_on_sibling_transient()
+    test_slice_view_fold_preserves_anti_dependence_on_output()
+    test_slice_view_fold_still_removes_a_safe_view()

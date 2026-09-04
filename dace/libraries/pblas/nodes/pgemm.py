@@ -4,6 +4,8 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import blas_helpers
+from dace.libraries.mpi.nodes.node import expanded_input_connectors
+from dace.libraries.pblas.nodes.node import scalapack_grid_code
 from dace.ordered import OrderedSet
 
 
@@ -18,6 +20,7 @@ class ExpandPgemmMKLMPICH(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         code = f"""
+        {scalapack_grid_code(node, parent_state, True)}
             const {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
             const char trans = 'N';
             MKL_INT gc_rows = {node.n};
@@ -32,27 +35,33 @@ class ExpandPgemmMKLMPICH(ExpandTransformation):
             MKL_INT la_cols = _a_block_sizes[0];
             MKL_INT lb_rows = _b_block_sizes[1];
             MKL_INT lb_cols = _b_block_sizes[0];
-            MKL_INT n_lc_rows = numroc_( &gc_rows, &lc_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            // MKL_INT n_lc_cols = numroc_( &gc_cols, &lc_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT n_lc_rows = numroc_( &gc_rows, &lc_rows, &__myprow, &__state->__mkl_int_zero, &__nprow);
+            // MKL_INT n_lc_cols = numroc_( &gc_cols, &lc_cols, &__mypcol, &__state->__mkl_int_zero, &__npcol);
             MKL_INT c_lld = max(n_lc_rows, 1);
-            MKL_INT n_la_rows = numroc_( &ga_rows, &la_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            // MKL_INT n_la_cols = numroc_( &ga_cols, &la_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT n_la_rows = numroc_( &ga_rows, &la_rows, &__myprow, &__state->__mkl_int_zero, &__nprow);
+            // MKL_INT n_la_cols = numroc_( &ga_cols, &la_cols, &__mypcol, &__state->__mkl_int_zero, &__npcol);
             MKL_INT a_lld = max(n_la_rows, 1);
-            MKL_INT n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            // MKL_INT n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT n_lb_rows = numroc_( &gb_rows, &lb_rows, &__myprow, &__state->__mkl_int_zero, &__nprow);
+            // MKL_INT n_lb_cols = numroc_( &gb_cols, &lb_cols, &__mypcol, &__state->__mkl_int_zero, &__npcol);
             MKL_INT b_lld = max(n_lb_rows, 1);
-            MKL_INT info;
+            MKL_INT info_c, info_a, info_b;
             MKL_INT _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
-            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &c_lld, &info);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);
-            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &b_lld, &info);
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__ctxt, &c_lld, &info_c);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__ctxt, &a_lld, &info_a);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__ctxt, &b_lld, &info_b);
+            if (info_c != 0 || info_a != 0 || info_b != 0) {{
+                fprintf(stderr, "descinit_ refused a PGEMM descriptor: info(c=%d a=%d b=%d). A negative value is "
+                                "minus the index of the argument it refused; the call would otherwise "
+                                "return wrong numbers rather than fail.\\n", info_c, info_a, info_b);
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }}
             MKL_INT _m = gc_rows, _n = gc_cols, _k = ga_rows;
             p{lapack_dtype_str}gemm_(
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc,
                 _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc);
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          expanded_input_connectors(node, parent_state),
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
@@ -79,6 +88,7 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         code = f"""
+        {scalapack_grid_code(node, parent_state, False)}
             {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
             char trans = 'N';
             int gc_rows = {node.n};
@@ -93,27 +103,33 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
             int la_cols = _a_block_sizes[0];
             int lb_rows = _b_block_sizes[1];
             int lb_cols = _b_block_sizes[0];
-            int n_lc_rows = numroc_( &gc_rows, &lc_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
-            // int n_lc_cols = numroc_( &gc_cols, &lc_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int n_lc_rows = numroc_( &gc_rows, &lc_rows, &__myprow, &__state->__int_zero, &__nprow);
+            // int n_lc_cols = numroc_( &gc_cols, &lc_cols, &__mypcol, &__state->__int_zero, &__npcol);
             int c_lld = max(n_lc_rows, 1);
-            int n_la_rows = numroc_( &ga_rows, &la_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
-            // int n_la_cols = numroc_( &ga_cols, &la_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int n_la_rows = numroc_( &ga_rows, &la_rows, &__myprow, &__state->__int_zero, &__nprow);
+            // int n_la_cols = numroc_( &ga_cols, &la_cols, &__mypcol, &__state->__int_zero, &__npcol);
             int a_lld = max(n_la_rows, 1);
-            int n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
-            // int n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int n_lb_rows = numroc_( &gb_rows, &lb_rows, &__myprow, &__state->__int_zero, &__nprow);
+            // int n_lb_cols = numroc_( &gb_cols, &lb_cols, &__mypcol, &__state->__int_zero, &__npcol);
             int b_lld = max(n_lb_rows, 1);
-            int info;
+            int info_c, info_a, info_b;
             int _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
-            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info);
-            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
-            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info);
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__ctxt, &c_lld, &info_c);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__ctxt, &a_lld, &info_a);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__ctxt, &b_lld, &info_b);
+            if (info_c != 0 || info_a != 0 || info_b != 0) {{
+                fprintf(stderr, "descinit_ refused a PGEMM descriptor: info(c=%d a=%d b=%d). A negative value is "
+                                "minus the index of the argument it refused; the call would otherwise "
+                                "return wrong numbers rather than fail.\\n", info_c, info_a, info_b);
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }}
             int _m = gc_rows, _n = gc_cols, _k = ga_rows;
             p{lapack_dtype_str}gemm_(
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
                 _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          expanded_input_connectors(node, parent_state),
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)

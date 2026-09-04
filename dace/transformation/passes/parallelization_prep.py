@@ -58,6 +58,69 @@ def _as_symbolic(expr):
     return symbolic.pystr_to_symbolic(str(expr))
 
 
+def _retyped(expr, sdfg):
+    """``expr`` with every free symbol re-bound to the dtype ``sdfg`` declares for it.
+
+    A loop bound lives in a STRING-backed property, so recovering one re-parses it, and
+    ``pystr_to_symbolic`` mints ``DEFAULT_SYMBOL_TYPE`` symbols from the bare names it finds. A
+    memlet subset is stored symbolic and keeps the dtype the program declared. A symbol's dtype is
+    part of its identity (``symbol._hashable_content``), so those are two DIFFERENT symbols of one
+    name and ``N - N`` never collapses to ``0`` -- not even under ``sympy.simplify``. Every band /
+    sign proof that compares a bound against a subset then fails for a reason that has nothing to
+    do with the program: ``ext_modular_wrap`` (``a[(i + K) % N]``) finds its split point at
+    ``x = N - 1`` and rejects it, because proving the near half in band ``0`` asks whether
+    ``N - 1 - (N - 1) >= 0`` and the two ``N``s do not cancel. It keeps its sequential loop and
+    runs 250x slower than the un-canonicalized form.
+
+    Re-binding to ``sdfg.symbols`` -- the declaration both spellings were meant to carry -- is what
+    makes the comparison well-typed. Assumptions already on the symbol are carried over, never
+    dropped: this widens a type, it must not weaken a proof.
+    """
+    if sdfg is None or not isinstance(expr, sympy.Basic):
+        return expr
+    repl = {}
+    for sym in expr.free_symbols:
+        if not isinstance(sym, symbolic.symbol):
+            continue
+        declared = sdfg.symbols.get(sym.name)
+        if declared is None or declared == sym.dtype:
+            continue
+        kept = {k: v for k, v in sym.assumptions0.items() if k in ('nonnegative', 'positive', 'integer')}
+        repl[sym] = symbolic.symbol(sym.name, dtype=declared, **kept)
+    return expr.subs(repl) if repl else expr
+
+
+def _unified(expr, *context):
+    """``expr`` with each free symbol re-spelled as the flavour ``context`` uses for that name.
+
+    Complements :func:`_retyped`, for the comparisons where no single declaration is authoritative
+    for both sides: a memlet-borne modulus and a string-recovered loop bound reach
+    :meth:`_modulo_to_affine` in whatever flavour their own stage minted, and either one can be the
+    odd one out (which one drifts depends on how far ``replace_dict`` has normalised the graph). A
+    sign proof does not care WHICH width it reasons in -- it cares that two occurrences of one name
+    are one symbol, or ``N - N`` never cancels and the band test fails on a well-formed program.
+
+    The widest dtype in ``context`` wins, so unifying never narrows an expression that a later
+    stage reads back.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    widest: Dict[str, Any] = {}
+    for other in context:
+        for sym in getattr(other, 'free_symbols', ()):
+            if not isinstance(sym, symbolic.symbol):
+                continue
+            best = widest.get(sym.name)
+            if best is None or sym.dtype.bytes > best.dtype.bytes:
+                widest[sym.name] = sym
+    repl = {
+        sym: widest[sym.name]
+        for sym in expr.free_symbols
+        if isinstance(sym, symbolic.symbol) and sym.name in widest and widest[sym.name].dtype != sym.dtype
+    }
+    return expr.subs(repl) if repl else expr
+
+
 def _is_zero(expr) -> bool:
     """Whether ``expr`` is identically zero -- the zero test the index-solving below needs.
 
@@ -1205,7 +1268,9 @@ class BestEffortLoopPeeling(ppl.Pass):
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
-                    ranges[symbolic.pystr_to_symbolic(graph.loop_variable)] = (start, end)
+                    owner = graph.sdfg
+                    ranges[_retyped(symbolic.pystr_to_symbolic(graph.loop_variable),
+                                    owner)] = (_retyped(_as_symbolic(start), owner), _retyped(_as_symbolic(end), owner))
             graph = getattr(graph, 'parent_graph', None)
         return ranges
 
@@ -1256,7 +1321,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``a[(i + K) % N]`` rewrites to ``i + K - N`` under the assumption ``K < N``,
         returned in ``relations`` for a caller to record and runtime-check. ``m``
         may be symbolic."""
-        operands = self._modulo_operands(mod)
+        operands = self._modulo_operands(_unified(mod, *(b for se in ranges.values() for b in se)))
         if operands is None:
             return None
         arg, m = operands
@@ -1311,7 +1376,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         end = loop_analysis.get_loop_end(loop)
         if start is None or end is None or not loop.loop_variable:
             return {}
-        return {symbolic.pystr_to_symbolic(loop.loop_variable): (start, end)}
+        owner = loop.sdfg
+        return {
+            _retyped(symbolic.pystr_to_symbolic(loop.loop_variable), owner):
+            (_retyped(_as_symbolic(start), owner), _retyped(_as_symbolic(end), owner))
+        }
 
     def _affine_body_modulos(self, loop: LoopRegion, ranges: Optional[Dict[Any, Any]] = None):
         """Yield ``(mod, arg, m, a, b)`` for every memlet-subset modulo ``Mod(arg,

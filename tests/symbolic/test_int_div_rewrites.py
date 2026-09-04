@@ -12,7 +12,8 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.symbolic import (int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix)
+from dace.symbolic import (deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr,
+                           sympy_intdiv_fix)
 
 N = pystr_to_symbolic('N')
 M = pystr_to_symbolic('M')
@@ -51,24 +52,15 @@ def test_inexact_division_is_left_symbolic(fn):
 
 @pytest.mark.parametrize('rounding', [sympy.floor, sympy.ceiling])
 def test_rounding_of_a_non_integer_expression_is_kept(rounding):
-    """A rounding call with nothing to divide by is not an integer division.
-
-    ``floor(e / b)`` used to match with ``b = 1`` for any non-atomic argument, so the rounding was
-    rewritten to ``int_floor(arg, 1)`` and printed as a division by one -- silently dropped
-    (spcl/dace#2524).
-    """
-    x = pystr_to_symbolic('x')
+    """A rounding call with nothing to divide by must survive the rewrite."""
+    x = sympy.Symbol('x')
     expr = rounding(sympy.sin(x))
     assert sympy_intdiv_fix(expr) == expr
 
 
 @pytest.mark.parametrize('rounding,call', [(sympy.floor, 'floor'), (sympy.ceiling, 'ceil')])
 def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
-    """The kept rounding must reach C++ as the matching math-library call.
-
-    ``ceil`` rather than the sympy name: the runtime's one-argument ``ceiling`` overload returns
-    ``DBL_MAX`` for a floating argument, so the bare name would emit a poison value.
-    """
+    """The kept rounding must reach C++ as the matching math-library call."""
     x = pystr_to_symbolic('x')
     assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
 
@@ -96,6 +88,22 @@ def test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating():
     """
     n = symbol('n', dtype=dtypes.int64)
     assert symstr(sympy.ceiling(sympy.sin(n)), cpp_mode=True) == '(ceil(sin(n)))'
+
+
+def test_ceiling_of_an_integer_prints_as_its_argument():
+    """A ``ceiling`` over a known-integer argument must print as the argument itself.
+
+    Deserialization rebuilds an application through ``Basic.__new__`` and bypasses the
+    ``eval`` that would have folded the wrapper, so a stored ``ceiling`` reaches the
+    printer unevaluated. Neither call is acceptable there: libm ``ceil`` returns a
+    ``double``, and the runtime's ``ceiling`` is only overloaded for ``int``, ``float``
+    and ``double``, which leaves a 64-bit or unsigned argument ambiguous.
+    """
+    stored = deserialize_symbolic('ceiling(__int_floor($N, 2))')
+    assert isinstance(stored, sympy.ceiling)
+    assert stored.args[0].is_integer
+
+    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
 
 
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
@@ -200,3 +208,32 @@ if __name__ == '__main__':
     test_int_floor_truncates_toward_zero_in_the_generated_code()
     test_ceiling_of_index_arithmetic_is_integer_typed()
     test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating()
+
+
+def test_a_stored_rounding_over_an_integer_folds_in_the_normalizer_not_only_the_printer():
+    """``sympy_intdiv_fix`` resolves a known-integer rounding, so consumers see the integer form.
+
+    Deserialization rebuilds an application through ``Basic.__new__``, bypassing the ``eval`` that
+    would have folded the wrapper, so a stored rounding arrives unevaluated. The printer has a
+    backstop for that, but a backstop only helps the emitted C++ -- range propagation, validation
+    and symbol comparison all read the EXPRESSION, and they were seeing a rounding that is the
+    identity. Folding it in the normalizer gives every consumer the same view.
+    """
+    for text in ('ceiling(__int_floor($N, 2) + 1)', 'floor(__int_floor($N, 2) + 1)'):
+        stored = deserialize_symbolic(text)
+        assert stored.args[0].is_integer, text
+        folded = sympy_intdiv_fix(stored)
+        assert not folded.find(sympy.ceiling), f'{text} -> {folded}'
+        assert not folded.find(sympy.floor), f'{text} -> {folded}'
+
+
+def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
+    """The floor counterpart of the ceiling rule: libm ``floor`` returns a double.
+
+    spcl/dace#2550 gave the integer short-circuit to ceilings only, which left this shape emitting
+    ``floor(...)`` -- a double where an integer extent belongs, and the same non-integer loop
+    predicate that makes OpenMP reject an ``omp for``.
+    """
+    emitted = symstr(deserialize_symbolic('floor(__int_floor($N, 2) + 1)'), cpp_mode=True)
+    assert 'floor(' not in emitted, emitted
+    assert '/' in emitted, emitted

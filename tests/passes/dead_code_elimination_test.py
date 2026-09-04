@@ -680,8 +680,8 @@ def _init_then_reduce(identity) -> Tuple[dace.SDFG, dace.SDFGState, nodes.Access
 
     red = state.add_reduce('lambda a, b: a + b', None, identity)
     s_red = state.add_access('s')
-    state.add_nedge(a_read, red, dace.Memlet('A[0:6]'))
-    state.add_nedge(red, s_red, dace.Memlet('s[0]'))
+    state.add_edge(a_read, None, red, '_in', dace.Memlet('A[0:6]'))
+    state.add_edge(red, '_out', s_red, None, dace.Memlet('s[0]'))
 
     copy = state.add_tasklet('copy', {'inp'}, {'o'}, 'o = inp')
     out = state.add_access('out')

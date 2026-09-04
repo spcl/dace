@@ -19,17 +19,24 @@ import pytest
 from dace.frontend.python.preprocessing import ensure_mpi_initialized
 from dace.sdfg.sdfg import MPI_RANK_VARS
 
-#: Run under a launcher, this brings MPI up and reports a rank; without the fix it aborts.
-PROBE = 'import dace\nfrom mpi4py import MPI\nprint("rank", MPI.COMM_WORLD.Get_rank())'
+#: Run under a launcher, this brings MPI up and reports a rank and the thread level MPI granted;
+#: without the fix the rank call aborts, and with a bare ``MPI_Init`` the level comes back SINGLE.
+PROBE = ('import dace\n'
+         'from mpi4py import MPI\n'
+         'print("rank", MPI.COMM_WORLD.Get_rank(), "level", MPI.Query_thread(), MPI.THREAD_FUNNELED)')
 
 
 class FakeMPI(types.ModuleType):
     """An ``mpi4py.MPI`` that starts down and records the bring-up."""
 
+    #: The levels, ordered as MPI orders them.
+    THREAD_SINGLE, THREAD_FUNNELED, THREAD_SERIALIZED, THREAD_MULTIPLE = 0, 1, 2, 3
+
     def __init__(self):
         super().__init__('mpi4py.MPI')
         self.initialized = False
         self.init_calls = 0
+        self.requested_levels = []
 
     def Is_initialized(self):
         return self.initialized
@@ -38,8 +45,13 @@ class FakeMPI(types.ModuleType):
         return False
 
     def Init(self):
+        raise AssertionError('bare MPI_Init promises MPI_THREAD_SINGLE; use Init_thread')
+
+    def Init_thread(self, required):
         self.initialized = True
         self.init_calls += 1
+        self.requested_levels.append(required)
+        return required
 
     def Finalize(self):
         self.initialized = False
@@ -66,6 +78,20 @@ def test_launched_rank_gets_mpi_initialized(fake_mpi, monkeypatch, rank_var):
     ensure_mpi_initialized()
 
     assert fake_mpi.init_calls == 1
+
+
+def test_bring_up_asks_for_thread_multiple(fake_mpi, monkeypatch):
+    """Bare ``MPI_Init`` promises MPI_THREAD_SINGLE -- one thread in the process -- and no DaCe
+    process keeps that promise: its maps are OpenMP regions and its BLAS spawns a pool. Open MPI
+    believes it and drops the locking around its shared-memory transport, so ScaLAPACK's panel
+    broadcasts come back corrupted and PBLAS returns a different wrong answer on every call.
+    mpi4py's own bring-up asks for MPI_THREAD_MULTIPLE; a rank that took this path instead must be
+    indistinguishable from one that did not."""
+    monkeypatch.setenv(MPI_RANK_VARS[0], '0')
+
+    ensure_mpi_initialized()
+
+    assert fake_mpi.requested_levels == [fake_mpi.THREAD_MULTIPLE]
 
 
 def test_already_initialized_rank_is_left_alone(fake_mpi, monkeypatch):
@@ -132,6 +158,14 @@ def test_poisoned_rank_can_still_talk_to_its_communicator():
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.count('rank') == 2, result.stdout
+
+    # ... and at a thread level that admits the other threads the process has. Below FUNNELED an
+    # MPI is entitled to run unlocked, which is what turned a pgemm into nondeterministic garbage.
+    for line in result.stdout.split('\n'):
+        if not line.startswith('rank '):
+            continue
+        _, _, _, level, funneled = line.split()
+        assert int(level) >= int(funneled), f'MPI came up below MPI_THREAD_FUNNELED: {line}'
 
 
 if __name__ == '__main__':

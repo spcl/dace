@@ -306,10 +306,21 @@ class LoopToScan(ppl.Pass):
               "inner loops are lifted regardless (there is no map to keep)."),
     )
 
-    def __init__(self, interchange_carry_with_map: bool = False, lift_nested_scan: bool = False):
+    target = properties.Property(
+        dtype=str,
+        default='cpu',
+        choices=['cpu', 'gpu'],
+        desc=("Target policy for the lift, mirroring ``WavefrontSkew.target``. Matching is "
+              "target-independent; this decides only whether a match is worth taking. ``'gpu'`` "
+              "refuses the CONSTANT-stride residue-class scan, whose exposed width is that "
+              "constant -- see :func:`residue_classes_too_narrow_for_gpu` for the measurements."),
+    )
+
+    def __init__(self, interchange_carry_with_map: bool = False, lift_nested_scan: bool = False, target: str = 'cpu'):
         super().__init__()
         self.interchange_carry_with_map = interchange_carry_with_map
         self.lift_nested_scan = lift_nested_scan
+        self.target = target
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -422,6 +433,10 @@ class LoopToScan(ppl.Pass):
                 # another if/else. Leave it as the original sequential loop.
                 continue
             infos = _match_all(loop, owner, allow_multi_slot=True)
+            if self.target == 'gpu' and residue_classes_too_narrow_for_gpu(infos):
+                # Matched, and deliberately not taken: leave the loop for LoopToMap / the
+                # sequential fallback, which this device measures far faster.
+                continue
             # Multi-slot shape (several independent scans on distinct constant
             # slots of one carrier -- ``acc[0,i]``, ``acc[1,i]``, ...): the shared
             # body can't go through the per-info ``_rewrite`` path (ambiguous
@@ -653,7 +668,13 @@ def _fuse_body_states(loop: LoopRegion) -> int:
                 accepts = xform.can_be_applied(loop, expr_index=0, sdfg=owner_sdfg)
             except Exception:
                 accepts = False
-            if not accepts:
+            # A verdict of True can be CONDITIONAL: the matcher records the WAR / WAW /
+            # seed-before-accumulate orderings its own ``apply`` would then wire as empty
+            # happens-before edges. ``_merge_state_into`` below is a plain node-gluing merge that
+            # wires none of them, so honouring only the boolean would drop exactly the ordering
+            # the verdict was conditioned on -- and gluing a seed write onto the accumulate that
+            # reads it back leaves one AccessNode with two unordered writers.
+            if not accepts or xform.connections_to_make:
                 continue
             cand = (s1, s2, e)
             break
@@ -2472,6 +2493,30 @@ def _iter_write_edges(state: SDFGState, name: str) -> List[Any]:
     return edges
 
 
+def _divisor_symbols(expr) -> set:
+    """Free symbols that appear as a DIVISOR in ``expr`` -- and are therefore ``>= 1``, not merely
+    ``>= 0``.
+
+    The canonicalize contract builds every free symbol ``nonnegative`` (see
+    :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`), and for a divisor
+    that is one bound too weak: ``nonnegative`` admits ``0``, so SymPy cannot decide the sign of
+    ``-floor(LEN_1D/M)`` and answers UNKNOWN, which :func:`_admissible_scan_stride` reads as an
+    admissible symbolic stride. That is how ``a[i] = a[i + LEN_1D//M] + b[i]`` -- a read-ahead over
+    a disjoint region, the same shape as the constant-divisor ``s1421`` this function already
+    handles -- gets lifted to a scan and loses its Map.
+
+    Nothing is assumed here that was not already required: a zero divisor is undefined behaviour in
+    the emitted code either way, so a symbol used as one is ``>= 1`` wherever the kernel runs at
+    all. Only DaCe's own ``int_floor``/``int_ceil`` are inspected; a plain SymPy quotient already
+    carries its own sign rules.
+    """
+    out: set = set()
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, (symbolic.int_floor, symbolic.int_ceil)) and len(node.args) > 1:
+            out |= node.args[1].free_symbols
+    return out
+
+
 def _provably_nonpositive(expr) -> bool:
     """``True`` iff ``expr`` is provably ``<= 0`` under the canonicalize nonnegative-symbol
     contract (see :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`).
@@ -2489,7 +2534,13 @@ def _provably_nonpositive(expr) -> bool:
         return False
     if expr.is_nonpositive is True:
         return True
-    rebuilt = expr.subs({s: sympy.Symbol(s.name, nonnegative=True, integer=True) for s in expr.free_symbols})
+    divisors = _divisor_symbols(expr)
+    rebuilt = expr.subs({
+        s:
+        sympy.Symbol(s.name, positive=True, integer=True)
+        if s in divisors else sympy.Symbol(s.name, nonnegative=True, integer=True)
+        for s in expr.free_symbols
+    })
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_floor), lambda n: sympy.floor(n.args[0] / n.args[1]))
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_ceil),
                               lambda n: sympy.ceiling(n.args[0] / n.args[1]))
@@ -2525,6 +2576,26 @@ def _admissible_scan_stride(diff):
     if diff.is_integer and not _provably_nonpositive(diff):
         return diff
     return None
+
+
+def residue_classes_too_narrow_for_gpu(infos: List['_Scan']) -> bool:
+    """``True`` iff every matched scan is a CONSTANT-stride residue-class scan, whose lift would
+    therefore expose a compile-time-constant amount of parallelism.
+
+    A residue-class scan over stride ``S`` decomposes into ``min(S, trip)`` independent prefix
+    scans, and that count is the whole width the lift exposes. For ``S == 1`` -- the contiguous
+    scan -- the width is the scan itself and this says nothing. For a constant ``S > 1`` the width
+    is ``S``: four classes saturate a four-thread team and leave a device essentially serial, and
+    the lift has replaced a form the GPU pipeline handled better. Measured on this corpus at XL,
+    canonicalize against the same graph without it: ``tsvc_2_s1221`` (``S = 4``) 1.30e4 vs 1.02e3
+    ms, ``fission_dep_const_offset`` (``S = 2``) 8.89e3 vs 2.14e2 ms -- 12.6x and 41x SLOWER for
+    the lift. On CPU the same lift wins (1.55e2 vs 2.67e2, 1.05e2 vs 2.47e2), which is why this is
+    a target policy and not a repair.
+
+    A SYMBOLIC stride is deliberately not gated: its runtime value is unknown, so the class count
+    may be large, and refusing on a guess would lose the lift wherever it is the right one.
+    """
+    return bool(infos) and all(isinstance(i.scan_stride, int) and i.scan_stride > 1 for i in infos)
 
 
 def _symbolic_stride_guard(infos: List['_Scan']) -> Optional[str]:

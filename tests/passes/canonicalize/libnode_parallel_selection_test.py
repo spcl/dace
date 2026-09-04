@@ -34,8 +34,8 @@ def build_toplevel_reduce(n, schedule):
     node = Reduce('reduce_sum', wcr='lambda a, b: a + b', axes=None, identity=0.0)
     node.schedule = schedule
     state.add_node(node)
-    state.add_edge(state.add_access('A'), None, node, None, dace.Memlet(f'A[0:{n}]'))
-    state.add_edge(node, None, state.add_access('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(state.add_access('A'), None, node, '_in', dace.Memlet(f'A[0:{n}]'))
+    state.add_edge(node, '_out', state.add_access('out'), None, dace.Memlet('out[0]'))
     sdfg.validate()
     return sdfg, state, node
 

@@ -46,12 +46,16 @@ class Node(object):
     specialization_hint = Property(dtype=str,
                                    default=None,
                                    allow_none=True,
-                                   desc="A device specialization a canonicalizing pass considered "
-                                   "and did not take, recorded where it applies. Canonicalization "
-                                   "picks the most parallel form; this says what a target-specific "
-                                   "pass could trade it for and on which device the trade pays. "
+                                   desc="A note about how this node got its shape, recorded where "
+                                   "it applies. Two kinds: a device specialization a canonicalizing "
+                                   "pass considered and did not take (canonicalization picks the "
+                                   "most parallel form; the hint says what a target-specific pass "
+                                   "could trade it for and on which device the trade pays), and the "
+                                   "kind of loop a scope is -- parallel, sequential with a proven "
+                                   "carried dependence, or neither proven (AnnotateLoopKinds). "
                                    "Rendered as a comment by the standalone (MPR) rendering and "
-                                   "ignored everywhere else. None when there is no alternative.")
+                                   "ignored everywhere else. Never a directive: nothing in the "
+                                   "pipeline dispatches on it. None when nothing was recorded.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -1112,10 +1116,13 @@ class Map(object):
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
-    omp_chunk_size = Property(dtype=int,
-                              default=0,
-                              desc="OpenMP schedule chunk size",
-                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_chunk_size = SymbolicProperty(default=0,
+                                      desc="OpenMP schedule chunk size; 0 emits no chunk clause. May be "
+                                      "SYMBOLIC: OpenMP evaluates chunk_size as an integer expression at "
+                                      "run time, so a chunk derived from the map's own trip count and "
+                                      "omp_get_max_threads() adapts to the problem and the team instead of "
+                                      "baking one machine's constant into the graph",
+                                      serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_simd = Property(dtype=bool,
                         default=False,
                         desc="Vectorize the innermost loop with an OpenMP simd clause",
@@ -1145,6 +1152,19 @@ class Map(object):
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    is_warp_tile = Property(dtype=bool,
+                            default=False,
+                            desc="This map's iterations are meant to be spread across the threads of one GPU "
+                            "thread block. It is a REQUEST carried through the device offload, not a schedule: "
+                            "the offload assigns every nested scope Sequential (a kernel launch inside a kernel "
+                            "is not expressible), which is correct and stays that way, so a pass that wants a "
+                            "thread-block schedule cannot ask for one before the offload runs -- a GPU schedule "
+                            "set that early is rejected outright. PromoteWarpTiles reads this afterwards and "
+                            "gives the map GPU_ThreadBlock. Only set it on a map proven data-parallel: it is a "
+                            "promise about the map, and the promotion trusts it.",
+                            serialize_if=lambda m: m.is_warp_tile)
+
     vectorize = Property(dtype=bool, default=False)
 
     def __init__(self,

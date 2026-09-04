@@ -216,6 +216,29 @@ def test_symbolic_stride_widens_only_under_its_guard():
         f"a symbolic row stride was claimed aligned with no runtime check behind it, got {set(unguarded)}"
 
 
+def test_the_stride_guard_compiles_wherever_its_map_ended_up():
+    """The guard has to be valid C++ on the host AND valid CUDA on the device.
+
+    It is prepended to the SDFG that owns the checked map, and that SDFG can be a nested one the
+    offloading placed on the device -- where ``fprintf`` and ``abort`` are host-only and nvcc
+    refuses the whole translation unit ("calling a __host__ function from a __device__ function").
+    Both spellings are emitted, behind ``__CUDA_ARCH__`` / ``__HIP_DEVICE_COMPILE__``, so whichever
+    compiler reads the tasklet finds the one it can call.
+    """
+    sdfg = _vectorized(_stencil3_2d_symbolic)
+    guards = [
+        n for st in sdfg.states() for n in st.nodes()
+        if isinstance(n, dace.nodes.Tasklet) and n.label.startswith(STRIDE_GUARD_PREFIX)
+    ]
+    assert guards, "no stride guard emitted; the check below would be vacuous"
+    code = guards[0].code.as_string
+    assert "__CUDA_ARCH__" in code and "__HIP_DEVICE_COMPILE__" in code, \
+        f"the guard is not split by compilation target, so one target cannot compile it: {code}"
+    for host_only, device_only in (("fprintf", "printf"), ("abort()", "__trap()")):
+        assert host_only in code and device_only in code, \
+            f"the guard misses the {device_only!r} arm that device code needs: {code}"
+
+
 def test_interior_transient_stride_widens():
     """A transient covering a stencil's INTERIOR is strided by ``N - 2``, and that expression is
     not provably non-negative as written -- so the coefficient test refused it even though the very

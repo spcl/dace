@@ -42,6 +42,49 @@ def constant_trip_count(width) -> bool:
     return isinstance(width, sympy.Basic) and bool(width.is_Integer)
 
 
+def half_disambiguated(ref: str, own_ctype: str, meets_ctype: str) -> str:
+    """Route a bare ``dace::float16`` (CUDA's ``__half``) operand through one
+    explicit ``(float)`` hop before it meets a differently-typed value.
+
+    ``dace/runtime/include/dace/types.h`` aliases the GPU ``dace::float16``
+    straight to CUDA's ``__half`` (unlike the CPU-side ``half`` struct, which
+    deliberately exposes exactly ONE implicit conversion, ``operator
+    float()``, for the documented reason "declaring member binary overloads
+    would tie with the built-ins ... and be ambiguous"). ``__half`` itself
+    declares SEVERAL simultaneously non-``explicit`` conversions (to
+    ``float``, ``short``, ``unsigned short``, ``int``, ``unsigned int``,
+    ``long long``, ``unsigned long long``, ``bool`` -- all gated by the one
+    ``__CUDA_NO_HALF_CONVERSIONS__`` macro, never individually). A bare half
+    value handed directly to a mixed-type infix operator or to an overloaded
+    function with no half overload (``std::sqrt``, ``std::fma``, ...) is
+    ambiguous ("more than one conversion function ... applies" / "more than
+    one operator ... matches" / "more than one instance of overloaded
+    function ... matches" -- the same defect, worded differently per call
+    shape). ``dace/runtime/include/dace/tile_ops/cuda.h`` already dodges
+    this at the ISA/runtime layer (``_cuda_to_compute`` casts every operand
+    to ``float`` before doing any arithmetic); this mirrors that at the
+    per-kernel Python-codegen layer so the ``pure`` expansion agrees with
+    the ISA one instead of handing the C++ compiler an unresolvable half.
+
+    Every fp16 value is exactly representable in ``float32``, so the hop
+    picks the one lossless conversion and changes no computed value -- the
+    alternative was a compile error, not a different result.
+
+    :param ref: The C++ expression for the operand.
+    :param own_ctype: The operand's own element C++ type.
+    :param meets_ctype: The C++ type of whatever this operand is about to
+        meet (the other operand, or the function it is passed to). No hop is
+        inserted when this already equals ``own_ctype`` -- the value never
+        leaves ``dace::float16``, so native half arithmetic keeps its own
+        precision.
+    :returns: ``ref`` unchanged, or ``(float)(ref)`` when disambiguation is
+        needed.
+    """
+    if own_ctype == dace.float16.ctype and meets_ctype != dace.float16.ctype:
+        return f"(float)({ref})"
+    return ref
+
+
 def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     """Wrap ``body`` in a K-fold nested for-loop iterating per-dim
     lane indices ``__l0, __l1, ...``.

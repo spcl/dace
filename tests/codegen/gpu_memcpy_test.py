@@ -10,9 +10,6 @@ import re
 # this test requires cupy module
 cp = pytest.importorskip("cupy")
 
-# initialize random number generator
-rng = cp.random.default_rng(42)
-
 
 def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):
     """Count top-level nodes of ``node_type``.
@@ -284,6 +281,7 @@ def test_gpu_shared_to_global_1D():
     size_M = M
     size_N = 128
 
+    rng = cp.random.default_rng(42)
     A = rng.random((size_M, size_N))
     B = rng.random((size_N, size_M))
     ref = A.transpose()
@@ -317,6 +315,7 @@ def test_gpu_shared_to_global_1D_accumulate():
     size_M = M
     size_N = 128
 
+    rng = cp.random.default_rng(42)
     A = rng.random((size_M, size_N))
     B = rng.random((size_N, size_M))
     ref = A.transpose() + B

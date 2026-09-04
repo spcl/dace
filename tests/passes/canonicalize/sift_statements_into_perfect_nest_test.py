@@ -349,21 +349,57 @@ def test_new_start_block_set_correctly():
 
 def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
     """``PerfectLoopNesting`` owns this capability: ``target='gpu'`` performs the sink,
-    ``target='cpu'`` does not. Distribution alone cannot reach this shape -- the pre statement
-    feeds the inner body, so the group analysis keeps them together.
+    ``target='cpu'`` does not.
 
-    Asserted on the boundary guard rather than on a named loop: the pass SSA-renames iterators.
+    Pinned on ``_pre_and_post``, whose ``acc`` is a scalar the inner loop carries, so distribution
+    is refused and the sink is the ONLY route to a perfect nest -- which is what isolates the
+    capability being tested. (``_pre_only`` no longer serves: its pre statement writes ``s[i]`` and
+    the inner body reads exactly ``s[i]``, both pinned to the parent index, so the distribution
+    reaches it first -- see :func:`test_aligned_pre_shape_is_distributed_not_sunk`.)
+
+    Asserted on the boundary guards rather than on a named loop: the pass SSA-renames iterators.
     """
-    gpu = _pre_only.to_sdfg(simplify=True)
+    n = 6
+    a = np.random.rand(n, 5)
+    ref = np.zeros(n)
+    _pre_and_post.to_sdfg(simplify=True)(a=a.copy(), c=ref, N=n)
+
+    gpu = _pre_and_post.to_sdfg(simplify=True)
     guards_before = len(_conds(gpu))
     assert PerfectLoopNesting(target='gpu').apply_pass(gpu, {})
     gpu.validate()
-    assert len(_conds(gpu)) == guards_before + 1
+    assert len(_conds(gpu)) == guards_before + 2, 'the pre and the post each get a boundary guard'
+    out = np.zeros(n)
+    gpu(a=a.copy(), c=out, N=n)
+    assert np.allclose(out, ref)
 
-    cpu = _pre_only.to_sdfg(simplify=True)
+    cpu = _pre_and_post.to_sdfg(simplify=True)
     PerfectLoopNesting(target='cpu').apply_pass(cpu, {})
     cpu.validate()
     assert len(_conds(cpu)) == guards_before
+
+
+@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+def test_aligned_pre_shape_is_distributed_not_sunk(target):
+    """When the pre statement and the inner body meet at the SAME parent index -- ``s[i]`` written
+    then ``s[i]`` read -- the distribution separates them into two perfect nests on either target,
+    and no boundary guard is needed. The sink runs last in the round precisely so it only has to
+    handle what distribution could not separate."""
+    n = 6
+    a = np.random.rand(n, 5)
+    ref_b, ref_s = np.zeros((n, 5)), np.zeros(n)
+    _pre_only.to_sdfg(simplify=True)(a=a.copy(), b=ref_b, s=ref_s, N=n)
+
+    sdfg = _pre_only.to_sdfg(simplify=True)
+    guards_before = len(_conds(sdfg))
+    assert PerfectLoopNesting(target=target).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len(_conds(sdfg)) == guards_before, 'a distributed nest needs no boundary guard'
+    assert len(_loops(sdfg)) == 3, 'one bare-statement nest plus the two levels of the inner nest'
+
+    out_b, out_s = np.zeros((n, 5)), np.zeros(n)
+    sdfg(a=a.copy(), b=out_b, s=out_s, N=n)
+    assert np.allclose(out_b, ref_b) and np.allclose(out_s, ref_s)
 
 
 def test_sift_is_idempotent():

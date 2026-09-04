@@ -259,7 +259,14 @@ def test_s343_static_extents_lift_the_whole_nest():
     assert not phases_under_a_loop(sdfg)
     assert num_maps(sdfg) >= 2
     # Exactly the 576-iteration mask phase; the 24-iteration scatter phase cannot pay for a fork.
-    assert omp_parallel_for(sdfg) == 1
+    # The break-even is PINNED, not inherited: CalibrateCpuThresholds scales it by the host's core
+    # count on purpose (``scale_for_team``), so on a 64-core node it becomes 2048 -- above BOTH
+    # phases, and the test then reads 0 and blames the band for a decision the calibration made.
+    # 512 rather than the 256 named above because calibration only leaves a key alone when it
+    # DIFFERS from the schema default, and 256 IS that default: pinning to it is indistinguishable
+    # from not pinning at all. Any value with 24 < v < 576 states the same thing about the band.
+    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=512):
+        assert omp_parallel_for(build(s343_static_kernel)) == 1
     with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=0):
         assert omp_parallel_for(build(s343_static_kernel)) >= 2
 

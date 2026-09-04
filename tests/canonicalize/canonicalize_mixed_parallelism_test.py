@@ -133,15 +133,28 @@ def test_mixed_parallelism_A_becomes_collapsed_2d_map():
     assert np.allclose(B_got, B_ref), 'B diverged from the un-canonicalized reference'
 
 
-def test_mixed_parallelism_default_pipeline_does_not_fission():
-    """Without the knob no distribution happens -- the CloudSC ruling. Pinned so the
-    default pipeline cannot start fissioning unnoticed: that is the change that must be
-    re-measured against the CloudSC read-modify-write kernel first."""
+def test_mixed_parallelism_default_pipeline_distributes():
+    """The default pipeline reaches the same shape as the explicit knob: ``perfect_loop_nesting``
+    is ON by default (user ruling 2026-09-01, reversing the 2026-08-18 ruling that kept it opt-in).
+
+    The 08-18 ruling existed for a defect, not for a preference: ``PerfectLoopNesting`` then
+    distributed through ``LoopFission``'s node-level grouping, which carries no dependence distance
+    or direction, and a single application reproduced the CloudSC read-modify-write miscompile
+    (``tendency_loc_a`` rel=0.13). That path is severed -- the pass groups with Allen-Kennedy at
+    block granularity and refuses what it cannot prove disjoint -- so the pin now points the other
+    way. A default that silently stopped distributing would leave the collapsed 2D map reachable
+    only through a knob nobody passes, which is what this catches.
+
+    Values under the default are checked in ``test_mixed_parallelism_value_preserving``; the
+    CloudSC numerics themselves are the corpus test's business, not this file's.
+    """
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert 2 not in _map_param_counts(sdfg), (
-        'the default pipeline fissioned -- re-measure CloudSC tendency_loc_a before allowing this')
+    assert _map_param_counts(sdfg) == [
+        1, 2
+    ], ('the default pipeline no longer distributes this nest into a collapsed 2D map for A and a '
+        f'1-D i-map for B; maps={_map_param_counts(sdfg)}')
 
 
 if __name__ == '__main__':

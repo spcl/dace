@@ -71,6 +71,32 @@ def test_memoization_does_not_mix_dialects(first):
 
 
 @pytest.mark.parametrize('first', [Dialect.RUNTIME, Dialect.STANDALONE], ids=['runtime-first', 'standalone-first'])
+def test_memoization_does_not_mix_dialects_taken_from_the_scope(first):
+    """The same, for the callers that do NOT name a dialect -- which is nearly all of them.
+
+    ``symstr``'s several hundred call sites in the code generators pass no dialect and take the
+    ambient one from :func:`~dace.mpr_lowering.dialect_scope`. That value has to be resolved in
+    FRONT of the memoized body: resolved inside it, every ambient-dialect caller shares the one key
+    ``dialect=None``, and an MPR rendering earlier in the process serves ``std::exp`` back to the
+    runtime printer -- the exact spelling that is ambiguous for a 16-bit float. The explicit-dialect
+    test above cannot see this: it never uses the key that collides.
+    """
+    second = Dialect.STANDALONE if first is Dialect.RUNTIME else Dialect.RUNTIME
+    expression = sympy.Abs(X * 5 + 2)
+    expected = {dialect: printed(expression, dialect) for dialect in (first, second)}
+    symbolic.symstr.cache_clear()
+    with mpr_lowering.dialect_scope(first):
+        primed_first = symbolic.symstr(expression, cpp_mode=True)
+    with mpr_lowering.dialect_scope(second):
+        primed_second = symbolic.symstr(expression, cpp_mode=True)
+    assert primed_first == expected[first], f'{first} changed when taken from the scope'
+    assert primed_second == expected[second], (f'{second} came back as {primed_second!r} after {first} primed the '
+                                               f'cache from the ambient dialect, but should be '
+                                               f'{expected[second]!r}; the ambient dialect is resolved inside the '
+                                               'memoized call rather than in front of it')
+
+
+@pytest.mark.parametrize('first', [Dialect.RUNTIME, Dialect.STANDALONE], ids=['runtime-first', 'standalone-first'])
 def test_sym2cpp_memoization_does_not_mix_dialects(first):
     """The same, one level up: ``sym2cpp`` has its own cache in front of ``symstr``."""
     second = Dialect.STANDALONE if first is Dialect.RUNTIME else Dialect.RUNTIME

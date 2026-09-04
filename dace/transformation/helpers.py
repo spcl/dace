@@ -373,7 +373,8 @@ def nest_sdfg_control_flow(sdfg: SDFG):
             sdfg.reset_cfg_list()
 
 
-def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge, kept: MultiConnectorEdge) -> None:
+def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge, kept: MultiConnectorEdge,
+                              nested_sdfg: nodes.NestedSDFG, is_input: bool) -> None:
     """Remove ``edge`` and its scope plumbing once ``kept`` owns the nested connector they share.
 
     :func:`nest_state_subgraph` gives the nested SDFG one descriptor -- hence one connector -- per
@@ -388,10 +389,18 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
     The nested connector carries the union of every folded subset, so ``kept``'s outer memlets are
     widened to cover ``edge``'s before its path goes away.
 
+    ``edge`` is a happens-before as well as a transfer, and ``kept`` inherits only its own endpoint's
+    half of that. The outer endpoint of a folded edge that still has users is therefore left
+    concurrent with the nest -- the state then means whatever node order says, which is how cavity
+    flow's lid assignment ended up racing the column zeroing it must follow. Re-state the constraint
+    as an ordering edge instead.
+
     :param sdfg: SDFG holding the descriptors the union falls back to.
     :param state: State holding both edges.
     :param edge: Boundary edge being folded away.
     :param kept: Boundary edge already reconnected to the shared nested connector.
+    :param nested_sdfg: The nested SDFG node both edges cross into.
+    :param is_input: ``edge`` enters the nested SDFG (its outer endpoint is ``edge.src``).
     """
     kept_level, level = state.memlet_tree(kept).parent, state.memlet_tree(edge).parent
     while kept_level is not None and level is not None and kept_level.edge is not level.edge:
@@ -400,7 +409,18 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
             widened = union(kept_memlet.subset, memlet.subset)
             kept_memlet.subset = widened if widened is not None else Range.from_array(sdfg.arrays[kept_memlet.data])
         kept_level, level = kept_level.parent, level.parent
+    outer = edge.src if is_input else edge.dst
     utils.remove_edge_and_dangling_path(state, edge)
+    # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
+    # constraint worth restating.
+    if outer not in state.nodes() or state.degree(outer) == 0:
+        return
+    # A fresh Memlet per edge -- never the object the old edge carried.
+    if is_input:
+        if not any(e.dst is nested_sdfg for e in state.out_edges(outer)):
+            state.add_nedge(outer, nested_sdfg, Memlet())
+    elif not any(e.src is nested_sdfg for e in state.in_edges(outer)):
+        state.add_nedge(nested_sdfg, outer, Memlet())
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -685,7 +705,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
         name = input_names[edge]
         if name in reconnected_in:
-            drop_folded_boundary_edge(sdfg, state, edge, reconnected_in[name])
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_in[name], nested_sdfg, True)
             continue
         if full_data:
             memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
@@ -702,7 +722,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
         name = output_names[edge]
         if name in reconnected_out:
-            drop_folded_boundary_edge(sdfg, state, edge, reconnected_out[name])
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_out[name], nested_sdfg, False)
             continue
         if full_data:
             memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
@@ -1391,16 +1411,32 @@ def wrap_code_node_in_unit_gpu_map(state: SDFGState, node: nodes.CodeNode) -> Tu
     Wraps a free (top-level) code node in a one-iteration ``GPU_Device`` map, so that it executes
     as a single-thread GPU kernel instead of host code.
 
+    :param state: The state in which the code node resides.
+    :param node: The code node to wrap. Must be at the top level of the state.
+    :return: The new map entry and exit nodes.
+    """
+    return wrap_code_node_in_unit_map(state, node, dtypes.ScheduleType.GPU_Device, '_gmap')
+
+
+def wrap_code_node_in_unit_map(state: SDFGState,
+                               node: nodes.CodeNode,
+                               schedule: dtypes.ScheduleType,
+                               suffix: str = '_umap') -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    """
+    Wraps a free (top-level) code node in a one-iteration map of the given schedule, so that the
+    node executes inside that scope instead of at the state's top level.
+
     All edges of the node are rerouted through the new map entry/exit. Edges without connectors
     (empty dependency memlets, common in autodiff-generated graphs) are rerouted without
     connectors instead of being turned into ``IN_None``/``OUT_None`` connector names.
 
     :param state: The state in which the code node resides.
     :param node: The code node to wrap. Must be at the top level of the state.
+    :param schedule: The schedule of the new map.
+    :param suffix: Appended to the node's label to name the map and its parameter.
     :return: The new map entry and exit nodes.
     """
-    me, mx = state.add_map(node.label + '_gmap', {node.label + '__gmapi': '0:1'},
-                           schedule=dtypes.ScheduleType.GPU_Device)
+    me, mx = state.add_map(node.label + suffix, {node.label + suffix + 'i': '0:1'}, schedule=schedule)
     in_edges = list(state.in_edges(node))
     out_edges = list(state.out_edges(node))
     me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}

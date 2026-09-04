@@ -126,7 +126,11 @@ def test_typecast_function_namespacing():
     # Sized typeclasses get the ``dace::`` prefix.
     success &= _test_pyexpr2cpp('float64(x)', 'dace::float64(x)')
     success &= _test_pyexpr2cpp('int32(a + b)', 'dace::int32((a + b))')
-    success &= _test_pyexpr2cpp('sqrt(float64(i + k))', 'sqrt(dace::float64((i + k)))')
+    # The call name is qualified now: a bare ``sqrt`` binds to ``std::sqrt``, whose float,
+    # double and long double overloads are all equally good for a 16-bit float, so nvcc
+    # rejects the translation unit as ambiguous. What this case is about is the CAST inside
+    # the call, which is namespaced either way.
+    success &= _test_pyexpr2cpp('sqrt(float64(i + k))', 'dace::math::sqrt(dace::float64((i + k)))')
     success &= _test_pyexpr2cpp('uint64(n)', 'dace::uint64(n)')
     # The explicit attribute form is unchanged, and now matches the bare form.
     success &= _test_pyexpr2cpp('dace.float64(x)', 'dace::float64(x)')

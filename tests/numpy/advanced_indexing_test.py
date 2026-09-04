@@ -3,8 +3,11 @@
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
+import ast
 import dace
+from dace import graphlib as nx
 from dace.frontend.python.common import DaceSyntaxError
+from dace.sdfg import nodes as dace_nodes
 import numpy as np
 import pytest
 
@@ -194,6 +197,199 @@ def test_index_intarr_nd():
     assert np.allclose(expected, res)
 
 
+def indirection_tasklet(sdfg: dace.SDFG):
+    """Returns the advanced-indexing tasklet and the memlet feeding its ``__arr`` connector."""
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith('indirection'):
+                arr_edge = next(e for e in state.in_edges(node) if e.dst_conn == '__arr')
+                return state, node, arr_edge.data
+    raise AssertionError('no indirection tasklet found in SDFG')
+
+
+def assert_arr_subscript_matches_memlet(sdfg: dace.SDFG) -> int:
+    """The ``__arr`` subscript must carry exactly as many indices as its memlet has non-scalar
+    dimensions -- the connector rule that conflating "extent 1" with "scalar index" broke.
+    """
+    _, tasklet, memlet = indirection_tasklet(sdfg)
+    code = tasklet.code.as_string.strip()
+    value = ast.parse(code).body[0].value
+    if isinstance(value, ast.Subscript):
+        indices = len(value.slice.elts) if isinstance(value.slice, ast.Tuple) else 1
+    else:
+        indices = 0
+    assert indices == memlet.subset.data_dims(), f'"{code}" does not match memlet "{memlet}"'
+    return indices
+
+
+def test_index_intarr_into_length_one_dim():
+    """An advanced index into an extent-1 dimension used to raise KeyError('__i0').
+
+    The index mapping is built only for NON-degenerate dimensions, but the loop that hands a
+    dimension over to its index array deleted the entry unconditionally. A ravelled 1x1 lookup
+    table -- one species in a pair potential, one channel in a layer -- is exactly that shape,
+    and it crashed the parser before any memlet existed to be wrong.
+    """
+
+    @dace.program
+    def indexing_test(table: dace.float64[1], idx: dace.int64[3, 2]):
+        return table[idx]
+
+    table = np.array([7.5], dtype=np.float64)
+    idx = np.zeros((3, 2), dtype=np.int64)
+    expected = table[idx]
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert expected.shape == (3, 2)
+
+    # The gather degenerates to a broadcast: no index is read, and the map spans the index shape.
+    state, tasklet, memlet = indirection_tasklet(sdfg)
+    assert assert_arr_subscript_matches_memlet(sdfg) == 0
+    assert set(tasklet.in_connectors) == {'__arr'}
+    assert str(memlet.subset) == '0'
+    map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
+    assert map_entry.map.params == ['__ind0', '__ind1']
+    assert str(map_entry.map.range) == '0:3, 0:2'
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape
+
+    res = sdfg(table=table, idx=idx)
+    assert res.shape == expected.shape, f"gather returned {res.shape}, numpy returns {expected.shape}"
+    assert np.allclose(expected, res)
+
+
+def test_index_intarr_into_length_one_dim_of_many():
+    """The same, with the degenerate dimension NEXT TO a normal one, so the surviving basic-index
+    dimension still has to reach the output."""
+
+    @dace.program
+    def indexing_test(table: dace.float64[1, 4], idx: dace.int64[3]):
+        return table[idx, :]
+
+    table = np.arange(4, dtype=np.float64).reshape(1, 4)
+    idx = np.zeros((3, ), dtype=np.int64)
+    expected = table[idx, :]
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    state, tasklet, memlet = indirection_tasklet(sdfg)
+    assert assert_arr_subscript_matches_memlet(sdfg) == 0
+    # The basic dimension stays a map parameter, the degenerate one is pinned by the memlet.
+    assert str(memlet.subset) == '0, __i1'
+    map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
+    assert sorted(map_entry.map.params) == ['__i1', '__ind0']
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape
+
+    res = indexing_test(table, idx)
+    assert res.shape == expected.shape, f"gather returned {res.shape}, numpy returns {expected.shape}"
+    assert np.allclose(expected, res)
+
+
+def test_index_intarr_length_one_dim_trailing_basic():
+    """An extent-1 dimension gathered while a trailing dimension is implicitly sliced whole."""
+
+    @dace.program
+    def indexing_test(table: dace.float64[1, 10], idx: dace.int64[3, 2]):
+        return table[idx]
+
+    table = np.arange(10, dtype=np.float64).reshape(1, 10)
+    idx = np.zeros((3, 2), dtype=np.int64)
+    expected = table[idx]
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    _, tasklet, memlet = indirection_tasklet(sdfg)
+    assert assert_arr_subscript_matches_memlet(sdfg) == 0
+    assert str(memlet.subset) == '0, __i1'
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (3, 2, 10)
+
+    res = sdfg(table=table, idx=idx)
+    assert res.shape == expected.shape
+    assert np.allclose(expected, res)
+
+
+def test_index_intarr_into_trailing_length_one_dim():
+    """The degenerate dimension is the LAST one, so the basic dimension in front of it must keep
+    its position in the output."""
+
+    @dace.program
+    def indexing_test(table: dace.float64[4, 1], idx: dace.int64[3, 2]):
+        return table[:, idx]
+
+    table = np.arange(4, dtype=np.float64).reshape(4, 1)
+    idx = np.zeros((3, 2), dtype=np.int64)
+    expected = table[:, idx]
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    _, tasklet, memlet = indirection_tasklet(sdfg)
+    assert assert_arr_subscript_matches_memlet(sdfg) == 0
+    assert str(memlet.subset) == '__i0, 0'
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (4, 3, 2)
+
+    res = sdfg(table=table, idx=idx)
+    assert res.shape == expected.shape
+    assert np.allclose(expected, res)
+
+
+@pytest.mark.parametrize('degenerate_dim', [0, 1])
+def test_index_intarr_length_one_dim_beside_real_gather(degenerate_dim):
+    """A degenerate advanced dimension NEXT TO a real one. The surviving index array has to keep
+    its position in the tasklet subscript even though the dropped one came before or after it.
+    """
+
+    @dace.program
+    def gather_first(table: dace.float64[1, 5], i0: dace.int64[3], i1: dace.int64[3]):
+        return table[i0, i1]
+
+    @dace.program
+    def gather_second(table: dace.float64[5, 1], i0: dace.int64[3], i1: dace.int64[3]):
+        return table[i0, i1]
+
+    if degenerate_dim == 0:
+        prog, shape, live = gather_first, (1, 5), 'i1'
+        i0 = np.zeros(3, dtype=np.int64)
+        i1 = np.array([0, 3, 4], dtype=np.int64)
+    else:
+        prog, shape, live = gather_second, (5, 1), 'i0'
+        i0 = np.array([0, 4, 2], dtype=np.int64)
+        i1 = np.zeros(3, dtype=np.int64)
+
+    table = np.arange(5, dtype=np.float64).reshape(shape)
+    expected = table[i0, i1]
+
+    sdfg = prog.to_sdfg(simplify=False)
+    state, tasklet, _ = indirection_tasklet(sdfg)
+    # Exactly one index survives, and it is the one belonging to the non-degenerate dimension.
+    assert assert_arr_subscript_matches_memlet(sdfg) == 1
+    assert set(tasklet.in_connectors) == {'__arr', '__inp0'}
+    inp_edge = next(e for e in state.in_edges(tasklet) if e.dst_conn == '__inp0')
+    assert inp_edge.data.data == live
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (3, )
+
+    res = sdfg(table=table, i0=i0, i1=i1)
+    assert res.shape == expected.shape
+    assert np.allclose(expected, res)
+
+
+def test_index_intarr_into_reshaped_length_one_dim():
+    """The examinimd gather: a per-pair coefficient table ravelled to one element, then gathered.
+    The sliced array is a view, so the degenerate dimension arrives through a reshape.
+    """
+
+    @dace.program
+    def indexing_test(cutsq: dace.float64[1, 1], pair: dace.int64[4]):
+        return cutsq.reshape((1, ))[pair]
+
+    cutsq = np.array([[2.5]], dtype=np.float64)
+    pair = np.zeros((4, ), dtype=np.int64)
+    expected = cutsq.reshape((1, ))[pair]
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert assert_arr_subscript_matches_memlet(sdfg) == 0
+    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (4, )
+
+    res = sdfg(cutsq=cutsq, pair=pair)
+    assert res.shape == expected.shape
+    assert np.allclose(expected, res)
+
+
 def test_index_boolarr_rhs():
 
     @dace.program
@@ -354,6 +550,157 @@ def test_out_index_intarr_multidim_range():
     assert np.allclose(A, ref)
 
 
+def store_tasklet(sdfg: dace.SDFG):
+    """Returns the state, tasklet and output memlet of an advanced-indexing store."""
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith(('assign', 'augassign')):
+                out_edge = next(e for e in state.out_edges(node) if e.src_conn == '__out')
+                return state, node, out_edge.data
+    raise AssertionError('no store tasklet found in SDFG')
+
+
+def assert_out_subscript_matches_memlet(sdfg: dace.SDFG) -> int:
+    """The ``__out`` subscript must carry exactly as many indices as its memlet has non-scalar
+    dimensions -- the same connector rule the gather side obeys. Sizing an indexed dimension by
+    the index array's length instead of the destination's broke it.
+    """
+    _, tasklet, memlet = store_tasklet(sdfg)
+    code = tasklet.code.as_string.strip()
+    target = ast.parse(code).body[0].targets[0]
+    if isinstance(target, ast.Subscript):
+        indices = len(target.slice.elts) if isinstance(target.slice, ast.Tuple) else 1
+    else:
+        indices = 0
+    assert indices == memlet.subset.data_dims(), f'"{code}" does not match memlet "{memlet}"'
+    return indices
+
+
+def assert_single_scatter_map(sdfg: dace.SDFG, extent: str):
+    """Every index array of a store shares ONE iteration space, so the scatter map has exactly one
+    parameter spanning the broadcast index shape. A parameter per indexed dimension iterated the
+    cartesian product, applying the operand once per combination.
+    """
+    state, _, _ = store_tasklet(sdfg)
+    map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
+    assert map_entry.map.params == ['__i0'], f'scatter map has parameters {map_entry.map.params}'
+    assert str(map_entry.map.range) == extent
+    return map_entry
+
+
+def test_out_index_multiple_intarr_aug():
+    """``a[rows, cols, cols] -= v`` used to write whole blocks, once per point of the cartesian
+    product of the three index arrays."""
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[8], cols: dace.int64[8]):
+        a[rows, cols, cols] -= 0.5
+
+    rows = np.repeat(np.arange(4, dtype=np.int64), 2)
+    cols = np.tile(np.arange(2, dtype=np.int64), 4)
+    a = np.zeros((4, 2, 2))
+    ref = np.zeros((4, 2, 2))
+    ref[rows, cols, cols] -= 0.5
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert assert_out_subscript_matches_memlet(sdfg) == 3
+    assert_single_scatter_map(sdfg, '0:8')
+
+    sdfg(a=a, rows=rows, cols=cols)
+    assert np.allclose(a, ref)
+
+
+def test_out_index_multiple_intarr_aug_mult():
+    """The same scatter with a different augmented operator, on a destination that is not zero."""
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[8], cols: dace.int64[8]):
+        a[rows, cols, cols] *= 3.0
+
+    rows = np.repeat(np.arange(4, dtype=np.int64), 2)
+    cols = np.tile(np.arange(2, dtype=np.int64), 4)
+    a = np.arange(16, dtype=np.float64).reshape(4, 2, 2) + 1
+    ref = np.copy(a)
+    ref[rows, cols, cols] *= 3.0
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert assert_out_subscript_matches_memlet(sdfg) == 3
+    assert_single_scatter_map(sdfg, '0:8')
+
+    sdfg(a=a, rows=rows, cols=cols)
+    assert np.allclose(a, ref)
+
+
+def test_out_index_multiple_intarr_store():
+    """A plain store through the same index shape takes the same iteration space."""
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[8], cols: dace.int64[8]):
+        a[rows, cols, cols] = 0.5
+
+    rows = np.repeat(np.arange(4, dtype=np.int64), 2)
+    cols = np.tile(np.arange(2, dtype=np.int64), 4)
+    a = np.arange(16, dtype=np.float64).reshape(4, 2, 2)
+    ref = np.copy(a)
+    ref[rows, cols, cols] = 0.5
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert assert_out_subscript_matches_memlet(sdfg) == 3
+    assert_single_scatter_map(sdfg, '0:8')
+
+    sdfg(a=a, rows=rows, cols=cols)
+    assert np.allclose(a, ref)
+
+
+def test_out_index_multiple_intarr_broadcast():
+    """Index arrays that BROADCAST rather than match: the extent-1 ones are read at 0 for every
+    point of the shared iteration space, and the map still spans the broadcast shape."""
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[4]):
+        a[rows, (1, ), (1, )] += 2.0
+
+    rows = np.array([3, 0, 2, 1], dtype=np.int64)
+    a = np.arange(16, dtype=np.float64).reshape(4, 2, 2)
+    ref = np.copy(a)
+    ref[rows, (1, ), (1, )] += 2.0
+
+    sdfg = indexing_test.to_sdfg(simplify=False)
+    assert assert_out_subscript_matches_memlet(sdfg) == 3
+    state, tasklet, _ = store_tasklet(sdfg)
+    assert_single_scatter_map(sdfg, '0:4')
+    # The broadcast index arrays are pinned at 0; only the matching one follows the map parameter.
+    reads = {e.dst_conn: str(e.data.subset) for e in state.in_edges(tasklet) if e.dst_conn.startswith('__ind_')}
+    assert reads == {'__ind_0': '__i0', '__ind_1': '0', '__ind_2': '0'}
+
+    sdfg(a=a, rows=rows)
+    assert np.allclose(a, ref)
+
+
+def test_out_index_multiple_intarr_mismatch_is_refused():
+    """Index arrays that neither match nor broadcast are refused, as they are on the read side."""
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[8], cols: dace.int64[3]):
+        a[rows, cols, cols] -= 0.5
+
+    with pytest.raises(IndexError, match='could not be broadcast together'):
+        indexing_test.to_sdfg()
+
+
+def test_out_index_multiple_intarr_array_operand_is_refused():
+    """numpy collapses the index arrays into ONE axis of the indexing result, which the
+    per-dimension subsets of a store cannot express. Refuse rather than scatter the wrong shape.
+    """
+
+    @dace.program
+    def indexing_test(a: dace.float64[4, 2, 2], b: dace.float64[8], rows: dace.int64[8], cols: dace.int64[8]):
+        a[rows, cols, cols] = b
+
+    with pytest.raises(DaceSyntaxError, match='more than one index array'):
+        indexing_test.to_sdfg()
+
+
 @pytest.mark.parametrize('tuple_index', (False, True))
 def test_advanced_indexing_syntax(tuple_index):
 
@@ -433,7 +780,6 @@ def test_multidim_tuple_multidim_index():
         indexing_test.to_sdfg()
 
 
-@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
     with pytest.raises(IndexError, match='could not be broadcast together'):
 
@@ -573,6 +919,44 @@ def test_index_array_followed_by_integer_index_write_is_allowed():
     assert np.allclose(out, reference)
 
 
+def test_gather_evaluated_before_its_destination_is_cleared():
+    """A gather bound to a name BEFORE the buffer it lands in is overwritten wholesale.
+
+    ``RedundantArray`` folds the copy away, so the gather's map writes ``out`` itself. The ordering
+    (empty) edge guarding that write-after-write used to be re-attached to the destination access
+    node, which orders the node but not the map filling it -- the clear was then free to be emitted
+    after the gather and zero every gathered value.
+    """
+
+    @dace.program
+    def indexing_test(src: dace.float64[4], idx: dace.int64[12], out: dace.float64[12]):
+        gathered = src[idx]
+        out[:] = 0.0
+        out[:] = gathered
+
+    src = np.arange(4, dtype=np.float64)
+    idx = np.repeat(np.arange(4, dtype=np.int64), 3)
+    expected = src[idx]
+
+    sdfg = indexing_test.to_sdfg(simplify=True)
+    for state in sdfg.all_states():
+        producers = [
+            state.entry_node(edge.src) or edge.src for node in state.data_nodes()
+            if node.data == 'out' and state.entry_node(node) is None for edge in state.in_edges(node)
+            if not edge.data.is_empty()
+        ]
+        for first in producers:
+            for second in producers:
+                if first is second:
+                    continue
+                ordered = nx.has_path(state.nx, first, second) or nx.has_path(state.nx, second, first)
+                assert ordered, f'unordered overwrite of "out" in state {state.label}'
+
+    out = np.full((12, ), -1.0)
+    sdfg(src=src, idx=idx, out=out)
+    assert np.allclose(out, expected)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -589,6 +973,13 @@ if __name__ == '__main__':
     test_index_intarr_1d_constant()
     test_index_intarr_1d_multi()
     test_index_intarr_nd()
+    test_index_intarr_into_length_one_dim()
+    test_index_intarr_into_length_one_dim_of_many()
+    test_index_intarr_length_one_dim_trailing_basic()
+    test_index_intarr_into_trailing_length_one_dim()
+    test_index_intarr_length_one_dim_beside_real_gather(0)
+    test_index_intarr_length_one_dim_beside_real_gather(1)
+    test_index_intarr_into_reshaped_length_one_dim()
     test_index_boolarr_rhs()
     test_index_multiboolarr()
     test_index_boolarr_fixed()
@@ -599,13 +990,19 @@ if __name__ == '__main__':
     test_out_index_intarr_aug_bcast()
     test_out_index_intarr_multidim()
     test_out_index_intarr_multidim_range()
+    test_out_index_multiple_intarr_aug()
+    test_out_index_multiple_intarr_aug_mult()
+    test_out_index_multiple_intarr_store()
+    test_out_index_multiple_intarr_broadcast()
+    test_out_index_multiple_intarr_mismatch_is_refused()
+    test_out_index_multiple_intarr_array_operand_is_refused()
     test_advanced_indexing_syntax(False)
     test_advanced_indexing_syntax(True)
     test_multidim_tuple_index(False)
     test_multidim_tuple_index(True)
     test_multidim_tuple_index_longer()
     test_multidim_tuple_multidim_index()
-    # test_multidim_tuple_multidim_index_write()
+    test_multidim_tuple_multidim_index_write()
     test_advanced_index_broadcasting()
     test_combining_basic_and_advanced_indexing()
     # test_combining_basic_and_advanced_indexing_write()
@@ -613,3 +1010,4 @@ if __name__ == '__main__':
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
     test_index_array_with_integer_index_write_is_refused()
     test_index_array_followed_by_integer_index_write_is_allowed()
+    test_gather_evaluated_before_its_destination_is_cleared()

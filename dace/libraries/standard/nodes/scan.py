@@ -968,6 +968,99 @@ def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
                          language=dace.Language.CPP)
 
 
+#: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
+#: on NVIDIA (32 wide): wide enough that ``gpucub::BlockScan``'s cross-warp step has work to do,
+#: narrow enough that a short row does not leave most of the block idle.
+BLOCK_COLLECTIVE_THREADS = 256
+
+
+@library.expansion
+class ExpandCUDABlock(ExpandTransformation):
+    """One thread BLOCK scans the whole range: ``gpucub::BlockScan`` fed by a block-strided loop.
+
+    :class:`ExpandCUDA` issues ``gpucub::DeviceScan``, which is a HOST call. A ``Scan`` that lands
+    INSIDE a kernel therefore had only ``pure`` to fall back on -- one thread walking every element
+    -- and that fallback is self-perpetuating: :func:`~dace.transformation.passes.offloading.
+    taskloop.encloses_device_wide_libnode` keeps a map on the host precisely BECAUSE it holds a
+    device-wide library node, so the per-row scan
+    (``for i: for j: b[i, j] = b[i, j - 1] + a[i, j]``) becomes one host-issued ``DeviceScan``
+    launch per row rather than one kernel. This expansion is what lets that row map be a kernel.
+
+    The emitted subgraph is a ``GPU_ThreadBlock`` map around a single call to
+    ``dace::cuda_scan::detail::block_inclusive_scan_strided`` (:file:`dace/runtime/include/dace/
+    cuda/scan.cuh`), the same collective the residue-class kernel is built from. The map's
+    parameter is deliberately unused: the collective indexes threads through ``threadIdx`` the way
+    CUB itself does, and the map is here to tell the code generator two things it can learn no
+    other way -- that the enclosing device map runs one iteration per BLOCK rather than per thread,
+    and that the block is :data:`BLOCK_COLLECTIVE_THREADS` wide (``get_kernel_dimensions`` reads
+    the block size off contained thread-block maps).
+
+    Refuses rather than approximates: the exclusive, multi-chain, affine and explicit-init shapes
+    all fall through to another expansion instead of being silently lowered as something else.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+        if not ExpandCUDABlock.environments:
+            from dace.libraries.sort.environments.cub import BlockCollectives
+            ExpandCUDABlock.environments = [BlockCollectives]
+        in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if node.op is ScanOp.AFFINE:
+            raise NotImplementedError("Scan(CUDA (block)): op=AFFINE is not supported.")
+        if node.chains != 1:
+            raise NotImplementedError("Scan(CUDA (block)): multi-chain scans are not supported.")
+        if node.exclusive:
+            raise NotImplementedError("Scan(CUDA (block)): exclusive scans are not supported.")
+        if _has_init(node):
+            raise NotImplementedError("Scan(CUDA (block)): an explicit ``_scan_init`` is not supported.")
+        # The collective accumulates in ONE type, the array's; a widening scan would accumulate at
+        # the input's width and lose the range the wider output was asked for.
+        refuse_widening(node, in_desc, out_desc, 'the CUDA (block) expansion')
+
+        n_expr = _resolve_length(node, state, sdfg)
+        stride_expr = sym2cpp(node.stride)
+        ctype = out_desc.dtype.base_type.ctype
+        op_functor = f'::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>'
+        identity = _OP_TO_IDENTITY_CPP[node.op]
+        if identity is None:
+            # min/max have no universal identity, so the out-of-range lanes have nothing safe to
+            # read. Refusing sends the node to ``pure``, which is slow rather than wrong.
+            raise NotImplementedError(f"Scan(CUDA (block)): op {node.op.value!r} has no identity to pad "
+                                      "the final partial chunk with.")
+
+        n_sym = in_edge.data.subset.num_elements()
+        nsdfg = dace.SDFG(node.label + '_block')
+        nsdfg.add_array(INPUT_CONNECTOR_NAME, [n_sym], in_desc.dtype, storage=in_desc.storage)
+        nsdfg.add_array(OUTPUT_CONNECTOR_NAME, [n_sym], out_desc.dtype, storage=out_desc.storage)
+        nstate = nsdfg.add_state(node.label + '_block_state')
+        read = nstate.add_read(INPUT_CONNECTOR_NAME)
+        write = nstate.add_write(OUTPUT_CONNECTOR_NAME)
+        code = (f'::dace::cuda_scan::detail::block_inclusive_scan_strided'
+                f'<{ctype}, {op_functor}, {BLOCK_COLLECTIVE_THREADS}>('
+                f'__bsin, __bsout, '
+                f'(long)({n_expr}), (long)({stride_expr}), {op_functor}(), '
+                f'static_cast<{ctype}>({identity}));')
+        tasklet = nstate.add_tasklet(node.label + '_block_scan',
+                                     inputs={'__bsin': dtypes.pointer(in_desc.dtype.base_type)},
+                                     outputs={'__bsout': dtypes.pointer(out_desc.dtype.base_type)},
+                                     code=code,
+                                     language=dace.Language.CPP)
+        entry, exit_node = nstate.add_map(node.label + '_block_lanes', {'__lane': f'0:{BLOCK_COLLECTIVE_THREADS}'},
+                                          schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+        # EVERY lane sees the WHOLE range -- the map does not partition the data, it only supplies
+        # the threads. Slicing by ``__lane`` here would hand each thread its own scan.
+        whole = dace.Memlet.simple(INPUT_CONNECTOR_NAME, f'0:{sym2cpp(n_sym)}')
+        nstate.add_memlet_path(read, entry, tasklet, dst_conn='__bsin', memlet=whole)
+        nstate.add_memlet_path(tasklet,
+                               exit_node,
+                               write,
+                               src_conn='__bsout',
+                               memlet=dace.Memlet.simple(OUTPUT_CONNECTOR_NAME, f'0:{sym2cpp(n_sym)}'))
+        return nsdfg
+
+
 @library.expansion
 class ExpandCUDA(ExpandTransformation):
     """``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` over device-global memory.
@@ -1170,6 +1263,7 @@ class Scan(nodes.LibraryNode):
     implementations = {
         "CPU": ExpandCPU,
         "CUDA": ExpandCUDA,
+        "CUDA (block)": ExpandCUDABlock,
         "pure": ExpandPure,
     }
     default_implementation = 'CPU'

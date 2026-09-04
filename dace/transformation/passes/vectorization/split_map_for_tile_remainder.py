@@ -460,9 +460,18 @@ class SplitMapForTileRemainder(ppl.Pass):
         :param modulus: The divisor the expression must be a nonzero multiple of.
         :param message: ``fprintf`` format body; takes the expression's value as its one ``%lld``.
         """
+        # Both spellings, chosen by the compiler that reads them: the guard belongs to the SDFG
+        # that owns the checked map, and that SDFG can be a nested one the offloading put on the
+        # device, where ``fprintf`` and ``abort`` are host-only and nvcc refuses the translation
+        # unit outright. ``printf`` and ``__trap`` are the device equivalents.
         code = (f'if ((long long)({expr_c}) % {modulus} != 0 || (long long)({expr_c}) < {modulus}) {{\n'
+                f'#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)\n'
+                f'    printf("DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
+                f'    __trap();\n'
+                f'#else\n'
                 f'    fprintf(stderr, "DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
                 f'    abort();\n'
+                f'#endif\n'
                 f'}}')
         tasklet = guard.add_tasklet(name=label, inputs={}, outputs={}, code=code, language=dace.dtypes.Language.CPP)
         tasklet.side_effects = True

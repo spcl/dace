@@ -35,7 +35,10 @@ export PYTHONHASHSEED=0
 export DACE_cache=unique
 export DACE_compiler_use_cache=0
 export DACE_default_build_folder="${OUTDIR}/dacecache"
-export OMP_NUM_THREADS="${SLURM_CPUS_ON_NODE:-1}"
+# Outside SLURM this defaulted to 1, which times a PARALLEL backend serially and reports a
+# working parallelisation as no gain. Four is the floor the test suite uses; override with
+# OMP_NUM_THREADS in the environment when a specific width is wanted.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-${SLURM_CPUS_ON_NODE:-4}}"
 # sys.path[0] would otherwise be tests/perf/, not the repo root -- tests.corpus.cloudsc's
 # absolute-from-root import fails without this (confirmed: ModuleNotFoundError: No module
 # named 'tests.corpus').

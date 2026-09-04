@@ -85,7 +85,7 @@ class ExpandNorm2Pure(ExpandTransformation):
                      axes=None if dim_zero is None else [dim_zero],
                      identity=0)
         reduce_state.add_node(red)
-        reduce_state.add_edge(reduce_state.add_read("_squares"), None, red, "_in_data",
+        reduce_state.add_edge(reduce_state.add_read("_squares"), None, red, "_in",
                               mm.Memlet.from_array("_squares", sdfg.arrays["_squares"]))
         reduce_state.add_edge(red, "_out", reduce_state.add_access("_sumsq"), None,
                               mm.Memlet.from_array("_sumsq", sdfg.arrays["_sumsq"]))

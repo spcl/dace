@@ -11,11 +11,14 @@ pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please ins
 pytest.importorskip("transformers",
                     reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import os
+import shutil
 
 import onnx
 import onnxsim
 import pathlib
-import urllib
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import torch
 from transformers import BertTokenizer, BertModel
@@ -26,8 +29,17 @@ from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
+#: Seconds to wait on the fixture server before calling it unreachable.
+FETCH_TIMEOUT_S = 60
+
+
 def get_data_file(url, directory_name=None) -> str:
     """ Get a data file from ``url``, cache it locally and return the local file path to it.
+
+        A fetch that fails SKIPS the test rather than failing it: the fixtures live on a web server
+        this repository does not own, and one that stops answering says nothing about dace. The
+        cached copy is used whenever it is already there, so a machine that fetched the fixtures
+        once keeps running the test even while the server is down.
 
         :param url: the url to download from.
         :param directory_name: an optional relative directory path where the file will be downloaded to.
@@ -45,7 +57,17 @@ def get_data_file(url, directory_name=None) -> str:
     file_path = str(data_directory / file_name)
 
     if not os.path.exists(file_path):
-        urllib.request.urlretrieve(url, file_path)
+        try:
+            # A bounded read, not ``urlretrieve``: that one inherits the global socket timeout,
+            # which is none, so an unreachable host hangs the run instead of skipping it.
+            with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S) as response, open(file_path, 'wb') as out:
+                shutil.copyfileobj(response, out)
+        except OSError as ex:  # URLError and HTTPError are both OSError
+            # Whatever urlretrieve left behind is a truncated file that would read as a cache hit.
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            pytest.skip(f"bert-tiny fixture {url} is unreachable ({ex}); the model files this test "
+                        "needs are not part of the repository")
     return file_path
 
 

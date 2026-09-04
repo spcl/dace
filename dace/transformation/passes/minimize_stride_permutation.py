@@ -29,11 +29,12 @@ applications (an adjacent-transposition bubble sort). An interchange that is
 not legal at its turn is skipped rather than raising, so the pass degrades
 gracefully on nests it cannot fully reorder.
 """
+import functools
 from typing import Dict, List, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, properties
+from dace import SDFG, properties, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
@@ -119,6 +120,38 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
                     prev = min_stride[vname]
                     min_stride[vname] = stride_val if prev is _NO_HOME_SCORE else sympy.Min(prev, stride_val)
     return {v: (min_stride[v], total_stride[v], offset_sum[v]) for v in var_set}
+
+
+class UndecidableStride(Exception):
+    """Two stride scores whose relative magnitude does not follow from the shape contract."""
+
+
+def stride_difference_sign(a, b) -> int:
+    """``-1``/``0``/``1`` as ``a`` is less than / equal to / greater than ``b``.
+
+    An array's strides are PRODUCTS OF ITS SHAPE EXTENTS, and an extent is at least one wherever the
+    array exists at all, so a symbolic stride is not an undecidable one: ``1`` versus ``LEN_2D`` and
+    ``M`` versus ``N*M`` both follow from that. The symbols are rebuilt ``positive`` here rather than
+    read off the incoming expression because assumptions do not survive the string round trip a
+    stride takes to reach this pass.
+
+    A pair that genuinely does not follow (``N*M`` versus ``M + K``) raises
+    :class:`UndecidableStride`, which leaves the nest untouched -- the behaviour this pass had for
+    every symbolic shape before.
+    """
+    diff = symbolic.simplify(pystr_to_symbolic(str(a)) - pystr_to_symbolic(str(b)))
+    if diff == 0:
+        return 0
+    if diff.is_number:
+        return -1 if diff < 0 else 1
+    rebuilt = diff.subs({sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in diff.free_symbols})
+    # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
+    # order, and reporting them as tied keeps the stable sort's current-order behaviour.
+    if rebuilt.is_nonpositive:
+        return -1
+    if rebuilt.is_nonnegative:
+        return 1
+    raise UndecidableStride(f'{a} vs {b}')
 
 
 @properties.make_properties
@@ -215,15 +248,6 @@ class MinimizeStridePermutation(ppl.Pass):
         params = [me.map.params[0] for me in nest]
         scores = self._score_parameters(state, sdfg, nest, params)
 
-        # Only reorder when every parameter has a concrete (symbol-free, finite)
-        # stride. With symbolic shapes the relative magnitudes are undecidable
-        # (e.g. ``N*M`` versus ``M``), so leaving the nest untouched is the
-        # intended, idempotent behavior rather than guessing an order.
-        for stride_score, _ in scores:
-            term = pystr_to_symbolic(str(stride_score))
-            if not (term.is_number and term.is_finite and not term.free_symbols):
-                return 0
-
         # Build a totally-ordered numeric key per parameter. Smaller indexed
         # stride => deeper (more inner), so the outer..inner target order
         # sorts by *descending* stride. A parameter without a unit-coefficient
@@ -234,12 +258,18 @@ class MinimizeStridePermutation(ppl.Pass):
         # would change the key and the pass would not be idempotent. When all
         # strides are symbolic the scores tie and the order is left unchanged,
         # which is the intended behavior (magnitudes are undecidable).
-        def order_key(i: int) -> Tuple[float, float]:
-            stride_score, offset_score = scores[i]
-            stride_num = float('inf') if stride_score is _NO_HOME_SCORE else _to_float(stride_score)
-            return (-stride_num, _to_float(offset_score))
+        def compare(i: int, j: int) -> int:
+            # Descending stride (the smallest-strided parameter belongs innermost), then ascending
+            # accumulated offset. Decided symbolically: see :func:`stride_difference_sign`.
+            stride_sign = stride_difference_sign(scores[i][0], scores[j][0])
+            if stride_sign != 0:
+                return -stride_sign
+            return stride_difference_sign(scores[i][1], scores[j][1])
 
-        order = sorted(range(len(params)), key=order_key)
+        try:
+            order = sorted(range(len(params)), key=functools.cmp_to_key(compare))
+        except UndecidableStride:
+            return 0
         # ``order[k]`` is the original index that should end up at depth ``k``.
         if order == list(range(len(params))):
             return 0
@@ -269,9 +299,17 @@ class MinimizeStridePermutation(ppl.Pass):
         """
         outer_entry = nest[depth]
         inner_entry = nest[depth + 1]
-        if not MapInterchange.can_be_applied_to(sdfg, outer_map_entry=outer_entry, inner_map_entry=inner_entry):
+        # ``transform_bounds``: a triangular / trapezoidal nest is exactly the shape whose traversal
+        # order is worth fixing and the one a plain swap refuses, because the inner range mentions
+        # the outer parameter. TSVC ``s1232`` (``for j: for i in range(j*VLEN, N): aa[i, j] = ...``)
+        # keeps a stride-``N`` innermost loop without it -- the pass scores the nest correctly and
+        # then cannot act on the score.
+        options = {'transform_bounds': True}
+        if not MapInterchange.can_be_applied_to(
+                sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry):
             return False
         MapInterchange.apply_to(sdfg,
+                                options=options,
                                 outer_map_entry=outer_entry,
                                 inner_map_entry=inner_entry,
                                 verify=False,

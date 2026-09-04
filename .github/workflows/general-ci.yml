@@ -12,6 +12,8 @@ env:
   # Unpinned, string-keyed set iteration order changes per run, and with it transformation order
   # and codegen -- a red that reproduces on one runner and not the next is undebuggable.
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -135,7 +137,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -204,7 +206,7 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev
           g++-aarch64-linux-gnu
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -251,7 +253,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest
       run: |
@@ -295,7 +297,7 @@ jobs:
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Install Intel oneAPI MKL
       # The Syrk / Symm nodes are parametrized over the ``MKL`` implementation, whose expansion
@@ -404,8 +406,11 @@ jobs:
         export OMP_STACKSIZE=64M
         export DACE_compiler_max_stack_array_size=65536
         export DACE_cache=unique
-        # Deterministic reduction order for the bit-exact legacy-vs-experimental corpus compare.
-        export OMP_NUM_THREADS=1
+        # Multithreaded, like the rest of the suite: a numerical comparison pinned to one thread
+        # grades a build nobody ships. The legacy-vs-experimental compare stays bit-exact anyway
+        # -- both sides are the same SDFG with the same schedules, so the two generators split a
+        # reduction identically and the thread count cancels out. Measured: 60/60 at 4 threads.
+        export OMP_NUM_THREADS=4
         # Pinned, not left to the defaults: build caching is most of the wall time here.
         export DACE_compiler_command_cache=1
         export DACE_compiler_precompiled_header=1
@@ -434,7 +439,7 @@ jobs:
       with:
         python-version: '3.14'
         pip-packages: pytest-xdist rustworkx
-        extras: testing
+        groups: testing
 
     - name: Test with pytest (tests/graphlib, rustworkx backend)
       run: |
@@ -473,7 +478,7 @@ jobs:
       with:
         python-version: '3.14'
         pip-packages: pytest-xdist
-        extras: testing
+        groups: testing
 
     - name: Test with pytest (layout)
       run: |

@@ -15,13 +15,21 @@ import os
 import numpy as np
 import pytest
 
+import functools
+
 import dace
 from dace.libraries.blas.environments import OpenBLAS
 
 
+@functools.lru_cache(maxsize=1, typed=True)
 def _openmp_runtime_loadable():
     """DaCe's CMake build always links OpenMP, so any DaCe-compiled .so needs libomp/libgomp
-    at load time regardless of BLAS/LAPACK (see the slurm scripts / openmp_rpath_flags)."""
+    at load time regardless of BLAS/LAPACK (see the slurm scripts / openmp_rpath_flags).
+
+    Called from a fixture rather than from a ``skipif`` argument: a ``skipif`` runs at COLLECTION,
+    and dlopening an OpenMP runtime there leaves it mapped for every later test in the interpreter
+    -- which is how ScaLAPACK's pgemm started returning wrong numbers on the heterogeneous runner.
+    """
     for name in ('libomp.so', 'libgomp.so.1', 'libgomp.so'):
         try:
             ctypes.CDLL(name)
@@ -31,8 +39,11 @@ def _openmp_runtime_loadable():
     return False
 
 
-_SKIP_BUILD = pytest.mark.skipif(not OpenBLAS.is_installed() or not _openmp_runtime_loadable(),
-                                 reason='needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime')
+@pytest.fixture
+def buildable():
+    """Skip unless this machine can build and load a LAPACKE kernel."""
+    if not OpenBLAS.is_installed() or not _openmp_runtime_loadable():
+        pytest.skip('needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime')
 
 
 def test_lapacke_header_and_symbols_available():
@@ -59,7 +70,7 @@ def test_lapacke_header_and_symbols_available():
             assert hasattr(loaded, sym), f'{sym} missing from {abs_libs[0]} (LAPACKE not in this build)'
 
 
-@_SKIP_BUILD
+@pytest.mark.usefixtures('buildable')
 def test_cholesky_compiles_and_links_lapacke():
     """cholesky2 path: np.linalg.cholesky -> Potrf -> LAPACKE_?potrf, end to end."""
 
@@ -73,7 +84,7 @@ def test_cholesky_compiles_and_links_lapacke():
     assert np.allclose(chol(A.copy()), np.linalg.cholesky(A), atol=1e-8)
 
 
-@_SKIP_BUILD
+@pytest.mark.usefixtures('buildable')
 def test_complex_solve_compiles_and_links_lapacke():
     """contour_integral path: complex np.linalg.solve -> Getrf+Getrs -> LAPACKE_z{getrf,getrs}."""
 

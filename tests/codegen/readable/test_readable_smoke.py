@@ -3,12 +3,21 @@
 Self-contained equivalence tests for the experimental (readable) CPU code
 generator: no external corpus needed. Each kernel is generated + run with both
 ``compiler.cpu.implementation = legacy`` and ``experimental`` on identical
-inputs; the outputs must be bit-exact.
+inputs; the outputs must agree to the dtype's tolerance.
+
+Not bit-exact, because these run MULTITHREADED like the rest of the suite: a WCR
+reduction associates its partial sums by thread count, so ``red`` differed in the
+last ulp between the two generators the moment the step stopped pinning
+OMP_NUM_THREADS=1. The tolerance is the same one the corpus comparisons in this
+directory use -- 1e-9 relative for fp64 -- which is some seven orders tighter
+than any discrepancy a real codegen defect would produce.
 """
 import copy
 import numpy as np
 import dace
 from dace.config import Config
+
+from tests.codegen.readable.conftest import assert_outputs_equivalent
 
 N, M, K = (dace.symbol(s) for s in ('N', 'M', 'K'))
 
@@ -52,10 +61,8 @@ def _equivalence(prog, args):
     _build(prog, 'legacy', '%s_legacy' % prog.name)(**a_leg)
     a_exp = copy.deepcopy(base)
     _build(prog, 'experimental_readable', '%s_experimental' % prog.name)(**a_exp)
-    for key in a_leg:
-        v1, v2 = a_leg[key], a_exp[key]
-        if isinstance(v1, np.ndarray):
-            assert np.array_equal(v1, v2), f'{prog.name}: output {key} differs'
+    arrays = {k: v for k, v in a_leg.items() if isinstance(v, np.ndarray)}
+    assert_outputs_equivalent(arrays, {k: a_exp[k] for k in arrays}, 'cpu', label=prog.name)
 
 
 def test_elementwise():

@@ -39,7 +39,7 @@ jobs:
         apt-packages: >-
           libyaml-dev cmake
           libblas-dev libopenblas-dev liblapacke-dev
-        extras: testing
+        groups: testing
 
     - name: Check out HPCAgent-Bench
       uses: actions/checkout@v7
@@ -47,9 +47,27 @@ jobs:
         repository: spcl/HPCAgent-Bench
         path: hpcagent-bench
 
-    - name: Install HPCAgent-Bench
-      # No dace pin: the bench must measure the checkout above, not a released wheel.
-      run: pip install -e ./hpcagent-bench
+    - name: The bench must measure the checkout
+      # The bench is not installed into the project environment at all: ``uv run --with-editable .``
+      # layers it, and its dependencies, over the environment ``setup-dace`` already synced. That
+      # keeps dace resolving to THIS checkout -- the bench declares dace as an EXTRA
+      # (``dace @ git+...@extended``), never a base dependency, so nothing in the overlay pulls a
+      # released wheel over the branch under test. ``--project`` is required because the cwd below
+      # is the bench, and without it uv would take the bench for the project.
+      #
+      # ``working-directory`` matters and must match the sweep step below: from the repo root the
+      # cwd shadows anything installed into site-packages, so the check would pass while the sweep
+      # -- which runs from ``hpcagent-bench`` and has no such shadow -- imported the wheel.
+      working-directory: hpcagent-bench
+      run: |
+        resolved=$(uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -c 'import dace, pathlib; print(pathlib.Path(dace.__file__).resolve())')
+        echo "dace resolves to $resolved"
+        case "$resolved" in
+          "$GITHUB_WORKSPACE"/dace/*) ;;
+          *) echo "::error::dace resolves to $resolved, not the checkout at $GITHUB_WORKSPACE"
+             exit 1 ;;
+        esac
 
     - name: Canonicalize CPU correctness
       working-directory: hpcagent-bench
@@ -65,19 +83,34 @@ jobs:
         DACE_compiler_cpu_implementation: experimental_readable
         OMP_NUM_THREADS: '4'
       # ``-r 1``: a correctness gate, not a measurement -- a timing repeat on a shared runner
-      # measures the runner. ``|| true`` so every kernel is reported before the gate below reads
-      # the CSV.
+      # measures the runner. ``|| true`` is deliberate here (unlike the gate step below): it lets
+      # the sweep run to completion so every kernel is reported in the CSV, even if some kernels
+      # crash along the way, before the gate step below reads that CSV.
       run: |
-        python -m hpcagent_bench.cli run-framework \
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework \
           -b all@${{ matrix.tag }} -f dace_cpu_canonicalize -p S -r 1 -t 900 \
           --csv canon_cpu_${{ matrix.tag }}.csv || true
 
     - name: Gate on the CSV
       working-directory: hpcagent-bench
-      # Exits with the number of rows that crashed, failed to build, or disagreed with numpy.
-      # ``continue-on-error`` until those are fixed; drop it once a run comes back clean.
-      continue-on-error: true
-      run: python -m hpcagent_bench.cli run-framework --summarize canon_cpu_${{ matrix.tag }}.csv
+      # --summarize exit codes: 0 = every row green; 1 = the CSV has rows and some crashed,
+      # failed, or disagreed with numpy (a real result, tolerated for now); 2 = the CSV is
+      # missing, unreadable, or has zero data rows (the sweep ran nothing -- never tolerated).
+      # No continue-on-error: a 0-kernel crashed run must not report success.
+      run: |
+        set +e
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework --summarize canon_cpu_${{ matrix.tag }}.csv
+        code=$?
+        set -e
+        if [ "$code" -ge 2 ]; then
+          echo "::error::the sweep produced no rows -- it crashed before running any kernel"
+          exit 1
+        fi
+        if [ "$code" -eq 1 ]; then
+          echo "::warning::known per-kernel failures remain; tolerated until the corpus is clean"
+        fi
 
     - name: Keep the verdicts
       if: always()

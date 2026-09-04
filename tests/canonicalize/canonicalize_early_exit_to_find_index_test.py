@@ -5,9 +5,18 @@ Covers TSVC ``s481`` (body_post + cond), ``s482`` (body_pre + cond), and the
 v1 refusal contract (``s332`` true-branch scalar rebind unsupported; cond-body
 overlap; multiple breaks; etc.). Also cross-pass non-interference: the
 break-loop pass must not fire on argmax / reduce / scan shapes.
+
+Also pins HPCAgent-Bench's ``ext_break_capture`` (s332 with an index + value capture): a naive
+port that puts the capture inside a ``break``-less ``omp for`` lets every thread race to write the
+shared answer, so a LATER (larger) firing index can overwrite the true first one -- exactly the
+bug five independent agent submissions hit on this kernel. ``dace::find_first_index``'s
+``reduction(min : best)`` (``dace/runtime/include/dace/detect.h:179``) is what keeps DaCe's own
+lowering race-free; the tests below pin that this stays correct on every firing edge.
 """
 import ast
 import pathlib
+
+import typing
 
 import numpy as np
 import pytest
@@ -938,6 +947,133 @@ def test_body_ordering_memlet_survives_the_body_clone():
     got = a.copy()
     sdfg(a=got, d=d, N=n, M=m)
     assert np.allclose(got, expected), f'max diff {np.abs(got - expected).max()}'
+
+
+# -----------------------------------------------------------------------------
+# ext_break_capture (HPCAgent-Bench s332: find-first PLUS index+value capture).
+#
+# Structurally this is NOT s481/s482: the whole loop body is the break-conditional
+# itself, so body_pre and body_post are both empty and ``_emit_body_loop`` returns
+# None for each (early_exit_to_find_index.py, the "no live body work to emit" guard).
+# The only per-iteration work IS the search; the capture is a single indexed read
+# at the winning index, done once in Phase 3 -- there is nothing left for a Map to
+# run in parallel. A Map appearing here later is a regression, not a missed
+# optimization.
+#
+# The captured value, not the found index, is the part a hand-parallelized port
+# gets wrong: ``break`` cannot appear inside ``#pragma omp for``, so a naive port
+# drops it and has every thread write ``out_index``/``out_value`` under the bare
+# guard ``if (a[i] > K)``, with no ordering between threads. A thread that finds a
+# LATER (larger) index can finish last and overwrite a thread that already wrote
+# the true first-firing one -- the sibling kernels have no such capture, so this
+# failure mode is unique to ext_break_capture. ``find_first_index``'s
+# ``reduction(min : best)`` at ``detect.h:179`` is the fix a naive port is missing.
+# -----------------------------------------------------------------------------
+
+_EXT_BREAK_CAPTURE_THRESHOLD = 1.0
+
+
+@dace.program
+def ext_break_capture(a: dace.float64[N], out_index: dace.int64[1], out_value: dace.float64[1]):
+    out_index[0] = -1
+    out_value[0] = -1.0
+    for i in range(N):
+        if a[i] > _EXT_BREAK_CAPTURE_THRESHOLD:
+            out_index[0] = i
+            out_value[0] = a[i]
+            break
+
+
+def ext_break_capture_reference(a: np.ndarray, n: int, threshold: float) -> typing.Tuple[np.ndarray, np.ndarray]:
+    """Sequential numpy reference matching ``ext_break_capture`` statement for statement."""
+    out_index = np.array([-1], dtype=np.int64)
+    out_value = np.array([-1.0], dtype=np.float64)
+    for i in range(n):
+        if a[i] > threshold:
+            out_index[0] = i
+            out_value[0] = a[i]
+            break
+    return out_index, out_value
+
+
+@pytest.fixture(scope='module')
+def ext_break_capture_pipeline():
+    """Run the production recipe once: canonicalize picks the parallel search form,
+    finalize_for_target resolves its implementation, then compile. Shared across the
+    structural test and every parametrized numeric case below -- rebuilding per case
+    would only pay compiler time, not change what is asserted."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    sdfg = ext_break_capture.to_sdfg(simplify=False)
+    canonicalize(sdfg, target='cpu')
+    finalize_for_target(sdfg, 'cpu')
+    csdfg = sdfg.compile()
+    return sdfg, csdfg
+
+
+def test_ext_break_capture_canonicalizes_to_findfirst_only(ext_break_capture_pipeline):
+    """Deliberately NOT xfail: this refusal is correct today and must stay correct (same
+    contract as ``smt_required_parallel_test.test_colliding_scatter_stays_sequential``). A
+    numeric check alone would not catch a regression here -- a future pass could grow a
+    same-answer Map around the capture and still pass every numeric case while reintroducing
+    exactly the unsynchronized-write race described above."""
+    sdfg, _csdfg = ext_break_capture_pipeline
+
+    assert _num_maps(sdfg) == 0, ('ext_break_capture has no per-iteration body independent of the '
+                                  'search -- a Map here is a regression, not progress')
+    searches = _find_first_nodes(sdfg)
+    assert len(searches) == 1, f'expected exactly one FindFirst search, got {len(searches)}'
+    search = searches[0]
+    assert isinstance(search, FindFirst), f'the search must stay a library node, got {type(search).__name__}'
+    assert search.implementation == 'OpenMP', (
+        f'the search must resolve to the parallel implementation, got {search.implementation!r}')
+
+    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    call_lines = [ln for ln in code.splitlines() if 'dace::find_first_index' in ln]
+    assert len(call_lines) == 1, f'expected exactly one find_first_index call, got {call_lines}'
+    assert call_lines[0].rstrip().endswith('true);'), (
+        f'the search must be lowered threaded (parallel=true), not a serial fallback: {call_lines[0].strip()!r}')
+
+
+@pytest.mark.parametrize('case', ['fires_at_first', 'fires_in_middle', 'fires_at_last', 'never_fires'])
+def test_ext_break_capture_matches_oracle_on_every_edge(ext_break_capture_pipeline, case):
+    """The four shapes a racing parallel port breaks differently: firing at the FIRST index
+    (a body that ran ahead of the search would already have clobbered it), firing in the MIDDLE
+    (the textbook race -- a later chunk finishing first must not win), firing at the LAST index
+    (every earlier non-match must not stick), and NEVER firing (the -1 / -1.0 sentinels must
+    survive -- a shared 'hint' used as the answer instead of ``reduction(min : ...)`` tends to
+    drift off the true no-fire value under load). A single-case numeric check would only catch
+    one of these failure modes."""
+    n = 32
+    rng = np.random.default_rng(332)
+    a = rng.uniform(-1000.0, _EXT_BREAK_CAPTURE_THRESHOLD - 1e-3, n)
+    if case == 'fires_at_first':
+        a[0] = _EXT_BREAK_CAPTURE_THRESHOLD + 500.0
+    elif case == 'fires_in_middle':
+        a[n // 2] = _EXT_BREAK_CAPTURE_THRESHOLD + 500.0
+    elif case == 'fires_at_last':
+        a[-1] = _EXT_BREAK_CAPTURE_THRESHOLD + 500.0
+    elif case == 'never_fires':
+        pass  # every a[i] stays below the threshold
+    else:
+        raise AssertionError(case)
+
+    ref_index, ref_value = ext_break_capture_reference(a, n, _EXT_BREAK_CAPTURE_THRESHOLD)
+
+    _sdfg, csdfg = ext_break_capture_pipeline
+    got_index = np.zeros(1, dtype=np.int64)
+    got_value = np.zeros(1, dtype=np.float64)
+    csdfg(a=a.copy(), out_index=got_index, out_value=got_value, N=n)
+
+    assert got_index[0] == ref_index[0], f'{case}: index {got_index[0]} != oracle {ref_index[0]}'
+    assert np.isclose(got_value[0], ref_value[0]), f'{case}: value {got_value[0]} != oracle {ref_value[0]}'
+
+    if case == 'never_fires':
+        # Explicit, not just oracle-equal: the sentinels are the value a racing implementation
+        # drifts away from, so pin them by their literal value too.
+        assert got_index[0] == -1
+        assert got_value[0] == -1.0
 
 
 if __name__ == '__main__':

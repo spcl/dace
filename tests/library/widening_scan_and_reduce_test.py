@@ -54,8 +54,8 @@ def reduce_sdfg(in_dtype, out_dtype, implementation):
     red = state.add_reduce('lambda x, y: x + y', None, 0)
     red.implementation = implementation
     red.schedule = dace.ScheduleType.CPU_Multicore
-    state.add_edge(state.add_read('A'), None, red, None, mm.Memlet('A[0:N]'))
-    state.add_edge(red, None, state.add_write('B'), None, mm.Memlet('B[0]'))
+    state.add_edge(state.add_read('A'), None, red, '_in', mm.Memlet('A[0:N]'))
+    state.add_edge(red, '_out', state.add_write('B'), None, mm.Memlet('B[0]'))
     sdfg.validate()
     return sdfg
 

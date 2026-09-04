@@ -361,3 +361,68 @@ def test_does_not_collapse_cross_state_transient():
     # No isolated node left (the original crash was an orphaned ``G``).
     iso = [n for st in body.states() for n in st.nodes() if isinstance(n, dace.nodes.AccessNode) and st.degree(n) == 0]
     assert not iso, f"isolated AccessNode(s) left: {[n.data for n in iso]}"
+
+
+def test_identity_free_reduce_producer_is_not_bypassed():
+    """``[s=0] -> AN(s) ~ AN(a) -> Reduce(identity=None) -> AN(s) -> [_out=_in] -> AN(out)``.
+
+    An identity-free ``Reduce`` emits no initialization state, so it folds into
+    whatever its output already holds -- here the seed written by the ``s = 0.0``
+    tasklet on the OTHER ``s`` node. Splicing the reduce onto ``out`` strands that
+    seed and turns ``out[i] = sum(a[i, :])`` into ``out[i] += sum(a[i, :])``: the
+    program still runs and still returns numbers, they are just wrong (tsvc_2_5
+    ``reduce_inner_carry``, max|diff| 2.673). The bypass must refuse."""
+    from dace.libraries.standard.nodes.reduce import Reduce
+
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("a", (8, ), dace.float64, transient=False)
+    body.add_array("s", (1, ), dace.float64, transient=True)
+    body.add_array("out", (1, ), dace.float64, transient=False)
+
+    seed_node = state.add_access("s")
+    seed = state.add_tasklet("seed", set(), {"__out"}, "__out = 0.0")
+    state.add_edge(seed, "__out", seed_node, None, Memlet("s[0]"))
+    a = state.add_access("a")
+    # Empty memlet: the seed only ORDERS the reduce after it, it carries no data.
+    state.add_edge(seed_node, None, a, None, Memlet())
+    red = Reduce("reduce", "lambda x, y: x + y", axes=[0], identity=None)
+    state.add_node(red)
+    acc = state.add_access("s")
+    state.add_edge(a, None, red, "_in", Memlet("a[0:8]"))
+    state.add_edge(red, "_out", acc, None, Memlet("s[0]"))
+    cp = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(acc, None, cp, "_in", Memlet("s[0]"))
+    state.add_edge(cp, "_out", state.add_access("out"), None, Memlet("out[0]"))
+
+    assert _count_assign_tasklets(outer) == 1
+    assert _bypass_count(outer) == 0
+    assert _count_assign_tasklets(outer) == 1
+    # The reduce still writes the seeded transient, not the caller's live array.
+    assert [e.dst.data for e in state.out_edges(red)] == ["s"]
+
+
+def test_wcr_producer_into_transient_is_not_bypassed():
+    """Same refusal via the other accumulating form: the producer edge into the
+    transient carries a WCR. The src branch builds its spliced memlet without a
+    WCR, so bypassing would drop the reduction AND move it onto an unseeded
+    buffer; refuse instead."""
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("IN", (1, ), dace.float64, transient=False)
+    body.add_array("T", (1, ), dace.float64, transient=True)
+    body.add_array("G", (1, ), dace.float64, transient=False)
+
+    src = state.add_access("IN")
+    t = state.add_access("T")
+    producer = state.add_tasklet("p", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    state.add_edge(src, None, producer, "_in", Memlet("IN[0]"))
+    acc_memlet = Memlet("T[0]")
+    acc_memlet.wcr = "lambda x, y: x + y"
+    state.add_edge(producer, "_out", t, None, acc_memlet)
+    bridge = state.add_tasklet("b", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(t, None, bridge, "_in", Memlet("T[0]"))
+    state.add_edge(bridge, "_out", state.add_access("G"), None, Memlet("G[0]"))
+
+    assert _count_assign_tasklets(outer) == 1
+    assert _bypass_count(outer) == 0
+    assert _count_assign_tasklets(outer) == 1
+    assert [e.data.wcr for e in state.out_edges(producer)] == ["lambda x, y: x + y"]

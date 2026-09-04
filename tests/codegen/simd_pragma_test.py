@@ -176,18 +176,21 @@ def test_multicore_multidim_leaf_gets_no_simd(impl):
 
 
 @pytest.mark.parametrize('impl', IMPLS)
-def test_multicore_collapsed_multidim_leaf_vectorizes_its_innermost_loop(impl):
-    """A multidimensional map reaches the clause through expansion, not through ``collapse``:
-    ``MarkSIMDMaps`` splits the innermost dimension into a Sequential map of its own and marks
-    that one, so the nest comes out as an outer ``parallel for`` over a ``simd`` inner loop."""
+def test_a_collapse_hint_is_honoured_instead_of_vectorized(impl):
+    """``collapse(k)`` and ``simd`` on the inner loop are contradictory: fusing k dimensions into
+    one iteration space leaves no inner loop to vectorize. ``MarkSIMDMaps`` reads the hint and
+    HONOURS it -- the nest keeps its collapsed form and takes no clause -- because taking it apart
+    to vectorize answers a different question than the one asked and costs the combined trip count
+    as thread parallelism (a ``[0:2, 0:1000000]`` nest would drop from 2,000,000-way to 2-way)."""
     with temporary_config():
         Config.set('compiler', 'cpu', 'implementation', value=impl)
         sdfg = _multidim_leaf_map_sdfg('mc_2d_coll_' + impl, dtypes.ScheduleType.CPU_Multicore, collapse=2)
         pragmas = _pragmas(sdfg)
     outer = [p for p in pragmas if 'parallel' in p]
     assert len(outer) == 1, pragmas
-    assert 'simd' not in outer[0], pragmas
-    assert any(p == '#pragma omp simd' for p in pragmas), pragmas
+    assert 'collapse(2)' in outer[0], pragmas
+    # Never both: the property says collapse, so no pragma anywhere may claim a vectorized loop.
+    assert not any('simd' in p for p in pragmas), pragmas
 
 
 @pytest.mark.parametrize('impl', IMPLS)

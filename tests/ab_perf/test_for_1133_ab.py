@@ -114,7 +114,7 @@ def _to_gpu_sdfg(sdfg: dace.SDFG, suffix: str, device_resident_data=()) -> dace.
     for arr in device_resident_data:
         if arr in gpu.arrays:
             gpu.arrays[arr].storage = dace.dtypes.StorageType.GPU_Global
-    gpu.apply_gpu_transformations(host_data=list(device_resident_data))
+    gpu.apply_gpu_transformations()
     for arr in device_resident_data:
         if arr in gpu.arrays:
             gpu.arrays[arr].storage = dace.dtypes.StorageType.GPU_Global

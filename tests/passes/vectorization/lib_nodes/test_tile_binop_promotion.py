@@ -45,6 +45,16 @@ _WIDENING = [
     (dace.float32, dace.float64, dace.float64, np.float32, np.float64, np.float64),
     (dace.int32, dace.int64, dace.int64, np.int32, np.int64, np.int64),
     (dace.int32, dace.float32, dace.float32, np.int32, np.float32, np.float32),
+    # A Tile operand meeting a differently-typed sibling through the raw ``+``: on GPU,
+    # dace::float16 is a bare alias for CUDA's __half, whose several simultaneously
+    # implicit conversions make a bare mixed-type operator ambiguous at compile time
+    # ("more than one conversion function ... applies" / "more than one operator ...
+    # matches"). half_disambiguated (_pure_codegen.py) routes it through one explicit
+    # (float) hop first; this case exercises that path even on CPU, where the emulated
+    # dace::half struct already has a single implicit conversion (the hop is then a
+    # harmless no-op) -- see tile_fp16_conversion_ambiguity_cudatest.py for the GPU
+    # compile-and-run proof.
+    (dace.float16, dace.float64, dace.float64, np.float16, np.float64, np.float64),
 ]
 
 

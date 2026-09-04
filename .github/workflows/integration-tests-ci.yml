@@ -14,6 +14,10 @@ on:
     branches: [ main, ci-fix ]
   workflow_dispatch:
 
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
@@ -44,6 +48,8 @@ jobs:
         # The tests build with ``simplify=False`` and apply simplification as an explicit step,
         # so the automatic heuristic must not have run first.
         export DACE_optimizer_automatic_simplification=0
+        # Never pin OMP_NUM_THREADS to 1 here: the simplify numerics guard compares the two SDFGs
+        # on the shipped multicore schedule, and one thread would make them agree for free.
         # Ask the installed package where it lives instead of assuming the job's directory.
         ROOT=$(uv run python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
         # No xdist: the SDFG is parsed once per process and memoized, so a worker per test would

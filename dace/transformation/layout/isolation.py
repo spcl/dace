@@ -49,6 +49,45 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> bool:
     return torn_down
 
 
+def set_openmp_thread_count(threads: int) -> bool:
+    """Pin every OpenMP runtime to ``threads``, both the ones already mapped and any mapped later.
+
+    Writing ``OMP_NUM_THREADS`` is not enough on its own once a runtime is up: libgomp parses the
+    variable in its initialiser and caches the count in its global ICV, so a later ``os.environ``
+    write is read by nobody. A caller that needs a deterministic reduction order therefore has to
+    ask the loaded runtime directly. The environment write still matters -- it is what governs a
+    runtime that gets dlopened afterwards, e.g. the one the generated kernel links against.
+
+    Returns True iff every loaded runtime reports the requested count afterwards. False (with a
+    warning naming the runtime) means the pin did not take and any parallel reduction that runtime
+    drives is free to accumulate in a different order. Never raises.
+    """
+    os.environ["OMP_NUM_THREADS"] = str(threads)  # governs a runtime not yet mapped
+    pinned = True
+    for soname in OMP_RUNTIME_SONAMES:
+        try:
+            lib = ctypes.CDLL(soname, mode=os.RTLD_NOLOAD)  # only touch runtimes already mapped
+        except OSError:
+            continue  # not loaded: the environment write above covers it
+        try:
+            setter, getter = lib.omp_set_num_threads, lib.omp_get_max_threads
+        except AttributeError:
+            warnings.warn(f"{soname}: no omp_set_num_threads/omp_get_max_threads; its thread count "
+                          f"was NOT pinned to {threads} and its reduction order stays whatever the "
+                          f"runtime chose at initialisation.")
+            pinned = False
+            continue
+        setter.argtypes = [ctypes.c_int]
+        setter.restype = None
+        getter.restype = ctypes.c_int
+        setter(threads)
+        if getter() != threads:  # e.g. a runtime that clamps to its own ceiling
+            warnings.warn(f"{soname}: omp_set_num_threads({threads}) left omp_get_max_threads() at "
+                          f"{getter()}; its thread count was NOT pinned.")
+            pinned = False
+    return pinned
+
+
 def quiet_fatal_signals() -> None:
     """In the forked child, disable faulthandler so a segfault dies quietly instead of dumping a misleading traceback."""
     try:

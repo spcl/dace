@@ -2,6 +2,7 @@
 #define SCALAPACK_H
 
 #include <complex>
+#include <mpi.h>
 typedef std::complex<float> complex_s;
 typedef std::complex<double> complex_d;
 
@@ -16,6 +17,11 @@ void Cblacs_gridexit(int context);
 void Cblacs_exit(int error_code);
 void Cblacs_gridmap(int *context, int *map, int ld_usermap, int np_row,
                     int np_col);
+
+// BLACS system handle for an MPI communicator: the Fortran handle the BLACS
+// seeds a context from, so a grid can be built on a communicator other than the
+// process default.
+int Csys2blacs_handle(MPI_Comm comm);
 
 int npreroc_(int *n, int *nb, int *iproc, int *isrcproc, int *nprocs);
 int numroc_(int *n, int *nb, int *iproc, int *isrcproc, int *nprocs);

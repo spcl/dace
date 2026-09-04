@@ -46,6 +46,10 @@ def test_nested_states_are_repointed_at_the_target():
     for sub in target.all_sdfgs_recursive():
         for state in sub.states():
             assert state.sdfg is sub, f'{state.label} points at {state.sdfg} instead of {sub}'
+    # An SDFG's own ``_sdfg`` is itself, so it must NOT be adopted from the snapshot: a target owned
+    # by the throwaway makes every ascent that stops at ``parent_graph is parent_graph.sdfg`` walk
+    # past the top and off the end (get_parent_map_and_loop_scopes).
+    assert target.sdfg is target, 'the target must own itself, not the snapshot'
     assert target.name == 'source', 'the restore must adopt the snapshot contents'
 
 

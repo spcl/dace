@@ -104,20 +104,22 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
     (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n, rhs,
      storage) = arr_desc
 
-    # The vendor path stages the right-hand side through a rank-2 ``_binout``, which does not match
-    # a rank-1 ``_bout``. Refused rather than silently reshaped; the pure expansion handles it.
-    if len(out_shape) == 1:
-        raise NotImplementedError('linalg.solve with a single right-hand side is only implemented by the pure '
-                                  'expansion; pass it as an (n, 1) matrix to use %s.' % implementation)
+    # ``validate`` squeezes the memlets, so an (n, 1) right-hand side arrives here rank-1 like a
+    # plain vector. One column is contiguous in either layout, so it is staged as a rank-1
+    # ``_binout`` and getrs reads nrhs == 1 off the rank.
+    single_rhs = len(out_shape) == 1
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     ain_arr = sdfg.add_array('_ain', ain_shape, dtype=ain_dtype, strides=ain_strides)
     ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True, storage=storage)
     bin_arr = sdfg.add_array('_bin', bin_shape, dtype=bin_dtype, strides=bin_strides)
-    binout_shape = [n, rhs]
-    if implementation in GPU_SOLVERS:
+    if single_rhs:
+        binout_shape = [n]
+    elif implementation in GPU_SOLVERS:
         binout_shape = [rhs, n]
+    else:
+        binout_shape = [n, rhs]
     binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True, storage=storage)
     bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True, storage=storage)
@@ -147,6 +149,10 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
         transpose_ain.implementation = SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
         state.add_edge(transpose_ain, '_out', ainout1, None, Memlet.from_array(*ainout_arr))
+    else:
+        state.add_nedge(ain, ainout1, Memlet.from_array(*ain_arr))
+
+    if implementation in GPU_SOLVERS and not single_rhs:
         transpose_bin = Transpose('bT', dtype=bin_dtype)
         transpose_bin.implementation = SOLVER_BLAS[implementation]
         state.add_edge(bin, None, transpose_bin, '_inp', Memlet.from_array(*bin_arr))
@@ -156,7 +162,6 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
         state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, '_out', bout, None, Memlet.from_array(*bout_arr))
     else:
-        state.add_nedge(ain, ainout1, Memlet.from_array(*ain_arr))
         state.add_nedge(bin, binout1, Memlet.from_array(*bin_arr))
         state.add_nedge(binout2, bout, Memlet.from_array(*bout_arr))
 
@@ -175,23 +180,6 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
     state.add_memlet_path(getrs_node, binout2, src_conn="_rhs_out", memlet=Memlet.from_array(*binout_arr))
 
     return sdfg
-
-
-@dace.library.expansion
-class ExpandSolvePure(ExpandTransformation):
-
-    environments = []
-
-    @staticmethod
-    def make_sdfg(node, parent_state, parent_sdfg):
-        raise NotImplementedError("Missing pure implementation of linalg.solve.")
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) + ".")
-        return ExpandSolvePure.make_sdfg(node, state, sdfg)
 
 
 @dace.library.expansion

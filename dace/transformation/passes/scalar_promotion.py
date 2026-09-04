@@ -18,7 +18,7 @@ descriptor as text rather than through a memlet -- are identical whatever the cr
 from typing import Any, Callable, Dict, Optional, Set
 
 from dace import data, dtypes, properties
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_is_written, rewrite_code_slots,
                                                                            rewrite_refs_to_element)
@@ -152,6 +152,24 @@ def promote_matching_scalars(sdfg: SDFG,
     return promoted
 
 
+def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
+    """Whether ``name`` is written across a GPU-scheduled map's ``MapExit``, i.e. is a kernel output.
+
+    :param sdfg: SDFG to search.
+    :param name: Descriptor name.
+    :returns: True if some access node of ``name`` is written by a GPU-scheduled ``MapExit``.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not (isinstance(node, nodes.AccessNode) and node.data == name):
+                continue
+            for in_edge in state.in_edges(node):
+                entry = state.entry_node(in_edge.src) if isinstance(in_edge.src, nodes.ExitNode) else None
+                if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
+                    return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class PromoteScalarOutputsToArrays(ppl.Pass):
@@ -187,6 +205,9 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
         :param pipeline_results: unused.
         :returns: how many descriptors were promoted, or ``None`` if none were.
         """
+        if self.gpu:
+            # The GPU criteria read the final storage decision, which is only settled after inference.
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         promoted = promote_matching_scalars(sdfg, self.needs_promotion, self.storage_for)
         # Under the GPU criteria this is unconditional: a connector can be mistyped against an Array
         # inner descriptor this pass did not create (cuBLAS expansion's ``gpu_streams``), so the
@@ -212,8 +233,6 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
             return False
         if self.non_transient_only and desc.transient:
             return False
-        # Local: gpu_helpers imports the GPU wrapper, which imports this module.
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
         return written_by_gpu_map_exit(sdfg, name)
 
     def storage_for(self, sdfg: SDFG, name: str) -> Optional[dtypes.StorageType]:

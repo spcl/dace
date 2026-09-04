@@ -68,6 +68,11 @@ _IN = '_reduce_in'
 _OUT = '_reduce_out'
 _ACC = '_reduce_acc'
 
+#: ``Reduce``'s data connectors. Module-level as in ``copy/common.py`` and ``scan``, so an expansion
+#: or a caller can name them without importing the node class.
+INPUT_CONNECTOR_NAME = '_in'
+OUTPUT_CONNECTOR_NAME = '_out'
+
 
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
@@ -150,11 +155,6 @@ class ExpandReducePure(pm.ExpandTransformation):
                         output_data.dtype,
                         strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
                         storage=output_data.storage)
-
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         if len(axes) == 0:
             # Degenerate reduction, do nothing
@@ -368,11 +368,6 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         # input-typed accumulator needed is gone with it. The widening happens per element instead,
         # on the identity tasklet's connectors, which is where it belongs.
         nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
-
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         from dace.transformation import dataflow
         # ``validate=False``: this SDFG is still DETACHED, so nothing here can see the scope it is
@@ -707,12 +702,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         state_id = state.parent_graph.node_id(state)
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
-        if node.out_connectors:
-            dtype = next(node.out_connectors.values())
-        else:
-            dtype = sdfg.arrays[output_memlet.data].dtype
-
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -879,10 +871,6 @@ DACE_EXPORTED gpuError_t __dace_reduce_{id}({intype} *input, {outtype} *output, 
         sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
 
         # Rename outer connectors and add to node
-        input_edge._dst_conn = '_in'
-        output_edge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         # Device-writable output: CUB writes the output pointer directly.
         if output_on_device:
@@ -961,11 +949,10 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         input_memlet = input_edge.data
         output_memlet = output_edge.data
 
-        if node.out_connectors:
-            dtype = next(node.out_connectors.values())
-        else:
-            dtype = sdfg.arrays[output_memlet.data].dtype
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer. It is the
+        # OUTPUT descriptor's -- a reduction accumulates at the type it was asked to produce.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -982,12 +969,6 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
                 {contents}
             }}
         }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), state.parent_graph, state_id, node_id)
-            reduce_op = ', __reduce_' + idstr + '(), ' + symstr(node.identity)
-        elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
-            reduce_op = ''
-        else:
-            credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
-            reduce_op = ((', dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)) + ', ' + symstr(node.identity))
 
         # Try to obtain the number of threads in the block, or use the default
         # configuration
@@ -1021,7 +1002,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         localcode.write("""
         typedef gpucub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
         __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
-            """.format(id=idstr, type=output_data.dtype.ctype, numthreads=block_threads))
+            """.format(id=idstr, type=output_type, numthreads=block_threads))
 
         input = (input_memlet.data + ' + ' + cpp_array_expr(sdfg, input_memlet, with_brackets=False))
         output = cpp_array_expr(sdfg, output_memlet)
@@ -1039,12 +1020,107 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
 
         # Rename outer connectors and add to node
-        input_edge._dst_conn = '_in'
-        output_edge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         return tnode
+
+
+@dace.library.expansion
+class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
+    """Reduce ``M`` elements with the ``B`` threads of ONE block: block-strided loop into CUB.
+
+    :class:`ExpandReduceCUDABlock` is the one-element-per-thread form -- register in, register out,
+    ``M == B``. That is not the shape a kernel presents. Measured over the ML/scientific-computing
+    tracks, an in-kernel ``Reduce`` runs along a feature axis of 10^2 to 10^4 elements
+    (``cross_entropy_loss``: 46,341 classes) with a 256-wide block, and until now fell back to
+    ``pure`` -- ONE thread walking all of them.
+
+    The reduced region is a one-dimensional run with a stride, which is the general case rather than
+    a special one: contiguous is simply ``stride == 1``. Both forms occur (``[i, 0:num_classes]`` at
+    stride 1, ``[i, 0:out_channels, j, k]`` at stride ``(h-k+1)*(w-k+1)``).
+
+    Refuses -- and so falls back to ``pure``, slower but never wrong -- when the reduced region is
+    not a single run, when the reduction is ``Custom`` or a ``*_Location`` argmin/argmax, or when the
+    op has no identity to pad the final partial chunk with.
+    """
+
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+                                                          block_reduce_code)
+
+        node.validate(sdfg, state)
+        in_edge = state.in_edges(node)[0]
+        out_edge = state.out_edges(node)[0]
+        in_desc = sdfg.arrays[in_edge.data.data]
+        out_desc = sdfg.arrays[out_edge.data.data]
+
+        redtype = detect_reduction_type(node.wcr)
+        if redtype == dtypes.ReductionType.Custom:
+            raise NotImplementedError('Reduce(CUDA (block strided)): a Custom WCR is not supported.')
+        if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
+            raise NotImplementedError(f'Reduce(CUDA (block strided)): {redtype} is not supported.')
+        if out_edge.data.subset.num_elements() != 1:
+            raise NotImplementedError('Reduce(CUDA (block strided)): only a full reduction to a scalar.')
+
+        # The reduced region has to be ONE run for a strided walk to cover it exactly. ``squeeze``
+        # drops the axes the subset already pinned to a point, and what is left must be a single
+        # axis -- anything else would need a nested walk this emitter does not do.
+        insubset = dcpy(in_edge.data.subset)
+        kept = insubset.squeeze()
+        if len(kept) != 1:
+            raise NotImplementedError('Reduce(CUDA (block strided)): the reduced region is not a single '
+                                      f'1-D run (kept axes: {kept}).')
+        count = insubset.num_elements()
+        stride = in_desc.strides[kept[0]]
+
+        dtype = out_desc.dtype.base_type
+        ctype = dtype.ctype
+        identity = node.identity
+        if identity is None:
+            # A Reduce built from a WCR carries no identity of its own; the op's is well known and
+            # is what the out-of-range lanes must fold.
+            identity = dtypes.reduction_identity(dtype, redtype)
+        if identity is None:
+            raise NotImplementedError(f'Reduce(CUDA (block strided)): {redtype} has no identity to pad the '
+                                      'final partial chunk with.')
+        credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
+        redop = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
+
+        state_id = state.parent_graph.node_id(state)
+        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        code = block_reduce_code(idstr=idstr,
+                                 ctype=ctype,
+                                 lanes=BLOCK_COLLECTIVE_THREADS,
+                                 count_expr=symstr(count),
+                                 element_expr=f'__brin[__bri * ({symstr(stride)})]',
+                                 redop=redop,
+                                 identity=f'static_cast<{ctype}>({symstr(identity)})',
+                                 out_expr='__brout[0]')
+
+        nsdfg = dace.SDFG(node.label + '_block')
+        nsdfg.add_array('_in', [count], in_desc.dtype, strides=[stride], storage=in_desc.storage)
+        nsdfg.add_array('_out', [1], out_desc.dtype, storage=out_desc.storage)
+        nstate = nsdfg.add_state(node.label + '_block_state')
+        tasklet = nstate.add_tasklet(node.label + '_block_reduce',
+                                     inputs={'__brin': dace.pointer(in_desc.dtype.base_type)},
+                                     outputs={'__brout': dace.pointer(out_desc.dtype.base_type)},
+                                     code=code,
+                                     language=dace.Language.CPP)
+        entry, exit_node = add_block_lane_map(nstate, node.label + '_block_lanes')
+        # EVERY lane sees the WHOLE run: the map supplies threads, it does not partition the data.
+        nstate.add_memlet_path(nstate.add_read('_in'),
+                               entry,
+                               tasklet,
+                               dst_conn='__brin',
+                               memlet=dace.Memlet.simple('_in', f'0:{symstr(count)}'))
+        nstate.add_memlet_path(tasklet,
+                               exit_node,
+                               nstate.add_write('_out'),
+                               src_conn='__brout',
+                               memlet=dace.Memlet.simple('_out', '0'))
+        return nsdfg
 
 
 @dace.library.expansion
@@ -1081,11 +1157,10 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
         output_memlet = output_edge.data
-        if node.out_connectors:
-            dtype = next(node.out_connectors.values())
-        else:
-            dtype = sdfg.arrays[output_memlet.data].dtype
-        output_type = dtype.ctype
+        # Element type comes from the memlet's data descriptor, never from a connector: a library
+        # node connector types the tasklet INTERFACE, which the frame hands a pointer. It is the
+        # OUTPUT descriptor's -- both the CUB fold and the atomic it feeds work at that type.
+        output_type = output_data.dtype.ctype
 
         if node.identity is None:
             raise ValueError('For block-atomic reduce nodes, the initial value (identity) must be specified')
@@ -1144,10 +1219,6 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
                                    localcode.getvalue(),
                                    language=dace.Language.CPP)
         sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
-        input_edge._dst_conn = '_in'
-        output_edge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
         return tnode
 
 
@@ -1210,8 +1281,12 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         ])
         memlet_in = dace.Memlet(data=in_edge.data.data, volume=1, subset=subset_in)
         memlet_out = dcpy(out_edge.data)
-        graph.add_edge(u=new_entry, u_connector=None, v=reduce_node, v_connector=None, memlet=memlet_in)
-        graph.add_edge(u=reduce_node, u_connector=None, v=new_exit, v_connector=None, memlet=memlet_out)
+        graph.add_edge(u=new_entry, u_connector=None, v=reduce_node, v_connector=INPUT_CONNECTOR_NAME, memlet=memlet_in)
+        graph.add_edge(u=reduce_node,
+                       u_connector=OUTPUT_CONNECTOR_NAME,
+                       v=new_exit,
+                       v_connector=None,
+                       memlet=memlet_out)
 
         ### add in and out local storage
         from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage, OutLocalStorage
@@ -1815,10 +1890,6 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                                    schedule.out_strides, raw_output_data.storage)
 
         # Rename outer connectors and add to node
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         from dace.transformation import dataflow
         # ``validate=False``: this SDFG is still DETACHED, so nothing here can see the scope it is
@@ -1836,6 +1907,12 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         (N-k)-dimensional array, with a list of axes to reduce and
         a reduction binary function. """
 
+    #: The node's data connectors, spelled the way ``CopyLibraryNode`` and ``Scan`` spell theirs.
+    #: Named here rather than at each expansion so a caller wiring a ``Reduce`` and an expansion
+    #: consuming one agree by construction.
+    INPUT_CONNECTOR_NAME = INPUT_CONNECTOR_NAME
+    OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
+
     # Global properties
     implementations = {
         'auto': ExpandReduceAuto,
@@ -1844,6 +1921,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         'OpenMP': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
         'CUDA (block)': ExpandReduceCUDABlock,
+        'CUDA (block strided)': ExpandReduceCUDABlockStrided,
         'CUDA (block atomic)': ExpandReduceCUDABlockAtomic,
         'CUDA (block allreduce)': ExpandReduceCUDABlockAll,
         'GPUAuto': ExpandReduceGPUAuto
@@ -1866,7 +1944,11 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
                  schedule=dtypes.ScheduleType.Default,
                  debuginfo=None,
                  **kwargs):
-        super().__init__(name=name, **kwargs)
+        # Declared like every other library node's: data flows in through ``_in`` and out through
+        # ``_out``, and an expansion replaces the node with a tasklet or nested SDFG carrying the
+        # same two. Reduce used to declare neither, so each of its expansions renamed the edges at
+        # expansion time -- the same three lines copied into eight places.
+        super().__init__(name=name, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.wcr = wcr
         self.axes = axes
         self.identity = identity

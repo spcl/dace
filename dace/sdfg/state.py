@@ -1255,11 +1255,13 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     specialization_hint = Property(dtype=str,
                                    default=None,
                                    allow_none=True,
-                                   desc='A device specialization a canonicalizing pass considered and did '
-                                   'not take. Same contract as the node-level property of the same name: '
-                                   'canonicalization picks the most parallel form and records the trade '
-                                   'here, the standalone (MPR) rendering emits it as a comment, and every '
-                                   'other code path ignores it.')
+                                   desc='A note about how this block got its shape: a device '
+                                   'specialization a canonicalizing pass considered and did not take, or '
+                                   'the kind of loop this is -- parallel, sequential with a proven carried '
+                                   'dependence, or neither proven (AnnotateLoopKinds). Same contract as the '
+                                   'node-level property of the same name: the standalone (MPR) rendering '
+                                   'emits it as a comment, every other code path ignores it, and nothing '
+                                   'anywhere dispatches on it.')
 
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
@@ -2709,6 +2711,42 @@ class StateSubgraphView(SubgraphView[nd.Node, mm.Memlet], DataflowGraphView):
         return state.sdfg
 
 
+def rehome_claimed_block(block: ControlFlowBlock, sdfg: Optional['SDFG']) -> None:
+    """Point ``block``, everything below it and the nested SDFGs they hold at ``sdfg``.
+
+    A nested SDFG keeps three back-references to where it sits -- ``parent`` (the state),
+    ``parent_sdfg`` (the SDFG that state belongs to) and ``parent_nsdfg_node`` (the wrapping node).
+    ``SDFGState.add_node`` maintains all three when it accepts a nested-SDFG node; an operation that
+    accepts a whole BLOCK has to maintain them for the nested SDFGs inside it, or the block arrives
+    claimed while its contents still name wherever they came from.
+
+    Two ordinary constructions leave them unset, and neither is exotic: assembling a region while it
+    is still detached (its ``sdfg`` is ``None``, so every nested SDFG added to one of its states
+    records ``None``), and ``copy.deepcopy`` of a region that IS owned -- ``SDFG.__deepcopy__``
+    resolves the parent through the memo, the owner is not in it because only the region was copied,
+    and the self-repair branch does not fire because the original was never detached. Loop fission,
+    loop specialization, guarded-loop partitioning and the segment-chain clones in parallelization
+    prep all do the second. Both end at "Parent SDFG not properly set for nested SDFG node".
+
+    Stops at nested-SDFG boundaries, and that is the right place to stop: a nested SDFG one level
+    deeper was copied together with the state that owns it, so its references are already consistent
+    and point inside that SDFG, which is where they belong.
+    """
+    blocks = [block]
+    if isinstance(block, AbstractControlFlowRegion):
+        # Reaches a ``ConditionalBlock``'s branches too: they are what its ``nodes()`` returns.
+        blocks.extend(block.all_control_flow_blocks())
+    for claimed in blocks:
+        claimed.sdfg = sdfg
+        if not isinstance(claimed, SDFGState):
+            continue
+        for node in claimed.nodes():
+            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                node.sdfg.parent = claimed
+                node.sdfg.parent_sdfg = sdfg
+                node.sdfg.parent_nsdfg_node = node
+
+
 @make_properties
 class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
                                 ControlFlowBlock, abc.ABC):
@@ -2990,10 +3028,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             sdfg = self
         else:
             sdfg = self.sdfg
-        node.sdfg = sdfg
+        # Claims ``node`` itself as well as everything below it, so a bare ``SDFGState`` carrying a
+        # nested SDFG -- a cloned body state, say -- is re-homed like a region is.
+        rehome_claimed_block(node, sdfg)
         if isinstance(node, AbstractControlFlowRegion):
-            for n in node.all_control_flow_blocks():
-                n.sdfg = sdfg
             # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
             # reports 0 -- the same id as the root and as every other unregistered region.
             # Appending instead would assign positions in insertion order while this assigns
@@ -3889,8 +3927,17 @@ class LoopRegion(ControlFlowRegion):
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)
-            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes), infer_expr_type(l_step, alltypes),
-                                                  infer_expr_type(l_end, alltypes))
+            # Infer from the parts that are actually readable. ``get_loop_end`` returns None for any
+            # condition that is not ``i <op> X`` -- a compound test like ``i <= N - 2 and i * i < N``
+            # is one -- and passing that to ``infer_expr_type`` raised ``Cannot convert type
+            # <class 'NoneType'> to a Python AST``, from inside codegen, for a loop that is otherwise
+            # perfectly well formed. The iterator's TYPE comes from the statements that define it,
+            # its init and its update; the end bound only ever participates through a comparison, so
+            # dropping it when unreadable narrows nothing.
+            parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
+            if not parts:
+                return {}
+            inferred_type = dtypes.result_type_of(*(infer_expr_type(part, alltypes) for part in parts))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
                 return {self.loop_variable: inferred_type}
@@ -3983,12 +4030,11 @@ class ConditionalBlock(AbstractControlFlowRegion):
             raise TypeError('Expected ControlFlowRegion, got ' + str(type(branch)))
         self._branches.append([condition, branch])
         branch.parent_graph = self
-        branch.sdfg = self.sdfg
-        # A branch is reached only through this list, never through ``nodes()``, so the generic
-        # ``add_node`` bookkeeping never runs for it: propagate the SDFG into the branch and
-        # invalidate here instead. Without this the branch's blocks keep ``sdfg is None``.
-        for n in branch.all_control_flow_blocks():
-            n.sdfg = self.sdfg
+        # A branch is added through this list rather than through ``add_node``, so the claim the
+        # generic path makes has to be made here instead -- the same claim, not a lesser one.
+        # Propagating only ``sdfg`` left the branch's nested SDFGs pointing at whatever they were
+        # copied from, which is how ``ConditionFusion`` produced an SDFG that failed validation.
+        rehome_claimed_block(branch, self.sdfg)
         self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):

@@ -1269,14 +1269,15 @@ class CPPUnparser:
     # C++ name, then the (single) argument list.  This is the tasklet-body
     # spelling for a complex's components, mirroring how ``int_floor`` maps to
     # ``dace::math::ifloor``.
-    # ``fma`` goes the same way: bare, it binds to ``std::fma``, whose three
-    # overloads are all equally good for a 16-bit float -- ambiguous, and a
-    # hard nvcc error.  ``dace::math::fma`` adds the 16-bit overloads and
-    # forwards every other type to ``std::fma`` unchanged.
+    # The math names come from ``mpr_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
+    # must be qualified (a bare call binds to ``std::``, whose overloads are ambiguous for a 16-bit
+    # float). It is shared with ``dace.symbolic``'s printer on purpose: the same expression reaches
+    # C++ through a tasklet body here and through a memlet subset there, and a name qualified by
+    # only one of the two builds in one place and fails in the other.
     _renamed_funcs = {
         're': 'dace::math::re',
         'im': 'dace::math::im',
-        'fma': 'dace::math::fma',
+        **mpr_lowering.RUNTIME_QUALIFIED_MATH,
     }
 
     def _Call(self, t: ast.Call):

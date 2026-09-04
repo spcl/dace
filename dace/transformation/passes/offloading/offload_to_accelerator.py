@@ -183,12 +183,11 @@ def in_sequential_specialization_arm(block) -> bool:
 class OffloadToAccelerator(ppl.Pass):
     """Move the work an accelerator can take to it, and insert the copies that decision implies.
 
-    Replaces :class:`~dace.transformation.interstate.gpu_transform_sdfg.GPUTransformSDFG` under
-    ``optimizer.new_gpu_offloading_pass``. The difference is where the copies land: the old
-    transformation copies in and out around the kernels it makes, while this one propagates the
+    The only offloader on this branch, and what ``SDFG.apply_gpu_transformations`` runs. Where the
+    transformation it replaced copied in and out around each kernel it made, this one propagates the
     wanted location of every array through the control flow first, so an array that stays on the
-    device across a whole loop is copied once rather than per iteration, and a host-only branch
-    pays for its copies inside that branch.
+    device across a whole loop is copied once rather than per iteration, and a host-only branch pays
+    for its copies inside that branch.
     """
 
     CATEGORY: str = 'Offload To Accelerator'
@@ -1562,15 +1561,20 @@ class OffloadToAccelerator(ppl.Pass):
         # make a rename dict for each IR node, then rename all such arrays in the IR.block
         def _insert_copy_names_in_node(node: OffloadingIRNode):
             rename_dict = {}
+            # Which SIDE the descriptor lives on, not which storage names that side. ``Default`` is
+            # one host storage of several, and a graph that has been through ``auto_optimize`` for
+            # the CPU carries ``CPU_Heap`` instead -- against which an identity test is False, so the
+            # device accesses kept the HOST name. The kernel then wrote the host array while the
+            # copy-back overwrote it with a device buffer nothing had written: vadv came back exactly
+            # as it went in.
             for name in node.gpu_set:
                 assert name in sdfg.arrays
-                if sdfg.arrays[name].storage == dtypes.StorageType.Default:  # starts on CPU, but this access is on GPU
+                if not self.is_array_stored_on_GPU(sdfg, name):  # starts on CPU, but this access is on GPU
                     rename_dict[name] = self._get_gpu_name(name)
 
             for name in node.cpu_set:
                 assert name in sdfg.arrays
-                if sdfg.arrays[
-                        name].storage == dtypes.StorageType.GPU_Global:  # starts on GPU, but this access is on CPU
+                if self.is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
             self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)

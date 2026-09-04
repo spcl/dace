@@ -14,16 +14,15 @@ over the flattened tile (correctness-only); the K=1 ISA backends call
 """
 from typing import Optional, Tuple
 
-import numpy as np
-
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
+from .tile_binop import _promotion_ok
 
 _TILE = "Tile"
 _SYMBOL = "Symbol"
@@ -88,37 +87,6 @@ _CUTE_UNOP_EXPR = {
 _CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
 
 
-def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
-    """Whether a Tile operand of dtype ``src`` may be promoted to the output
-    dtype ``dst`` (a widening conversion) before the op.
-
-    Same rule as :func:`dace.libraries.tileops.nodes.tile_binop._promotion_ok`:
-    int -> float/double, int -> wider int, float -> double, or equal; a
-    narrowing conversion raises.
-
-    :param src: The operand's element dtype.
-    :param dst: The output element dtype.
-    :returns: ``True`` iff promoting ``src`` to ``dst`` is non-narrowing.
-    """
-    if src == dst:
-        return True
-    s_int = np.issubdtype(src.type, np.integer)
-    d_int = np.issubdtype(dst.type, np.integer)
-    s_flt = np.issubdtype(src.type, np.floating)
-    d_flt = np.issubdtype(dst.type, np.floating)
-    s_bool = (src.type is np.bool_)
-    d_bool = (dst.type is np.bool_)
-    if s_int and d_flt:
-        return True
-    if s_int and d_int and dst.bytes >= src.bytes:
-        return True
-    if s_flt and d_flt and dst.bytes >= src.bytes:
-        return True
-    if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
-        return True
-    return False
-
-
 @library.expansion
 class ExpandTileUnopPure(ExpandTransformation):
     """Correctness-only CPP tasklet lowering of ``TileUnop``."""
@@ -149,8 +117,10 @@ class ExpandTileUnopPure(ExpandTransformation):
         if node.kind_a == _SYMBOL:
             # Cast to out_dtype so a literal / symbolic int operand resolves
             # cleanly against a typed unop call (mirrors the binop fix).
+            operand_ctype = out_dtype
             operand = f"{_cast}({pyexpr2cpp(node.expr_a)})"
         elif node.kind_a == _TILE:
+            operand_ctype = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
             operand = f"_a[{off}]"
         else:  # Scalar: descriptor-aware reference.
             # A tile-shape Array widened upstream is read per lane ``_a[off]``
@@ -161,7 +131,23 @@ class ExpandTileUnopPure(ExpandTransformation):
             from .tile_binop import scalar_operand_ref
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
             ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
+            operand_ctype = out_dtype if broadcast else desc.dtype.ctype
             operand = f"{_cast}({ref})" if broadcast else ref
+
+        if node.op not in _CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
+            # Every ``_UNOP_CPP`` op other than ``neg``/``not`` lowers to an
+            # overloaded ``std::`` function (``sqrt``, ``exp``, ``abs``, ...)
+            # with NO ``__half`` overload at all -- unlike a mixed-type infix
+            # operator, this is not a "meets a different type" question, it
+            # is unconditional: ``dace::float16`` (CUDA's ``__half`` on GPU)
+            # exposes several simultaneously implicit conversions, so the
+            # overload set can never pick one on its own (confirmed: this is
+            # the exact shape of the ``std::sqrt`` "more than one instance of
+            # overloaded function ... matches" ambiguity). Route through one
+            # explicit, lossless ``(float)`` hop first, same as
+            # ``half_disambiguated`` (see its docstring) and same as the ISA
+            # runtime header's own ``_cuda_to_compute`` (tile_ops/cuda.h).
+            operand = half_disambiguated(operand, operand_ctype, "float")
 
         if node.op in _CAST_OP_TO_CPP:
             # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as

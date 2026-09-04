@@ -20,20 +20,10 @@ Modes covered:
     ``LOGICAL(1)`` ↔ uint8).  The expansion's cast tasklet widens
     to int32 before reducing.
 """
-import ctypes
-
 import dace
 from dace.libraries.standard.nodes import CountLibraryNode
 
 import numpy as np
-
-# DaCe-compiled SOs link against libgomp's ``omp_get_max_threads`` at
-# load time; preload it with RTLD_GLOBAL so ctypes.CDLL on the dacestub
-# finds the symbol.
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out_dtype):

@@ -114,8 +114,15 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     :meth:`_classify_sync_points`.
     """
 
-    def __init__(self):
-        self._max_concurrent_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
+    @property
+    def max_concurrent_streams(self) -> int:
+        """``compiler.cuda.max_concurrent_streams``, read at APPLY time.
+
+        Snapshotting it in ``__init__`` bound the count to whenever the strategy object happened to
+        be built -- a pipeline constructed at module import, then applied inside a
+        ``set_temporary`` block, kept the value from import and silently ignored the block.
+        """
+        return int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
     # Assignment (WCC).
 
@@ -149,13 +156,13 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 gpu_stream = self._next_stream(gpu_stream)
 
     def _next_stream(self, gpu_stream: int) -> int:
-        if self._max_concurrent_streams == 0:
+        if self.max_concurrent_streams == 0:
             return gpu_stream + 1
-        if self._max_concurrent_streams == -1:
+        if self.max_concurrent_streams == -1:
             # NOTE: In this case codegen will create the `gpu_streams` array, but
             #   will only place `nullptr` in it.
             return 0
-        return (gpu_stream + 1) % self._max_concurrent_streams
+        return (gpu_stream + 1) % self.max_concurrent_streams
 
     def _requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
         sdfg = state.parent

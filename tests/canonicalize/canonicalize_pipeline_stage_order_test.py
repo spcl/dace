@@ -14,7 +14,9 @@ from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizont
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, _assert_self_contained, _build_stages
+from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
+from dace.transformation.passes.canonicalize.pipeline import (CANONICALIZE_STAGES, _assert_self_contained,
+                                                              _build_stages)
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -33,6 +35,8 @@ def _flat(target: str = 'cpu'):
         inner = []
         if isinstance(p, PatternMatchAndApplyRepeated):
             inner = [type(t).__name__ for t in p.transformations]
+        elif isinstance(p, canon_pipeline.IvSubstitutionFissionFixpoint):
+            inner = [type(u).__name__ for u in p.round_units()]
         out.append((label, type(p).__name__, inner))
     return out
 
@@ -230,7 +234,9 @@ def test_simplify_never_runs_after_the_reduce_stage(target):
     ``tests/passes/canonicalize/terminal_cleanup_band_test.py``). Asserting the confinement here is what
     keeps a re-added simplify from silently restoring the crutch.
     """
-    labels = [lbl for lbl, p in _build_stages(target=target) if type(p).__name__ == SimplifyPass.__name__]
+    # A simplify OWNED by a composite stage counts: confinement is about where simplification
+    # happens, and a wrapper past the reduce stage would restore the crutch just as effectively.
+    labels = [lbl for lbl, cls, inner in _flat(target) if SimplifyPass.__name__ in (cls, *inner)]
     assert labels == ['clean', 'reduce', 'reduce'], labels
 
 

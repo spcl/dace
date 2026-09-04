@@ -27,8 +27,9 @@ wider block dimension (32) is then assigned to the wider domain dimension.
 
 The pass never overrides a user-set ``gpu_block_size`` and skips any device map
 that already carries an inner ``GPU_ThreadBlock`` / ``GPU_ThreadBlock_Dynamic``
-map -- those derive the block size from the thread-block map, and a preset
-``gpu_block_size`` would conflict at codegen.
+map, or a map still tagged ``is_warp_tile`` and waiting to become one -- those
+derive the block size from the thread-block map, and a preset ``gpu_block_size``
+would conflict at codegen.
 """
 from typing import Any, Dict, List, Optional
 
@@ -148,15 +149,28 @@ def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return scope_contains_block_reduce(state, map_entry)
 
 
+def owns_the_thread_block(node) -> bool:
+    """True iff ``node`` is a map that gives its enclosing kernel a thread-block level of its own.
+
+    Two spellings of one thing. A map already on a thread-block schedule is one. A map tagged
+    ``is_warp_tile`` is the other: the tag is a request the device offload could not honour, and
+    ``PromoteWarpTiles`` redeems it as ``GPU_ThreadBlock`` during codegen preprocessing. The tag has
+    to count here, because the promotion is still ahead of any pipeline that has not run that pass
+    itself -- a block size chosen now would meet a thread-block map that did not exist when it was
+    chosen, and codegen refuses that pair as a conflict rather than picking one.
+    """
+    return isinstance(node, nodes.MapEntry) and (node.map.schedule in THREADBLOCK_SCHEDULES or node.map.is_warp_tile)
+
+
 def scope_contains_threadblock_map(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """True iff ``map_entry``'s scope (including nested SDFGs) contains a thread-block map."""
+    """True iff ``map_entry``'s scope (including nested SDFGs) contains a map that owns the
+    thread-block level (see :func:`owns_the_thread_block`)."""
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
-        if isinstance(node, nodes.MapEntry) and node.map.schedule in THREADBLOCK_SCHEDULES:
+        if owns_the_thread_block(node):
             return True
         if isinstance(node, nodes.NestedSDFG):
-            for inner, _ in node.sdfg.all_nodes_recursive():
-                if isinstance(inner, nodes.MapEntry) and inner.map.schedule in THREADBLOCK_SCHEDULES:
-                    return True
+            if any(owns_the_thread_block(inner) for inner, _ in node.sdfg.all_nodes_recursive()):
+                return True
     return False
 
 
@@ -164,8 +178,8 @@ def scope_contains_threadblock_map(state: SDFGState, map_entry: nodes.MapEntry) 
 class SelectGPUDeviceBlockSize(ppl.Pass):
     """Assign a domain-matched ``gpu_block_size`` to every eligible ``GPU_Device`` map.
 
-    Eligible = ``GPU_Device`` schedule, no user-set ``gpu_block_size``, and no inner
-    thread-block map. See :func:`pick_gpu_block_size` for the selection logic.
+    Eligible = ``GPU_Device`` schedule, no user-set ``gpu_block_size``, and no inner map that owns
+    the thread-block level. See :func:`pick_gpu_block_size` for the selection logic.
     """
 
     CATEGORY: str = 'Optimization'

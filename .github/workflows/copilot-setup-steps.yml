@@ -21,7 +21,8 @@ jobs:
           # to run instead of skip in the agent environment.
           apt-packages: g++ build-essential g++-aarch64-linux-gnu cmake
           pip-packages: pytest pytest-cov flake8 pytest-xdist coverage
-          extras: testing,linting,ml
+          groups: testing,linting
+          extras: ml
 
       - name: Set up pre-commit
         run: |

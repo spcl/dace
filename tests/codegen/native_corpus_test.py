@@ -3,7 +3,7 @@
 
 Each kernel is imported verbatim from the shipped ``tests/npbench/polybench`` corpus -- nothing is
 re-implemented here. Every kernel is put through the standard optimization pipeline
-(``simplify`` + ``LoopToMap`` + ``MapFusion``, plus ``GPUTransformSDFG`` for the GPU variant),
+(``simplify`` + ``LoopToMap`` + ``MapFusion``, plus ``apply_gpu_transformations`` for the GPU variant),
 compiled under ``compiler.build_mode = native``, run, and its result compared against NumPy. The
 NumPy ground truth is the kernel's own undecorated Python function (``DaceProgram.f``) -- the exact
 oracle DaCe's own corpus tests use (e.g. ``gemm_kernel.f(...)``).
@@ -18,7 +18,7 @@ import dace
 from dace.config import set_temporary
 from dace.frontend.python.parser import DaceProgram
 from dace.transformation.dataflow import MapFusion
-from dace.transformation.interstate import GPUTransformSDFG, LoopToMap
+from dace.transformation.interstate import LoopToMap
 
 from tests.npbench.polybench import gemm_npbench_test, gesummv_test, jacobi_1d_test, mvt_test
 
@@ -76,7 +76,7 @@ def apply_pipeline(sdfg: dace.SDFG, to_gpu: bool) -> None:
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.apply_transformations_repeated(MapFusion)
     if to_gpu:
-        sdfg.apply_transformations(GPUTransformSDFG)
+        sdfg.apply_gpu_transformations()
     sdfg.simplify()
 
 
@@ -124,5 +124,5 @@ def test_native_corpus_cpu(name, tmp_path):
 @pytest.mark.gpu
 @pytest.mark.parametrize('name', list(KERNELS))
 def test_native_corpus_gpu(name, tmp_path):
-    """simplify + LoopToMap + MapFusion + GPUTransformSDFG, native CUDA build, result == NumPy."""
+    """simplify + LoopToMap + MapFusion + offload, native CUDA build, result == NumPy."""
     run_case(name, to_gpu=True, cache_dir=str(tmp_path / 'cache'))

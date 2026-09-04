@@ -54,7 +54,8 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import ResolveMixedDtypeBinops
+from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (CastScalarIteLiteralArms,
+                                                                                 ResolveMixedDtypeBinops)
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
@@ -132,12 +133,17 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
     :param source: A standalone (throwaway) SDFG whose contents ``target`` adopts.
     """
     from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
-    preserved = ('_parent', '_parent_sdfg', '_parent_nsdfg_node', '_cfg_list', 'guid')
+    # ``_sdfg`` is an SDFG's reference to ITSELF, so copying ``source``'s would hand ``target`` the
+    # throwaway as its own owner: ``target.sdfg is not target``, and every walker that ascends out of
+    # a nested SDFG by comparing ``parent_graph`` against ``parent_graph.sdfg`` (assert_no_nested_
+    # parallel_maps via get_parent_map_and_loop_scopes) then walks past the top and off the end.
+    preserved = ('_parent', '_parent_sdfg', '_parent_nsdfg_node', '_cfg_list', '_sdfg', 'guid')
     target.__dict__.update({k: v for k, v in source.__dict__.items() if k not in preserved})
     target._parent = None
     target._parent_sdfg = None
     target._parent_nsdfg_node = None
     target._cfg_list = []
+    target._sdfg = target
     # Re-point EVERY block, at every control-flow nesting level (loop / conditional bodies included),
     # at ``target``. Fixing only the top-level nodes leaves blocks inside a LoopRegion pointing at the
     # throwaway ``source``: the SDFG still behaves correctly (``source`` is an equivalent graph), but a
@@ -972,6 +978,13 @@ class VectorizeMultiDim(ppl.Pipeline):
             # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
             # that would compile against a pointer (or not compile at all).
             _AssertTileOpsLowered(widths=widths_t),
+            # A ternary blend's literal/Symbol arm survives here only in a tasklet that STAYS
+            # scalar (every tile-bound one was just claimed by ConvertTaskletsToTileOps above,
+            # whose TileITE casts a Symbol arm on its own) -- e.g. the untiled remainder of a
+            # branched split. Cast it now so codegen's generic Python-tasklet translation, which
+            # has no casting logic of its own, never emits a bare literal against a differently
+            # typed sibling arm.
+            CastScalarIteLiteralArms(),
         ]
         # Branched (GPU-only) post-transform: after the tile emitters lowered the ``__tile_main``
         # interior mask-free and prepared the tail (masked tile ops, or left scalar), fuse each pair

@@ -9,7 +9,6 @@ import sys
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.interstate import GPUTransformSDFG
 
 N = dace.symbol('N')
 
@@ -42,7 +41,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
             state.instrument = instrumentation
 
     if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
-        sdfg.apply_transformations(GPUTransformSDFG)
+        sdfg.apply_gpu_transformations()
 
     with dace.instrument(instrumentation,
                          filter='*',

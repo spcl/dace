@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``OffloadToAccelerator`` places a copy where the location CHANGES, not around every kernel.
 
-The shape that separates it from ``GPUTransformSDFG`` is the guarded one canonicalize emits for a
+The shape that exercises it is the guarded one canonicalize emits for a
 loop it can only parallelize under a runtime condition::
 
     if <cond>:  <Map>          # parallel arm
@@ -16,6 +16,7 @@ TSVC ``s171`` is the corpus kernel that canonicalizes to this shape (``a[i * inc
 parallelism turns on ``inc != 0``). Nothing here compiles or runs -- the pass rewrites the SDFG, so
 these assertions need no GPU.
 """
+import numpy as np
 import pytest
 
 import dace
@@ -136,46 +137,37 @@ def test_the_fallback_copies_in_before_it_runs_and_out_after():
                                           'sequential loop, so its result never reaches the device')
 
 
-@pytest.mark.parametrize('use_new_pass', [True, False])
-def test_the_config_knob_selects_the_offloader(use_new_pass):
-    """``apply_gpu_transformations`` routes on ``optimizer.new_gpu_offloading_pass``. The two
-    offloaders differ in whether a host copy is ever needed, which is what tells them apart: the
-    new pass starts from device-resident inputs and stages one, the old one starts on the host."""
+def test_apply_gpu_transformations_offloads_with_the_pass():
+    """``apply_gpu_transformations`` runs ``OffloadToAccelerator``, and nothing else.
+
+    The offloading starts from device-resident inputs and stages a host copy where host code reads
+    one; the transformation it replaced started on the host and never needed such a copy, so the
+    ``_host`` name is the signature of which offloader ran.
+    """
     sdfg = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=use_new_pass):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
-    staged = [name for name in sdfg.arrays if name.endswith('_host')]
-    if use_new_pass:
-        assert staged, 'the new pass stages a host copy under a `_host` name'
-    else:
-        assert not staged, 'the old transformation never needs a host copy: it starts on the host'
+    assert [name for name in sdfg.arrays if name.endswith('_host')], \
+        'no `_host` staging: apply_gpu_transformations did not run the offloading pass'
 
 
-@pytest.mark.parametrize('use_new_pass', [True, False])
-def test_simplify_is_honoured_whichever_offloader_ran(use_new_pass):
-    """``simplify`` is ``apply_gpu_transformations``'s contract, not one offloader's.
+def test_simplify_is_honoured_by_the_offloading():
+    """``simplify`` is ``apply_gpu_transformations``'s contract, not the offloading's.
 
-    The old arm forwards it into ``GPUTransformSDFG``'s options and the new arm has no options to
-    forward it to, so the knob used to mean "simplify" on one path and nothing on the other. Both
-    offloaders insert copy states, so a caller that asked for a simplified graph and got the new
-    pass was handed the unfused ones -- a difference in graph shape decided by a config knob the
-    caller never set, which is exactly what the argument exists to make explicit.
+    ``OffloadToAccelerator`` takes no such option and leaves the copy states it inserts unfused, so
+    a caller that asked for a simplified graph has to be handed one by the method itself.
     """
     plain = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
     simplified = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=use_new_pass):
-        plain.apply_gpu_transformations(validate=False, simplify=False)
-        simplified.apply_gpu_transformations(validate=False, simplify=True)
+    plain.apply_gpu_transformations(validate=False, simplify=False)
+    simplified.apply_gpu_transformations(validate=False, simplify=True)
     plain.validate()
     simplified.validate()
 
     def size(sdfg):
-        """States, dataflow nodes, dataflow edges. Which one shrinks is not the same on the two
-        arms -- the old one fuses states here and leaves the nodes alone, the new one prunes nodes
-        and leaves the states alone -- so asserting on any single count would pin one arm's
-        incidental shape rather than the contract both share."""
+        """States, dataflow nodes, dataflow edges. Asserting on any single count would pin the
+        incidental shape simplify happens to reach rather than the contract that it shrinks."""
         return (sum(1 for _ in sdfg.all_states()), sum(len(s.nodes()) for s in sdfg.all_states()),
                 sum(len(s.edges()) for s in sdfg.all_states()))
 
@@ -214,12 +206,12 @@ def test_an_offloaded_scan_gets_its_device_lowering():
             'host lowering, so the kernel would carry a serial sweep')
 
 
-def test_a_host_pinned_library_node_is_left_to_the_old_transformation():
+def test_a_host_pinned_library_node_keeps_its_operands_on_the_host():
     """``ScatterConflictCheck`` keeps its flag and its tag scratch on the HOST in every expansion,
     the CUDA one included -- it tags on the device out of the CUB scratch pool and only sizes that
     buffer from the scratch array. The new pass gives a whole state ONE location, so it would move
-    both with the rest and the node's own validation rejects the result. Declining is what keeps
-    that from becoming a mid-rewrite crash."""
+    both with the rest and the node's own validation rejects the result. Leaving the node's
+    operands where it declared them is what keeps that from becoming a mid-rewrite crash."""
     sdfg = canonicalized_with_gpu_inputs('s4113_d_single')
     checks = [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__ == 'ScatterConflictCheck']
     assert checks, 's4113 no longer canonicalizes to a ScatterConflictCheck'
@@ -228,7 +220,7 @@ def test_a_host_pinned_library_node_is_left_to_the_old_transformation():
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
     assert not [name for name in sdfg.arrays if name.endswith('_host')
-                ], ('a host-pinned library node must route to the old transformation')
+                ], ('a host-pinned library node must keep its operands on the host')
 
 
 def test_a_find_first_answer_stays_on_the_host():
@@ -286,8 +278,7 @@ def test_a_scalar_operand_never_enters_the_placement_sets():
     Naming one trips the pass's own invariant instead (tsvc_2_5 ext_break_capture's ``__ff_KFIND``).
     """
     sdfg = scan_with_a_scalar_seed()
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)  # the assertion fires inside
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)  # the assertion fires inside
     sdfg.validate()
 
 
@@ -322,8 +313,7 @@ def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
     ``s315``, where a host tasklet writing ``a`` came out writing ``a_gpu``.
     """
     sdfg = host_tasklet_behind_an_interstate_read()
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
     host_state = next(state for state in sdfg.states() if state.label == 'host_work')
     written = {edge.data.data for edge in host_state.edges() if not edge.data.is_empty()}
@@ -376,8 +366,7 @@ def test_a_wrapped_region_puts_every_root_under_its_entry():
     graph -- tsvc ``s252``, ``sink node _Add_ should be a data node``.
     """
     sdfg = free_computation_with_a_reading_and_a_sourceless_tasklet()
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
     state = next(s for s in sdfg.states() if s.label == 'mixed')
     scopes = state.scope_dict()
@@ -469,28 +458,13 @@ def test_a_trivial_kernel_map_is_never_eliminated():
     assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'a kernel output was scalarized'
 
 
-def test_a_pinned_host_map_falls_back_to_the_old_transformation():
-    """``host_maps`` / ``host_data`` name what must STAY on the host. The new pass derives that
-    rather than accepting it, so a caller that pins anything gets the old transformation even with
-    the knob on -- silently ignoring the pin would move data the caller said not to move."""
-    sdfg = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False, host_data=['a'])
-    sdfg.validate()
-    assert not [name
-                for name in sdfg.arrays if name.endswith('_host')], ('the pinned call must not go through the new pass')
-
-
 if __name__ == '__main__':
     test_the_guarded_kernel_still_canonicalizes_to_a_parallel_and_a_sequential_arm()
     test_the_fallback_arm_owns_its_copies()
     test_the_fallback_copies_in_before_it_runs_and_out_after()
-    test_the_config_knob_selects_the_offloader(True)
-    test_the_config_knob_selects_the_offloader(False)
     test_an_offloaded_scan_gets_its_device_lowering()
-    test_a_host_pinned_library_node_is_left_to_the_old_transformation()
+    test_a_host_pinned_library_node_keeps_its_operands_on_the_host()
     test_a_find_first_answer_stays_on_the_host()
-    test_a_pinned_host_map_falls_back_to_the_old_transformation()
     test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
     test_a_wrapped_region_puts_every_root_under_its_entry()
     test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind()
@@ -542,8 +516,7 @@ def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
     memory and the parameter a pointer.
     """
     sdfg = kernel_writing_a_scalar_a_later_state_reads()
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
     written = [name for name, desc in sdfg.arrays.items() if name.startswith('acc') and desc.transient]
@@ -639,8 +612,7 @@ def test_a_read_only_array_both_sides_read_is_copied_exactly_once():
     coherent -- and the loop here would make that one copy per iteration.
     """
     sdfg = indirect_read_only_sdfg()
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
     copies = copy_blocks_for(sdfg, 'idx')
@@ -665,8 +637,7 @@ def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
     accumulate = step.add_tasklet('accumulate', {}, {'t': None}, 't = 1.0')
     step.add_edge(accumulate, 't', step.add_write('total'), None, dace.Memlet('total[k]'))
 
-    with dace.config.set_temporary('optimizer', 'new_gpu_offloading_pass', value=True):
-        sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
     copies = copy_blocks_for(sdfg, 'total')
@@ -731,3 +702,69 @@ def test_apply_gpu_storage_leaves_an_array_an_interstate_edge_reads_on_the_host(
     assert sdfg.arrays['bounds'].storage is not dace.StorageType.GPU_Global
     assert sdfg.arrays['data'].storage is dace.StorageType.GPU_Global
     sdfg.validate()
+
+
+def cpu_heap_sdfg() -> dace.SDFG:
+    """One map writing a non-transient array, with every descriptor on ``CPU_Heap``.
+
+    That is the storage ``auto_optimize(DeviceType.CPU)`` leaves behind, and the shape the rename
+    below was blind to.
+    """
+    sdfg = dace.SDFG('cpu_heap_offload')
+    for name in ('A', 'B'):
+        sdfg.add_array(name, [32], dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    state = sdfg.add_state('compute')
+    state.add_mapped_tasklet('double', {'i': '0:32'}, {'a': dace.Memlet('A[i]')},
+                             'b = a * 2.0', {'b': dace.Memlet('B[i]')},
+                             external_edges=True)
+    return sdfg
+
+
+def test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy():
+    """A host array the offloading puts on the device must be RENAMED at every device access.
+
+    The rename asked whether the descriptor's storage was ``Default``, which is one host storage of
+    several: after ``auto_optimize`` for the CPU every array carries ``CPU_Heap`` instead, so the
+    test was False and the kernel kept writing the HOST array, while the copy-back overwrote it with
+    a device buffer nothing had written. vadv came back exactly as it went in -- a wrong answer with
+    a valid graph, which is why this is asserted on the graph and not only through a result.
+    """
+    sdfg = cpu_heap_sdfg()
+    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.validate()
+
+    for state in sdfg.states():
+        scopes = state.scope_dict()
+        for node in state.data_nodes():
+            entry = scopes.get(node)
+            if entry is None or entry.map.schedule not in dtypes.GPU_SCHEDULES:
+                continue
+            assert sdfg.arrays[node.data].storage in GPU_RESIDENT_STORAGES, (
+                f'{node.data!r} is accessed inside a {entry.map.schedule} map but lives in '
+                f'{sdfg.arrays[node.data].storage}')
+
+    kernel_writes = {
+        edge.dst.data
+        for state in sdfg.states()
+        for edge in state.edges()
+        if isinstance(edge.src, dace.nodes.MapExit) and isinstance(edge.dst, dace.nodes.AccessNode)
+        and state.entry_node(edge.src).map.schedule in dtypes.GPU_SCHEDULES
+    }
+    assert kernel_writes, 'no kernel write to check'
+    for name in kernel_writes:
+        assert sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES, (
+            f'a GPU map writes {name!r}, which lives in {sdfg.arrays[name].storage}: the write never '
+            'reaches the device buffer that is copied back')
+
+
+@pytest.mark.gpu
+def test_a_cpu_heap_array_survives_the_round_trip():
+    """The same program, run: what the kernel computed has to come back to the caller."""
+    sdfg = cpu_heap_sdfg()
+    sdfg.apply_gpu_transformations()
+
+    a = np.arange(32, dtype=np.float64)
+    b = np.zeros(32, dtype=np.float64)
+    sdfg(A=a, B=b)
+
+    assert np.allclose(b, a * 2.0), 'the device result never reached the host array'

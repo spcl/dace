@@ -426,14 +426,14 @@ class LiftMapReductionToReduce(ppl.Pass):
         red = state.add_reduce(wcr, axes=[0], identity=identity_val)
         if self._vectorized:
             red.implementation = "vectorized"
-        state.add_edge(buf_node, None, red, None, dace.Memlet(f"{buf}[0:{trip}]"))
+        state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
         if self._wcr_free_output:
             # Reduce(buf) -> _partial (plain), then acc = acc <op> _partial (plain RMW). No
             # WCR survives, so the reduction is legal inside a body NSDFG.
             from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
             partial, _ = sdfg.add_scalar(f"_red_partial_{acc}", dtype, transient=True, find_new_name=True)
             partial_node = state.add_access(partial)
-            state.add_edge(red, None, partial_node, None, dace.Memlet(f"{partial}[0]"))
+            state.add_edge(red, '_out', partial_node, None, dace.Memlet(f"{partial}[0]"))
             fold = state.add_tasklet("reduce_accum", OrderedSet(('__in1', '__in2')), {"__out"},
                                      f"__out = {_wcr_augassign_body(wcr)}")
             state.add_edge(state.add_access(acc), None, fold, "__in1",
@@ -444,7 +444,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         # Reduce(buf) -> acc, WCR-accumulated into the prior acc (top-level boundary form).
         out_mem = dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset))
         out_mem.wcr = wcr
-        state.add_edge(red, None, acc_node, None, out_mem)
+        state.add_edge(red, '_out', acc_node, None, out_mem)
         return True
 
     @staticmethod
@@ -582,8 +582,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         red = state.add_reduce(wcr, axes=[0], identity=identity_val)
         if self._vectorized:
             red.implementation = "vectorized"
-        state.add_edge(buf_node, None, red, None, dace.Memlet(f"{buf}[0:{trip}]"))
-        state.add_edge(red, None, acc_out_node, None, dace.Memlet(f"{acc}[0]"))
+        state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
+        state.add_edge(red, '_out', acc_out_node, None, dace.Memlet(f"{acc}[0]"))
 
         # If the reduced trip depends on data-dependent symbols (spmv
         # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by an

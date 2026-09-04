@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace import dtypes
 from dace.libraries.blas.nodes.symm import Symm
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes
@@ -235,9 +236,7 @@ def test_slice_nest_lifted_with_the_prescale_left_alone():
 def test_lifted_slice_nest_survives_vectorization():
     """The lift must hold through the multi-dim vectorizer: the hand-rolled version of
     this nest accumulates onto ``C`` from a parallel map, and the vectorizer dropped the
-    WCR that made that safe -- which is only visible on more than one thread, so this
-    runs at whatever thread count the suite configures rather than pinning one."""
-    assert int(os.environ["OMP_NUM_THREADS"]) > 1, "a dropped-WCR race is invisible on a single thread"
+    WCR that made that safe -- which is only visible on more than one thread."""
     sdfg = copy.deepcopy(_canonicalized(_symm_slice_kernel))
     sdfg.name = f"{sdfg.name}_vectorized"
     VectorizeCPUMultiDim(
@@ -260,6 +259,16 @@ def test_lifted_slice_nest_survives_vectorization():
                     assert not (isinstance(scope, nodes.MapEntry)
                                 and "Multicore" in str(scope.map.schedule)), f"C written inside {scope.map.params}"
                     scope = scopes[scope]
+
+    # The race this guards is invisible on one thread, so pin the thread count HERE instead of
+    # reading OMP_NUM_THREADS: a ``num_threads`` clause overrides the environment, so the check
+    # holds whatever the suite exports. Every multicore scope is pinned, so a regression that
+    # brings the accumulation back is racing on the run below rather than quietly serialised.
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.all_states():
+            for entry in state.nodes():
+                if isinstance(entry, nodes.MapEntry) and entry.map.schedule in dtypes.CPU_SCHEDULES:
+                    entry.map.omp_num_threads = 4
 
     m, n = 20, 30
     A, B, C, alpha, beta = _slice_inputs(m, n)

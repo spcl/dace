@@ -11,6 +11,8 @@ env:
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   DACE_compiler_cuda_implementation: legacy
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -28,7 +30,8 @@ jobs:
     - uses: ./.github/actions/setup-dace-venv
       with:
         pip-packages: flake8 pytest-xdist coverage mpi4py cupy cutensor-cu12
-        extras: testing,ml
+        groups: testing
+        extras: ml
         codecov: 'true'
 
     - name: Check mpi4py

@@ -978,3 +978,136 @@ def test_map_roundtrip_declined_when_a_map_would_not_come_back():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+# -----------------------------------------------------------------------------
+# The remainder clamp -- ``min(i + K, <parent limit>)``.
+#
+# Every hand-tiled stencil writes its inner bound this way, because the last tile would otherwise
+# overrun the array. The clamp is not decoration: it changes the collapsed bound. An UNCLAMPED tile
+# overshoots its span, so the collapsed loop must round up to the tile boundary; a clamped one
+# covers the parent range exactly, and rounding up there walks off the end of the array. That is a
+# heap corruption (``free(): invalid size``), not a slow kernel, which is why every case below
+# runs the result and compares it.
+# -----------------------------------------------------------------------------
+
+TSTEPS = dace.symbol('TSTEPS')
+
+
+def jacobi_reference(A, B, n, tsteps):
+    """The flat, untiled stencil. Vectorised, so the oracle is never the slow part."""
+    for _ in range(tsteps):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[:-2, 1:-1] + A[2:, 1:-1])
+        A[1:n - 1, 1:n - 1] = B[1:n - 1, 1:n - 1]
+    return A, B
+
+
+def run_against_flat_stencil(prog, n=96, tsteps=3):
+    """Canonicalize, run, and compare against the flat nest. Returns the surviving loops."""
+    from dace.transformation.passes.canonicalize import finalize, pipeline as canon
+    rng = np.random.default_rng(5)
+    a0, b0 = rng.random((n, n)), rng.random((n, n))
+    want_a, want_b = jacobi_reference(a0.copy(), b0.copy(), n, tsteps)
+
+    sdfg = prog.to_sdfg(simplify=False)
+    canon.canonicalize(sdfg, target='cpu')
+    finalize.finalize_for_target(sdfg, 'cpu')
+    a, b = a0.copy(), b0.copy()
+    sdfg(A=a, B=b, N=n, TSTEPS=tsteps)
+    assert np.allclose(a, want_a) and np.allclose(b, want_b), f'{prog.name}: untiled result diverged'
+    return [
+        r.loop_variable for g in sdfg.all_sdfgs_recursive() for r in g.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    ]
+
+
+def test_a_clamped_two_level_tile_collapses_to_the_flat_stencil():
+    """``jacobi_2d_tile_2lvl_too_big``: W = 1024 is larger than the whole interior at test size."""
+
+    @dace.program
+    def two_lvl(A: dace.float64[N, N], B: dace.float64[N, N]):
+        W = 1024
+        for t in range(TSTEPS):
+            for ii in range(1, N - 1, W):
+                for jj in range(1, N - 1, W):
+                    for i in range(ii, min(ii + W, N - 1)):
+                        for j in range(jj, min(jj + W, N - 1)):
+                            B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j])
+            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+
+    survivors = run_against_flat_stencil(two_lvl)
+    assert len(survivors) == 1, f'only the time loop may survive; got {survivors}'
+
+
+def test_a_clamped_tile_with_swapped_inner_axes_collapses():
+    """``jacobi_2d_tile_swapped_dims``: the point loops run ``j`` then ``i``, against the tiles."""
+
+    @dace.program
+    def swapped(A: dace.float64[N, N], B: dace.float64[N, N]):
+        W = 64
+        for t in range(TSTEPS):
+            for ii in range(1, N - 1, W):
+                for jj in range(1, N - 1, W):
+                    for j in range(jj, min(jj + W, N - 1)):
+                        for i in range(ii, min(ii + W, N - 1)):
+                            B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j])
+            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+
+    survivors = run_against_flat_stencil(swapped)
+    assert len(survivors) == 1, f'only the time loop may survive; got {survivors}'
+
+
+def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
+    """``jacobi_2d_tile_4lvl_silly``: widths 13/7/19/3, where none divides its parent.
+
+    A correctly strip-mined level clamps to EVERY window enclosing it, so its bound is a Min of
+    several terms and no single term is the parent's limit -- their Min is. Comparing the terms one
+    at a time refuses exactly this, the well-formed nest; comparing them together collapses all ten
+    spatial loops and leaves only the time loop.
+
+    Clamped to the array bound alone, these widths let each level run past the tile containing it.
+    The nest still covers the flat range, but visits most points three or four times -- a redundant
+    cover, not a tiling, on which no untiling is sound and only the body's idempotence would hide
+    the difference. That shape is what this kernel used to have.
+    """
+
+    @dace.program
+    def four_lvl(A: dace.float64[N, N], B: dace.float64[N, N]):
+        W1, W2, W3, W4 = 13, 7, 19, 3
+        for t in range(TSTEPS):
+            for i1 in range(1, N - 1, W1):
+                for j1 in range(1, N - 1, W1):
+                    for i2 in range(i1, min(i1 + W1, N - 1), W2):
+                        for j2 in range(j1, min(j1 + W1, N - 1), W2):
+                            for i3 in range(i2, min(i2 + W2, i1 + W1, N - 1), W3):
+                                for j3 in range(j2, min(j2 + W2, j1 + W1, N - 1), W3):
+                                    for i4 in range(i3, min(i3 + W3, i2 + W2, i1 + W1, N - 1), W4):
+                                        for j4 in range(j3, min(j3 + W3, j2 + W2, j1 + W1, N - 1), W4):
+                                            for i in range(i4, min(i4 + W4, i3 + W3, i2 + W2, i1 + W1, N - 1)):
+                                                for j in range(j4, min(j4 + W4, j3 + W3, j2 + W2, j1 + W1, N - 1)):
+                                                    B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] +
+                                                                     A[i + 1, j])
+            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+
+    survivors = run_against_flat_stencil(four_lvl)
+    assert len(survivors) == 1, f'all ten spatial loops must collapse; got {survivors}'
+
+
+@pytest.mark.parametrize('n', [17, 30, 64, 97, 128])
+def test_the_nested_clamp_cascade_is_a_partition_at_every_size(n):
+    """The reason the clamp is written this way rather than by sizing N to divide the widths.
+
+    A divisibility-based fix holds only while N cooperates, and the size is exactly what a fuzzing
+    harness varies. The clamp is correct at EVERY N -- checked here on the iteration set itself,
+    so the property is pinned independently of what the compiler then does with it.
+    """
+    from collections import Counter
+    w1, w2, w3, w4 = 13, 7, 19, 3
+    seen: Counter = Counter()
+    for i1 in range(1, n - 1, w1):
+        for i2 in range(i1, min(i1 + w1, n - 1), w2):
+            for i3 in range(i2, min(i2 + w2, i1 + w1, n - 1), w3):
+                for i4 in range(i3, min(i3 + w3, i2 + w2, i1 + w1, n - 1), w4):
+                    for i in range(i4, min(i4 + w4, i3 + w3, i2 + w2, i1 + w1, n - 1)):
+                        seen[i] += 1
+    assert set(seen) == set(range(1, n - 1)), f'N={n}: the tiles do not cover the flat range'
+    assert not seen or max(seen.values()) == 1, f'N={n}: some point is visited twice'

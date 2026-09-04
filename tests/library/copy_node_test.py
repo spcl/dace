@@ -1923,10 +1923,6 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     assert stream_decl < memcpy_call
 
 
-# GPUPersistentKernel takes every state between the copy-in and the copy-out, which is what
-# GPUTransformSDFG leaves as the start and sink blocks. OffloadToAccelerator places its copies where
-# the control flow wants them instead, so that selection would swallow a host/device transfer.
-@pytest.mark.old_gpu_transform_only
 def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     """A grid barrier releases only once EVERY thread reaches it. The copy expansion runs inside a
     single-thread component of a persistent kernel, so a barrier at its own state boundary is
@@ -1944,7 +1940,10 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
 
     sdfg = gbar_prog.to_sdfg()
     sdfg.apply_gpu_transformations()
-    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    # The compute states, named rather than positional: the offloading places its transfers where
+    # the control flow wants them, not only at the start and the sink, and a persistent kernel that
+    # swallowed one would be a kernel doing its own host copy.
+    content_nodes = {block for block in sdfg.nodes() if not block.label.startswith('copy_')}
     transform = GPUPersistentKernel()
     transform.setup_match(SubgraphView(sdfg, content_nodes))
     transform.kernel_prefix = 'stuff'

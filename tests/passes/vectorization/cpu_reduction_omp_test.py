@@ -160,8 +160,58 @@ def test_numeric_exact(kind):
         assert np.array_equal(out[0], exp), f"{kind} N={nval}: {float(out[0])!r} != {float(exp)!r}"
 
 
+def test_happens_before_edge_does_not_cost_the_reduction_clause():
+    """An EMPTY ordering edge in front of the reducing map must not read as a read of ``acc``.
+
+    The clause is refused when the map body also READS the accumulator, because a privatized copy
+    starts at the operator identity. An empty memlet reads nothing -- it is the happens-before
+    edge ``StateFusionExtended`` leaves to hold a seed write (``acc = 0``) in front of the map
+    that accumulates into it, re-anchored onto the map entry by ``MapFusionVertical``. Counting
+    one as a read drops the map onto the per-element atomic path: measured at 2662 ms against
+    40 ms on TSVC ``s319`` at the XL preset.
+    """
+    sdfg = dace.SDFG("seeded_reduction")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state("reduce", is_start_block=True)
+
+    seed = state.add_write("acc")
+    state.add_edge(state.add_tasklet("init", {}, {"o"}, "o = 0.0"), "o", seed, None, dace.Memlet("acc[0]"))
+
+    entry, exit_ = state.add_map("red", {"i": "0:N"})
+    tasklet = state.add_tasklet("add", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(state.add_read("A"), None, entry, "IN_A", dace.Memlet("A[0:N]"))
+    state.add_edge(entry, "OUT_A", tasklet, "_in", dace.Memlet("A[i]"))
+    wcr = "lambda x, y: x + y"
+    state.add_edge(tasklet, "_out", exit_, "IN_acc", dace.Memlet("acc[0]", wcr=wcr))
+    accumulated = state.add_access("acc")
+    state.add_edge(exit_, "OUT_acc", accumulated, None, dace.Memlet("acc[0]", wcr=wcr))
+    entry.add_in_connector("IN_A")
+    entry.add_out_connector("OUT_A")
+    exit_.add_in_connector("IN_acc")
+    exit_.add_out_connector("OUT_acc")
+    # The ordering edge, exactly as the fusion leaves it: seed -> the accumulating map's entry.
+    state.add_nedge(seed, entry, dace.Memlet())
+    state.add_edge(accumulated, None, state.add_write("out"), None, dace.Memlet("acc[0] -> [0]"))
+    sdfg.validate()
+
+    code = _cpu_code(sdfg)
+    assert "reduction(+:" in code, "the happens-before edge cost the OpenMP reduction clause"
+    assert "reduce_atomic" not in code, "the reduction fell through to the per-element atomic path"
+
+    shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+    csdfg = sdfg.compile()
+    for nval in (64, 1000):
+        a = (np.arange(nval) % 7).astype(np.float64)
+        out = np.zeros(1, dtype=np.float64)
+        csdfg(A=a.copy(), out=out, N=nval)
+        assert out[0] == a.sum(), f"N={nval}: {float(out[0])!r} != {float(a.sum())!r}"
+
+
 if __name__ == "__main__":
     for _kind in _PROGRAMS:
         test_emits_omp_reduction_clause(_kind)
         test_partial_folds_to_single_element(_kind)
+    test_happens_before_edge_does_not_cost_the_reduction_clause()
     print("codegen ok")

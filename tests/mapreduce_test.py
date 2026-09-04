@@ -366,8 +366,8 @@ def test_a_second_body_tasklet_does_not_break_the_match():
     state.add_memlet_path(scale, mx, tmp, src_conn='o', memlet=dace.Memlet('tmp[i]'))
 
     red = state.add_reduce('lambda a, b: a + b', None, identity=0)
-    state.add_edge(tmp, None, red, None, dace.Memlet('tmp[0:N]'))
-    state.add_edge(red, None, state.add_write('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(tmp, None, red, '_in', dace.Memlet('tmp[0:N]'))
+    state.add_edge(red, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
     sdfg.validate()
 
     with contextlib.redirect_stdout(io.StringIO()) as captured:

@@ -155,8 +155,8 @@ def _make_triple_nested_for_loop() -> SDFG:
     tmpnode2 = reduce_state.add_access('tmp')
     cnode = reduce_state.add_access('C')
     red = reduce_state.add_reduce('lambda a, b: a + b', (2, ), 0)
-    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
-    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
+    reduce_state.add_edge(tmpnode2, None, red, '_in', dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
+    reduce_state.add_edge(red, '_out', cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
     return sdfg
 
 

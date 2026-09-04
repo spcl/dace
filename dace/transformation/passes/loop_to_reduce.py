@@ -264,7 +264,7 @@ class RetargetWCRAccumulator(ppl.Pass):
         return count or None
 
 
-def _loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
+def loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
     """True iff a ``LoopToMap.can_be_applied`` refusal was caused by a loop-carried dependence."""
     if reason is None:
         return False
@@ -313,7 +313,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
             probe = LoopToMap()
             probe.loop = node
             applicable = probe.can_be_applied(node.parent_graph, 0, owner, permissive=False)
-            if not applicable and _loop_to_map_refusal_is_carried(probe.last_refusal_reason):
+            if not applicable and loop_to_map_refusal_is_carried(probe.last_refusal_reason):
                 node.pinned_sequential = True
                 pinned += 1
         return pinned or None
@@ -1083,8 +1083,8 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     arr = red_state.add_read(info.array)
     dst = red_state.add_write(dest_name)
     red = red_state.add_reduce(info.wcr, axes=list(range(len(info.array_subset))), identity=None)
-    red_state.add_edge(arr, None, red, None, mm.Memlet(data=info.array, subset=info.array_subset))
-    red_state.add_edge(red, None, dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
+    red_state.add_edge(arr, None, red, '_in', mm.Memlet(data=info.array, subset=info.array_subset))
+    red_state.add_edge(red, '_out', dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
 
 
 def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):

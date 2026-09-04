@@ -180,13 +180,17 @@ class LiftInv(ppl.Pass):
         # A and out square, matching size, matching base dtype (Inv's contract).
         if not is_square_matrix(a_desc) or not is_square_matrix(out_desc, dtype=a_desc.dtype):
             return False
-        if symbolic.simplify(a_desc.shape[0] - out_desc.shape[0]) != 0:
+        # Two descriptors, two mintings: a transient sized by a replacement from a reparsed extent
+        # holds a different sympy instance of the name than a declared parameter does.
+        a_dim, out_dim = symbolic.equalize_symbols_across(a_desc.shape[0], out_desc.shape[0])
+        if symbolic.simplify(a_dim - out_dim) != 0:
             return False
         n = a_desc.shape[0]
         # The RHS operand must be a transient identity of the same size/dtype.
         if not b_desc.transient or not is_square_matrix(b_desc, dtype=a_desc.dtype):
             return False
-        if symbolic.simplify(b_desc.shape[0] - n) != 0:
+        b_dim, a_dim = symbolic.equalize_symbols_across(b_desc.shape[0], n)
+        if symbolic.simplify(b_dim - a_dim) != 0:
             return False
 
         eye = self._identity_producer(state, b_node, n)
@@ -224,7 +228,11 @@ class LiftInv(ppl.Pass):
         if write.data != b_node.data or write.subset is None:
             return None
         for (lo, hi, st), sz in zip(write.subset.ndrange(), b_node.desc(state.sdfg).shape):
-            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or symbolic.simplify(hi - (sz - 1)) != 0:
+            # A memlet bound reparsed from a string and a shape carrying the declared assumptions are
+            # two sympy instances of one name whose difference never cancels.
+            end, extent = symbolic.equalize_symbols_across(hi, sz)
+            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
+                    symbolic.simplify(end - (extent - 1)) != 0:
                 return None
 
         map_entry = state.entry_node(map_exit)
@@ -234,7 +242,11 @@ class LiftInv(ppl.Pass):
         if len(params) != 2:
             return None
         for (lo, hi, st) in map_entry.map.range.ndrange():
-            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or symbolic.simplify(hi - (n - 1)) != 0:
+            # The map range is reparsed from the lifted loop while ``n`` carries the descriptor's
+            # declared assumptions: one name, two sympy instances, no cancellation.
+            end, extent = symbolic.equalize_symbols_across(hi, n)
+            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
+                    symbolic.simplify(end - (extent - 1)) != 0:
                 return None
         # An identity reads nothing: the map has no data inputs.
         if any(e.data is not None and not e.data.is_empty() for e in state.in_edges(map_entry)):

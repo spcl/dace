@@ -2,6 +2,47 @@
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    {include-group = 'docs'},
+    {include-group = 'linting'},
+    {include-group = 'testing'}
+]
+docs = ["jinja2<3.2.0", "sphinx-autodoc-typehints", "sphinx-rtd-theme>=0.5.1"]
+linting = ["pre-commit==4.1.0", "yapf==0.43.0", "ruff==0.15.5"]
+ml-testing = [
+    "coverage",
+    "pytest-cov",
+    "scipy",
+    "absl-py",
+    "opt_einsum",
+    "pymlir",
+    "click",
+    "ipykernel",
+    "nbconvert",
+    "pytest-timeout",
+    "transformers==5.5.0",
+    "jax<=0.6.2",
+    "efficientnet_pytorch",
+]
+testing = [
+    "coverage",
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-timeout>=2.0",
+    "pytest-xdist>=3.0",
+    "flake8",
+    "scipy",
+    "absl-py",
+    "opt-einsum>=3.0",
+    "pymlir",
+    "ipykernel",
+    "nbformat",
+    "nbconvert",
+    # Plotting the corpus perf results; analysis only, never imported by dace itself.
+    "matplotlib",
+]
+
 [project]
 name = "dace"
 dynamic = ["version"]
@@ -19,7 +60,14 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "networkx>=2.5,<=3.5",
+    # Cap is <3.7, not <=3.5. networkx 3.6 dropped the root from ``immediate_dominators``
+    # (it computes with ``{start: None}``, then ``del idom[start]`` before returning), and
+    # every caller here reads that map as total over the reachable blocks, so an entry block
+    # raised ``KeyError`` and the whole canonicalize pipeline died. The backend layer
+    # (``dace/graphlib/networkx_backend.py``) restores the entry, which is what a backend
+    # layer is for, so 3.6 is supported. The cap stays so the NEXT contract change surfaces
+    # as a pip resolution error rather than as a KeyError mid-pipeline.
+    "networkx>=2.5,<3.7",
     "astunparse",
     "sympy>=1.9",
     "pyyaml",
@@ -43,49 +91,15 @@ dependencies = [
     "scikit-build",
     "cmake",
     "ninja",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
-testing = [
-    "coverage",
-    "pytest",
-    "pytest-cov",
-    "pytest-timeout",
-    "pytest-xdist",
-    "flake8",
-    "scipy",
-    "absl-py",
-    "opt_einsum",
-    "pymlir",
-    "click",
-    "ipykernel",
-    "nbconvert",
-    "pytest-timeout",
-    # Plotting the corpus perf results; analysis only, never imported by dace itself.
-    "matplotlib",
-]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
 # Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
 fastgraph = ["rustworkx"]
-ml-testing = [
-    "coverage",
-    "pytest-cov",
-    "scipy",
-    "absl-py",
-    "opt_einsum",
-    "pymlir",
-    "click",
-    "ipykernel",
-    "nbconvert",
-    "pytest-timeout",
-    "transformers==4.50",
-    "jax<=0.6.2",
-    "efficientnet_pytorch",
-]
-docs = ["jinja2<3.2.0", "sphinx-autodoc-typehints", "sphinx-rtd-theme>=0.5.1"]
-linting = ["pre-commit==4.1.0", "yapf==0.43.0", "ruff==0.15.5"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"

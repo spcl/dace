@@ -587,6 +587,28 @@ def prove_read_ahead(read_expr: sp.Basic,
     return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'raw_le', domain_assumptions)
 
 
+def prove_no_write_after_read(read_expr: sp.Basic,
+                              write_expr: sp.Basic,
+                              itervar: str,
+                              start: Any,
+                              end: Any,
+                              step: Any = 1,
+                              read_guard: Optional[sp.Basic] = None,
+                              domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+    """Prove that no iteration AFTER the reader's own writes the element it reads.
+
+    The other half of :func:`prove_read_ahead`, which covers the iterations up to and including
+    the reader's own. Both True means the read never aliases the write in any iteration at all --
+    there is no dependence of either direction to break, so a snapshot-rename would buy nothing
+    and only add a copy.
+
+    :returns: ``True`` when the solver proves it, ``False``/``None`` otherwise.
+    """
+    if not _HAS_Z3:
+        return None
+    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'war', domain_assumptions)
+
+
 def classify_read_write_pair(read_expr: sp.Basic,
                              write_expr: sp.Basic,
                              itervar: str,
@@ -629,6 +651,7 @@ __all__ = [
     'prove_injective_write',
     'prove_disjoint_write_ranges',
     'prove_read_ahead',
+    'prove_no_write_after_read',
     'classify_read_write_pair',
     # Re-exported from ``sdfg.analysis.cfg``: the branch guards a read executes under are a
     # plain control-flow fact, shared with the polyhedral engine in ``wavefront_skew``.

@@ -8,6 +8,8 @@ on:
 
 env:
   PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
 
 jobs:
   linting:
@@ -23,18 +25,20 @@ jobs:
     - name: Set up uv
       uses: astral-sh/setup-uv@v7
       with:
-        python-version: '3.14'
+        python-version: '3.10'
         enable-cache: true
         pyproject-file: pyproject.toml
         cache-dependency-glob: pyproject.toml
 
-    - name: Install linting tools
-      run: uv sync --extra linting
+    # In one place we should check that `pyproject.toml` and `uv.lock` are up-to-date.
+    # This place is as good any other. We un-freeze to lock file to do so.
+    - name: Check that uv.lock is up-to-date
+      run: UV_FROZEN=0 uv lock --check
 
     - name: Run linting tools
       id: lint
-      run: uv run pre-commit run --show-diff-on-failure --color=always --all-files
+      run: uv run --only-group=linting pre-commit run --show-diff-on-failure --color=always --all-files
 
     - name: Check for undefined names in code generation
       id: undefined-names
-      run: uv run ruff check --select F821 dace/codegen/
+      run: uv run --only-group=linting ruff check --select F821 dace/codegen/

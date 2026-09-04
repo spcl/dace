@@ -293,14 +293,13 @@ def test_unknown_build_mode_raises(tmp_path):
 def test_native_rejects_hip_backend(tmp_path):
     """Native mode is CUDA-only: a HIP/ROCm backend must raise a clear error, not crash downstream
     on a half-wired code path."""
-    from dace.transformation.interstate import GPUTransformSDFG
 
     @dace.program
     def inc(a: dace.float64[16]):
         a[:] = a + 1.0
 
     sdfg = inc.to_sdfg()
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations()
     sdfg.build_folder = str(tmp_path / 'cache')
     with set_temporary('compiler', 'cuda', 'backend', value='hip'):
         with set_temporary('compiler', 'build_mode', value='native'):
@@ -456,7 +455,6 @@ def test_native_incremental_rebuild_and_invalidation(tmp_path):
 def test_native_build_cublas_matmul(tmp_path):
     """A cuBLAS library node builds through the native ``.cu -> .a -> .so`` path and runs."""
     import dace.libraries.blas as blas
-    from dace.transformation.interstate import GPUTransformSDFG
     n = 64
     old = blas.default_implementation
     blas.default_implementation = 'cuBLAS'
@@ -467,7 +465,7 @@ def test_native_build_cublas_matmul(tmp_path):
             z[:] = x @ y
 
         sdfg = mmg.to_sdfg()
-        sdfg.apply_transformations(GPUTransformSDFG)
+        sdfg.apply_gpu_transformations()
         sdfg.build_folder = str(tmp_path / 'cache')
         x = np.random.rand(n, n)
         y = np.random.rand(n, n)

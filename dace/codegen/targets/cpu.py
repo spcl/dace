@@ -424,7 +424,10 @@ def _contiguous_element_count(desc):
         return None
     # No allocation padding beyond the logical element count.
     try:
-        if bool(symbolic.simplify(desc.total_size - acc) != 0):
+        # ``total_size`` is reassigned by passes from reparsed map extents while ``shape`` keeps the
+        # declared assumptions, so one name reaches here as two sympy instances that never cancel.
+        total, count = symbolic.equalize_symbols_across(desc.total_size, acc)
+        if bool(symbolic.simplify(total - count) != 0):
             return None
     except TypeError:
         return None
@@ -3053,7 +3056,14 @@ class CPUCodeGen(TargetCodeGenerator):
             map_exit = state.exit_node(map_entry)
         except (KeyError, StopIteration):
             return out
-        read_names = {e.src.data for e in state.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode)}
+        # EMPTY memlets excluded: an empty edge is a happens-before ordering (the shape
+        # StateFusionExtended and MapFusionVertical leave on a scope entry), and it reads
+        # nothing, so it cannot see the privatized copy this rule protects.
+        read_names = {
+            e.src.data
+            for e in state.in_edges(map_entry)
+            if isinstance(e.src, nodes.AccessNode) and e.data is not None and not e.data.is_empty()
+        }
         map_param_set = set(map_entry.map.params)
         for iedge in state.in_edges(map_exit):
             if iedge.data is None or iedge.data.wcr is None or iedge.data.subset is None:
@@ -3173,9 +3183,14 @@ class CPUCodeGen(TargetCodeGenerator):
             # a whole-``x`` reduction makes every ``x[j]`` read ``0``, dropping the sum
             # (``x[i]=b[i]/L[i,i]``). A sound reduction is a WRITE-ONLY accumulate; if the
             # container is also read, fall through to the (correct, contended) atomic path.
+            # EMPTY memlets are excluded: an empty edge orders the map after a producer and
+            # reads nothing, so it cannot observe the privatized copy. Counting one as a read
+            # costs the clause and drops the map onto the atomic path -- measured at 2662 ms
+            # against 40 ms on tsvc s319, whose seed ``sum_val = 0`` is held in front of the
+            # accumulating map by exactly such an edge.
             if any(
-                    isinstance(e.src, nodes.AccessNode) and e.src.data == oedge.dst.data
-                    for e in state.in_edges(map_entry)):
+                    isinstance(e.src, nodes.AccessNode) and e.src.data == oedge.dst.data and e.data is not None
+                    and not e.data.is_empty() for e in state.in_edges(map_entry)):
                 continue
             # A true Scalar is always eligible for a plain ``reduction(op:var)`` clause
             # (the pre-existing, flag-independent behavior). A whole contiguous Array
@@ -3302,8 +3317,14 @@ class CPUCodeGen(TargetCodeGenerator):
                         schedule += "guided"
                     else:
                         raise ValueError("Unknown OpenMP schedule type")
-                    if node.map.omp_chunk_size > 0:
-                        schedule += f", {node.map.omp_chunk_size}"
+                    # A symbolic chunk has no truth value, so the "is there a chunk" test is
+                    # whether it is the literal 0 that means "no chunk clause" -- never ``> 0``,
+                    # which raises on an expression. Everything else goes through sym2cpp, which is
+                    # what lets a chunk derived from the trip count and the team size reach the
+                    # pragma; OpenMP evaluates chunk_size as an integer expression at run time.
+                    chunk = node.map.omp_chunk_size
+                    if symbolic.issymbolic(chunk) or int(chunk) > 0:
+                        schedule += f", {sym2cpp(chunk)}"
                     schedule += ")"
                     map_header += schedule
 
