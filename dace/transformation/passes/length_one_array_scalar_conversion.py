@@ -34,8 +34,8 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
 ``Array`` needs a 1-element numpy buffer.
 """
+import ast
 import itertools
-import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
@@ -103,40 +103,91 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
                     node.symbol_mapping[key] = rewritten
 
 
-def _rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
-    """Rewrite references to rewritten descriptors in a source ``expr``.
+class ScalarRefRewriter(ast.NodeTransformer):
+    """Collapse ``old[0]`` to ``new`` and rename a bare ``old`` to ``new``.
 
-    For each ``old -> new`` in ``rename``, collapse ``old[0]`` to ``new`` (the redundant length-1
-    accessor) and rename a bare ``old`` to ``new``. Only a token not preceded by a word character or
-    ``.`` is matched, so a literal ``[0]`` on a different descriptor whose name merely ends in ``old``
-    (``bar[0]`` vs rewritten ``ar``) keeps its subscript. When ``old == new`` (an in-place rewrite)
-    this only strips the ``[0]``.
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    """
 
-    :param expr: source expression to rewrite.
-    :param rename: mapping from each rewritten descriptor's old name to its new name.
+    def __init__(self, rename: Dict[str, str]):
+        self.rename = rename
+
+    def visit_Subscript(self, node: ast.Subscript):
+        index = node.slice.value if isinstance(node.slice, ast.Index) else node.slice
+        if (isinstance(node.value, ast.Name) and node.value.id in self.rename and isinstance(index, ast.Constant)
+                and index.value == 0):
+            return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.rename:
+            return ast.copy_location(ast.Name(id=self.rename[node.id], ctx=node.ctx), node)
+        return node
+
+
+class ElementRefRewriter(ast.NodeTransformer):
+    """Inverse of :class:`ScalarRefRewriter`: point a bare ``old`` at ``new[0]``.
+
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    """
+
+    def __init__(self, rename: Dict[str, str]):
+        self.rename = rename
+
+    def visit_Subscript(self, node: ast.Subscript):
+        # An already-subscripted reference is only renamed; its index is rewritten on its own.
+        if isinstance(node.value, ast.Name) and node.value.id in self.rename:
+            node.slice = self.visit(node.slice)
+            node.value = ast.Name(id=self.rename[node.value.id], ctx=node.value.ctx)
+            return node
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id not in self.rename:
+            return node
+        element = ast.Subscript(value=ast.Name(id=self.rename[node.id], ctx=ast.Load()),
+                                slice=ast.Constant(value=0),
+                                ctx=node.ctx)
+        return ast.fix_missing_locations(ast.copy_location(element, node))
+
+
+def _rewrite_with(expr: str, rewriter: ast.NodeTransformer) -> str:
+    """Apply ``rewriter`` to ``expr`` parsed as Python.
+
+    :param expr: Source expression to rewrite; text that does not parse is returned unchanged.
+    :param rewriter: Transformer to apply to the parsed tree.
+    :returns: The rewritten source.
+    """
+    try:
+        tree = ast.parse(expr)
+    except SyntaxError:
+        return expr
+    # ``ast.unparse``, not ``astutils.unparse``: the latter parenthesizes every binary operation,
+    # which would rewrite slots this pass did not touch.
+    return ast.unparse(rewriter.visit(tree))
+
+
+def rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
+    """Collapse each rewritten descriptor's redundant ``old[0]`` accessor and rename it to ``new``.
+
+    An attribute (``obj.old``) is never a descriptor reference, and a name inside a string literal is
+    not code; the AST distinguishes both. When ``old == new`` this only strips the ``[0]``.
+
+    :param expr: Source expression to rewrite.
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
     :returns: ``expr`` with each ``old[0]`` / ``old`` rewritten to ``new``.
     """
-    for old, new in rename.items():
-        expr = re.sub(rf'(?<![\w.]){re.escape(old)}\[0\]', new, expr)
-        if old != new:
-            expr = re.sub(rf'(?<![\w.]){re.escape(old)}\b', new, expr)
-    return expr
+    return _rewrite_with(expr, ScalarRefRewriter(rename))
 
 
 def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
-    """Inverse of :func:`_rewrite_refs`: point a bare reference at element 0 of a now-length-1 array.
+    """Inverse of :func:`rewrite_refs`: point a bare reference at element 0 of a now-length-1 array.
 
-    For each ``old -> new`` in ``rename``, a bare ``old`` that is not already subscripted becomes
-    ``new[0]``. A token preceded by a word character or ``.`` is skipped, mirroring the forward
-    direction, and an already-subscripted ``old[...]`` is left alone so the rewrite is idempotent.
-
-    :param expr: source expression to rewrite.
-    :param rename: mapping from each rewritten descriptor's old name to its new name.
+    :param expr: Source expression to rewrite.
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
     :returns: ``expr`` with each bare ``old`` rewritten to ``new[0]``.
     """
-    for old, new in rename.items():
-        expr = re.sub(rf'(?<![\w.]){re.escape(old)}(?!\s*\[)\b', f'{new}[0]', expr)
-    return expr
+    return _rewrite_with(expr, ElementRefRewriter(rename))
 
 
 def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename: Dict[str, str]) -> None:
@@ -425,8 +476,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 staged.append((arr_name, scal_name, is_read, is_written))
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
-        # length-1 subset to the scalar element. AccessNodes carry the data name; memlets carry it
-        # plus a subset; interstate/condition/loop code carry it textually.
+        # length-1 subset to the scalar element.
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
@@ -434,7 +484,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             for edge in state.edges():
                 repoint_memlet_to_element(edge, rename)
 
-        rewrite_code_slots(sdfg, lambda text: _rewrite_refs(text, rename))
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs(text, rename))
 
         # Wire copy-in / copy-out for the staged non-transients. One shared start/sink state holds all.
         if staged:
@@ -565,7 +615,6 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 rename[name] = arr_name
                 staged.append((name, arr_name, is_read, is_written))
 
-        # Re-point every body reference of a rewritten scalar at element 0 of its length-1 array.
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
