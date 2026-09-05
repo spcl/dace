@@ -4169,6 +4169,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # it the same array is given a second name here while the access nodes elsewhere
                 # still carry the first one.
                 is_new_arr = True
+                known_outer = None
                 for k, v in self.nested_closure_arrays.items():
                     if arr is v[0]:
                         is_new_arr = False
@@ -4177,10 +4178,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     known = self.closure.array_mapping[id(arr)]
                     if known in self.sdfg.arrays:
                         is_new_arr = False
-                        aname = known
+                        known_outer = known
                 # `arr` has not been added yet: add it with a (possibly) new name.
                 if is_new_arr:
                     outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
+                # `arr` is already here under a name this scope minted for it. Only the outer name
+                # follows; the connector keeps the name the callee knows the array by, which is the
+                # one its own descriptor is under.
+                elif known_outer is not None:
+                    outer_name = known_outer
                 # `arr` has already been added, but is not in the SDFG: add it with the same name.
                 # NOTE: This may occur when `arr` has already been added in a nested scope.
                 elif aname not in self.sdfg.arrays:
