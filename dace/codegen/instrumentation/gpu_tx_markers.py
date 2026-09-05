@@ -14,78 +14,73 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
+def roctx_available() -> bool:
+    """Whether this machine has both halves of roctracer's marker library."""
+    rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
+    headers = [
+        os.path.join(rocm_path, 'roctracer/include/roctx.h'),
+        os.path.join(rocm_path, 'include/roctracer/roctx.h')
+    ]
+    return (any(os.path.isfile(path) for path in headers)
+            and os.path.isfile(os.path.join(rocm_path, 'lib', 'libroctx64.so')))
+
+
+def nvtx_available() -> bool:
+    """Whether the CUDA toolkit's marker headers are reachable. NVTX v3 is header-only."""
+    cuda_path = os.getenv('CUDA_HOME') or os.getenv('CUDA_PATH') or '/usr/local/cuda'
+    return os.path.isfile(os.path.join(cuda_path, 'include', 'nvtx3', 'nvToolsExt.h'))
+
+
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_TX_MARKERS)
 class GPUTXMarkersProvider(InstrumentationProvider):
     """ Timing instrumentation that adds NVTX/rocTX ranges to SDFGs and states. """
-    NVTX_HEADER_INCLUDE = '#include <nvtx3/nvToolsExt.h>'
-    ROCTX_HEADER_INCLUDE = '#include <roctx.h>'
+
+    #: Keyed by marker library. The library's name is also the prefix of its range calls.
+    HEADER_INCLUDE = {'nvtx': '#include <nvtx3/nvToolsExt.h>', 'roctx': '#include <roctx.h>'}
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
-        # Check if ROCm TX libraries and headers are available
-        rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
-        roctx_header_paths = [
-            os.path.join(rocm_path, 'roctracer/include/roctx.h'),
-            os.path.join(rocm_path, 'include/roctracer/roctx.h')
-        ]
-        roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
-        self.enable_rocTX = any(os.path.isfile(path)
-                                for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
+        if self.backend not in ('cuda', 'hip'):
+            raise NameError('GPU backend "%s" not recognized' % self.backend)
+        # Which marker library to use follows the platform, not the backend. HIP's NVIDIA platform
+        # is the CUDA toolkit underneath: it has NVTX and no roctracer at all.
+        if self.backend == 'cuda':
+            self.library = 'nvtx'
+        elif roctx_available():
+            self.library = 'roctx'
+        elif nvtx_available():
+            self.library = 'nvtx'
+        else:
+            self.library = None
         self.include_generated = False
         super().__init__()
 
     def _print_include(self, sdfg: SDFG) -> None:
         """ Prints the include statement for the NVTX/rocTX library for a given SDFG. """
-        if self.include_generated:
+        if self.include_generated or self.library is None:
             return
-        if self.backend == 'cuda':
-            sdfg.append_global_code(self.NVTX_HEADER_INCLUDE, 'frame')
-        elif self.backend == 'hip':
-            if self.enable_rocTX:
-                sdfg.append_global_code(self.ROCTX_HEADER_INCLUDE, 'frame')
-        else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+        sdfg.append_global_code(self.HEADER_INCLUDE[self.library], 'frame')
         self.include_generated = True
 
     def print_include(self, stream: CodeIOStream) -> None:
         """ Prints the include statement for the NVTX/rocTX library in stream. """
-        if stream is None:
+        if stream is None or self.include_generated or self.library is None:
             return
-        if self.include_generated:
-            return
-        if self.backend == 'cuda':
-            stream.write(self.NVTX_HEADER_INCLUDE)
-        elif self.backend == 'hip':
-            if self.enable_rocTX:
-                stream.write(self.ROCTX_HEADER_INCLUDE)
-        else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+        stream.write(self.HEADER_INCLUDE[self.library])
         self.include_generated = True
 
     def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
-        if stream is None:
+        if stream is None or self.library is None:
             return
         self._print_include(sdfg)
         if name is None:
             name = 'None'
-        if self.backend == 'cuda':
-            stream.write(f'nvtxRangePush("{name}");')
-        elif self.backend == 'hip':
-            if self.enable_rocTX:
-                stream.write(f'roctxRangePush("{name}");')
-        else:
-            raise NameError(f'GPU backend "{self.backend}" not recognized')
+        stream.write(f'{self.library}RangePush("{name}");')
 
     def print_range_pop(self, stream: CodeIOStream) -> None:
-        if stream is None:
+        if stream is None or self.library is None:
             return
-        if self.backend == 'cuda':
-            stream.write('nvtxRangePop();')
-        elif self.backend == 'hip':
-            if self.enable_rocTX:
-                stream.write('roctxRangePop();')
-        else:
-            raise NameError(f'GPU backend "{self.backend}" not recognized')
+        stream.write(f'{self.library}RangePop();')
 
     def _is_sdfg_in_device_code(self, sdfg: SDFG) -> bool:
         """ Check if the SDFG is in device code and not top level SDFG. """
@@ -196,7 +191,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             # Don't instrument device code
             return
         # cannot push rocTX markers before initializing HIP
-        if self.enable_rocTX:
+        if self.library == 'roctx':
             return
         self.print_range_push(f'init_{sdfg.name}', sdfg, callsite_stream)
 
@@ -207,7 +202,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             # Don't instrument device code
             return
         # cannot push rocTX markers before initializing HIP so there's no marker to pop
-        if self.enable_rocTX:
+        if self.library == 'roctx':
             return
         self.print_range_pop(callsite_stream)
 

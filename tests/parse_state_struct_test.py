@@ -33,7 +33,17 @@ def _cuda_helper():
     """
     program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
 
-    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.cuda.CUDACodeGen, "CudaDummy")
+    # Same naming the CUDA target itself uses (targets/cuda.py: language/target_type): a HIP build
+    # emits .cpp under src/cuda/hip/, and it is that layout which makes CMake enable the HIP language
+    # and define WITH_HIP. Hardcoding "cu" builds the helper as CUDA, so dace.h takes its CUDA branch
+    # while the code above calls hipMemcpy -- "hipMemcpyHostToDevice was not declared in this scope".
+    backend = common.get_gpu_backend()
+    dummy_cuda_target = codeobject.CodeObject("dummy",
+                                              "",
+                                              "cu" if backend == 'cuda' else "cpp",
+                                              targets.cuda.CUDACodeGen,
+                                              "CudaDummy",
+                                              target_type="" if backend == 'cuda' else backend)
 
     build_folder = dace.Config.get('default_build_folder')
     BUILD_PATH = os.path.join(build_folder, "cuda_helper")

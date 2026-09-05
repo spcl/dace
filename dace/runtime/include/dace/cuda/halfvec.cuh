@@ -13,8 +13,11 @@
 #endif
 
 // Scalar functions
+// The guards below skip what rocPRIM's half headers already declare. That is a property of the AMD
+// platform, not of hipcc: on HIP's NVIDIA platform __HIPCC__ is set too, but the half overloads
+// come from cuda_fp16.h, which does not have them.
 namespace dace { namespace math {
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
     DACE_DFI half max(half a, half b) {
         return __hgt(a, b) ? a : b;
     }
@@ -33,7 +36,7 @@ namespace dace { namespace math {
     }
 }}
 
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
 using dace::math::max;
 using dace::math::tanh;
 using dace::math::exp;
@@ -525,7 +528,7 @@ DACE_DFI half8 op(half8 x) {                                               \
                  op(x.h2<2>()), op(x.h2<3>()));                            \
 }
 
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
 namespace dace { namespace math {
     HALF_VEC_UFUNC(exp)
     HALF_VEC_UFUNC(tanh)
@@ -543,14 +546,14 @@ DACE_DFI half4 max(half4 a, half b) {
     return half4(max(a.h2<0>(), bvec), max(a.h2<1>(), bvec));
 }
 
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
 DACE_DFI half4 max(half a, half4 b) { return max(b, a); }
 #endif
 
 DACE_DFI half4 max(half4 a, half2 b) {
     return half4(max(a.h2<0>(), b), max(a.h2<1>(), b));
 }
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
 DACE_DFI half4 max(half2 a, half4 b) { return max(b, a); }
 #endif
 
@@ -565,7 +568,7 @@ DACE_DFI half8 max(half8 a, half b) {
                  max(a.h2<2>(), bvec),
                  max(a.h2<3>(), bvec));
 }
-#ifndef __HIPCC__
+#ifndef __HIP_PLATFORM_AMD__
 DACE_DFI half8 max(half a, half8 b) { return max(b, a); }
 #endif
 
