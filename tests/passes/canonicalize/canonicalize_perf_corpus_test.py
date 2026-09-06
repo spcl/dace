@@ -1392,7 +1392,12 @@ def test_autopar_input_is_sequential(suite, name):
     assert not found, f'{suite}:{name} still emits {len(found)} thread-team pragma(s) for the autopar arms: {found}'
 
 
+# ``long`` as well as ``perf``: this is the batch measurement harness, not a gate. One case builds
+# and times every arm over two dataset presets with warm-ups and repetitions, and there are a few
+# hundred cases, so the sweep is hours. The CI perf job selects "perf and not long" and gets the
+# ratchet; this one is run deliberately, resumably, from a result directory.
 @pytest.mark.perf
+@pytest.mark.long
 @pytest.mark.parametrize("suite,name", CS.kernels())
 def test_speedup(suite, name):
     path = _result_path(suite, name)

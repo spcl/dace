@@ -274,7 +274,10 @@ jobs:
         # Sequential and 8 threads: two lowerings timed against each other cannot share cores with
         # xdist workers, or the ratio measures the scheduler rather than the code.
         export OMP_NUM_THREADS=8
-        pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf"
+        # ``not long``: the canonicalize corpus sweep carries ``perf`` too, but it is the batch
+        # measurement harness -- a few hundred kernels times eight arms -- and belongs in a
+        # deliberate run, not in every push.
+        pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf and not long"
 
   # --- Corpus (was corpus-ci.yml) ---
   corpus:
