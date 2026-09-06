@@ -438,6 +438,91 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     return parent_desc.is_equivalent(mapped)
 
 
+def _view_strides(container_strides: Tuple[symbolic.SymbolicType, ...],
+                  subset: subsets.Subset) -> Optional[List[symbolic.SymbolicType]]:
+    """
+    Derives the strides a view of a container has from the part of it the view covers.
+
+    A view keeps a stride per dimension it still has: the ones the subset takes a single element of
+    are gone, and a dimension that is taken with a step advances by that many elements at a time.
+
+    :param container_strides: The strides of the container behind the view.
+    :param subset: The part of the container the view covers, in the container's coordinates.
+    :return: One stride per remaining dimension, or None if the subset does not fit the container.
+    """
+    if subset is None or len(subset) != len(container_strides):
+        return None
+    strides = []
+    for stride, (_, _, step), size in zip(container_strides, subset.ndrange(), subset.size()):
+        if size == 1:
+            continue
+        strides.append(stride * step)
+    return strides
+
+
+def _as_container(desc: data.Data) -> data.Data:
+    """
+    Describes what a view covers as a container in its own right.
+
+    A connector stands for a container of the parent, and what the parent has there may well be a
+    view of something else. What follows down is what the view covers; being a view is the parent's
+    business, and a nested SDFG makes views of its own where it needs them.
+
+    :param desc: The descriptor to describe as a container.
+    :return: The same descriptor, or a copy of it that is not a view.
+    """
+    if isinstance(desc, data.ArrayView):
+        return desc.as_array()
+    if isinstance(desc, data.StructureView):
+        return desc.as_structure()
+    if isinstance(desc, data.ContainerView):
+        result = copy.deepcopy(desc)
+        result.__class__ = data.ContainerArray
+        return result
+    return desc
+
+
+def _rebase_views(sdfg: SDFG, name: str, old_desc: data.Data,
+                  new_desc: data.Data) -> List[Tuple[str, data.Data, data.Data]]:
+    """
+    Restates every view of a container that was restated, so that it still covers the same elements.
+
+    A view is written in the strides of what it views. Once the container is laid out as the caller
+    lays it out, a view left in the old layout walks the wrong elements.
+
+    :param sdfg: The SDFG the container and its views belong to.
+    :param name: The name of the container that was restated.
+    :param old_desc: How the container was described before.
+    :param new_desc: How it is described now.
+    :return: One entry per view that followed, with its name and its descriptions before and after.
+    :note: This function operates in-place.
+    """
+    followed: List[Tuple[str, data.Data, data.Data]] = []
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            desc = sdfg.arrays[node.data]
+            if not isinstance(desc, data.View):
+                continue
+            viewed = sdutil.get_view_node(state, node)
+            if not isinstance(viewed, nd.AccessNode) or viewed.data != name:
+                continue
+            memlet = sdutil.get_view_edge(state, node).data
+            subset = memlet.subset if memlet.data == name else memlet.other_subset
+            strides = _view_strides(old_desc.strides, subset)
+            # Only a view whose strides say exactly what the subset says about the container it had
+            # is following that container; anything else was written to mean something of its own.
+            if strides is None or tuple(strides) != tuple(desc.strides):
+                continue
+            restated = _view_strides(new_desc.strides, subset)
+            if restated is None:
+                continue
+            replacement = copy.deepcopy(desc)
+            replacement._strides = restated
+            sdfg.arrays[node.data] = replacement
+            followed.append((node.data, desc, replacement))
+    return followed
+
+
 def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data) -> None:
     """
     Restates the descriptor of every connector below that stands for one of this SDFG's containers.
@@ -452,6 +537,9 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
     :param new_desc: How it is described now.
     :note: This function operates in-place, and recurses into the whole subtree.
     """
+    for view_name, old_view, new_view in _rebase_views(sdfg, name, old_desc, new_desc):
+        rebase_descendants(sdfg, view_name, old_view, new_view)
+
     for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG):
@@ -467,7 +555,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 inner_desc = node.sdfg.arrays[connector]
                 if not inner_desc.is_equivalent(old_desc):
                     continue
-                replacement = copy.deepcopy(new_desc)
+                replacement = copy.deepcopy(_as_container(new_desc))
                 replacement.transient = False
                 node.sdfg.arrays[connector] = replacement
                 rebase_descendants(node.sdfg, connector, inner_desc, replacement)
