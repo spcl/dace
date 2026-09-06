@@ -25,7 +25,6 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
-from tests.npbench.weather_stencils.vadv_test import ground_truth, initialize
 
 #: Both programs are about float16, so the module carries the marker the dedicated fp16 CI leg
 #: selects on, next to the ``gpu`` marker the GPU legs select on.
@@ -177,6 +176,11 @@ def test_vadv_with_an_fp16_field_matches_the_host_reference():
     the float64 field it was rounded from -- so the only difference left to measure is the lowering.
     """
     extents = {'I': 32, 'J': 32, 'K': 16}
+    # Imported here, not at module scope: vadv_test pulls in dace.autodiff, which imports torch,
+    # which dlopens an OpenMP runtime into the whole session at COLLECTION time -- what
+    # tests/openmp_runtime_leak_test.py refuses.
+    from tests.npbench.weather_stencils.vadv_test import ground_truth, initialize
+
     _, utens_stage, u_stage, wcon, u_pos, utens = initialize(extents['I'], extents['J'], extents['K'])
     u_pos16 = u_pos.astype(np.float16)
 
