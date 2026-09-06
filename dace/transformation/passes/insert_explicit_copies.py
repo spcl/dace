@@ -254,10 +254,14 @@ class InsertExplicitCopies(ppl.Pass):
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
         # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
-        # into the real output). CopyLibraryNode's expansions (ExpandMemcpyCPU et al.) always emit
-        # an unconditional store; lifting a WCR edge here would silently turn the accumulate into
-        # an overwrite. Mirrors the same guard in ``_replace_direct_copies``.
-        if edge.data.wcr is not None:
+        # into the real output). Most CopyLibraryNode expansions (ExpandMemcpyCPU et al.) emit an
+        # unconditional store; lifting such an edge would silently turn the accumulate into an
+        # overwrite. A single-element stage-out is the exception: no memcpy variant can be selected
+        # for it, so it expands to a Tasklet whose output edge still carries the WCR and is lowered
+        # by the generator's own conflict resolution. Left implicit, that shape is the one copy the
+        # readable generator has no explicit form for and emits as ``dace::CopyND::Accumulate``.
+        if edge.data.wcr is not None and (stage_in or any(sbs is not None and sbs.num_elements_exact() != 1
+                                                          for sbs in (edge.data.subset, edge.data.other_subset))):
             return False
         # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
         # ``set`` connector and leave the Reference unbound.

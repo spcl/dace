@@ -69,13 +69,23 @@
 // the lowering. The contiguous, untransformed case still hands CUB a raw pointer, which is what lets
 // it use vectorised loads.
 //
-// thrust's iterators, not cub's: cub's are deprecated from CCCL 2.8 (CUDA 12.8), warnings are errors
-// here, and CCCL 3 (CUDA 13) removed them. ``reduction.h`` picks the same way for its segmented
-// reduce. rocThrust ships both, so this is not a CUDA-only preference.
+// thrust's iterators, not cub's -- ON CUDA. cub's are deprecated from CCCL 2.8 (CUDA 12.8),
+// warnings are errors here, and CCCL 3 (CUDA 13) removed them. ``reduction.h`` picks the same way
+// for its segmented reduce.
+//
+// HIP takes hipCUB's instead, and that is not a preference. ``DeviceReduce::ArgMax`` wraps its
+// input in rocPRIM's ``arg_index_iterator``, which static_asserts
+// ``std::iterator_traits<I>::iterator_category`` IS ``std::random_access_iterator_tag``. A
+// ``thrust::transform_iterator`` reports thrust's own category tag instead, so the assert fires
+// and the translation unit does not compile at all (tsvc_2_s318's strided argmax, gfx942) --
+// even though rocThrust ships the iterator quite happily. hipCUB's own iterators carry the std
+// tag and are not deprecated, so the reason to avoid cub's does not apply on this backend.
+#if !defined(__HIPCC__) && !defined(__HIP__) && !defined(WITH_HIP)
 #if __has_include(<thrust/iterator/counting_iterator.h>)
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #define DACE_CUB_COMPAT_THRUST_ITERATORS
+#endif
 #endif
 
 namespace dace {

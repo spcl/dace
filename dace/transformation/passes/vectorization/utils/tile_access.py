@@ -552,8 +552,12 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
         resolved = resolve_index_expr(e, inner_sdfg, _defs=defs)
         if resolved == e:
             return bound, False
-        if expr_is_data_dependent(resolved, inner_sdfg):
-            return bound, False  # gather index -> keep
+        # A memlet subset may name symbols only. A resolved form that names a data CONTAINER
+        # (``_exit_i_0 = _exit_i_buf_0``, the library-node-written exit buffer) survives CPU codegen
+        # by accident but is a device pointer on GPU, so the subscript does not compile.
+        names = {str(s) for s in resolved.free_symbols}
+        if expr_is_data_dependent(resolved, inner_sdfg) or (names & inner_sdfg.arrays.keys()):
+            return bound, False  # gather / container-valued index -> keep
         return resolved, True
 
     new_ranges = []
