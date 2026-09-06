@@ -317,6 +317,30 @@ def test_no_runtime_header_reaches_the_vendored_nvidia_cub() -> None:
     assert not offenders, f'these headers reach the vendored NVIDIA CUB: {offenders}'
 
 
+#: The gather iterator ``ArgReduce`` reduces a strided or transformed operand through.
+CUB_COMPAT_HEADER = RUNTIME_INCLUDE_DIR / 'dace' / 'cub_compat.cuh'
+
+
+def test_the_gather_iterator_declares_a_std_random_access_category() -> None:
+    """``DeviceReduce::ArgMax`` wraps its input in rocPRIM's ``arg_index_iterator``, which
+    static_asserts that ``std::iterator_traits<I>::iterator_category`` IS
+    ``std::random_access_iterator_tag``.
+
+    Neither library's transform iterator satisfies that here. rocPRIM's report
+    ``thrust::detail::iterator_category_with_system_and_traversal`` the moment thrust is in the
+    translation unit, and DaCe puts it there unconditionally through ``thrust::complex`` in
+    ``types.h`` / ``math.h`` / ``complex.h`` -- so on HIP the assert fired for every strided or
+    transformed ArgReduce (TSVC ``s318``, gfx942) whichever backend's iterator was selected, and
+    selecting between them cannot fix it. The tag has to be DECLARED here."""
+    text = CUB_COMPAT_HEADER.read_text()
+    assert 'using iterator_category = ::std::random_access_iterator_tag;' in text, (
+        'GatherIterator no longer declares its own std random-access category; a library transform '
+        'iterator reports a thrust tag whenever thrust is in the unit, which rocPRIM rejects')
+    for banned in ('thrust::transform_iterator', 'gpucub::TransformInputIterator'):
+        assert banned not in text, (f'{banned} is back in cub_compat.cuh: its iterator_category '
+                                    'follows the library, not the std tag rocPRIM asserts on')
+
+
 def generated_gpu_code(program, backend: str, mutate=None, implementation: str = None) -> str:
     """Code for ``program`` lowered to the GPU under ``backend``, without compiling it."""
     with contextlib.ExitStack() as stack:
