@@ -323,13 +323,26 @@ def seed_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     return None if edge is None else sdfg.arrays[edge.data.data]
 
 
+def future_value(ctype: str, expr: str) -> str:
+    """``gpucub::FutureValue`` over a seed the host must not dereference.
+
+    The ITERATOR type is named, not defaulted. Both backends declare
+    ``FutureValue<T, Iter = T*>`` and take the iterator by ``const Iter``, so the default binds
+    ``T* const`` -- which a ``const T*`` seed pointer cannot convert to ("would lose const
+    qualifier"). rocPRIM rejects it outright, and the whole translation unit fails to compile
+    (tsvc_2_s318's scan, gfx942). Naming ``const T*`` accepts a seed that is const and one that is
+    not, on CUB and rocPRIM alike.
+    """
+    return f'::gpucub::FutureValue<{ctype}, const {ctype}*>({expr})'
+
+
 def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -> str:
     """The ``init_value`` argument of the cub call for chain ``chain``."""
     conn = init_connector(chain)
     desc = seed_desc(node, state, sdfg, chain)
     if desc is None or desc.storage not in GPU_RESIDENT_STORAGES:
         return conn
-    return f"::gpucub::FutureValue<{desc.dtype.base_type.ctype}>({conn})"
+    return future_value(desc.dtype.base_type.ctype, conn)
 
 
 def coef_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int = 0):
@@ -1141,7 +1154,7 @@ class ExpandCUDA(ExpandTransformation):
                 seed_ctype = desc.dtype.base_type.ctype
                 if desc is not None and desc.storage in GPU_RESIDENT_STORAGES:
                     seed_param = f', const {seed_ctype}* __sc_init'
-                    extra = f', ::gpucub::FutureValue<{seed_ctype}>(__sc_init)'
+                    extra = f', {future_value(seed_ctype, "__sc_init")}'
                 else:
                     seed_param = f', {seed_ctype} __sc_init'
                     extra = ', __sc_init'

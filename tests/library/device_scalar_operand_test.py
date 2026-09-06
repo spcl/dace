@@ -111,3 +111,15 @@ def test_a_device_seed_goes_to_cub_as_a_future():
     code = expanded_code(sdfg)
     assert 'FutureValue' in code, code[:400]
     sdfg.validate()
+
+
+def test_the_future_names_a_const_iterator():
+    """The seed reaches the wrapper as ``const T*``, so the future's ITERATOR must be ``const T*``.
+
+    Both backends declare ``FutureValue<T, Iter = T*>`` and take the iterator by ``const Iter``.
+    Left to default, that is ``T* const``, which a ``const T*`` cannot convert to; rocPRIM rejects
+    it and the translation unit does not compile at all.
+    """
+    sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
+    code = expanded_code(sdfg)
+    assert 'FutureValue<double, const double*>' in code, code[:400]
