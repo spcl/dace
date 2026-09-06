@@ -489,6 +489,46 @@ def test_connector_clash_with_enclosing_map_parameter():
     assert np.allclose(C, A * 2)
 
 
+def _mapped_symbol_sdfg(value):
+    """Nested SDFG using symbol ``s``, added to a parent with a scalar ``X`` and a symbol ``M``."""
+    inner = dace.SDFG('inner')
+    inner.add_symbol('s', dace.int64)
+    inner.add_array('o', [1], dace.float64)
+    istate = inner.add_state()
+    t = istate.add_tasklet('t', {}, {'b'}, 'b = s')
+    istate.add_edge(t, 'b', istate.add_write('o'), None, dace.Memlet('o[0]'))
+
+    parent = dace.SDFG('parent')
+    parent.add_symbol('M', dace.int64)
+    parent.add_scalar('X', dace.int64)
+    parent.add_array('O', [1], dace.float64)
+    state = parent.add_state()
+    node = state.add_nested_sdfg(inner, {}, {'o'}, {'s': value})
+    state.add_edge(node, 'o', state.add_write('O'), None, dace.Memlet('O[0]'))
+    return parent, node
+
+
+def test_symbol_mapped_to_a_parent_symbol_is_folded():
+    """A value naming a symbol of the parent's scope is folded in, leaving no alias behind."""
+    _, node = _mapped_symbol_sdfg('M')
+
+    assert 's' not in node.sdfg.symbols
+    assert 's' not in node.symbol_mapping
+    assert str(node.symbol_mapping['M']) == 'M'
+
+
+def test_symbol_mapped_to_a_parent_container_is_kept():
+    """A value naming one of the parent's containers is not a symbol of the parent's scope.
+
+    Folding it in would rename the nested SDFG's symbol after the container, and a connector for
+    that container could then no longer be told apart from the symbol.
+    """
+    _, node = _mapped_symbol_sdfg('X')
+
+    assert 'X' not in node.sdfg.symbols
+    assert str(node.symbol_mapping['s']) == 'X'
+
+
 if __name__ == '__main__':
     import traceback
     for name, fn in list(globals().items()):

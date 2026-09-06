@@ -1839,10 +1839,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 # expression where a name has to be, and would also apply to the uses that the
                 # reassignment -- not the mapping -- governs. Such entries stay on the mapping.
                 reassigned = _symbols_reassigned_within(sdfg)
+                # A value that refers to one of the parent's data containers does not name a symbol
+                # of the parent's scope. Folding it in would rename the nested SDFG's symbol after
+                # that container, and a connector for the container could then no longer be told
+                # apart from the symbol. Such entries stay on the mapping too.
+                parent_arrays = self.sdfg.arrays if self.sdfg is not None else {}
                 applied_mapping = {
                     k: v
                     for k, v in symbol_mapping.items()
                     if k in used and not (k in reassigned and not dtypes.validate_name(str(v)))
+                    and not (symbolic.arrays(v) | symbolic.scalars(v, parent_arrays))
                 }
                 retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in applied_mapping}
 
