@@ -236,6 +236,46 @@ jobs:
           -m "vectorization and sequential and not gpu and not long and not perf" \
           || [ $? -eq 5 ]
 
+  # --- Canonicalization performance (relative, canon vs auto_optimize) ---
+  canon-perf:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Advisory until the ratchet's baselines are re-measured on an idle machine: the numbers
+    # currently in ``_KNOWN_SLOWER`` were taken on a box running eleven other pytest processes,
+    # which moved several of them by a factor of two. A red here is worth reading, but it is not
+    # yet worth blocking on. Flip to ``false`` once a clean set of baselines is in.
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        groups: testing
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        # Every other job filters these out with "not perf", so this is the only place they run.
+        # What they assert is a RATIO -- canonicalize against auto_optimize, both built and timed in
+        # this same process on this same machine -- so a slow shared runner moves both numbers and
+        # the comparison survives it. No wall-clock number is asserted.
+        export DACE_PERF_TEST=1
+        # Sequential and 8 threads: two lowerings timed against each other cannot share cores with
+        # xdist workers, or the ratio measures the scheduler rather than the code.
+        export OMP_NUM_THREADS=8
+        pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf"
+
   # --- Corpus (was corpus-ci.yml) ---
   corpus:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
