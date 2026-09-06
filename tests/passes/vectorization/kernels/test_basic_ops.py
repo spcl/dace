@@ -203,7 +203,7 @@ def max_with_constant_reversed_order(A: dace.float64[N, N], c: dace.float64):
             A[i, j] = max(A[i, j], c)
 
 
-@pytest.mark.simple  # canonical: test_max_with_constant_reversed_order (operand-order variant)
+# Overlaps test_max_with_constant_reversed_order (operand-order variant)
 def test_max_with_constant(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -240,7 +240,7 @@ def test_max_with_constant_reversed_order(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: test_vsubs_two_cpu (2-input variant exercises more)
+# Overlaps test_vsubs_two_cpu (2-input variant exercises more)
 def test_vsubs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -305,7 +305,7 @@ def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_unop_pure covers exp
+# Overlaps lib_nodes/test_tile_unop_pure covers exp
 def test_vexp_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -336,7 +336,7 @@ def test_vsubs_two_cpu(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: test_v_const_subs_two_cpu (2-input variant)
+# Overlaps test_v_const_subs_two_cpu (2-input variant)
 def test_v_const_subs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -394,7 +394,7 @@ def add_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1: dace
         A[i, j] = A[i, j] + c5
 
 
-@pytest.mark.simple  # canonical: axpy / TSVC s000 family covers this
+# Overlaps axpy / TSVC s000 family covers this
 def test_vadd_with_unary_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -415,7 +415,7 @@ def test_vadd_with_unary_scalar_cpu(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_unop_pure covers abs
+# Overlaps lib_nodes/test_tile_unop_pure covers abs
 def test_vabs(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -448,7 +448,7 @@ def test_unary_symbol(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_binop_pure[kind=Scalar] covers scalar binop
+# Overlaps lib_nodes/test_tile_binop_pure[kind=Scalar] covers scalar binop
 def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -471,7 +471,7 @@ def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.simple  # canonical: test_vadd_with_scalars_int (harder; scalar broadcast)
+# Overlaps test_vadd_with_scalars_int (harder; scalar broadcast)
 def test_vadd_int(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)

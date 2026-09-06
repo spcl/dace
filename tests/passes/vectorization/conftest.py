@@ -95,12 +95,6 @@ def pytest_configure(config):
         "tile_nodes: legacy marker; the K-dim tile-op config "
         "(VectorizeCPUMultiDim) is now the sole vectorize_config arm.",
     )
-    config.addinivalue_line(
-        "markers",
-        "simple: redundant / trivial test (duplicates lib_nodes coverage or "
-        "a more comprehensive sibling). Skipped by default; opt in with "
-        "``--run-simple`` to include them in the sweep.",
-    )
     # pytest-xdist registers this itself when installed; register it here too so the corpus
     # marks don't raise PytestUnknownMarkWarning when it is not.
     config.addinivalue_line(
@@ -115,15 +109,6 @@ def pytest_addoption(parser):
 
     :param parser: The pytest option parser.
     """
-    parser.addoption(
-        "--run-simple",
-        action="store_true",
-        default=False,
-        help="Include tests marked ``@pytest.mark.simple`` (redundant / "
-        "trivial duplicates of a more comprehensive sibling test or of "
-        "``lib_nodes/`` coverage). Default sweep skips these to keep the "
-        "feedback loop fast; the hardening sweep / CI includes them.",
-    )
     parser.addoption(
         "--run-full-matrix",
         action="store_true",
@@ -181,22 +166,6 @@ def pytest_generate_tests(metafunc):
         # test function — the harness reads it via ``request``).
         metafunc.fixturenames.append(knob)
         metafunc.parametrize(knob, vals, indirect=True)
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip ``@pytest.mark.simple`` items unless ``--run-simple`` is given.
-
-    :param config: The pytest config object.
-    :param items: The collected test items (filtered in place).
-    """
-    # Skip ``@pytest.mark.simple`` items unless ``--run-simple`` is given.
-    # A skip (rather than a deselect) keeps the test visible in collection
-    # reports so the gate is observable.
-    if not config.getoption("--run-simple"):
-        skip_simple = pytest.mark.skip(reason="@pytest.mark.simple — pass --run-simple to include")
-        for item in items:
-            if "simple" in item.keywords:
-                item.add_marker(skip_simple)
 
 
 @pytest.fixture

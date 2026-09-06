@@ -15,8 +15,8 @@ A. **Same-kernel-different-params** — tests that call the same ``dace_func``.
 
 B. **Similar-kernel-different-bodies** — kernels whose AST fingerprint matches
    (loop nesting + statement opcode sequence + array-rank signature) but bodies
-   differ in literals/names. Action: keep the harder one canonical,
-   ``@pytest.mark.simple`` the simpler one(s).
+   differ in literals/names. Action: keep the harder one canonical and note the
+   overlap on the simpler one(s), so a later reader knows what already covers it.
 
 Run with ``python -m tests.passes.vectorization._scan_duplicates``.
 Not a test; not picked up by pytest collection.
@@ -192,7 +192,7 @@ def main():
     for (f, name), fn in all_programs.items():
         fp = kernel_fingerprint(fn)
         fp_to_kernels[fp].append((f, name))
-    print("GROUP B — STRUCTURALLY-SIMILAR KERNELS  (action: keep harder canonical, @simple the rest)")
+    print("GROUP B — STRUCTURALLY-SIMILAR KERNELS  (action: keep harder canonical, note the rest)")
     print("-" * 78)
     b_groups = [(fp, ks) for fp, ks in fp_to_kernels.items() if len(ks) >= 2]
     # Only show groups where the kernel names differ (else they're just multi-file copies)
@@ -213,7 +213,7 @@ def main():
     # Heuristic: tests in the same file calling the same kernel with bodies of
     # the same line-count (within 3 lines) are likely the wrapper-only variants
     # the plan calls out (test_v_const_subs_cpu vs test_v_const_subs_two_cpu etc).
-    print("GROUP C — TEST WRAPPERS WITH SIMILAR BODIES + KERNELS  (suggest @simple gating)")
+    print("GROUP C — TEST WRAPPERS WITH SIMILAR BODIES + KERNELS  (suggest noting the overlap)")
     print("-" * 78)
     by_file = defaultdict(list)
     for (f, t), fn in all_tests.items():
