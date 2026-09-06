@@ -194,19 +194,31 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
     'dace.libraries.standard.nodes.reduce.Reduce': 'reduction over the given axes with the given operator',
 }
 
-#: Library-node implementations CPF selects, best first. ``pure`` is an SDFG made of maps and
-#: tasklets -- which is the whole point: it renders as loops, and it is the PARALLEL form.
-#: ``pure-seq`` is the sequential fallback for a node that has no parallel pure expansion.
-#: ``MappedTasklet`` is the copy library node's spelling of the same idea -- a map that reads one
-#: buffer and writes the other. Its ``Auto`` default would pick ``dace::CopyND`` for a strided
-#: copy, which is a runtime template, so the choice is made here rather than left to the node.
+#: Library-node implementations CPF selects, best first. The criterion is NOT the name ``pure`` and
+#: NOT an empty ``environments`` list -- it is "expands to something a standalone unit can compile",
+#: which means SDFG content (maps and tasklets) or a call into the C++ standard library.
 #:
-#: The alternative is what the node would pick on its own: a BLAS call, ``dace::reduce``, cuBLAS.
-#: Every one of those is a library CPF cannot link, so leaving the choice to the node's default
-#: would render a translation unit that names a symbol nothing defines.
-PURE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
+#: ``Auto`` is the copy and fill nodes' own selector, and it is preferred over any fixed spelling
+#: because it picks BY SIZE AND LAYOUT: one ``std::memcpy``/``memset`` for a contiguous copy that
+#: runs once, a parallel mapped tasklet past the threshold where the map is worth its overhead.
+#: Pinning ``MappedTasklet`` instead spent an element-wise map on copies a single call would do.
+#: Its ``dace::CopyND`` branch needs a ``GPU_Shared`` endpoint, which :func:`prepare` has already
+#: refused by the time this runs. ``pure`` is an SDFG made of maps and tasklets -- which is the
+#: whole point: it renders as loops, and it is the PARALLEL form. ``pure-seq`` is the sequential
+#: fallback for a node with no parallel pure expansion, ``MappedTasklet`` the spelling used by a
+#: copy node that has no ``Auto``.
+#:
+#: DELIBERATELY ABSENT, and the reason this list is a checked allowlist rather than a filter on
+#: ``environments``: DaCe's faster-sounding implementations declare no environment and still name a
+#: symbol nothing here defines. ``Reduce``'s ``OpenMP`` lowers onto ``dace::reduce``, its
+#: ``vectorized`` onto ``horizontal_reduce_*`` from the vectorizable-math headers (and onto
+#: ``OpenMP`` outright under a multicore schedule), ``FindFirst``'s onto ``dace::find_first_index``,
+#: and ``Scan``'s only environment-free spellings are the CUDA ones. Reduce's lowercase ``auto``
+#: is a dispatcher that can land on any of those, which is why only capital ``Auto`` appears here.
+RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 
-#: Slack in the expand-and-reselect loop of :func:`force_pure_expansions`, on top of the one round
+#: Slack in the expand-and-reselect loop of :func:`force_renderable_expansions`, on top of the one
+#: round
 #: per library node a single state holds. A node may expand into further library nodes (``MatMul``
 #: -> ``Gemm`` -> its own expansion), so each generation needs a round of its own; the slack covers
 #: that nesting depth. The bound exists only so a node that expands to itself fails with a message
@@ -264,8 +276,8 @@ def subtree_guids(node, state) -> Set[str]:
     return guids
 
 
-def force_pure_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
-    """Expand every library node in ``sdfg`` through its pure implementation, in place.
+def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
+    """Expand every library node in ``sdfg`` through a renderable implementation, in place.
 
     Done here rather than left to code generation because the choice has to be made GENERATION BY
     GENERATION: a node's expansion can introduce further library nodes, and those arrive carrying
@@ -280,7 +292,7 @@ def force_pure_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, 
     parallel with each other, so the number of rounds is the deepest single state's library-node
     count, not the SDFG's.
 
-    A node with no pure implementation at all is left alone: it may still expand to something
+    A node with no renderable implementation at all is left alone: it may still expand to something
     renderable, and if it does not, the ``dace::`` symbol it emits is reported against its name by
     :func:`verify`, which says more than a refusal from here could.
 
@@ -309,7 +321,7 @@ def force_pure_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, 
         described: Dict[int, Tuple[str, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            for candidate in PURE_IMPLEMENTATIONS:
+            for candidate in RENDERABLE_IMPLEMENTATIONS:
                 if candidate in available:
                     node.implementation = candidate
                     break
@@ -455,8 +467,9 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     Four things happen: every written signature scalar is promoted to a length-1 array so it is
     addressable (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`),
     what that could not make renderable is refused
-    (:func:`refuse_by_value_returns`), every library node is pointed at its pure implementation and
-    expanded (:func:`force_pure_expansions`), and lifetimes that would need a state struct are
+    (:func:`refuse_by_value_returns`), every library node is pointed at the best implementation a
+    standalone unit can compile and expanded (:func:`force_renderable_expansions`), and lifetimes
+    that would need a state struct are
     demoted (see :data:`LIFETIME_DEMOTIONS`). Anything CPF cannot express raises here rather than
     at compile time, where the message would be a C++ diagnostic about a name this module chose.
 
@@ -466,7 +479,7 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
 
     :param sdfg: the SDFG to prepare. Call on a COPY -- :func:`cpf` does.
     :param provenance: filled in with the library-node descriptions the rendering will comment
-                       with (see :func:`force_pure_expansions`).
+                       with (see :func:`force_renderable_expansions`).
     :raises NotImplementedError: if the SDFG needs a device compiler, holds a stream or a consume
                                  scope (:func:`refuse_runtime_scopes`), or carries a return container
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
@@ -478,7 +491,7 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
-    force_pure_expansions(sdfg, provenance)
+    force_renderable_expansions(sdfg, provenance)
     for _, _, desc in sdfg.arrays_recursive():
         demoted = LIFETIME_DEMOTIONS.get(desc.lifetime)
         if demoted is not None:
@@ -703,7 +716,7 @@ class Rendering(NamedTuple):
     """A rendered SDFG: the C++ text, and the SDFG that text was generated from.
 
     The second field is not a convenience. CPF renders a PREPARED COPY -- library nodes expanded
-    through their pure implementations, lifetimes demoted -- and preparation can change the
+    through renderable implementations, lifetimes demoted -- and preparation can change the
     ARGUMENT LIST: expanding a ``Reduce`` into a map introduces the extent symbol the library node
     had kept to itself, so the entry point takes an argument the original SDFG's ``arglist()``
     never mentions. Calling the rendered code means calling it with THIS SDFG's arglist; the
