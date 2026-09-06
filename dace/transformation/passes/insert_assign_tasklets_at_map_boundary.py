@@ -27,6 +27,30 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import _is_unit_subset
 
 
+def _outer_side_memlet(sdfg: SDFG,
+                       outer_an: nodes.AccessNode,
+                       boundary_memlet: Memlet,
+                       wcr: Optional[Any] = None) -> Memlet:
+    """Build the memlet for the boundary edge after the local AccessNode stops being an endpoint.
+
+    The split rewires the boundary edge onto the inserted tasklet, so its memlet has to name the
+    data that crosses the scope, i.e. ``outer_an``'s container. It usually does already; when it
+    names the local container instead (``ScalarFission`` renames the two ends of a staging copy
+    into separate versions and the boundary edge follows the inner one) reusing it verbatim leaves
+    a memlet naming data that is neither endpoint of its path. The caller only queues such an edge
+    when the outer container is a single element, so the whole container is the moved element.
+
+    :param sdfg: The SDFG owning the array descriptors.
+    :param outer_an: The AccessNode outside the scope (the memlet path's source / sink).
+    :param boundary_memlet: The memlet of the boundary edge being split.
+    :param wcr: Write-conflict resolution to carry over, if any.
+    :returns: The memlet to put on the boundary edge.
+    """
+    if boundary_memlet.data == outer_an.data:
+        return Memlet(data=outer_an.data, subset=copy.deepcopy(boundary_memlet.subset), wcr=wcr)
+    return Memlet(data=outer_an.data, subset=dace.subsets.Range.from_array(sdfg.arrays[outer_an.data]), wcr=wcr)
+
+
 @transformation.explicit_cf_compatible
 class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
     """Insert ``_out = _in`` tasklets at map-boundary staging edges."""
@@ -178,6 +202,18 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             outer_an = mpath[0].src if direction == 'in' else mpath[-1].dst
             if not isinstance(outer_an, nodes.AccessNode):
                 continue
+            # The boundary memlet normally names the OUTER container, but it may name the
+            # local one instead: ``ScalarFission`` versions the two ends of a staging copy
+            # into separate containers (``c2`` -> outer ``c2_1`` / inner ``c2_0``) and the
+            # boundary edge follows the inner name. Once the split moves that memlet onto a
+            # ``MapEntry -> tasklet`` edge the local AccessNode is no longer an endpoint, so
+            # the memlet must be re-anchored on the outer container (see ``_outer_side_memlet``).
+            # Re-anchoring needs the element the boundary edge moves, which a local-named
+            # memlet does not carry -- it is recoverable only when the outer container is a
+            # single element too. Leave a wider one unsplit rather than invent an element.
+            if e.data.data != outer_an.data and not _is_unit_subset(
+                    dace.subsets.Range.from_array(sdfg.arrays[outer_an.data])):
+                continue
 
             edges_to_process.append((direction, e, outer_an))
 
@@ -192,7 +228,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 local_an = edge.dst  # AccessNode inside the scope
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
-                outer_copy = Memlet(data=outer_memlet.data, subset=copy.deepcopy(outer_memlet.subset))
+                outer_copy = _outer_side_memlet(sdfg, outer_an, outer_memlet)
                 tasklet = state.add_tasklet(name=f"_assign_in_{outer_an.data}_to_{local_an.data}",
                                             inputs={"_in"},
                                             outputs={"_out"},
@@ -211,9 +247,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 # ``... -> tasklet -[wcr]-> MapExit``; dropping the WCR here
                 # corrupts reductions whose privatised scalar reaches the map
                 # exit via an AccessNode-to-MapExit edge with WCR.
-                outer_copy = Memlet(data=outer_memlet.data,
-                                    subset=copy.deepcopy(outer_memlet.subset),
-                                    wcr=outer_memlet.wcr)
+                outer_copy = _outer_side_memlet(sdfg, outer_an, outer_memlet, wcr=outer_memlet.wcr)
                 tasklet = state.add_tasklet(name=f"_assign_out_{local_an.data}_to_{outer_an.data}",
                                             inputs={"_in"},
                                             outputs={"_out"},

@@ -525,12 +525,54 @@ def nest_state_subgraph(sdfg: SDFG,
             if edge.data.data is not None:
                 subgraph_transients[edge.data.data] = None
 
+    # A boundary memlet must name the container on the PARENT side of its edge, and it does not
+    # always: a versioning pass renames the inner end of a staging copy and the memlet on the
+    # boundary edge follows the INNER name (``ScalarFission`` versioning ``c2`` into an outer
+    # ``c2_1`` plus a scope-local ``c2_0``, ``replicate_scope`` giving a remainder tail its own
+    # ``c2_0_0``). That container moves into the nested SDFG below, so a parent edge left naming it
+    # would reference data the parent no longer has, and its connector would be minted around the
+    # moved descriptor (moved-in ``c2_0_0`` -> connector ``c2_0_0_0``, parent memlet still
+    # ``c2_0_0`` -> ``KeyError`` in every consumer that resolves the memlet against the parent).
+    # Re-anchor such an edge on the AccessNode outside the subgraph. Only a single-element access
+    # is unambiguous -- a wider memlet naming the inner container does not carry which outer
+    # element it moves -- so leave those exactly as they are.
+    outer_ends = [(e, state.memlet_path(e)[0].src) for e in inputs]
+    outer_ends += [(e, state.memlet_path(e)[-1].dst) for e in outputs]
+    for boundary_edge, outer_node in outer_ends:
+        if boundary_edge.data.data is None or boundary_edge.data.data not in subgraph_transients:
+            continue
+        if not isinstance(outer_node, nodes.AccessNode):
+            continue
+        outer_desc = sdfg.arrays[outer_node.data]
+        if outer_desc.total_size != 1 or boundary_edge.data.subset.num_elements() != 1:
+            continue
+        boundary_edge.data.data = outer_node.data
+        boundary_edge.data.subset = Range.from_array(outer_desc)
+
+    # An AccessNode that a boundary edge already carries needs NO second interface. The two paths
+    # give the SAME container two connectors -- the boundary one, plus a "referenced in full" one
+    # whose parent side is a fresh in-scope AccessNode wired to the scope node by an empty ordering
+    # edge. For a container the scope reads from outside (a scalar staged in through ``IN_x``, e.g.
+    # after ``LoopInvariantCodeMotion`` hoists its writer out of the map) that second interface
+    # reads the in-scope allocation, which nothing writes: the body's reader binds to it, the
+    # boundary connector is later pruned as unused, and with it the ``IN_x`` edge that ordered the
+    # map after the writer -- so the map is emitted BEFORE the value is assigned and reads
+    # uninitialized memory. Only the endpoint of a boundary edge naming this very container is
+    # skipped; an AccessNode that merely shares a container with some other boundary edge keeps its
+    # own full-array interface.
+    # Membership only; ``dict`` as the ordered set the rest of this function uses.
+    carried_ends = [(id(e.dst), e.data.data) for e in inputs]
+    carried_ends += [(id(e.src), e.data.data) for e in outputs]
+    boundary_carried = dict.fromkeys(carried_ends)
+
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = {}
     output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
+            if (id(node), node.data) in boundary_carried:
+                continue
             if node.has_reads(state):
                 input_arrays[node.data] = None
             if node.has_writes(state):
@@ -651,9 +693,24 @@ def nest_state_subgraph(sdfg: SDFG,
             node.sdfg.parent_sdfg = nsdfg
             node.sdfg.parent_nsdfg_node = node
 
+    def reads_whole_connector(edge: MultiConnectorEdge, name: str) -> bool:
+        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``'s whole container.
+
+        Then it needs no access node of its own inside: the ``name -> name`` copy that would be
+        added is a no-op, and its write turns the input connector into a written descriptor, which
+        validation rejects. The connector IS that array inside the nested SDFG, so an access node of
+        it already reads the boundary data. Restricted to a whole-container access -- a partial one
+        still needs the copy that rebases it into the connector's coordinates.
+        """
+        if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != name:
+            return False
+        return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
+
     # Add access nodes and edges as necessary
     edges_to_offset = []
     for edge, name in input_names.items():
+        if reads_whole_connector(edge, name):
+            continue
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
