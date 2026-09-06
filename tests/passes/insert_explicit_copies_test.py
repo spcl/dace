@@ -1072,11 +1072,45 @@ def test_iec_symbolic_reshape_targets_the_whole_destination():
     assert str(out_edges[0].data.subset) == "0:N - 2, 0:M"
 
 
-def test_iec_skips_wcr_staging_edge():
-    """A WCR edge is a reduction, not a copy. ``CopyLibraryNode``'s expansions emit an unconditional
-    store, so lifting the tile-merge edge AccumulateTransient produces turns ``out[i] += tile[i]``
-    into ``out[i] = tile[i]`` -- silently, with a valid SDFG and a wrong answer."""
+def test_iec_skips_multi_element_wcr_staging_edge():
+    """A multi-element WCR edge is a reduction, not a copy. ``Auto`` picks a memcpy expansion for a
+    contiguous multi-element copy, and a memcpy stores unconditionally, so lifting the tile-merge
+    edge AccumulateTransient produces turns ``out[j] += tile[j]`` into ``out[j] = tile[j]`` --
+    silently, with a valid SDFG and a wrong answer."""
     sdfg = dace.SDFG("iec_wcr_staging")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_transient("tile", [4], dace.float64)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:8"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    ime, imx = state.add_map("inner", {"j": "0:4"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("copy", {"inp"}, {"o"}, "o = inp")
+    tile = state.add_access("tile")
+    state.add_memlet_path(state.add_read("A"), me, ime, t, dst_conn="inp", memlet=Memlet("A[i, j]"))
+    state.add_memlet_path(t, imx, tile, src_conn="o", memlet=Memlet("tile[j]"))
+    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
+    state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0:4]", wcr="lambda a, b: a + b"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a multi-element WCR edge must not be lowered to CopyLibraryNode"
+    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
+    assert wcr_edges, "the accumulate must survive the pass"
+    sdfg.validate()
+
+    A = np.arange(32, dtype=np.float64).reshape(8, 4)
+    out = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, out=out)
+    np.testing.assert_array_equal(out, A.sum(axis=0))
+
+
+def test_iec_lifts_single_element_wcr_staging_edge():
+    """The one WCR shape that IS lifted. ``Auto`` can only pick ``Tasklet`` for a single-element
+    host copy, and a tasklet keeps the WCR on its output edge, so the accumulate is still an
+    accumulate. Left implicit the readable generator has no explicit form for it and falls back to
+    ``dace::CopyND::Accumulate``, which a self-contained rendering cannot contain."""
+    sdfg = dace.SDFG("iec_wcr_staging_scalar")
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("out", [1], dace.float64)
     sdfg.add_transient("tile", [1], dace.float64)
@@ -1087,14 +1121,15 @@ def test_iec_skips_wcr_staging_edge():
     tile = state.add_access("tile")
     state.add_memlet_path(state.add_read("A"), me, t, dst_conn="inp", memlet=Memlet("A[i]"))
     state.add_edge(t, "o", tile, None, Memlet("tile[0]"))
-    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
     state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0]", wcr="lambda a, b: a + b"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 0, "a WCR edge must not be lowered to CopyLibraryNode"
-    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
-    assert wcr_edges, "the accumulate must survive the pass"
+    assert _count_copy_nodes(sdfg) == 1, "a single-element WCR stage-out must become a CopyLibraryNode"
+    cn, _ = _find_libnode_and_scope(state)
+    assert cn.implementation in (None, "Auto"), "the copy node must be left for the selector to resolve"
+    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
+    assert out_edges[0].data.wcr is not None, "the accumulate must move onto the copy node's output"
     sdfg.validate()
 
     A = np.arange(8, dtype=np.float64)
