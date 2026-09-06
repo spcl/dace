@@ -325,6 +325,23 @@ def _disallow_stmt(visitor, node):
     raise DaceSyntaxError(visitor, node, 'Keyword "%s" disallowed' % (type(node).__name__))
 
 
+def _connected_container(dependency: Union[Memlet, nodes.Tasklet], connector: str) -> str:
+    """
+    Returns the name of the container a dependency of a call refers to.
+
+    A call's dependencies are keyed by connector, which is the name the callee knows the container
+    by. The scope around the call knows it by the name of its own container, which is the one its
+    parent connects, and that is the name the memlet carries.
+
+    :param dependency: The memlet passed to the connector, or the tasklet that feeds it.
+    :param connector: The name of the connector, used when there is no container behind it.
+    :return: The name of the container, or the connector's name if the dependency is not a memlet.
+    """
+    if isinstance(dependency, Memlet) and dependency.data is not None:
+        return dependency.data
+    return connector
+
+
 ###############################################################
 # Parsing functions
 ###############################################################
@@ -4340,10 +4357,13 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 narrname = arrname
 
+            # What this scope passes on is the container the memlet names, not the connector: the
+            # callee may know the array by a name of its own, and it is this scope's parent that
+            # connects what follows, under the name this scope has for it.
             if narrname in inputs:
-                self.inputs[arrname] = (state, inputs[narrname], [])
+                self.inputs[_connected_container(inputs[narrname], arrname)] = (state, inputs[narrname], [])
             if narrname in outputs:
-                self.outputs[arrname] = (state, outputs[narrname], [])
+                self.outputs[_connected_container(outputs[narrname], arrname)] = (state, outputs[narrname], [])
 
         # Unset parent inputs/read accesses that
         # turn out to be outputs/write accesses.
