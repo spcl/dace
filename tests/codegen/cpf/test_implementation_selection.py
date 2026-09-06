@@ -16,6 +16,7 @@ import pytest
 import dace
 from dace.codegen.cpf import RENDERABLE_IMPLEMENTATIONS, render
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.helper import is_parallel_cpu_transfer_size
 from dace.libraries.standard.nodes.copy.select import select_copy_implementation
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
@@ -35,7 +36,7 @@ def prepared_sdfg():
     return sdfg
 
 
-def test_a_contiguous_copy_renders_as_one_memcpy_not_an_element_loop():
+def test_a_small_constant_copy_renders_as_one_memcpy():
     sdfg = prepared_sdfg()
     copies = [(node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, CopyLibraryNode)]
     assert copies, 'the fixture is meant to carry copy library nodes for CPF to choose an expansion for'
@@ -50,6 +51,28 @@ def test_a_contiguous_copy_renders_as_one_memcpy_not_an_element_loop():
     assert 'CopyND' not in code
 
 
+@pytest.mark.parametrize('elements', [
+    dace.symbol('N'),
+    dace.symbol('N') * dace.symbol('N'),
+    1 << 20,
+])
+def test_a_large_or_unknown_copy_stays_a_parallel_map(elements):
+    """The half that matters at benchmark sizes, and the reason Auto is preferred over a fixed name.
+
+    A single ``memcpy`` is one thread. Past ``parallel_transfer_min_elements`` the mapped form wins
+    because it is a PARALLEL map, so the threshold has to route large copies away from the libc
+    call -- and a symbolic size, which is every copy in a kernel with a runtime extent, must be
+    ASSUMED large rather than treated as unknown-therefore-small.
+    """
+    assert is_parallel_cpu_transfer_size(elements)
+
+
+def test_a_small_constant_copy_is_the_only_one_that_takes_the_single_call():
+    threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+    assert not is_parallel_cpu_transfer_size(threshold - 1)
+    assert is_parallel_cpu_transfer_size(threshold)
+
+
 @pytest.mark.parametrize('implementation', ['OpenMP', 'vectorized', 'auto', 'GPUAuto', 'CUDA', 'PBLAS', 'cutile'])
 def test_implementations_that_lower_onto_a_runtime_are_not_selectable(implementation):
     """Named one by one rather than filtered on ``environments``, which reports none for all of these."""
@@ -57,4 +80,4 @@ def test_implementations_that_lower_onto_a_runtime_are_not_selectable(implementa
 
 
 if __name__ == '__main__':
-    test_a_contiguous_copy_renders_as_one_memcpy_not_an_element_loop()
+    test_a_small_constant_copy_renders_as_one_memcpy()
