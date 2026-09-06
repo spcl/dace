@@ -219,7 +219,9 @@ def test_a_nested_sdfg_function_takes_no_reference_and_agrees_with_cpp():
     the kernel computes would not show up in the text at all.
     """
     sdfg, code = render_c(c_halves, 'mprc_halves')
-    nested = re.search(r'^inline void \w+\(([^)]*)\)', code, re.M)
+    # ``static inline``, not ``inline``: the unit defines and calls this function itself, and an
+    # inline function with external linkage may not reference the ``static`` index helpers it calls.
+    nested = re.search(r'^static inline void \w+\(([^)]*)\)', code, re.M)
     assert nested is not None, f'this test needs a nested SDFG function, or it asserts nothing:\n{code}'
     assert '&' not in nested.group(1), f'C has no reference parameters: {nested.group(1)}'
 

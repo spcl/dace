@@ -2808,7 +2808,15 @@ class CPUCodeGen(TargetCodeGenerator):
             # (and ``static`` would be worse -- unresolvable across TUs). DACE_HIDDEN gives it external
             # linkage with hidden visibility: the static linker resolves the cross-object call, the
             # symbol stays out of the .so's public ABI, and ThinLTO may still re-inline it.
-            qualifier = 'DACE_HIDDEN ' if do_split else ('inline ' if codegen is self else '')
+            # A standalone unit defines and calls the nest in the SAME file, so it takes internal
+            # linkage. Plain ``inline`` is not merely redundant there, it is ill-formed C: an inline
+            # function with EXTERNAL linkage may not reference an identifier with internal linkage
+            # (C11 6.7.4p3), and every one of these bodies calls the ``<array>_idx`` helpers, which
+            # the C dialect emits ``static``. gcc rejected 14 of the 38 rendered llr forms for it.
+            if cpf_lowering.standalone():
+                qualifier = 'static inline '
+            else:
+                qualifier = 'DACE_HIDDEN ' if do_split else ('inline ' if codegen is self else '')
             nested_stream.write(
                 qualifier +
                 codegen.generate_nsdfg_header(sdfg, cfg, state_dfg, state_id, node, memlet_references, sdfg_label), cfg,
