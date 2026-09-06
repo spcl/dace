@@ -57,3 +57,39 @@ jobs:
         uv run pytest --tb=short --timeout_method thread --timeout=3600 \
           "$ROOT/tests/corpus/cloudsc_regression_test.py" \
           "$ROOT/tests/passes/constant_propagation_on_cloudsc_test.py"
+
+  # A separate runner from ``cloudsc-e2e``: the four target pipelines each canonicalize and rebuild
+  # the dwarf, so sharing a job would put both under one timeout and make either failure look like
+  # the other's. The two device legs of the same file carry the ``gpu`` marker and run in the GPU
+  # workflow, which is the only place a device is available.
+  cloudsc-host-pipelines:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      matrix:
+        python-version: ['3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Canonicalize and vectorize CloudSC on the host, checking the numbers each time
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        # The legs simplify as an explicit step, so the automatic heuristic must not run first.
+        export DACE_optimizer_automatic_simplification=0
+        ROOT=$(uv run python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
+        # Parse + simplify CloudSC once, then canonicalize for the host and check the numbers, then
+        # vectorize THAT graph and check them again. No xdist: the parse is memoized per process.
+        uv run pytest --tb=short --timeout_method thread --timeout=14400 \
+          -m "integration and not gpu" \
+          "$ROOT/tests/corpus/cloudsc/cloudsc_target_pipelines_test.py"

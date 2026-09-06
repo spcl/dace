@@ -59,7 +59,10 @@ jobs:
         export DACE_cache=single
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
-        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
+        # CloudSC target pipelines deselected by path: a whole-dwarf canonicalize per case does
+        # not fit this 300s per-test timeout. They run on the CSCS pipeline, which has a runner
+        # sized for them.
+        uv run pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi" --ignore=tests/corpus/cloudsc/cloudsc_target_pipelines_test.py
 
     - name: Run pytest GPU with distributed compilation
       run: |
