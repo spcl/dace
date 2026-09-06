@@ -3,7 +3,10 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
+from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
@@ -409,6 +412,145 @@ def test_view_on_the_boundary_is_nested_as_an_array():
     assert B[0] == 0.0
 
 
+def _staged_scalar_sdfg(fission: bool) -> dace.SDFG:
+    """``B[i] = A[i] * c2`` with the loop-invariant ``c2`` staged into the map through ``IN_c2``.
+
+    The staging copy names the SAME container on both sides of the map entry, so ``ScalarFission``
+    versions it into an outer ``c2_0`` and a scope-local ``c2_1``, and the boundary memlet is left
+    naming the inner one.
+
+    :param fission: Whether to run ``ScalarFission`` before returning.
+    :returns: The built (and validated) SDFG.
+    """
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('staged_scalar')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_transient('c2', [1], dace.float64)
+
+    state = sdfg.add_state('compute')
+    setc = state.add_tasklet('setc', {}, {'_o'}, '_o = 2.0')
+    outer = state.add_access('c2')
+    state.add_edge(setc, '_o', outer, None, dace.Memlet('c2[0]'))
+    me, mx = state.add_map('m', dict(i='0:N'))
+    me.add_in_connector('IN_c2')
+    me.add_out_connector('OUT_c2')
+    inner = state.add_access('c2')
+    mul = state.add_tasklet('mul', {'_a': None, '_c': None}, {'_o'}, '_o = _a * _c')
+    state.add_memlet_path(state.add_access('A'), me, mul, dst_conn='_a', memlet=dace.Memlet('A[i]'))
+    state.add_edge(outer, None, me, 'IN_c2', dace.Memlet('c2[0]'))
+    state.add_edge(me, 'OUT_c2', inner, None, dace.Memlet('c2[0]'))
+    state.add_edge(inner, None, mul, '_c', dace.Memlet('c2[0]'))
+    state.add_memlet_path(mul, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+
+    if fission:
+        Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+        sdfg.validate()
+    return sdfg
+
+
+def _map_body(state: dace.SDFGState):
+    """The map entry of ``state``'s single map, and its scope contents without the exit node."""
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    return entry, [n for n in state.scope_children()[entry] if not isinstance(n, nodes.MapExit)]
+
+
+def _run(sdfg: dace.SDFG) -> None:
+    """Compile and run the staged-scalar SDFG, asserting ``B == 2 * A``."""
+    A = np.random.rand(16)
+    B = np.full(16, -1.0)
+    sdfg(A=A, B=B, N=16)
+    assert np.allclose(B, 2.0 * A)
+
+
+def test_boundary_memlet_naming_a_moved_container_is_reanchored():
+    """A boundary memlet naming a container that moves INTO the nested SDFG is re-anchored outside.
+
+    ``ScalarFission`` versions the two ends of the staging copy apart and the boundary memlet keeps
+    the inner name, which nesting then moves into the nested SDFG. Leaving the parent edge on that
+    name references data the parent no longer has, and the connector is minted around the moved
+    descriptor instead ("Array c2_1 not found in SDFG").
+    """
+    sdfg = _staged_scalar_sdfg(fission=True)
+    state = next(iter(sdfg.states()))
+    entry, body = _map_body(state)
+    inner = next(n for n in body if isinstance(n, nodes.AccessNode))
+    boundary = next(e for e in state.out_edges(entry) if e.dst is inner)
+    outer = state.memlet_path(boundary)[0].src
+
+    assert isinstance(outer, nodes.AccessNode)
+    assert outer.data != inner.data, 'ScalarFission should have versioned the two ends apart'
+    assert boundary.data.data == inner.data, 'the boundary memlet should follow the inner version'
+
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
+    sdfg.validate()
+
+    assert inner.data not in sdfg.arrays
+    assert inner.data in nsdfg.sdfg.arrays
+    assert all(e.data.data in sdfg.arrays for e in state.edges() if not e.data.is_empty())
+    crossing = [e for e in state.in_edges(nsdfg) if e.data.data == outer.data]
+    assert len(crossing) == 1
+    assert crossing[0].dst_conn == outer.data
+
+    _run(sdfg)
+
+
+def test_boundary_carried_access_node_gets_no_second_interface():
+    """An AccessNode a boundary edge already carries gets one connector, not two.
+
+    The "referenced in full" path would mint a second interface for the same container: an extra
+    input connector fed by a fresh in-scope AccessNode over an empty ordering edge, plus an output
+    connector that turns a container the scope only reads into one the map writes on every
+    iteration. Pruning the unused half then takes the ordering edge with it and the map is emitted
+    before its input is assigned.
+    """
+    sdfg = _staged_scalar_sdfg(fission=False)
+    state = next(iter(sdfg.states()))
+    _, body = _map_body(state)
+
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
+    sdfg.validate()
+
+    assert set(nsdfg.in_connectors) == {'A', 'c2'}
+    assert set(nsdfg.out_connectors) == {'B'}
+    assert 'c2' not in nsdfg.sdfg.read_and_write_sets()[1]
+    assert len([n for n in state.data_nodes() if n.data == 'c2']) == 1
+    assert not [e for e in state.edges() if e.data.is_empty()]
+
+    assert sdfg.apply_transformations_repeated(PruneConnectors) == 0
+    assert 'c2' in nsdfg.in_connectors
+    assert [e for e in state.in_edges(nsdfg) if e.data.data == 'c2']
+    sdfg.validate()
+
+    _run(sdfg)
+
+
+def test_input_edge_on_the_whole_container_gets_no_inner_copy():
+    """An input boundary edge already ending on the whole container needs no access node inside.
+
+    The connector IS that array inside the nested SDFG, so the added ``c2 -> c2`` copy is a no-op
+    whose write turns an input connector into a written descriptor.
+    """
+    sdfg = _staged_scalar_sdfg(fission=False)
+    state = next(iter(sdfg.states()))
+    _, body = _map_body(state)
+
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
+    sdfg.validate()
+
+    nstate = next(iter(nsdfg.sdfg.states()))
+    assert not [
+        e for e in nstate.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+    ]
+    staged = [n for n in nstate.data_nodes() if n.data == 'c2']
+    assert len(staged) == 1
+    assert nstate.in_degree(staged[0]) == 0
+    assert [name for name in nsdfg.sdfg.arrays if name.startswith('c2')] == ['c2']
+
+    _run(sdfg)
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -424,3 +566,6 @@ if __name__ == '__main__':
     test_region_local_transient_read_by_an_outside_edge_stays_a_connector()
     test_symbol_needing_an_incoming_value_stays_an_argument()
     test_view_on_the_boundary_is_nested_as_an_array()
+    test_boundary_memlet_naming_a_moved_container_is_reanchored()
+    test_boundary_carried_access_node_gets_no_second_interface()
+    test_input_edge_on_the_whole_container_gets_no_inner_copy()

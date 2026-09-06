@@ -16,7 +16,9 @@ import pytest
 import dace
 from dace import nodes
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
+from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.scalar_fission import ScalarFission
 
 
 def _an_to_an_edges(sdfg: dace.SDFG):
@@ -388,6 +390,110 @@ def test_map_boundary_stage_in_view_defining_edge_not_split():
     ve = get_view_edge(state, v)
     assert ve is not None
     assert not isinstance(ve.src, nodes.Tasklet) and not isinstance(ve.dst, nodes.Tasklet)
+
+
+def _fissioned_staging_sdfg() -> dace.SDFG:
+    """``B[i] = A[i] * c2`` with the loop-invariant ``c2`` staged into the map, after ``ScalarFission``.
+
+    The staging copy names the same container on both sides of the map entry, so the pass versions
+    it into an outer ``c2_0`` and a scope-local ``c2_1`` -- and the boundary memlet keeps the inner
+    name, which is no longer an endpoint of its path once the split rewires it onto a tasklet.
+
+    :returns: The built, fissioned and validated SDFG.
+    """
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('fissioned_staging')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_transient('c2', [1], dace.float64)
+
+    state = sdfg.add_state('compute')
+    setc = state.add_tasklet('setc', {}, {'_o'}, '_o = 2.0')
+    outer = state.add_access('c2')
+    state.add_edge(setc, '_o', outer, None, dace.Memlet('c2[0]'))
+    me, mx = state.add_map('m', dict(i='0:N'))
+    me.add_in_connector('IN_c2')
+    me.add_out_connector('OUT_c2')
+    inner = state.add_access('c2')
+    mul = state.add_tasklet('mul', {'_a': None, '_c': None}, {'_o'}, '_o = _a * _c')
+    state.add_memlet_path(state.add_access('A'), me, mul, dst_conn='_a', memlet=dace.Memlet('A[i]'))
+    state.add_edge(outer, None, me, 'IN_c2', dace.Memlet('c2[0]'))
+    state.add_edge(me, 'OUT_c2', inner, None, dace.Memlet('c2[0]'))
+    state.add_edge(inner, None, mul, '_c', dace.Memlet('c2[0]'))
+    state.add_memlet_path(mul, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    return sdfg
+
+
+def test_staging_split_reanchors_a_locally_named_boundary_memlet():
+    """A boundary memlet naming the scope-local container is re-anchored on the outer one.
+
+    The split moves that memlet onto the ``MapEntry -> tasklet`` edge, where the local AccessNode is
+    no longer an endpoint: reused verbatim it names data that is neither end of its path.
+    """
+    sdfg = _fissioned_staging_sdfg()
+    state = next(iter(sdfg.states()))
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    boundary = next(e for e in state.out_edges(entry) if isinstance(e.dst, nodes.AccessNode))
+    local_name = boundary.dst.data
+    outer_name = state.memlet_path(boundary)[0].src.data
+    assert boundary.data.data == local_name != outer_name
+
+    changed = InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    assert changed == 1
+    sdfg.validate()
+
+    tasklet = next(t for t in _assign_tasklets(sdfg) if state.in_edges(t)[0].src is entry)
+    assert state.in_edges(tasklet)[0].data.data == outer_name
+    assert state.out_edges(tasklet)[0].data.data == local_name
+
+    A = np.random.rand(16)
+    B = np.full(16, -1.0)
+    sdfg(A=A, B=B, N=16)
+    assert np.allclose(B, 2.0 * A)
+
+
+def test_staging_split_declines_a_locally_named_memlet_with_a_wider_outer_container():
+    """A destination-anchored staging memlet over a multi-element outer container is left alone.
+
+    ``A[0:N] -> MapEntry -[tmp[0] <- A[i]]-> tmp`` names the local scalar, so the element it moves
+    lives in ``other_subset``. Re-anchoring on ``A`` would have to invent that element: the whole
+    container is ``N`` wide, and the split drops ``other_subset``, so every iteration would read
+    ``A[0]``.
+    """
+    N = dace.symbol('N')
+    sdfg = dace.SDFG('dst_anchored_staging')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_transient('tmp', [1], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    me.add_in_connector('IN_A')
+    me.add_out_connector('OUT_A')
+    tin = state.add_access('tmp')
+    t = state.add_tasklet('add', {'_i'}, {'_o'}, '_o = _i + 1.0')
+    state.add_edge(state.add_access('A'), None, me, 'IN_A', dace.Memlet('A[0:N]'))
+    state.add_edge(me, 'OUT_A', tin, None, dace.Memlet(data='tmp', subset='0', other_subset='i'))
+    state.add_edge(tin, None, t, '_i', dace.Memlet('tmp[0]'))
+    state.add_memlet_path(t, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+
+    changed = InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
+    assert changed is None
+    sdfg.validate()
+
+    boundary = next(e for e in state.out_edges(me) if isinstance(e.dst, nodes.AccessNode))
+    assert boundary.dst is tin
+    assert boundary.data.data == 'tmp'
+    assert str(boundary.data.other_subset) == 'i'
+
+    A = np.random.rand(16)
+    B = np.full(16, -1.0)
+    sdfg(A=A, B=B, N=16)
+    assert np.allclose(B, A + 1.0)
 
 
 if __name__ == "__main__":
