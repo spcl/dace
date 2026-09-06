@@ -103,6 +103,7 @@ def test_no_python_syntax_in_device_code():
     assert leak is None, f"Python attribute syntax leaked into device code: {leak.group(0) if leak else ''}"
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc required to compile the generated device code")
 def test_generated_code_compiles():
     """The original report: the tail's ternary did not compile at all."""

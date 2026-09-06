@@ -161,6 +161,7 @@ def test_emits_block_reduce_and_single_atomic(kind):
         "a reduce_atomic outside the thread-0 block-fold guard = one atomic per thread"
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
 @pytest.mark.parametrize("kind", list(_PROGRAMS))
 def test_compiles(kind):

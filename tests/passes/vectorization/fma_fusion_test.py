@@ -132,6 +132,7 @@ def test_cpu_fma_off_by_default():
     assert _count(sdfg, TileFMA) == 0
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
 def test_gpu_fma_lowers_to_native_hfma2():
     """A width-8 fp16 ``tile_fma`` lowers to native ``fma.rn.f16x2`` (four packed half2 FMAs),

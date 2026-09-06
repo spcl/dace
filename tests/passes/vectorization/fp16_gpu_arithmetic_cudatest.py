@@ -169,6 +169,7 @@ def test_no_python_syntax_reaches_device_code():
         assert leak is None, f"{program.name}: Python syntax leaked into device code: {leak.group(0)}"
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc required to compile the generated device code")
 @pytest.mark.parametrize("program", [_scale_add16, _mixed16, _select16, _sqrt16, _sum16])
 def test_generated_fp16_code_compiles(program):
