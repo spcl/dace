@@ -438,7 +438,7 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     return parent_desc.is_equivalent(mapped)
 
 
-def _rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data) -> None:
+def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data) -> None:
     """
     Restates the descriptor of every connector below that stands for one of this SDFG's containers.
 
@@ -470,7 +470,7 @@ def _rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: da
                 replacement = copy.deepcopy(new_desc)
                 replacement.transient = False
                 node.sdfg.arrays[connector] = replacement
-                _rebase_descendants(node.sdfg, connector, inner_desc, replacement)
+                rebase_descendants(node.sdfg, connector, inner_desc, replacement)
 
 
 def integrate_nested_sdfg(sdfg: SDFG):
@@ -546,7 +546,7 @@ def integrate_nested_sdfg(sdfg: SDFG):
                         # it was written before. Nothing about the container changed -- the shape is
                         # only stated in the parent's symbols now -- so those connectors adopt it as
                         # well, or they are left describing something the contract says they are not.
-                        _rebase_descendants(sdfg, connector, old_desc, sdfg.arrays[connector])
+                        rebase_descendants(sdfg, connector, old_desc, sdfg.arrays[connector])
                         continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 

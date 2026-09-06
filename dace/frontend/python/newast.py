@@ -4440,9 +4440,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 continue
             strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
             if len(strides) == len(sdfg.arrays[a].shape):
+                # The callee was parsed on its own and its inner nested SDFGs already describe this
+                # container as it was written then. Restating it here leaves those descriptions
+                # behind, so they follow it -- the container is the same one, only laid out as the
+                # caller lays it out.
+                old_desc = copy.deepcopy(sdfg.arrays[a])
                 sdfg.arrays[a]._strides = strides
                 if inv_mapping:
                     symbolic.safe_replace(inv_mapping, lambda m: sd.replace_properties_dict(sdfg.arrays[a], m))
+                dealias.rebase_descendants(sdfg, a, old_desc, sdfg.arrays[a])
             else:
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')

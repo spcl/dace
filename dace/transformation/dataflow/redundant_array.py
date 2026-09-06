@@ -1235,6 +1235,37 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             graph.remove_node(in_array)
 
 
+def _view_carries_a_connector(state: SDFGState, edges: List[graph.MultiConnectorEdge[mm.Memlet]], view_desc: data.Data,
+                              viewed_desc: data.Data, from_source: bool) -> bool:
+    """
+    Checks whether a nested SDFG on the far end of ``edges`` describes the view rather than the
+    container behind it.
+
+    Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector's
+    descriptor is identical to the container it is connected to, and the memlets inside address that
+    container's coordinate system. Removing the view moves such a connector onto the viewed
+    container without moving those memlets with it, which is only safe when the connector matches
+    the viewed container as well.
+
+    :param state: The state the view lives in.
+    :param edges: The edges between the view and the nested SDFGs that use it.
+    :param view_desc: The descriptor of the view about to be removed.
+    :param viewed_desc: The descriptor of the container it views.
+    :param from_source: True if the nested SDFGs write the view, False if they read it.
+    :return: True if removing the view would leave a connector describing the wrong container.
+    """
+    for edge in edges:
+        for leaf in state.memlet_tree(edge).leaves():
+            node = leaf.src if from_source else leaf.dst
+            connector = leaf.src_conn if from_source else leaf.dst_conn
+            if not isinstance(node, nodes.NestedSDFG) or connector not in node.sdfg.arrays:
+                continue
+            ndesc = node.sdfg.arrays[connector]
+            if ndesc.is_equivalent(view_desc) and not ndesc.is_equivalent(viewed_desc):
+                return True
+    return False
+
+
 class SqueezeViewRemove(pm.SingleStateTransformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -1292,6 +1323,9 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
                 dst_conn = e.dst_conn
                 if dst_conn in e.dst.out_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.out_edges(out_array), out_desc, in_desc, False):
+            return False
 
         return True
 
@@ -1382,6 +1416,9 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
                 src_conn = e.src_conn
                 if src_conn in e.src.in_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.in_edges(in_array), in_desc, out_desc, True):
+            return False
 
         return True
 
@@ -1693,6 +1730,15 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                         if source_conn in source_node.sdfg.arrays and isinstance(in_desc, data.ArrayView):
                             ndesc = source_node.sdfg.arrays[source_conn]
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
+                                return False
+                            # Under the nested SDFG contract (see
+                            # ``dace.sdfg.dealias.integrate_nested_sdfg``) an integrated connector's
+                            # descriptor is identical to the container it is connected to, and the
+                            # memlets inside address that container's coordinate system. Removing the
+                            # view moves the connector onto the viewed array without moving those
+                            # memlets with it, so it is only safe when the connector already matches
+                            # the viewed array as well.
+                            if ndesc.is_equivalent(in_desc) and not ndesc.is_equivalent(out_desc):
                                 return False
 
         return True
