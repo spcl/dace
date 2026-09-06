@@ -114,6 +114,15 @@ _typecast_func_to_cpp = {s.split("::")[-1]: s for s in dtypes.TYPECLASS_TO_STRIN
 #: typeclass's ``ctype`` before unparsing.
 _CTYPE_NAMES = frozenset(typeclass.ctype for typeclass in dtypes.TYPECLASS_TO_STRING)
 
+#: Typeclasses whose C++ element type is a CLASS, not a built-in arithmetic type: ``dace::float16``
+#: is ``__half`` on the device and a struct on the host, and each of these converts implicitly BOTH
+#: to and from the built-in floats. A bare Python literal reaches C++ as an untyped ``double``, so
+#: ``1.0 / x`` with ``x`` one of them has two equally good operators -- the built-in ``arithmetic /
+#: arithmetic`` (converting ``x`` up) and the class's own (converting the literal down) -- and nvcc
+#: rejects the expression as ambiguous. Every other typeclass is a built-in whose usual arithmetic
+#: conversions are unambiguous, so a literal next to it is printed unchanged.
+_IMPLICITLY_CONVERTING_TYPES = frozenset(dtypes.FLOAT_TYPES - {dtypes.float32, dtypes.float64})
+
 
 def interleave(inter, f, seq, **kwargs):
     """
@@ -1181,11 +1190,40 @@ class CPPUnparser:
             self.write("(")
 
             # get left and right types for type inference
-            self.dispatch(t.left)
+            self.dispatch_operand(t.left, t.right)
             self.write(" " + self.binop[t.op.__class__.__name__] + " ")
-            self.dispatch(t.right)
+            self.dispatch_operand(t.right, t.left)
 
             self.write(")")
+
+    def operand_class_type(self, node: ast.AST):
+        """The class-typed (``dace::float16`` and friends) typeclass ``node`` evaluates to, else None.
+
+        Only a name whose type the CALLER supplied is answered -- a tasklet connector under the
+        classic generator, or an inlined array access spliced in as a name under the readable one --
+        because that is the whole of what ``defined_symbols`` knows here.
+        """
+        if not isinstance(node, ast.Name):
+            return None
+        dtype = self.defined_symbols.get(node.id)
+        if not isinstance(dtype, dtypes.typeclass):
+            return None
+        return dtype if dtype in _IMPLICITLY_CONVERTING_TYPES else None
+
+    def dispatch_operand(self, node: ast.AST, other: ast.AST) -> None:
+        """Print one operand of an infix binary operator, typing an untyped numeric literal against
+        ``other`` when that side is one of the ``_IMPLICITLY_CONVERTING_TYPES``.
+
+        The cast is the operand's OWN dtype, which is what Python and NumPy compute here too (a
+        weak Python scalar takes the array's dtype), and it is written only where the alternative is
+        an expression no C++ compiler can resolve.
+        """
+        if numeric_literal_value(node) is not None:
+            dtype = self.operand_class_type(other)
+            if dtype is not None:
+                self.write(self.typecast(dtype.ctype, self.render(node)))
+                return
+        self.dispatch(node)
 
     cmpops = {
         "Eq": "==",

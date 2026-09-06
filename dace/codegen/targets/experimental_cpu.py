@@ -1761,6 +1761,19 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     produced by InlineTaskletConnectors) to ``A[A_idx(i, j, ...)]``.
     """
 
+    def __init__(self, sdfg, memlets, constants, codegen):
+        super().__init__(sdfg, memlets, constants, codegen)
+        #: Operand text -> its dtype, for the statements this class renders itself (below) instead of
+        #: leaving to ``unparse_tasklet``'s unparser, which is handed the same thing as
+        #: ``defined_symbols``. A surviving connector keeps its name and its declared dtype; an
+        #: inlined one is gone from the body, so its access text stands in for it. The C++ printer
+        #: needs this to type a bare numeric literal against a ``dace::float16`` operand
+        #: (``cppunparse.CPPUnparser.dispatch_operand``).
+        self.operand_dtypes: Dict[str, dtypes.typeclass] = {
+            conn: entry[3]
+            for conn, entry in memlets.items() if conn is not None
+        }
+
     def _is_bare_data(self, name: str) -> bool:
         return name not in self.memlets and name not in self.constants and name in self.sdfg.arrays
 
@@ -1812,7 +1825,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         lhs = self._bare_access(target_node)
         if lhs is None:
             return self.generic_visit(node)
-        rhs = cppunparse.cppunparse(value, expr_semicolon=False)
+        rhs = cppunparse.cppunparse(value, expr_semicolon=False, defined_symbols=self.operand_dtypes)
         desc = self.sdfg.arrays[target]
         plain = '%s = %s;' % (lhs, rhs)
         if self.codegen._is_const_scalar(desc, target, self.sdfg):
@@ -1847,6 +1860,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         access = self._bare_access(node)
         if access is None:
             return self.generic_visit(node)
+        self.operand_dtypes[access] = self.sdfg.arrays[target].dtype
         return ast.copy_location(ast.Name(id=access), node)
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
@@ -1856,6 +1870,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             desc = self.sdfg.arrays[name]
             ptrname = self.codegen.ptr(name, desc, self.sdfg)
             if self.codegen._is_value_scalar(ptrname, desc):
+                self.operand_dtypes[ptrname] = desc.dtype
                 return ast.copy_location(ast.Name(id=ptrname), node)
         return super().visit_Name(node)
 
