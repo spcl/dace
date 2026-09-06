@@ -45,7 +45,15 @@ def _build_block_atomic_sum_sdfg():
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0'))
     sdfg.fill_scope_connectors()
 
-    sdfg.apply_gpu_transformations()
+    # Declared, not derived. What this test is about is the CUDA the expansion emits, and the
+    # expansion has requirements of its own: a thread-block map to size ``BlockReduce`` from, and a
+    # register input holding the per-thread partial. Asking an offloader for them would assert its
+    # placement policy here -- and it has no reason to produce a thread-block map at all, since
+    # inserting those is a later pass.
+    me.map.schedule = dace.ScheduleType.GPU_Device
+    mei.map.schedule = dace.ScheduleType.GPU_ThreadBlock
+    sdfg.arrays['tA'].storage = dace.StorageType.Register
+    sdfg.validate()
     return sdfg
 
 

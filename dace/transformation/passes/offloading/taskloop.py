@@ -25,10 +25,23 @@ def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
     return isinstance(node, (CopyLibraryNode, FillLibraryNode))
 
 
+def is_device_wide_libnode(node: nodes.Node) -> bool:
+    """A library node whose expansion is a call only host code can issue.
+
+    Copies and fills move data rather than compute it. The rest are host-issued -- a cuBLAS gemm is
+    a call -- EXCEPT the expansions that say otherwise: a cub block reduce emits device code and
+    refuses to expand outside a kernel, so a map around one is that kernel, not a host loop.
+    """
+    if not isinstance(node, nodes.LibraryNode) or is_copy_or_fill_libnode(node):
+        return False
+    expansion = type(node).implementations.get(node.implementation)
+    return expansion is None or not expansion.runs_inside_kernel
+
+
 def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
     """Its scope holds a library node expanding to a call only host code can issue."""
     for node in scope_children.get(entry, ()):
-        if isinstance(node, nodes.LibraryNode) and not is_copy_or_fill_libnode(node):
+        if is_device_wide_libnode(node):
             return True
         if isinstance(node, nodes.MapEntry) and encloses_device_wide_libnode(state, node, scope_children):
             return True
@@ -38,9 +51,7 @@ def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_
 
 
 def sdfg_holds_device_wide_libnode(sdfg: SDFG) -> bool:
-    return any(
-        isinstance(node, nodes.LibraryNode) and not is_copy_or_fill_libnode(node)
-        for node, _ in sdfg.all_nodes_recursive())
+    return any(is_device_wide_libnode(node) for node, _ in sdfg.all_nodes_recursive())
 
 
 def sdfg_only_launches(sdfg: SDFG) -> bool:

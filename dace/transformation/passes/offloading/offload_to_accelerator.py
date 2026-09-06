@@ -248,6 +248,7 @@ class OffloadToAccelerator(ppl.Pass):
         self.offload_host_level_bodies(sdfg)
         self.scalarize_locals_of_removed_trivial_maps(sdfg)
         self.refuse_by_value_scalars_the_device_writes(sdfg)
+        self.register_kernel_local_transients(sdfg)
 
     def overwritten_before_any_read(self, sdfg: SDFG) -> OrderedSet[str]:
         """Signature arrays whose value on entry cannot be observed, so staging them down is dead work.
@@ -320,6 +321,37 @@ class OffloadToAccelerator(ppl.Pass):
                     if symbolic.equal(memlet.volume, desc.total_size, is_length=False):
                         return True
         return False
+
+    def register_kernel_local_transients(self, sdfg: SDFG) -> None:
+        """Storage for a transient every access of which is inside one kernel: a register.
+
+        The copy analysis places the containers that CROSS the host/device boundary and leaves the
+        rest at ``Default``, which is host memory. A transient the kernel both writes and reads --
+        the scalar a fused map keeps its intermediate in -- is then a host allocation named only by
+        device code, and the copy into it is host-to-device inside a kernel: the generator's
+        dispatcher answers that pattern with ``IllegalCopy``. It never actually emits one here, but
+        registering the target and not using it trips the code generator's own consistency check.
+        The offloading this pass replaced made the same descriptors registers.
+        """
+        for nested in sdfg.all_sdfgs_recursive():
+            local: OrderedSet[str] = OrderedSet()
+            escapes: OrderedSet[str] = OrderedSet()
+            for state in nested.states():
+                scopes = state.scope_dict()
+                for node in state.data_nodes():
+                    if node.data not in nested.arrays:
+                        continue
+                    desc = nested.arrays[node.data]
+                    if not desc.transient or desc.storage in GPU_RESIDENT_STORAGES:
+                        continue
+                    if isinstance(desc, (data.View, data.Stream)):
+                        continue
+                    if self.enclosing_kernel(scopes, node):
+                        local.add(node.data)
+                    else:
+                        escapes.add(node.data)
+            for name in local - escapes:
+                nested.arrays[name].storage = dtypes.StorageType.Register
 
     def kernel_local_len1_arrays(self, sdfg: SDFG) -> OrderedSet[str]:
         """Length-1 transients written inside a TRIVIAL SEQUENTIAL map that a kernel encloses.
@@ -524,6 +556,8 @@ class OffloadToAccelerator(ppl.Pass):
         host, device, written = self.data_sides(sdfg)
         for name in list(sdfg.arrays):
             desc = sdfg.arrays[name]
+            if isinstance(desc, data.Stream):
+                continue
             if desc.transient or desc.storage != dtypes.StorageType.GPU_Global or name not in host:
                 continue
             if name in device and name in written:
@@ -905,6 +939,13 @@ class OffloadToAccelerator(ppl.Pass):
                 else:
                     if isinstance(edge.src, nodes.AccessNode):
                         return self.get_data_used_by_incoming_access_nodes(sdfg, state, edge.src)
+
+            elif self._is_stream(data_name, sdfg):
+                # A Stream is a queue with its own device-side push/pop protocol, not a buffer whose
+                # location this pass decides: there is nothing to place and nothing to copy, and the
+                # code generator allocates it where the kernel that pushes into it runs. Invisible to
+                # the analysis, which is what the offloading it replaced did with one as well.
+                return OrderedSet()
 
             else:
                 raise RuntimeError(f"edge {edge} carries {edge.data}, which is neither an array, a scalar nor a view")
@@ -2245,6 +2286,11 @@ class OffloadToAccelerator(ppl.Pass):
         assert data_name in sdfg.arrays
         desc = sdfg.arrays[data_name]
         return isinstance(desc, data.View)
+
+    def _is_stream(self, data_name: str, sdfg: SDFG):
+        assert data_name in sdfg.arrays
+        desc = sdfg.arrays[data_name]
+        return isinstance(desc, data.Stream)
 
     def _is_length1_array(self, data_name: str, sdfg: SDFG):
         assert data_name in sdfg.arrays

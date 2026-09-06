@@ -1943,7 +1943,10 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     # The compute states, named rather than positional: the offloading places its transfers where
     # the control flow wants them, not only at the start and the sink, and a persistent kernel that
     # swallowed one would be a kernel doing its own host copy.
-    content_nodes = {block for block in sdfg.nodes() if not block.label.startswith('copy_')}
+    # Everything between the start and the sink. GPUPersistentKernel launches its subgraph FROM a
+    # block outside it, so the start block has to stay out: it is the only one with no predecessor
+    # to launch from, and a subgraph holding it leaves the transform with no entry state at all.
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_block, sdfg.sink_nodes()[0]}
     transform = GPUPersistentKernel()
     transform.setup_match(SubgraphView(sdfg, content_nodes))
     transform.kernel_prefix = 'stuff'

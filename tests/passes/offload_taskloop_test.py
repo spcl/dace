@@ -218,6 +218,19 @@ def test_a_map_around_a_library_node_launches_from_the_host_without_the_heuristi
     assert libnode_schedule(sdfg) == dtypes.ScheduleType.GPU_Device
 
 
+def test_a_map_around_an_in_kernel_library_node_is_still_the_kernel():
+    """A cub block reduce emits device code and refuses to expand outside a kernel, so the map
+    around it is that kernel -- unlike the device-wide reduce, which host code issues."""
+    sdfg = map_over_reduce()
+    state = next(iter(sdfg.states()))
+    reduce_node = next(node for node in state.nodes() if isinstance(node, nodes.LibraryNode))
+    reduce_node.implementation = 'CUDA (block atomic)'
+    entry = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry))
+
+    assert not is_taskloop_map(state, entry, state.scope_children())
+    assert map_schedule(offloaded(sdfg, heuristics=False), 'rows') == dtypes.ScheduleType.GPU_Device
+
+
 def test_the_staged_row_of_a_launched_library_node_is_device_memory():
     sdfg = offloaded(map_over_reduce(), heuristics=True)
     assert storages(sdfg)['row'] == dtypes.StorageType.GPU_Global

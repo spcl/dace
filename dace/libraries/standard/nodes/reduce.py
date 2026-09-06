@@ -915,6 +915,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
     """
         GPU implementation of the reduce node across a thread-block (uses CUB).
     """
+    runs_inside_kernel = True
     environments = [CUDA]
 
     _SPECIAL_RTYPES = {
@@ -1042,6 +1043,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
     not a single run, when the reduction is ``Custom`` or a ``*_Location`` argmin/argmax, or when the
     op has no identity to pad the final partial chunk with.
     """
+    runs_inside_kernel = True
 
     environments = [CUDA]
 
@@ -1134,6 +1136,7 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
     is GPU-global length-1 so every block's atomic hits the same element. ``__shared__``
     temp storage + atomic emitted inside the tasklet → stateless ``tile -> global`` node.
     """
+    runs_inside_kernel = True
     environments = [CUDA]
 
     @staticmethod
@@ -1229,6 +1232,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
          wraps it in outer maps and outputs from the root thread
         to a newly created shared memory container
     """
+    runs_inside_kernel = True
 
     environments = [CUDA]
 

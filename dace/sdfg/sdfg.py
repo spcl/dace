@@ -3250,21 +3250,9 @@ class SDFG(ControlFlowRegion):
             :param validate_all: as ``validate``.
             :param simplify: simplify afterwards, folding the copy states the offloading inserted.
             :note: This is an in-place operation on the SDFG.
-            :raises NotImplementedError: if the SDFG holds a ``Stream`` descriptor.
         """
         # Avoiding import loops
         from dace.transformation.passes.offloading import OffloadToAccelerator
-
-        # A Stream is a queue with a device-side push/pop protocol, not a buffer whose location can
-        # be decided and copied; the offloading classifies descriptors as array / scalar / view and
-        # has nowhere to put one. Refused where the caller can still see it, rather than misplaced.
-        streamed = [
-            name for nsdfg in self.all_sdfgs_recursive() for name, desc in nsdfg.arrays.items()
-            if isinstance(desc, dt.Stream)
-        ]
-        if streamed:
-            raise NotImplementedError(f'Offloading an SDFG that holds Stream descriptors ({", ".join(streamed)}) '
-                                      'is not supported.')
 
         OffloadToAccelerator().apply_pass(self, {})
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
