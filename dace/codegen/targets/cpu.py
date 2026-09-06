@@ -9,7 +9,7 @@ import warnings
 
 import numpy as np
 
-from dace import data, dtypes, mpr_lowering, registry, memlet as mmlt, subsets, symbolic, Config
+from dace import data, dtypes, cpf_lowering, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.config import set_temporary
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -1210,7 +1210,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # ``alignas`` says the same thing without a DaCe macro, and is a keyword in both C++11
             # and C23, so a standalone unit that includes no DaCe header can still be aligned.
             prefix = ''
-            if alignment and mpr_lowering.standalone():
+            if alignment and cpf_lowering.standalone():
                 alignment, prefix = '', 'alignas(64) '
             if node.setzero and not variable_length_array:
                 declaration_stream.write(
@@ -1246,7 +1246,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread, through the same statement builder as CPU_Heap so a
-            # generator that spells allocation differently (MPR's C dialect: aligned_alloc) is not
+            # generator that spells allocation differently (CPF's C dialect: aligned_alloc) is not
             # bypassed by this branch.
             allocation_stream.write(
                 '\n#pragma omp parallel\n{\n' + self.heap_alloc_stmt(alloc_name,
@@ -1713,7 +1713,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
 
-        if mpr_lowering.standalone():
+        if cpf_lowering.standalone():
             return self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, bool(atomic))
 
         # If there is a type mismatch and more than one element is used, cast
@@ -1743,14 +1743,14 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def standalone_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
-        """The MPR spelling of a conflict resolution, or a refusal.
+        """The CPF spelling of a conflict resolution, or a refusal.
 
-        MPR admits exactly the WCR forms that are TREE-reducible: one an enclosing OpenMP map folds
+        CPF admits exactly the WCR forms that are TREE-reducible: one an enclosing OpenMP map folds
         through a ``reduction(op:...)`` clause, and one that has no conflict at all (``nc``) and so
         is a plain read-modify-write. The remaining form is a per-element atomic, which the runtime
         provides as ``dace::wcr_fixed<...>::reduce_atomic`` -- serialized machinery, and a runtime
-        symbol MPR does not have. It is refused rather than rendered as an ``omp atomic``: the point
-        of MPR is to show the maximally parallel form of the program, and an atomic accumulation is
+        symbol CPF does not have. It is refused rather than rendered as an ``omp atomic``: the point
+        of CPF is to show the maximally parallel form of the program, and an atomic accumulation is
         the form that says the parallelization was not resolved.
 
         :param sdfg: the SDFG owning the memlet, for unparsing a custom resolution.
@@ -1766,12 +1766,12 @@ class CPUCodeGen(TargetCodeGenerator):
         target = f'{memlet.data}[{memlet.subset}]'
         if atomic:
             raise NotImplementedError(
-                f'MPR cannot render the conflicting write-conflict resolution on {target}: it lowers to an '
-                'atomic, and MPR admits only tree-reducible WCR (an OpenMP reduction clause, or a '
+                f'CPF cannot render the conflicting write-conflict resolution on {target}: it lowers to an '
+                'atomic, and CPF admits only tree-reducible WCR (an OpenMP reduction clause, or a '
                 'non-conflicting accumulation). Parallelize the map so the accumulator is reduced, or '
                 'render the SDFG that does.')
         if isinstance(dtype, dtypes.vector):
-            raise NotImplementedError(f'MPR cannot render the vector WCR on {target}: the vector type is a DaCe '
+            raise NotImplementedError(f'CPF cannot render the vector WCR on {target}: the vector type is a DaCe '
                                       'runtime template. Scalarize the map before rendering.')
         # No OpenMP clause spells these two, so they never reach the fold above -- but both are a
         # plain expression in either dialect, and both match the runtime functor exactly
@@ -1784,8 +1784,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if operator in ('+', '*', '&', '|', '^', '&&', '||'):
             return f'*({ptr}) = *({ptr}) {operator} ({inname})'
         if operator in ('min', 'max'):
-            # C has no ``std::min``; MPR emits its own typed pair (see mpr_lowering.C_MINMAX_TYPES).
-            spelling = f'mpr_{operator}' if mpr_lowering.standalone_c() else f'std::{operator}'
+            # C has no ``std::min``; CPF emits its own typed pair (see cpf_lowering.C_MINMAX_TYPES).
+            spelling = f'cpf_{operator}' if cpf_lowering.standalone_c() else f'std::{operator}'
             return f'*({ptr}) = {spelling}(*({ptr}), {inname})'
         if redtype is dtypes.ReductionType.Custom:
             # Not conflicting by here, so the runtime would take ``wcr_custom<T>::reduce``, which is
@@ -1793,7 +1793,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # without a lambda, which the C dialect could not spell. ``Sub`` and ``Div`` arrive here
             # too: no OpenMP clause names them, so they detect as Custom.
             return f'*({ptr}) = {cpp.unparse_cr_inline(sdfg, memlet.wcr, (f"*({ptr})", f"({inname})"))}'
-        raise NotImplementedError(f'MPR has no standalone spelling for the {redtype} write-conflict resolution '
+        raise NotImplementedError(f'CPF has no standalone spelling for the {redtype} write-conflict resolution '
                                   f'on {target}; it is provided by the DaCe reduction runtime.')
 
     def process_out_memlets(self,
@@ -2523,26 +2523,26 @@ class CPUCodeGen(TargetCodeGenerator):
 
     @staticmethod
     def nsdfg_symbol_argument(symbol: dtypes.typeclass, name: str) -> str:
-        """One nested-SDFG symbol parameter, widened to ``int64_t`` for MPR.
+        """One nested-SDFG symbol parameter, widened to ``int64_t`` for CPF.
 
         A loop iterator carries the int32 default symbol type, so a nested body that takes one names
-        it ``int`` while every index and ``_size`` helper MPR emits beside it is ``int64_t`` -- the
+        it ``int`` while every index and ``_size`` helper CPF emits beside it is ``int64_t`` -- the
         call then narrows an EXTENT (a dot product's trip count, in cholesky) and truncates past
         2^31. Only the standalone dialect is widened: main's signatures are not this generator's to
         change.
         """
-        if mpr_lowering.standalone() and symbol in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
+        if cpf_lowering.standalone() and symbol in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
             return dtypes.int64.as_arg(name)
         return symbol.as_arg(name)
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
-        # MPR emits no state struct at all (see framecode.generate_fileheader), so a nested function
+        # CPF emits no state struct at all (see framecode.generate_fileheader), so a nested function
         # cannot take a pointer to it. Anything that would have been READ through it -- persistent
         # buffers, instrumentation, environment handles -- is refused or demoted before rendering,
         # so dropping the parameter drops nothing the body still needs.
-        if state_struct and mpr_lowering.standalone():
+        if state_struct and cpf_lowering.standalone():
             state_struct = False
 
         if state_struct:
@@ -2578,7 +2578,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
         prepend = []
-        if state_struct and mpr_lowering.standalone():
+        if state_struct and cpf_lowering.standalone():
             state_struct = False  # matches generate_nsdfg_header, which drops the parameter
         if state_struct:
             prepend = ['__state']

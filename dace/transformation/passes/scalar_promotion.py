@@ -64,7 +64,7 @@ def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.Stor
 
     Module-level rather than a method because the MECHANISM is the same wherever a scalar has to
     become addressable, and only the CRITERIA differ. GPU promotion (below) needs it because device
-    memory has no scalar form; MPR's C rendering needs it because a written scalar reaches a nested
+    memory has no scalar form; CPF's C rendering needs it because a written scalar reaches a nested
     function as a C++ reference, which C cannot spell.
 
     :param sdfg: the SDFG declaring ``name``.

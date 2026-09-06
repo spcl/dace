@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The MPR entry signature's qualifiers: ``const`` on read-only pointers, C's own ``restrict``.
+"""The CPF entry signature's qualifiers: ``const`` on read-only pointers, C's own ``restrict``.
 
 ``Data.as_arg`` builds the signature for every DaCe backend and has no notion of a read-only
-parameter, so an MPR rendering used to hand out a mutable pointer to a buffer it only reads. Two
+parameter, so an CPF rendering used to hand out a mutable pointer to a buffer it only reads. Two
 things follow, and both were observed: every C/C++ linter reports it (cppcheck
 ``constParameterPointer`` on all four read-only arguments of arc_distance), and a binding that
 published a ``const`` flag derived from the written-set described a signature that said the
@@ -23,9 +23,9 @@ import re
 import numpy as np
 
 import dace
-from dace.codegen.mpr import readonly_entry_arrays, render, written_containers
+from dace.codegen.cpf import readonly_entry_arrays, render, written_containers
 
-from tests.codegen.mpr.conftest import (assert_standalone, build_standalone, call_standalone, compile_diagnostics)
+from tests.codegen.cpf.conftest import (assert_standalone, build_standalone, call_standalone, compile_diagnostics)
 
 N = dace.symbol('N')
 
@@ -50,7 +50,7 @@ def entry_signature(code: str, name: str) -> str:
 
 
 def test_written_containers_sees_the_destination_only():
-    sdfg, _ = rendered('mpr_qual_written', 'c++')
+    sdfg, _ = rendered('cpf_qual_written', 'c++')
     written = written_containers(sdfg)
     assert 'dst' in written, written
     assert 'src' not in written, written
@@ -59,43 +59,43 @@ def test_written_containers_sees_the_destination_only():
 def test_readonly_entry_arrays_is_the_read_only_pointers():
     """Only ARRAYS, and only the unwritten ones. ``factor`` is a by-value scalar, not a pointer, so
     it must not appear here -- qualifying it would be a different (and pointless) change."""
-    sdfg, _ = rendered('mpr_qual_readonly', 'c++')
+    sdfg, _ = rendered('cpf_qual_readonly', 'c++')
     assert list(readonly_entry_arrays(sdfg)) == ['src']
 
 
 def test_cpp_qualifies_the_read_only_pointer():
-    _, code = rendered('mpr_qual_cpp', 'c++')
-    params = entry_signature(code, 'mpr_qual_cpp')
+    _, code = rendered('cpf_qual_cpp', 'c++')
+    params = entry_signature(code, 'cpf_qual_cpp')
     assert 'const double * __restrict__ src' in params, params
     # The written buffer must stay mutable; qualifying it would not compile.
     assert 'const double * __restrict__ dst' not in params, params
     assert 'double * __restrict__ dst' in params, params
-    assert_standalone(code, 'mpr_qual_cpp', language='c++')
+    assert_standalone(code, 'cpf_qual_cpp', language='c++')
 
 
 def test_c_qualifies_and_uses_the_c_restrict_keyword():
-    _, code = rendered('mpr_qual_c', 'c')
-    params = entry_signature(code, 'mpr_qual_c')
+    _, code = rendered('cpf_qual_c', 'c')
+    params = entry_signature(code, 'cpf_qual_c')
     assert 'const double * restrict src' in params, params
     assert 'double * restrict dst' in params, params
     assert 'const double * restrict dst' not in params, params
     # The GNU spelling must be gone from the WHOLE unit, not just the signature.
     assert '__restrict__' not in code, code
-    assert_standalone(code, 'mpr_qual_c', language='c')
+    assert_standalone(code, 'cpf_qual_c', language='c')
 
 
 def test_c_render_compiles_without_a_warning():
     """The qualifier is only worth having if it survives the compiler: a ``const`` pointee that the
     body assigns through would be an error, not a warning."""
-    _, code = rendered('mpr_qual_c_warn', 'c')
-    assert compile_diagnostics(code, 'mpr_qual_c_warn', language='c') == ''
+    _, code = rendered('cpf_qual_c_warn', 'c')
+    assert compile_diagnostics(code, 'cpf_qual_c_warn', language='c') == ''
 
 
 def test_qualified_signature_still_computes_and_keeps_the_abi():
     """Called through ctypes with plain (non-const) pointers, exactly as before -- ``const`` on the
     pointee changes no argument's size, order or register class."""
-    sdfg, code = rendered('mpr_qual_call', 'c')
-    library = build_standalone(code, 'mpr_qual_call', language='c')
+    sdfg, code = rendered('cpf_qual_call', 'c')
+    library = build_standalone(code, 'cpf_qual_call', language='c')
     n = 64
     src = np.arange(n, dtype=np.float64)
     dst = np.zeros(n, dtype=np.float64)

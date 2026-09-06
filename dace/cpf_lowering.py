@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""How MPR spells the functions the DaCe runtime headers normally provide.
+"""How CPF spells the functions the DaCe runtime headers normally provide.
 
-MPR (maximal parallel rendering) emits C++ -- or C23, which is the same semantics in a language
+CPF (canonical parallel form) emits C++ -- or C23, which is the same semantics in a language
 with no templates and no overloading -- that builds against a bare host compiler: no
 ``-I dace/runtime/include``, no ``libdace``. Every function the ordinary code generators reach for
 therefore has to be re-expressed, and there are four ways to do it:
@@ -15,7 +15,7 @@ therefore has to be re-expressed, and there are four ways to do it:
 
 ``INLINE_DEFINITIONS``
     Neither of the above: the operation needs a real function (it is recursive, generic over
-    signedness, or simply too long to inline at every use). MPR emits the definition once, at the
+    signedness, or simply too long to inline at every use). CPF emits the definition once, at the
     top of the translation unit, and only for the helpers that translation unit actually calls.
 
 ``C_REWRITTEN_IN_NATIVE_CODE``
@@ -55,7 +55,7 @@ class Dialect(enum.Enum):
     """
     #: The DaCe runtime headers are available; emit ``dace::`` names as usual.
     RUNTIME = 'runtime'
-    #: No DaCe headers; emit only the C++ standard library and MPR's own inline definitions.
+    #: No DaCe headers; emit only the C++ standard library and CPF's own inline definitions.
     STANDALONE = 'standalone'
     #: No DaCe headers and no C++ either: one C23 translation unit. The C standard library is not
     #: type-generic and has no templates, so every helper is a ``_Generic`` dispatch macro over a
@@ -98,9 +98,9 @@ def dialect_scope(dialect: Dialect):
         _active_dialect = previous
 
 
-#: The dialects that emit a self-contained translation unit. Everything MPR refuses -- device
+#: The dialects that emit a self-contained translation unit. Everything CPF refuses -- device
 #: code, a state struct, an external buffer handshake -- it refuses for both of them, so the many
-#: call sites that ask "is this an MPR rendering" ask through :func:`standalone`.
+#: call sites that ask "is this an CPF rendering" ask through :func:`standalone`.
 STANDALONE_DIALECTS = frozenset({Dialect.STANDALONE, Dialect.STANDALONE_C})
 
 
@@ -122,7 +122,7 @@ def standalone_c() -> bool:
 #: in progress. Set only through :func:`provenance_scope`.
 #:
 #: A pure expansion replaces ``Gemm`` with a loop nest, and the loop nest does not say it was a
-#: matrix product. MPR restores that: the description is recorded when the node is expanded and
+#: matrix product. CPF restores that: the description is recorded when the node is expanded and
 #: written as a comment where the expansion's code is emitted. Keyed by GUID rather than by node
 #: object because the code generator runs its own lowering (inlining, copy lifting) between the
 #: expansion and the emission.
@@ -133,7 +133,7 @@ _provenance: Dict[str, Tuple[str, str]] = {}
 
 
 def describe(guid: str) -> Optional[Tuple[str, str]]:
-    """``(origin, description)`` for the library node that produced ``guid``, if MPR recorded one.
+    """``(origin, description)`` for the library node that produced ``guid``, if CPF recorded one.
 
     ``origin`` is the GUID of the library node itself. The emitter dedupes on it rather than on the
     description text: two separate ``Gemm`` nodes in one program are two things worth commenting,
@@ -255,10 +255,10 @@ REWRITES: Dict[str, Tuple[int, str]] = {
     'np_float_pow': (2, '(std::pow(static_cast<double>({0}), static_cast<double>({1})))'),
 }
 
-#: Runtime function -> the C++ definition MPR emits for it.
+#: Runtime function -> the C++ definition CPF emits for it.
 #:
 #: Emitted only when the translation unit calls the helper (see :func:`definitions_for`), so a
-#: kernel that never rounds up never carries an ``int_ceil``. Each is ``static`` so several MPR
+#: kernel that never rounds up never carries an ``int_ceil``. Each is ``static`` so several CPF
 #: translation units can be compiled together, and templated so it works for whatever width the
 #: index arithmetic settled on. A helper needs a definition rather than a rewrite when it names its
 #: argument's type, uses an argument more than once, dispatches on integral-vs-floating, or writes
@@ -286,25 +286,25 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: before C++23 for every instantiation. Marking those ``constexpr`` anyway is ill-formed with no
 #: diagnostic required, and it LOOKS fine -- GCC folds ``std::floor`` as a builtin and accepts it,
 #: while clang rejects the same code. Measured, not assumed; see the constexpr probes in
-#: ``tests/codegen/mpr/test_lowering_table.py``.
+#: ``tests/codegen/cpf/test_lowering_table.py``.
 INLINE_DEFINITIONS: Dict[str, str] = {
-    'mpr_max':
+    'cpf_max':
     'template <typename T>\n'
-    'static constexpr inline T mpr_max(const T& value) {\n'
+    'static constexpr inline T cpf_max(const T& value) {\n'
     '    return value;\n'
     '}\n'
     'template <typename T, typename... Ts>\n'
-    'static constexpr inline typename std::common_type<T, Ts...>::type mpr_max(const T& a, const Ts&... rest) {\n'
-    '    return (a < mpr_max(rest...)) ? mpr_max(rest...) : a;\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type cpf_max(const T& a, const Ts&... rest) {\n'
+    '    return (a < cpf_max(rest...)) ? cpf_max(rest...) : a;\n'
     '}',
-    'mpr_min':
+    'cpf_min':
     'template <typename T>\n'
-    'static constexpr inline T mpr_min(const T& value) {\n'
+    'static constexpr inline T cpf_min(const T& value) {\n'
     '    return value;\n'
     '}\n'
     'template <typename T, typename... Ts>\n'
-    'static constexpr inline typename std::common_type<T, Ts...>::type mpr_min(const T& a, const Ts&... rest) {\n'
-    '    return (mpr_min(rest...) < a) ? mpr_min(rest...) : a;\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type cpf_min(const T& a, const Ts&... rest) {\n'
+    '    return (cpf_min(rest...) < a) ? cpf_min(rest...) : a;\n'
     '}',
     'sign':
     'template <typename T>\n'
@@ -350,9 +350,9 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     # --- prefix scans -------------------------------------------------------------------------
     # The DaCe runtime provides these in ``dace/scan.hpp``, one function per (op, inclusive) pair
     # because an OpenMP reduction identifier cannot be a template parameter -- the operator has to
-    # be spelled into the clause. MPR reproduces them rather than rewriting a scan into a
+    # be spelled into the clause. CPF reproduces them rather than rewriting a scan into a
     # sequential loop: the ``inscan`` form IS the parallel one, and a rendering that quietly
-    # serialized every prefix sum would not be a maximal parallel rendering.
+    # serialized every prefix sum would not be a canonical parallel form.
     'min_identity':
     'template <typename T>\n'
     'static inline T min_identity() {\n'
@@ -393,7 +393,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, min:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = mpr_min(acc, static_cast<T>(f[i]));\n'
+    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan inclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -404,7 +404,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, max:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = mpr_max(acc, static_cast<T>(f[i]));\n'
+    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan inclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -437,7 +437,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, min:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = mpr_min(acc, static_cast<T>(f[i]));\n'
+    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
@@ -448,14 +448,14 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, max:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = mpr_max(acc, static_cast<T>(f[i]));\n'
+    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
     '    }\n'
     '}',
     # --- find-first ---------------------------------------------------------------------------
     # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
-    # short-circuiting parallel search. MPR emits that search rather than unrolling it back into a
+    # short-circuiting parallel search. CPF emits that search rather than unrolling it back into a
     # sequential scan, for the same reason it emits the inscan form of a prefix sum: the cancelling
     # parallel shape IS the rendering, and serializing it would answer a different question.
     'find_first_chunk':
@@ -643,10 +643,10 @@ INLINE_DEFINITIONS: Dict[str, str] = {
 
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
 DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
-    'scan_incl_min': ('min_identity', 'mpr_min'),
-    'scan_incl_max': ('max_identity', 'mpr_max'),
-    'scan_excl_min': ('min_identity', 'mpr_min'),
-    'scan_excl_max': ('max_identity', 'mpr_max'),
+    'scan_incl_min': ('min_identity', 'cpf_min'),
+    'scan_incl_max': ('max_identity', 'cpf_max'),
+    'scan_excl_min': ('min_identity', 'cpf_min'),
+    'scan_excl_max': ('max_identity', 'cpf_max'),
     'find_first_index': ('find_first_chunk', ),
     'py_floor': ('int_floor_ni', ),
     'py_mod': ('py_floor', ),
@@ -668,11 +668,11 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
 
 #: ``Max``/``Min`` are variadic in the runtime, which ``std::max``/``std::min`` are not: those are
 #: binary or take an ``initializer_list``. The ORDER now matches (a later argument wins only by
-#: comparing strictly better), so the difference is arity and mixed-type promotion, but MPR still
+#: comparing strictly better), so the difference is arity and mixed-type promotion, but CPF still
 #: emits the runtime's own definition (see :data:`INLINE_DEFINITIONS`) so the two cannot drift.
-VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'mpr_max', 'min': 'mpr_min'}
+VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'cpf_max', 'min': 'cpf_min'}
 
-#: Headers MPR always includes: the exact-width integer types and the maths every kernel may reach,
+#: Headers CPF always includes: the exact-width integer types and the maths every kernel may reach,
 #: plus the two the readable generator's own allocations need -- ``<new>`` for the aligned
 #: ``operator new[](std::align_val_t)`` it allocates heap transients with, and ``<type_traits>``
 #: for the ``std::is_trivially_destructible`` static assertion it pairs with the matching delete.
@@ -682,8 +682,8 @@ VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'm
 BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<complex>',
                                  '<numeric>', '<new>', '<type_traits>')
 
-#: Runtime functions MPR deliberately does NOT lower, and why. Reaching one is a refusal, not a
-#: pass-through: the name is declared by a DaCe header MPR does not include, so passing it through
+#: Runtime functions CPF deliberately does NOT lower, and why. Reaching one is a refusal, not a
+#: pass-through: the name is declared by a DaCe header CPF does not include, so passing it through
 #: would produce a translation unit that does not build.
 UNSUPPORTED: Dict[str, str] = {}
 
@@ -753,7 +753,7 @@ def ctype_for(ctype: str, dialect: Optional[Dialect] = None) -> str:
     :raises NotImplementedError: if the type has no standalone spelling at all.
     """
     if ctype in UNSUPPORTED_CTYPES:
-        raise NotImplementedError(f'MPR cannot emit the type {ctype!r}: {UNSUPPORTED_CTYPES[ctype]}.')
+        raise NotImplementedError(f'CPF cannot emit the type {ctype!r}: {UNSUPPORTED_CTYPES[ctype]}.')
     return tables_for(dialect).ctype_renames.get(ctype, ctype)
 
 
@@ -761,7 +761,7 @@ def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dia
     """Spell a variadic ``Max``/``Min`` for ``dialect``.
 
     The runtime's ``Max`` takes any number of arguments, and so does the C++ dialect's own
-    ``mpr_max`` template, so that one is called with the arguments as they stand. C has no
+    ``cpf_max`` template, so that one is called with the arguments as they stand. C has no
     variadic macro to fold over, so the C dialect NESTS the binary macro instead -- left to right,
     which is the association the recursive template has too.
 
@@ -787,33 +787,33 @@ def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dia
 
 
 def needs_definition(name: str, dialect: Optional[Dialect] = None) -> bool:
-    """Whether MPR calls ``name`` unchanged and emits a definition for it."""
+    """Whether CPF calls ``name`` unchanged and emits a definition for it."""
     return name in tables_for(dialect).inline_definitions
 
 
 def lowering_for(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialect] = None) -> Optional[str]:
-    """The MPR spelling of a call to ``name`` with ``arguments`` already printed.
+    """The CPF spelling of a call to ``name`` with ``arguments`` already printed.
 
     :param name: the runtime function name as the ordinary generators would emit it.
     :param arguments: already-printed argument expressions.
     :returns: the C++ expression, or ``None`` if ``name`` needs no rewriting -- either it is not a
-              runtime function at all, or it is one MPR emits a definition for and calls unchanged
+              runtime function at all, or it is one CPF emits a definition for and calls unchanged
               (:func:`needs_definition` separates those two).
     :raises ValueError: if ``name`` is a known rewrite but the argument count does not match, which
                         means the caller and this table disagree about the function's shape.
-    :raises NotImplementedError: if ``name`` is a runtime function MPR cannot express (see
+    :raises NotImplementedError: if ``name`` is a runtime function CPF cannot express (see
                                  :data:`UNSUPPORTED`).
     """
     tables = tables_for(dialect)
     if name in tables.unsupported:
-        raise NotImplementedError(f'MPR cannot lower {name!r}: {tables.unsupported[name]}.')
+        raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
     variadic = variadic_minmax(name, arguments, dialect)
     if variadic is not None:
         return variadic
     if name in tables.rewrites:
         arity, template = tables.rewrites[name]
         if len(arguments) != arity:
-            raise ValueError(f'MPR lowering of {name!r} expects {arity} arguments, got {len(arguments)}')
+            raise ValueError(f'CPF lowering of {name!r} expects {arity} arguments, got {len(arguments)}')
         return template.format(*arguments)
     if name in tables.std_renames:
         return '%s(%s)' % (tables.std_renames[name], ', '.join(arguments))
@@ -842,7 +842,7 @@ def rewrite_ctypes(code: str, dialect: Optional[Dialect] = None) -> str:
     """
     for qualified, reason in UNSUPPORTED_CTYPES.items():
         if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
-            raise NotImplementedError(f'MPR cannot emit the type {qualified!r}: {reason}')
+            raise NotImplementedError(f'CPF cannot emit the type {qualified!r}: {reason}')
     for qualified, plain in tables_for(dialect).ctype_renames.items():
         code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
     return code
@@ -854,7 +854,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     Native tasklet bodies never reach the expression printers -- they are emitted verbatim -- so
     this is the only point at which a library expansion's own C++ can be re-spelled. Which is
     needed for the real cases: the ``Scan`` expansion calls ``::dace::scan::detail::scan_incl_sum``
-    and the ``FindFirst`` expansion calls ``dace::find_first_index``, and MPR emits both functions
+    and the ``FindFirst`` expansion calls ``dace::find_first_index``, and CPF emits both functions
     itself rather than serializing a prefix sum or a cancelling search into a sequential loop.
 
     In C the same pass also rewrites the two call shapes C cannot express as a call at all -- the
@@ -863,14 +863,14 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     (:func:`c_native_renames`), before the name table is consulted.
 
     Textual by necessity, and deliberately conservative: only the qualified name is rewritten, only
-    when the identifier is one MPR knows, and never with knowledge of the arguments. A
+    when the identifier is one CPF knows, and never with knowledge of the arguments. A
     ``dace::`` name with no standalone spelling is LEFT ALONE, so it reaches
-    ``dace.codegen.mpr.verify`` and is reported against the construct that emitted it -- a silent
+    ``dace.codegen.cpf.verify`` and is reported against the construct that emitted it -- a silent
     partial rewrite would be worse than none.
 
     :param code: the C++ body as the expansion wrote it.
     :param dialect: which standalone dialect to rewrite for; ambient when omitted.
-    :returns: the body with the names MPR can spell rewritten.
+    :returns: the body with the names CPF can spell rewritten.
     :raises NotImplementedError: if the body names a type or function this dialect cannot express.
     """
     tables = tables_for(dialect)
@@ -882,9 +882,9 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     def replace(match: 're.Match') -> str:
         name = match.group(1)
         if name in tables.unsupported:
-            raise NotImplementedError(f'MPR cannot lower {name!r}: {tables.unsupported[name]}.')
+            raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
         if name in tables.inline_definitions:
-            return name  # MPR emits this one's definition at the top of the unit
+            return name  # CPF emits this one's definition at the top of the unit
         if name in tables.std_renames:
             return tables.std_renames[name]
         return match.group(0)  # unknown: left for verify() to report
@@ -956,7 +956,7 @@ def definitions_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple
                        if all(dependency in placed for dependency in tables.definition_dependencies.get(name, ())
                               if dependency in needed))
         if not ready:
-            raise ValueError(f'MPR inline definitions have a dependency cycle among {sorted(needed - placed)}')
+            raise ValueError(f'CPF inline definitions have a dependency cycle among {sorted(needed - placed)}')
         for name in ready:
             emitted.append(tables.inline_definitions[name])
             placed.add(name)
@@ -996,7 +996,7 @@ def headers_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str
 
 #: Arithmetic types a ``_Generic`` dispatch enumerates, paired with the suffix its typed helper is
 #: named after. SIGNED integers only: an unsigned instantiation of a sign-sensitive body ("comparison
-#: of unsigned expression < 0 is always false") warns under ``-Wextra``, and MPR output must build
+#: of unsigned expression < 0 is always false") warns under ``-Wextra``, and CPF output must build
 #: warning-free. A helper reached with an unsigned value fails to select, which is the loud direction.
 #:
 #: The types are the FUNDAMENTAL spellings, not the ``<stdint.h>`` typedefs: ``int32_t`` IS ``int``
@@ -1009,7 +1009,7 @@ C_COMPLEX: Tuple[Tuple[str, str],
 C_ARITHMETIC: Tuple[Tuple[str, str], ...] = C_SIGNED_INTS + C_FLOATS
 
 #: Every type surviving the usual arithmetic conversions of ``(a) + (b)``, which is what
-#: ``mpr_max`` / ``mpr_min`` dispatch on. Unsigned types belong HERE (the bodies compare two values
+#: ``cpf_max`` / ``cpf_min`` dispatch on. Unsigned types belong HERE (the bodies compare two values
 #: of one type and cannot warn), and the list is closed on purpose: no ``default:`` association, so
 #: a type outside it is a compile error rather than a silent widening through ``double`` -- which
 #: is how an int64 argument would lose its low bits.
@@ -1062,11 +1062,11 @@ def c_typed_family(name: str,
     """
     blocks = []
     dispatch = []
-    # A family whose own name already carries the prefix (``mpr_max``) must not get it twice.
-    stem = name[4:] if name.startswith('mpr_') else name
+    # A family whose own name already carries the prefix (``cpf_max``) must not get it twice.
+    stem = name[4:] if name.startswith('cpf_') else name
     for types, returns, body in groups:
         for ctype, suffix in types:
-            target = 'mpr_%s_%s' % (stem, suffix)
+            target = 'cpf_%s_%s' % (stem, suffix)
             declared = ', '.join(ptype.replace('{T}', ctype) + ' ' + pname for ptype, pname in parameters)
             statements = '\n'.join('    ' + line if line.strip() else line
                                    for line in body.replace('{T}', ctype).split('\n'))
@@ -1135,7 +1135,7 @@ C_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
     ('hypot', 'hypot', 'real', 2),
 )
 
-#: Maths MPR emits for its OWN definitions rather than for a runtime rename: ``cpp_mod`` needs
+#: Maths CPF emits for its OWN definitions rather than for a runtime rename: ``cpp_mod`` needs
 #: ``fmod``, ``np_modf`` needs ``modf``, and the complex ``sign_numpy_2`` needs the component
 #: accessors that :data:`REWRITES` spells ``.real()`` / ``.imag()`` in C++.
 C_INTERNAL_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
@@ -1146,7 +1146,7 @@ C_INTERNAL_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
 )
 
 #: Runtime maths C already spells type-generically, as a ``<math.h>`` MACRO. Wrapping these in an
-#: ``mpr_`` dispatch would be wrong as well as pointless: there is no ``isnanf`` to dispatch TO.
+#: ``cpf_`` dispatch would be wrong as well as pointless: there is no ``isnanf`` to dispatch TO.
 C_TYPE_GENERIC_MATH: Dict[str, str] = {
     'isfinite': 'isfinite',
     'isinf': 'isinf',
@@ -1179,7 +1179,7 @@ def c_math_macro(base: str, family: str, arity) -> Tuple[str, str]:
     parameters = tuple('a%d' % index for index in range(count))
     control = '+(a0)' if (count == 1 or arity == 'first2') else ' + '.join('(%s)' % p for p in parameters)
     dispatch = tuple((ctype, target.replace('{base}', base)) for ctype, target in _C_FAMILY_DISPATCH[family])
-    name = 'mpr_' + base
+    name = 'cpf_' + base
     return name, c_generic_macro(name, parameters, control, dispatch)
 
 
@@ -1197,18 +1197,18 @@ for _runtime_name, _base, _family, _arity in C_INTERNAL_MATH_SPEC:
     _macro, _definition = c_math_macro(_base, _family, _arity)
     _C_MATH_MACROS[_macro] = _definition
 
-#: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: MPR emits its
+#: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: CPF emits its
 #: own typed pair (see :data:`C_MINMAX_TYPES`).
-C_VARIADIC_MINMAX: Dict[str, str] = {'Max': 'mpr_max', 'Min': 'mpr_min', 'max': 'mpr_max', 'min': 'mpr_min'}
+C_VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'cpf_max', 'min': 'cpf_min'}
 
 #: Rewrites that differ from :data:`REWRITES` because their C++ form names a C++ construct: a
 #: member call on ``std::complex``, or a ``static_cast``.
 C_REWRITES: Dict[str, Tuple[int, str]] = dict(REWRITES)
 C_REWRITES.update({
-    're': (1, '(mpr_creal({0}))'),
-    'im': (1, '(mpr_cimag({0}))'),
-    'iround': (1, '((int)mpr_round({0}))'),
-    'np_float_pow': (2, '(mpr_pow((double)({0}), (double)({1})))'),
+    're': (1, '(cpf_creal({0}))'),
+    'im': (1, '(cpf_cimag({0}))'),
+    'iround': (1, '((int)cpf_round({0}))'),
+    'np_float_pow': (2, '(cpf_pow((double)({0}), (double)({1})))'),
 })
 
 #: ``dace::``-namespaced C++ type -> its C spelling. Only the two complex types differ from the C++
@@ -1228,7 +1228,7 @@ _C_MINMAX_DEFINITIONS: Dict[str, str] = {
     name:
     c_typed_family(name, (('{T}', 'a'), ('{T}', 'b')), ((C_MINMAX_TYPES, '{T}', 'return (%s) ? b : a;' % condition), ),
                    '(a) + (b)')
-    for name, condition in (('mpr_max', 'a < b'), ('mpr_min', 'b < a'))
+    for name, condition in (('cpf_max', 'a < b'), ('cpf_min', 'b < a'))
 }
 
 _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
@@ -1238,7 +1238,7 @@ _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
 #:
 #: The eight prefix scans keep their ``#pragma omp simd reduction(inscan, ...)`` bodies verbatim.
 #: That form IS the parallel scan; a rendering that quietly serialized every prefix sum would not be
-#: a maximal parallel rendering.
+#: a canonical parallel form.
 #:
 #: The four out-parameter helpers took C++ references. Their C macros take the same LVALUES the
 #: printers already pass and apply ``&`` themselves, so no call site changes shape.
@@ -1253,26 +1253,26 @@ C_INLINE_DEFINITIONS.update({
     c_typed_family(
         'sign_numpy_2', (('{T}', 'value'), ),
         ((C_ARITHMETIC, '{T}', _C_SIGN_BODY),
-         (C_COMPLEX, '{T}', 'return (mpr_creal(value) != 0 && mpr_cimag(value) != 0) ? value / mpr_abs(value) : 0;')),
+         (C_COMPLEX, '{T}', 'return (cpf_creal(value) != 0 && cpf_cimag(value) != 0) ? value / cpf_abs(value) : 0;')),
         '+(value)'),
     # Two arities, which no single C macro can have. The three-argument pick chooses between the
     # unary and binary dispatch macros by counting what the caller wrote.
     'heaviside':
     '\n'.join((
-        '#define mpr_pick3(a0, a1, a2, ...) a2',
-        c_typed_family('mpr_heaviside_1', (('{T}', 'value'), ),
+        '#define cpf_pick3(a0, a1, a2, ...) a2',
+        c_typed_family('cpf_heaviside_1', (('{T}', 'value'), ),
                        ((C_ARITHMETIC, '{T}', 'return (value > ({T})0) ? ({T})1 : ({T})0;'), ), '+(value)'),
         c_typed_family(
-            'mpr_heaviside_2', (('{T}', 'value'), ('{T}', 'at_zero')),
+            'cpf_heaviside_2', (('{T}', 'value'), ('{T}', 'at_zero')),
             ((C_ARITHMETIC, '{T}', 'return (value < ({T})0) ? ({T})0 : ((value > ({T})0) ? ({T})1 : at_zero);'), ),
             '(value) + (at_zero)'),
-        '#define heaviside(...) mpr_pick3(__VA_ARGS__, mpr_heaviside_2, mpr_heaviside_1)(__VA_ARGS__)',
+        '#define heaviside(...) cpf_pick3(__VA_ARGS__, cpf_heaviside_2, cpf_heaviside_1)(__VA_ARGS__)',
     )),
     # Integral input is already floored, so it comes back unchanged -- narrowing an int64 through
     # ``(int)floor(...)`` would truncate it to 32 bits.
     'ifloor':
     c_typed_family('ifloor', (('{T}', 'value'), ),
-                   ((C_SIGNED_INTS, '{T}', 'return value;'), (C_FLOATS, 'int', 'return (int)mpr_floor(value);')),
+                   ((C_SIGNED_INTS, '{T}', 'return value;'), (C_FLOATS, 'int', 'return (int)cpf_floor(value);')),
                    '+(value)'),
     'int_ceil':
     c_typed_family('int_ceil', (('{T}', 'numerator'), ('{T}', 'denominator')),
@@ -1287,7 +1287,7 @@ C_INLINE_DEFINITIONS.update({
     'py_floor':
     c_typed_family('py_floor', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_SIGNED_INTS, '{T}', 'return int_floor_ni(numerator, denominator);'),
-                    (C_FLOATS, '{T}', 'return mpr_floor(numerator / denominator);')), '(numerator) + (denominator)'),
+                    (C_FLOATS, '{T}', 'return cpf_floor(numerator / denominator);')), '(numerator) + (denominator)'),
     'py_mod':
     c_typed_family('py_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_ARITHMETIC, '{T}', 'return numerator - py_floor(numerator, denominator) * denominator;'), ),
@@ -1302,18 +1302,18 @@ C_INLINE_DEFINITIONS.update({
     'cpp_mod':
     c_typed_family('cpp_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_SIGNED_INTS, '{T}', 'return numerator % denominator;'),
-                    (C_FLOATS, '{T}', 'return mpr_fmod(numerator, denominator);')), '(numerator) + (denominator)'),
+                    (C_FLOATS, '{T}', 'return cpf_fmod(numerator, denominator);')), '(numerator) + (denominator)'),
     'Mod_float':
     c_typed_family('Mod_float', (('{T}', 'value'), ('{T}', 'modulus')),
                    ((C_FLOATS, '{T}', 'return value - (int)(value / modulus) * modulus;'), ), '(value) + (modulus)'),
     'Modulo':
     c_typed_family(
         'Modulo', (('{T}', 'value'), ('{T}', 'modulus')),
-        ((C_ARITHMETIC, '{T}', 'return value - ({T})mpr_floor((double)(value) / (double)(modulus)) * modulus;'), ),
+        ((C_ARITHMETIC, '{T}', 'return value - ({T})cpf_floor((double)(value) / (double)(modulus)) * modulus;'), ),
         '(value) + (modulus)'),
     'Modulo_float':
     c_typed_family('Modulo_float', (('{T}', 'value'), ('{T}', 'modulus')),
-                   ((C_FLOATS, '{T}', 'return value - ({T})mpr_floor(value / modulus) * modulus;'), ),
+                   ((C_FLOATS, '{T}', 'return value - ({T})cpf_floor(value / modulus) * modulus;'), ),
                    '(value) + (modulus)'),
     'cpp_divmod':
     c_typed_family('cpp_divmod',
@@ -1333,11 +1333,11 @@ C_INLINE_DEFINITIONS.update({
     'np_modf':
     c_typed_family('np_modf', (('{T}', 'value'), ('{T} *', 'integral'), ('{T} *', 'fractional')),
                    ((C_SIGNED_INTS, 'void', '*integral = value;\n*fractional = 0;'),
-                    (C_FLOATS, 'void', '*fractional = mpr_modf(value, integral);')), '+(value)',
+                    (C_FLOATS, 'void', '*fractional = cpf_modf(value, integral);')), '+(value)',
                    ('value', '&(integral)', '&(fractional)')),
     'np_frexp':
     c_typed_family('np_frexp', (('{T}', 'value'), ('{T} *', 'mantissa'), ('int *', 'exponent')),
-                   ((C_FLOATS, 'void', '*mantissa = mpr_frexp(value, exponent);'), ), '+(value)',
+                   ((C_FLOATS, 'void', '*mantissa = cpf_frexp(value, exponent);'), ), '+(value)',
                    ('value', '&(mantissa)', '&(exponent)')),
     'ipow':
     c_typed_family('ipow', (('{T}', 'base'), ('long long', 'exponent')), ((C_ARITHMETIC, '{T}', '{T} result = 1;\n'
@@ -1393,8 +1393,8 @@ def _c_scan_family(kind: str, operation: str, clause: str, step: str) -> str:
 
 for _kind in ('inclusive', 'exclusive'):
     for _operation, _clause, _step in (('sum', '+', 'acc + f[i]'), ('product', '*', 'acc * f[i]'),
-                                       ('min', 'min', 'mpr_min(acc, ({T})f[i])'), ('max', 'max',
-                                                                                   'mpr_max(acc, ({T})f[i])')):
+                                       ('min', 'min', 'cpf_min(acc, ({T})f[i])'), ('max', 'max',
+                                                                                   'cpf_max(acc, ({T})f[i])')):
         C_INLINE_DEFINITIONS['scan_%s_%s' % ('incl' if _kind == 'inclusive' else 'excl', _operation)] = _c_scan_family(
             _kind, _operation, _clause, _step)
 
@@ -1427,82 +1427,82 @@ C_INLINE_DEFINITIONS['find_first_chunk'] = (
 #: than an expression: the assignment target is the first argument, because a C expression cannot
 #: contain the loop this needs. ``_Pragma`` rather than ``#pragma`` for the same reason -- a
 #: directive cannot be produced by a macro expansion.
-C_INLINE_DEFINITIONS['mpr_find_first'] = '\\\n'.join((
-    '#define mpr_find_first(out, ff_begin, ff_end, ff_index, ff_parallel, ff_pred) ',
+C_INLINE_DEFINITIONS['cpf_find_first'] = '\\\n'.join((
+    '#define cpf_find_first(out, ff_begin, ff_end, ff_index, ff_parallel, ff_pred) ',
     '    do {',
-    '        const long long mpr_ff_lo = (ff_begin);',
-    '        const long long mpr_ff_end = (ff_end);',
-    '        const bool mpr_ff_par = (ff_parallel);',
+    '        const long long cpf_ff_lo = (ff_begin);',
+    '        const long long cpf_ff_end = (ff_end);',
+    '        const bool cpf_ff_par = (ff_parallel);',
     # The block is the early-exit granularity: a vectorized loop cannot break.
-    '        const long long mpr_ff_simd = 64;',
-    '        long long mpr_ff_best = mpr_ff_end;',
-    '        if (mpr_ff_lo < mpr_ff_end) {',
-    '            const long long mpr_ff_span = mpr_ff_end - mpr_ff_lo;',
-    '            const long long mpr_ff_chunk = find_first_chunk(mpr_ff_span, mpr_ff_par);',
-    '            const long long mpr_ff_chunks = (mpr_ff_span + mpr_ff_chunk - 1) / mpr_ff_chunk;',
-    '            long long mpr_ff_hint = mpr_ff_end;',
-    '            _Pragma("omp parallel for schedule(dynamic, 1) if (parallel : mpr_ff_par) '
-    'reduction(min : mpr_ff_best)")',
-    '            for (long long mpr_ff_c = 0; mpr_ff_c < mpr_ff_chunks; ++mpr_ff_c) {',
-    '                long long mpr_ff_seen, mpr_ff_hi, mpr_ff_found, mpr_ff_b;',
-    '                const long long mpr_ff_from = mpr_ff_lo + mpr_ff_c * mpr_ff_chunk;',
+    '        const long long cpf_ff_simd = 64;',
+    '        long long cpf_ff_best = cpf_ff_end;',
+    '        if (cpf_ff_lo < cpf_ff_end) {',
+    '            const long long cpf_ff_span = cpf_ff_end - cpf_ff_lo;',
+    '            const long long cpf_ff_chunk = find_first_chunk(cpf_ff_span, cpf_ff_par);',
+    '            const long long cpf_ff_chunks = (cpf_ff_span + cpf_ff_chunk - 1) / cpf_ff_chunk;',
+    '            long long cpf_ff_hint = cpf_ff_end;',
+    '            _Pragma("omp parallel for schedule(dynamic, 1) if (parallel : cpf_ff_par) '
+    'reduction(min : cpf_ff_best)")',
+    '            for (long long cpf_ff_c = 0; cpf_ff_c < cpf_ff_chunks; ++cpf_ff_c) {',
+    '                long long cpf_ff_seen, cpf_ff_hi, cpf_ff_found, cpf_ff_b;',
+    '                const long long cpf_ff_from = cpf_ff_lo + cpf_ff_c * cpf_ff_chunk;',
     '                _Pragma("omp atomic read")',
-    '                mpr_ff_seen = mpr_ff_hint;',
-    '                if (mpr_ff_from >= mpr_ff_seen) continue;',
-    '                mpr_ff_hi = mpr_ff_from + mpr_ff_chunk;',
-    '                if (mpr_ff_hi > mpr_ff_end) mpr_ff_hi = mpr_ff_end;',
-    '                if (mpr_ff_hi > mpr_ff_seen) mpr_ff_hi = mpr_ff_seen;',
-    '                mpr_ff_found = mpr_ff_end;',
-    '                for (mpr_ff_b = mpr_ff_from; mpr_ff_b < mpr_ff_hi; mpr_ff_b += mpr_ff_simd) {',
-    '                    long long mpr_ff_block = mpr_ff_end;',
-    '                    long long mpr_ff_to = mpr_ff_b + mpr_ff_simd;',
-    '                    if (mpr_ff_to > mpr_ff_hi) mpr_ff_to = mpr_ff_hi;',
-    '                    _Pragma("omp simd reduction(min : mpr_ff_block)")',
-    '                    for (long long ff_index = mpr_ff_b; ff_index < mpr_ff_to; ++ff_index) {',
-    '                        const long long mpr_ff_v = (ff_pred) ? ff_index : mpr_ff_end;',
-    '                        mpr_ff_block = mpr_ff_v < mpr_ff_block ? mpr_ff_v : mpr_ff_block;',
+    '                cpf_ff_seen = cpf_ff_hint;',
+    '                if (cpf_ff_from >= cpf_ff_seen) continue;',
+    '                cpf_ff_hi = cpf_ff_from + cpf_ff_chunk;',
+    '                if (cpf_ff_hi > cpf_ff_end) cpf_ff_hi = cpf_ff_end;',
+    '                if (cpf_ff_hi > cpf_ff_seen) cpf_ff_hi = cpf_ff_seen;',
+    '                cpf_ff_found = cpf_ff_end;',
+    '                for (cpf_ff_b = cpf_ff_from; cpf_ff_b < cpf_ff_hi; cpf_ff_b += cpf_ff_simd) {',
+    '                    long long cpf_ff_block = cpf_ff_end;',
+    '                    long long cpf_ff_to = cpf_ff_b + cpf_ff_simd;',
+    '                    if (cpf_ff_to > cpf_ff_hi) cpf_ff_to = cpf_ff_hi;',
+    '                    _Pragma("omp simd reduction(min : cpf_ff_block)")',
+    '                    for (long long ff_index = cpf_ff_b; ff_index < cpf_ff_to; ++ff_index) {',
+    '                        const long long cpf_ff_v = (ff_pred) ? ff_index : cpf_ff_end;',
+    '                        cpf_ff_block = cpf_ff_v < cpf_ff_block ? cpf_ff_v : cpf_ff_block;',
     '                    }',
-    '                    if (mpr_ff_block < mpr_ff_end) { mpr_ff_found = mpr_ff_block; break; }',
+    '                    if (cpf_ff_block < cpf_ff_end) { cpf_ff_found = cpf_ff_block; break; }',
     '                }',
-    '                if (mpr_ff_found < mpr_ff_end) {',
-    '                    long long mpr_ff_cur;',
-    '                    if (mpr_ff_found < mpr_ff_best) mpr_ff_best = mpr_ff_found;',
+    '                if (cpf_ff_found < cpf_ff_end) {',
+    '                    long long cpf_ff_cur;',
+    '                    if (cpf_ff_found < cpf_ff_best) cpf_ff_best = cpf_ff_found;',
     '                    _Pragma("omp atomic read")',
-    '                    mpr_ff_cur = mpr_ff_hint;',
-    '                    if (mpr_ff_found < mpr_ff_cur) {',
+    '                    cpf_ff_cur = cpf_ff_hint;',
+    '                    if (cpf_ff_found < cpf_ff_cur) {',
     '                        _Pragma("omp atomic write")',
-    '                        mpr_ff_hint = mpr_ff_found;',
+    '                        cpf_ff_hint = cpf_ff_found;',
     '                    }',
     '                }',
     '            }',
     '        }',
-    '        (out) = mpr_ff_best;',
+    '        (out) = cpf_ff_best;',
     '    } while (0)',
 ))
 
 #: Definitions each C definition calls -- macros included, since a macro must be ``#define``d before
 #: the function body that expands it is compiled.
 C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
-    'sign_numpy_2': ('mpr_creal', 'mpr_cimag', 'mpr_abs'),
-    'ifloor': ('mpr_floor', ),
-    'py_floor': ('int_floor_ni', 'mpr_floor'),
+    'sign_numpy_2': ('cpf_creal', 'cpf_cimag', 'cpf_abs'),
+    'ifloor': ('cpf_floor', ),
+    'py_floor': ('int_floor_ni', 'cpf_floor'),
     'py_mod': ('py_floor', ),
     'floor_mod': ('py_mod', ),
-    'cpp_mod': ('mpr_fmod', ),
-    'Modulo': ('mpr_floor', ),
-    'Modulo_float': ('mpr_floor', ),
+    'cpp_mod': ('cpf_fmod', ),
+    'Modulo': ('cpf_floor', ),
+    'Modulo_float': ('cpf_floor', ),
     'py_divmod': ('cpp_divmod', ),
-    'np_modf': ('mpr_modf', ),
-    'np_frexp': ('mpr_frexp', ),
+    'np_modf': ('cpf_modf', ),
+    'np_frexp': ('cpf_frexp', ),
     'lcm': ('gcd', ),
-    'scan_incl_min': ('mpr_min', ),
-    'scan_incl_max': ('mpr_max', ),
-    'scan_excl_min': ('mpr_min', ),
-    'scan_excl_max': ('mpr_max', ),
-    'mpr_find_first': ('find_first_chunk', ),
+    'scan_incl_min': ('cpf_min', ),
+    'scan_incl_max': ('cpf_max', ),
+    'scan_excl_min': ('cpf_min', ),
+    'scan_excl_max': ('cpf_max', ),
+    'cpf_find_first': ('find_first_chunk', ),
 }
 
-#: What the C dialect refuses, and why. Empty: every construct MPR reaches has a C spelling.
+#: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
 C_UNSUPPORTED: Dict[str, str] = {}
 
 #: Helpers C answers with a REWRITE of the CALL SITE rather than a definition or a refusal -- a
@@ -1513,7 +1513,7 @@ C_UNSUPPORTED: Dict[str, str] = {}
 #: as a macro argument (:func:`c_find_first`).
 C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_identity', 'find_first_index'})
 
-#: Headers MPR's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
+#: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
 #: section header above.
 C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<complex.h>')
@@ -1534,7 +1534,7 @@ class Tables(NamedTuple):
     std_renames: Dict[str, str]
     #: Runtime function -> ``(arity, format string over the printed arguments)``.
     rewrites: Dict[str, Tuple[int, str]]
-    #: Function name -> the definition MPR emits for it.
+    #: Function name -> the definition CPF emits for it.
     inline_definitions: Dict[str, str]
     #: ``Max``/``Min`` -> the binary function they nest into.
     variadic_minmax: Dict[str, str]
@@ -1594,7 +1594,7 @@ def tables_for(dialect: Optional[Dialect] = None) -> Tables:
     """
     resolved = dialect if dialect is not None else _active_dialect
     if resolved not in TABLES:
-        raise ValueError(f'{resolved} has no MPR lowering tables; the standalone dialects are '
+        raise ValueError(f'{resolved} has no CPF lowering tables; the standalone dialects are '
                          f'{sorted(d.value for d in TABLES)}. Name one, or run inside a dialect_scope.')
     return TABLES[resolved]
 
@@ -1644,7 +1644,7 @@ def c_scan_identities(code: str) -> str:
         kind, ctype = match.group(1), match.group(2)
         identities = C_SCAN_IDENTITIES.get(ctype)
         if identities is None:
-            raise NotImplementedError(f'MPR cannot spell the scan {kind} identity for {ctype!r}: it has no ordered '
+            raise NotImplementedError(f'CPF cannot spell the scan {kind} identity for {ctype!r}: it has no ordered '
                                       'extreme value, so only sum and product scans are defined for it.')
         return identities[0] if kind == 'min' else identities[1]
 
@@ -1657,7 +1657,7 @@ def c_scan_identities(code: str) -> str:
 #: and needs somewhere to put the result. The bounds are captured as ONE group and spliced through
 #: unread: the expansion parenthesizes each of them, so they arrive as two macro arguments however
 #: many commas the extents contain. The predicate is parenthesized by the same expansion, which is
-#: what keeps a comma inside it (``mpr_max(a, b) > 0``) from splitting the macro argument.
+#: what keeps a comma inside it (``cpf_max(a, b) > 0``) from splitting the macro argument.
 _C_FIND_FIRST_CALL = re.compile(
     r'([^;{}\n]+?)\s*=\s*(?:::)?(?:[A-Za-z_]\w*::)*find_first_index\s*\(\s*'
     r'(.+?),\s*\[&\]\s*\(\s*long long\s+([A-Za-z_]\w*)\s*\)\s*->\s*bool\s*\{\s*return\s+(.+?)\s*;\s*\}'
@@ -1669,9 +1669,9 @@ def c_find_first(code: str) -> str:
 
     C has no lambda and no way to hand a capturing predicate to a function, so the predicate cannot
     stay an argument to anything callable -- it has to be pasted into the search's innermost loop,
-    which makes the search a macro. This is the only construct MPR answers by rewriting a call site
+    which makes the search a macro. This is the only construct CPF answers by rewriting a call site
     rather than by naming a helper, so it is deliberately narrow: it matches the exact statement the
-    two CPU expansions write, and anything else is left alone for ``dace.codegen.mpr.verify`` to
+    two CPU expansions write, and anything else is left alone for ``dace.codegen.cpf.verify`` to
     report as an unlowered ``dace::`` name rather than half-rewritten into something that builds.
 
     Must run BEFORE the qualified-name rewrite, which would otherwise leave the C++ call shape in
@@ -1681,7 +1681,7 @@ def c_find_first(code: str) -> str:
     :returns: the body with the search spelled as C.
     """
     return _C_FIND_FIRST_CALL.sub(
-        lambda match: 'mpr_find_first(%s, %s, %s, %s, %s);' %
+        lambda match: 'cpf_find_first(%s, %s, %s, %s, %s);' %
         (match.group(1).strip(), match.group(2).strip(), match.group(3), match.group(5), match.group(4).strip()), code)
 
 

@@ -81,7 +81,7 @@ import dace
 from numbers import Number
 from io import StringIO
 from typing import List
-from dace import dtypes, mpr_lowering
+from dace import dtypes, cpf_lowering
 from dace.sdfg import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -265,10 +265,10 @@ class CPPLocals(LocalScheme):
 def runtime_call(name: str, arguments: List[str]) -> str:
     """A call to a DaCe runtime function, spelled for the ambient dialect.
 
-    Under :attr:`~dace.mpr_lowering.Dialect.RUNTIME` this is the call the generators have always
-    emitted. Under ``STANDALONE`` the name goes through :mod:`dace.mpr_lowering`, which either
+    Under :attr:`~dace.cpf_lowering.Dialect.RUNTIME` this is the call the generators have always
+    emitted. Under ``STANDALONE`` the name goes through :mod:`dace.cpf_lowering`, which either
     renames it to the standard library, rewrites the call into an expression, or names an inline
-    definition MPR emits at the top of the unit.
+    definition CPF emits at the top of the unit.
 
     A ``dace::``-qualified name with no lowering RAISES rather than passing through: the header
     that declares it is not included, so passing it through would produce a translation unit that
@@ -280,19 +280,19 @@ def runtime_call(name: str, arguments: List[str]) -> str:
     :returns: the call (or the expression that replaces it).
     :raises NotImplementedError: if a runtime function has no standalone spelling.
     """
-    if mpr_lowering.standalone():
-        dialect = mpr_lowering.active_dialect()
+    if cpf_lowering.standalone():
+        dialect = cpf_lowering.active_dialect()
         bare = name.rsplit('::', 1)[-1]
-        lowered = mpr_lowering.lowering_for(bare, tuple(arguments), dialect)
+        lowered = cpf_lowering.lowering_for(bare, tuple(arguments), dialect)
         if lowered is not None:
             return lowered
-        if mpr_lowering.needs_definition(bare, dialect):
-            # MPR emits this one's definition at the top of the unit, under the SAME name -- so the
+        if cpf_lowering.needs_definition(bare, dialect):
+            # CPF emits this one's definition at the top of the unit, under the SAME name -- so the
             # call keeps its shape and only loses the namespace it was qualified with.
             return '%s(%s)' % (bare, ', '.join(arguments))
         if name.startswith('dace::'):
-            raise NotImplementedError(f'MPR has no standalone spelling for the DaCe runtime function {name!r}; '
-                                      'it is declared by a header MPR does not include')
+            raise NotImplementedError(f'CPF has no standalone spelling for the DaCe runtime function {name!r}; '
+                                      'it is declared by a header CPF does not include')
     return '%s(%s)' % (name, ', '.join(arguments))
 
 
@@ -375,10 +375,10 @@ class CPPUnparser:
         name from ``types.h``. Standalone C++ spells the same type with the language's own
         (``double(x)``); C has no functional cast, so it needs the cast-expression form.
         """
-        if not mpr_lowering.standalone():
+        if not cpf_lowering.standalone():
             return '%s(%s)' % (ctype, argument)
-        spelled = mpr_lowering.ctype_for(ctype, mpr_lowering.active_dialect())
-        if mpr_lowering.standalone_c():
+        spelled = cpf_lowering.ctype_for(ctype, cpf_lowering.active_dialect())
+        if cpf_lowering.standalone_c():
             return '((%s)(%s))' % (spelled, argument)
         return '%s(%s)' % (spelled, argument)
 
@@ -1307,7 +1307,7 @@ class CPPUnparser:
     # C++ name, then the (single) argument list.  This is the tasklet-body
     # spelling for a complex's components, mirroring how ``int_floor`` maps to
     # ``dace::math::ifloor``.
-    # The math names come from ``mpr_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
+    # The math names come from ``cpf_lowering.RUNTIME_QUALIFIED_MATH``, which states why each one
     # must be qualified (a bare call binds to ``std::``, whose overloads are ambiguous for a 16-bit
     # float). It is shared with ``dace.symbolic``'s printer on purpose: the same expression reaches
     # C++ through a tasklet body here and through a memlet subset there, and a name qualified by
@@ -1315,7 +1315,7 @@ class CPPUnparser:
     _renamed_funcs = {
         're': 'dace::math::re',
         'im': 'dace::math::im',
-        **mpr_lowering.RUNTIME_QUALIFIED_MATH,
+        **cpf_lowering.RUNTIME_QUALIFIED_MATH,
     }
 
     def _Call(self, t: ast.Call):
@@ -1345,7 +1345,7 @@ class CPPUnparser:
                 self.write(self.typecast(_typecast_func_to_cpp[t.func.id], ', '.join(self.render(e) for e in t.args)))
                 return
 
-        if isinstance(t.func, ast.Name) and mpr_lowering.standalone() and not t.keywords:
+        if isinstance(t.func, ast.Name) and cpf_lowering.standalone() and not t.keywords:
             # ``dace.float32(x)`` reaches here as a call to the TYPE (cpp.py's visit_Attribute
             # rewrites the attribute to the typeclass's ctype), which is a C++ functional cast. C
             # has none, and the ``dace::``-namespaced widths have no C spelling either.

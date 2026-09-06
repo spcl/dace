@@ -6,7 +6,7 @@ import re
 from typing import Any, DefaultDict, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import dace
-from dace import config, data, dtypes, mpr_lowering, symbolic
+from dace import config, data, dtypes, cpf_lowering, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -196,18 +196,18 @@ class DaCeCodeGenerator(object):
         persistent storage are state fields, so any TU may dereference ``__state``.
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
-        standalone = mpr_lowering.standalone()
+        standalone = cpf_lowering.standalone()
         # Hash file include
         if backend == 'frame' and include_hash and not standalone:
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################
-        # Target- and environment-based includes. Skipped entirely for MPR: its preamble carries the
-        # system headers (:data:`~dace.mpr_lowering.BASE_HEADERS` plus whatever the emitted text
-        # turns out to call), and the DaCe headers in these lists are the ones MPR exists to do
+        # Target- and environment-based includes. Skipped entirely for CPF: its preamble carries the
+        # system headers (:data:`~dace.cpf_lowering.BASE_HEADERS` plus whatever the emitted text
+        # turns out to call), and the DaCe headers in these lists are the ones CPF exists to do
         # without. Dropping a header an expansion really needed does not hide the problem -- that
         # expansion also emits the ``dace::`` symbol the header declares, which
-        # ``dace.codegen.mpr.verify`` reports against the SDFG construct that asked for it.
+        # ``dace.codegen.cpf.verify`` reports against the SDFG construct that asked for it.
         if not standalone:
             for target in self._dispatcher.used_targets:
                 headers = target.get_includes()
@@ -264,10 +264,10 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         #########################################################
-        # Write state struct. MPR has no state: its entry point takes the arguments directly, and
+        # Write state struct. CPF has no state: its entry point takes the arguments directly, and
         # everything a state field would hold (persistent buffers, instrumentation reports,
         # environment handles) is either demoted to SDFG lifetime or refused outright by
-        # :func:`~dace.codegen.mpr.render`. Emitting an empty struct nobody dereferences would
+        # :func:`~dace.codegen.cpf.render`. Emitting an empty struct nobody dereferences would
         # only invite one back.
         if not standalone:
             structstr = '\n'.join(self.statestruct)
@@ -292,11 +292,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
-        # Write frame code - header. The runtime header is the whole point of MPR's absence: the
+        # Write frame code - header. The runtime header is the whole point of CPF's absence: the
         # standalone preamble (system headers plus the inline definitions the unit actually calls)
-        # is prepended afterwards by :func:`~dace.codegen.mpr.render`, which is the only place that
+        # is prepended afterwards by :func:`~dace.codegen.cpf.render`, which is the only place that
         # can see the finished text and therefore which helpers it uses.
-        if mpr_lowering.standalone():
+        if cpf_lowering.standalone():
             global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n', sdfg)
         else:
             global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
@@ -323,7 +323,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param callsite_stream: Stream to write to (at call site).
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
-        if mpr_lowering.standalone():
+        if cpf_lowering.standalone():
             self.generate_standalone_footer(sdfg, callsite_stream)
             return
         fname = sdfg.name
@@ -488,11 +488,11 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_standalone_footer(self, sdfg: SDFG, callsite_stream: CodeIOStream):
-        """Close MPR's entry function, and nothing else.
+        """Close CPF's entry function, and nothing else.
 
-        The ordinary footer emits four things MPR cannot have: the ``__program_<name>`` wrapper and
+        The ordinary footer emits four things CPF cannot have: the ``__program_<name>`` wrapper and
         the ``__dace_init_<name>`` / ``__dace_exit_<name>`` pair (all three take a state pointer),
-        and the instrumentation report save (a ``dace::perf::Report`` field on that state). MPR's
+        and the instrumentation report save (a ``dace::perf::Report`` field on that state). CPF's
         entry function IS the program, so only its closing brace is left.
 
         Init/exit code is REFUSED rather than dropped. Both come from SDFG properties a user set on
@@ -511,7 +511,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 refused.append(f'{sd.name}.exit_code')
         # An environment is refused only when it has something to RUN or LINK. Most carry nothing
         # but a header list (the ``standard`` library's ``CPU`` is only ``<cstring>``, ``<numeric>``
-        # and friends), and those cost the rendering nothing -- MPR supplies the system headers
+        # and friends), and those cost the rendering nothing -- CPF supplies the system headers
         # itself. One with initialization code, a state field or a link dependency is a different
         # thing: it needs a handshake or a library that a single self-contained unit does not have.
         for env in self.environments:
@@ -527,7 +527,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         if len(self._dispatcher.instrumentation) > 2:
             refused.append('instrumentation')
         if refused:
-            raise NotImplementedError('MPR cannot render this SDFG standalone: it needs ' + '; '.join(refused) +
+            raise NotImplementedError('CPF cannot render this SDFG standalone: it needs ' + '; '.join(refused) +
                                       ', which runs outside the entry function and has no place to run in a '
                                       'single self-contained translation unit')
         callsite_stream.write('}', sdfg)
@@ -549,16 +549,16 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 ext_arrays[arr.storage].append((subsdfg, aname, arr))
 
         # External lifetime means the CALLER owns the buffer and hands it in through
-        # ``__dace_set_external_memory_<storage>`` before the program runs. MPR has no such
+        # ``__dace_set_external_memory_<storage>`` before the program runs. CPF has no such
         # handshake -- its entry function takes the arglist and nothing else -- so an SDFG that
         # needs one cannot be rendered, and saying so beats emitting a kernel that reads a pointer
         # that was never set.
-        if mpr_lowering.standalone():
+        if cpf_lowering.standalone():
             if ext_arrays:
                 names = sorted(name for arrays in ext_arrays.values() for _, name, _ in arrays)
-                raise NotImplementedError('MPR cannot render this SDFG standalone: ' + ', '.join(names) +
+                raise NotImplementedError('CPF cannot render this SDFG standalone: ' + ', '.join(names) +
                                           ' have External lifetime, which requires the caller to supply the '
-                                          'buffer through an init handshake MPR does not emit')
+                                          'buffer through an init handshake CPF does not emit')
             return
 
         # Only generate functions as necessary
@@ -1317,14 +1317,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Open program function
             params = sdfg.signature(arglist=self.arglist)
-            if mpr_lowering.standalone():
-                # MPR's entry point IS the program: no state pointer, no ``__program_`` wrapper to
+            if cpf_lowering.standalone():
+                # CPF's entry point IS the program: no state pointer, no ``__program_`` wrapper to
                 # forward through, and C linkage so a ctypes / dlopen caller finds it under the
                 # SDFG's own name. The argument list is unchanged, so the signature stays the one
                 # ``sdfg.arglist()`` describes -- which is what the test harness builds its ctypes
                 # argument types from.
                 # ``extern "C"`` is a C++ construct and the C dialect's ABI is already C's.
-                linkage = '' if mpr_lowering.standalone_c() else 'extern "C" '
+                linkage = '' if cpf_lowering.standalone_c() else 'extern "C" '
                 function_signature = f'{linkage}void {sdfg.name}({params})\n{{'
             else:
                 if params:

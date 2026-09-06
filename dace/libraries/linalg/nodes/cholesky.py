@@ -115,7 +115,7 @@ class ExpandCholeskyPure(ExpandTransformation):
 class ExpandCholeskyPure(ExpandTransformation):
     """Cholesky as loops and tasklets, with no library behind it.
 
-    Exists so a Cholesky can be rendered, read and edited on its own -- MPR emits one translation
+    Exists so a Cholesky can be rendered, read and edited on its own -- CPF emits one translation
     unit with no BLAS to link, and an SDFG that reaches a vendor implementation cannot be rendered
     at all. It is the textbook right-looking factorization, so it is correct rather than fast; a
     build that has MKL or OpenBLAS should keep using them.

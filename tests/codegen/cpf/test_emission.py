@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end MPR rendering: SDFG in, self-contained C++ out, same numbers.
+"""End-to-end CPF rendering: SDFG in, self-contained C++ out, same numbers.
 
-Every test here follows one shape -- render with :func:`dace.mpr`, assert the text is standalone,
+Every test here follows one shape -- render with :func:`dace.cpf`, assert the text is standalone,
 build it with a bare compiler in an empty directory, run it through ctypes, compare against a numpy
 reference. What differs between them is the SDFG PATTERN, because that is what decides which
-printer, which allocation path and which lowering table entry MPR reaches:
+printer, which allocation path and which lowering table entry CPF reaches:
 
 * elementwise maps and multi-dimensional index helpers (the ``<array>_idx`` shape),
 * a WCR accumulation, which must fold to an OpenMP ``reduction`` clause rather than an atomic,
@@ -15,7 +15,7 @@ printer, which allocation path and which lowering table entry MPR reaches:
 
 Numeric equality is necessary but not sufficient: a rendering that dropped the ``omp parallel for``
 would still produce the right numbers, so each test also asserts the structure that makes the
-output an MPR -- the parallel pragma, the reduction clause, the index helper, the entry signature.
+output an CPF -- the parallel pragma, the reduction clause, the index helper, the entry signature.
 """
 import re
 
@@ -24,12 +24,12 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes import FindFirst
-from dace import mpr
-from dace.codegen.mpr import render as render_sdfg
+from dace import cpf
+from dace.codegen.cpf import render as render_sdfg
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (insert_assumption_guards,
                                                                                 set_symbol_nonnegative_assumptions)
 
-from tests.codegen.mpr.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
+from tests.codegen.cpf.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
                                         compile_diagnostics, wcr_sdfg)
 
 N = dace.symbol('N')
@@ -43,9 +43,9 @@ def render(program, name: str, simplify: bool = True):
     :func:`call_standalone` looks up -- two tests sharing a name would build two different kernels
     into the same symbol.
 
-    The SDFG returned is the PREPARED one MPR rendered, not the one built here: expanding a library
+    The SDFG returned is the PREPARED one CPF rendered, not the one built here: expanding a library
     node can introduce an extent symbol, which makes the two argument lists differ (see
-    :class:`dace.codegen.mpr.Rendering`). Calling with the wrong one drops that argument.
+    :class:`dace.codegen.cpf.Rendering`). Calling with the wrong one drops that argument.
     """
     sdfg = program.to_sdfg(simplify=simplify)
     sdfg.name = name
@@ -54,7 +54,7 @@ def render(program, name: str, simplify: bool = True):
 
 
 def run(sdfg, code, arguments, name: str):
-    """Build ``code`` and invoke it on ``arguments`` (in place, as MPR's entry point writes)."""
+    """Build ``code`` and invoke it on ``arguments`` (in place, as CPF's entry point writes)."""
     assert_standalone(code, name)
     call_standalone(build_standalone(code, name), sdfg, arguments)
 
@@ -66,8 +66,8 @@ def test_elementwise_map_is_rendered_parallel():
     def scale_add(a: dace.float64, x: dace.float64[N], y: dace.float64[N]):
         y[:] = a * x + y
 
-    sdfg, code = render(scale_add, 'mpr_axpy')
-    assert 'extern "C" void mpr_axpy(' in code, 'MPR must export the SDFG under its own name'
+    sdfg, code = render(scale_add, 'cpf_axpy')
+    assert 'extern "C" void cpf_axpy(' in code, 'CPF must export the SDFG under its own name'
     assert '#pragma omp parallel for' in code, 'a data-parallel map must render as an OpenMP loop'
     assert 'x_idx(' in code, 'array accesses go through the generated <array>_idx helper'
 
@@ -75,8 +75,8 @@ def test_elementwise_map_is_rendered_parallel():
     x = np.random.rand(n)
     y = np.random.rand(n)
     expected = 2.5 * x + y
-    run(sdfg, code, {'x': x, 'y': y, 'N': n, 'a': 2.5}, 'mpr_axpy')
-    assert_matches({'y': expected}, {'y': y}, 'mpr_axpy')
+    run(sdfg, code, {'x': x, 'y': y, 'N': n, 'a': 2.5}, 'cpf_axpy')
+    assert_matches({'y': expected}, {'y': y}, 'cpf_axpy')
 
 
 def test_two_dimensional_map_indexes_through_a_stride():
@@ -87,7 +87,7 @@ def test_two_dimensional_map_indexes_through_a_stride():
         for i, j in dace.map[0:M, 0:N]:
             b[j, i] = a[i, j] + 1.0
 
-    sdfg, code = render(transpose_add, 'mpr_transpose')
+    sdfg, code = render(transpose_add, 'cpf_transpose')
     assert '#pragma omp parallel for' in code
     # The helper takes the two indices, then whichever extents the stride arithmetic needs (a
     # symbolic shape is passed in rather than baked in), so match the leading two and not the arity.
@@ -98,14 +98,14 @@ def test_two_dimensional_map_indexes_through_a_stride():
     a = np.random.rand(m, n)
     b = np.zeros((n, m))
     expected = a.T + 1.0
-    run(sdfg, code, {'a': a, 'b': b, 'M': m, 'N': n}, 'mpr_transpose')
-    assert_matches({'b': expected}, {'b': b}, 'mpr_transpose')
+    run(sdfg, code, {'a': a, 'b': b, 'M': m, 'N': n}, 'cpf_transpose')
+    assert_matches({'b': expected}, {'b': b}, 'cpf_transpose')
 
 
 def test_wcr_folds_into_an_openmp_reduction():
     """A WCR accumulator must become a ``reduction`` clause.
 
-    MPR allows exactly the tree-reducible form. The alternative lowering is an atomic through
+    CPF allows exactly the tree-reducible form. The alternative lowering is an atomic through
     ``dace::wcr_fixed``, which is a runtime symbol -- so an atomic fallback here would not merely be
     slow, it would fail :func:`assert_standalone`. Asserting the clause pins WHICH of the two ran.
     """
@@ -114,18 +114,18 @@ def test_wcr_folds_into_an_openmp_reduction():
     def total(x: dace.float64[N], out: dace.float64[1]):
         out[0] = np.sum(x)
 
-    sdfg, code = render(total, 'mpr_sum')
+    sdfg, code = render(total, 'cpf_sum')
     assert 'reduction(' in code, 'a WCR accumulation must fold into an OpenMP reduction clause'
 
     n = 4096
     x = np.random.rand(n)
     out = np.zeros(1)
-    run(sdfg, code, {'x': x, 'out': out, 'N': n}, 'mpr_sum')
-    assert_matches({'out': np.array([x.sum()])}, {'out': out}, 'mpr_sum')
+    run(sdfg, code, {'x': x, 'out': out, 'N': n}, 'cpf_sum')
+    assert_matches({'out': np.array([x.sum()])}, {'out': out}, 'cpf_sum')
 
 
 #: Non-conflicting conflict resolutions, with the statement each must render to and its oracle.
-#: ``Sub`` and ``Div`` are not in the table -- no OpenMP clause names them, so they reach MPR as
+#: ``Sub`` and ``Div`` are not in the table -- no OpenMP clause names them, so they reach CPF as
 #: ``Custom``, which is why one entry per SPELLING is not the same as one entry per reduction type.
 NON_CONFLICTING_WCR = [
     ('sub', 'lambda p, q: p - q', '*(out + i) = (*(out + i) - (y));', lambda o, x: o - x),
@@ -150,9 +150,9 @@ def test_non_conflicting_wcr_renders_without_the_reduction_runtime(label, resolu
     dialects are compared against each other: a C++-only spelling (a lambda) would pass a numeric
     check and still leave the C dialect with nothing to emit.
     """
-    rendering = render_sdfg(wcr_sdfg(f'mpr_resolve_{label}', resolution))
+    rendering = render_sdfg(wcr_sdfg(f'cpf_resolve_{label}', resolution))
     cpp_code = rendering.code
-    c_code = render_sdfg(wcr_sdfg(f'mpr_resolve_{label}', resolution), language='c').code
+    c_code = render_sdfg(wcr_sdfg(f'cpf_resolve_{label}', resolution), language='c').code
     assert statement in cpp_code, f'{label}: expected {statement!r} in the C++ rendering'
     assert statement in c_code, f'{label}: expected {statement!r} in the C rendering'
     for leaked in ('wcr_fixed', 'wcr_custom'):
@@ -165,14 +165,14 @@ def test_non_conflicting_wcr_renders_without_the_reduction_runtime(label, resolu
     else:
         a, out = rng.random(32) + 0.5, rng.random(32) + 0.5  # away from zero, so the division is conditioned
     expected = oracle(out.copy(), a)
-    run(rendering.sdfg, cpp_code, {'a': a, 'out': out}, f'mpr_resolve_{label}')
-    assert_matches({'out': expected}, {'out': out}, f'mpr_resolve_{label}')
+    run(rendering.sdfg, cpp_code, {'a': a, 'out': out}, f'cpf_resolve_{label}')
+    assert_matches({'out': expected}, {'out': out}, f'cpf_resolve_{label}')
 
 
 def test_sequential_loop_around_a_parallel_map():
     """A time loop over a parallel body: the loop stays sequential, the body stays parallel.
 
-    This is the shape MPR exists to make visible -- the maximally parallel rendering of a program
+    This is the shape CPF exists to make visible -- the maximally parallel rendering of a program
     whose outer axis genuinely carries a dependence.
     """
 
@@ -181,9 +181,9 @@ def test_sequential_loop_around_a_parallel_map():
         for _ in range(steps):
             a[1:-1] = 0.25 * (a[:-2] + 2.0 * a[1:-1] + a[2:])
 
-    sdfg, code = render(diffuse, 'mpr_diffuse')
+    sdfg, code = render(diffuse, 'cpf_diffuse')
     assert '#pragma omp parallel for' in code, 'the inner stencil sweep is data-parallel'
-    body = code[code.index('extern "C" void mpr_diffuse('):]
+    body = code[code.index('extern "C" void cpf_diffuse('):]
     outer = body.index('for (')
     inner = body.index('#pragma omp parallel for')
     assert outer < inner, ('the sequential time loop must enclose the parallel sweep; the reverse order would '
@@ -194,8 +194,8 @@ def test_sequential_loop_around_a_parallel_map():
     expected = a.copy()
     for _ in range(5):
         expected[1:-1] = 0.25 * (expected[:-2] + 2.0 * expected[1:-1] + expected[2:])
-    run(sdfg, code, {'a': a, 'N': n, 'steps': 5}, 'mpr_diffuse')
-    assert_matches({'a': expected}, {'a': a}, 'mpr_diffuse')
+    run(sdfg, code, {'a': a, 'N': n, 'steps': 5}, 'cpf_diffuse')
+    assert_matches({'a': expected}, {'a': a}, 'cpf_diffuse')
 
 
 def test_maths_functions_reach_the_standard_library():
@@ -209,7 +209,7 @@ def test_maths_functions_reach_the_standard_library():
                 yout >> y[i]
                 yout = math.sqrt(math.fabs(xin)) + math.exp(-math.fabs(xin))
 
-    sdfg, code = render(mixed_maths, 'mpr_maths')
+    sdfg, code = render(mixed_maths, 'cpf_maths')
     assert 'std::sqrt' in code, 'sqrt must be lowered to the standard library, not dace::math::sqrt'
     assert 'std::exp' in code
 
@@ -217,8 +217,8 @@ def test_maths_functions_reach_the_standard_library():
     x = np.random.rand(n) * 4.0 - 2.0
     y = np.zeros(n)
     expected = np.sqrt(np.abs(x)) + np.exp(-np.abs(x))
-    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'mpr_maths')
-    assert_matches({'y': expected}, {'y': y}, 'mpr_maths')
+    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'cpf_maths')
+    assert_matches({'y': expected}, {'y': y}, 'cpf_maths')
 
 
 def test_integer_index_arithmetic_stays_integer():
@@ -234,15 +234,15 @@ def test_integer_index_arithmetic_stays_integer():
         for i in dace.map[0:N // 2]:
             y[i] = x[2 * i] + x[2 * i + 1]
 
-    sdfg, code = render(halves, 'mpr_halves')
-    assert 'int_floor' not in code, 'int_floor is a DaCe runtime function; MPR lowers it to C++ division'
+    sdfg, code = render(halves, 'cpf_halves')
+    assert 'int_floor' not in code, 'int_floor is a DaCe runtime function; CPF lowers it to C++ division'
 
     n = 65
     x = np.arange(n, dtype=np.int64)
     y = np.zeros(n // 2, dtype=np.int64)
     expected = x[0:2 * (n // 2):2] + x[1:2 * (n // 2):2]
-    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'mpr_halves')
-    assert_matches({'y': expected}, {'y': y}, 'mpr_halves')
+    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'cpf_halves')
+    assert_matches({'y': expected}, {'y': y}, 'cpf_halves')
 
 
 def test_single_precision_and_integer_types_survive():
@@ -253,7 +253,7 @@ def test_single_precision_and_integer_types_survive():
         for i in dace.map[0:N]:
             y[i] = x[i] * dace.float32(k[i])
 
-    sdfg, code = render(weighted, 'mpr_mixed_types')
+    sdfg, code = render(weighted, 'cpf_mixed_types')
     assert 'float ' in code and 'int32_t' in code or 'int ' in code
 
     n = 100
@@ -261,15 +261,15 @@ def test_single_precision_and_integer_types_survive():
     k = np.arange(n, dtype=np.int32)
     y = np.zeros(n, dtype=np.float32)
     expected = x * k.astype(np.float32)
-    run(sdfg, code, {'x': x, 'k': k, 'y': y, 'N': n}, 'mpr_mixed_types')
-    assert_matches({'y': expected}, {'y': y}, 'mpr_mixed_types')
+    run(sdfg, code, {'x': x, 'k': k, 'y': y, 'N': n}, 'cpf_mixed_types')
+    assert_matches({'y': expected}, {'y': y}, 'cpf_mixed_types')
     assert y.dtype == np.float32
 
 
 def test_matrix_multiply_renders_as_loops():
     """A matmul: the one place a library node would otherwise reach for BLAS.
 
-    MPR has no BLAS to call, so the rendering must be loops. The reference is numpy's, so a wrong
+    CPF has no BLAS to call, so the rendering must be loops. The reference is numpy's, so a wrong
     accumulation order would still pass the fp64 tolerance -- the structural assertion is what
     states that no library call survived.
     """
@@ -278,12 +278,12 @@ def test_matrix_multiply_renders_as_loops():
     def matmul(a: dace.float64[M, N], b: dace.float64[N, M], c: dace.float64[M, M]):
         c[:] = a @ b
 
-    sdfg, code = render(matmul, 'mpr_matmul')
-    # Comments are stripped first: MPR NAMES the library node it rendered away ("// BLAS gemm"),
+    sdfg, code = render(matmul, 'cpf_matmul')
+    # Comments are stripped first: CPF NAMES the library node it rendered away ("// BLAS gemm"),
     # and that line is the opposite of a leaked BLAS call.
     executable = '\n'.join(line for line in code.splitlines() if not line.strip().startswith('//'))
     for banned in ('cblas', 'dgemm', 'MKL', 'BLAS'):
-        assert banned not in executable, (f'MPR rendered a BLAS call ({banned}); it must render the loop nest '
+        assert banned not in executable, (f'CPF rendered a BLAS call ({banned}); it must render the loop nest '
                                           'instead')
     assert '// BLAS gemm' in code, 'the rendering must still say what the loop nest used to be'
 
@@ -291,8 +291,8 @@ def test_matrix_multiply_renders_as_loops():
     a = np.random.rand(m, n)
     b = np.random.rand(n, m)
     c = np.zeros((m, m))
-    run(sdfg, code, {'a': a, 'b': b, 'c': c, 'M': m, 'N': n}, 'mpr_matmul')
-    assert_matches({'c': a @ b}, {'c': c}, 'mpr_matmul')
+    run(sdfg, code, {'a': a, 'b': b, 'c': c, 'M': m, 'N': n}, 'cpf_matmul')
+    assert_matches({'c': a @ b}, {'c': c}, 'cpf_matmul')
 
 
 def test_strided_copy_renders_as_a_loop_not_a_runtime_call():
@@ -300,7 +300,7 @@ def test_strided_copy_renders_as_a_loop_not_a_runtime_call():
 
     The copy library node's ``Auto`` implementation picks a memcpy for a contiguous buffer and the
     runtime's N-dimensional strided copy otherwise. The second is a template from a DaCe header, so
-    MPR has to have made the choice itself -- and a transposed slice assignment is the shape that
+    CPF has to have made the choice itself -- and a transposed slice assignment is the shape that
     forces it.
     """
 
@@ -308,20 +308,20 @@ def test_strided_copy_renders_as_a_loop_not_a_runtime_call():
     def strided(a: dace.float64[M, N], b: dace.float64[N, M]):
         b[:] = np.transpose(a)
 
-    sdfg, code = render(strided, 'mpr_strided_copy')
+    sdfg, code = render(strided, 'cpf_strided_copy')
     assert 'memcpy' not in code or 'for (' in code, 'a strided copy cannot be a single memcpy'
 
     m, n = 9, 14
     a = np.random.rand(m, n)
     b = np.zeros((n, m))
-    run(sdfg, code, {'a': a, 'b': b, 'M': m, 'N': n}, 'mpr_strided_copy')
-    assert_matches({'b': a.T}, {'b': b}, 'mpr_strided_copy')
+    run(sdfg, code, {'a': a, 'b': b, 'M': m, 'N': n}, 'cpf_strided_copy')
+    assert_matches({'b': a.T}, {'b': b}, 'cpf_strided_copy')
 
 
 def test_scan_is_inlined_rather_than_called():
     """A prefix sum must render as code, not as a call into the DaCe scan header.
 
-    ``dace/scan.hpp`` is exactly the kind of dependency MPR cannot have; the standard library's
+    ``dace/scan.hpp`` is exactly the kind of dependency CPF cannot have; the standard library's
     ``std::inclusive_scan`` is equally unavailable to it, since the CPU expansion reaches it through
     that header's environment. The pure expansion is loops, which is what has to come out.
     """
@@ -330,21 +330,21 @@ def test_scan_is_inlined_rather_than_called():
     def prefix(x: dace.float64[N], y: dace.float64[N]):
         y[:] = np.cumsum(x)
 
-    sdfg, code = render(prefix, 'mpr_scan')
+    sdfg, code = render(prefix, 'cpf_scan')
     assert 'inclusive_scan' not in code and 'partial_sum' not in code, (
         'the scan reached the standard-library algorithm through the DaCe scan header instead of being inlined')
 
     n = 512
     x = np.random.rand(n)
     y = np.zeros(n)
-    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'mpr_scan')
-    assert_matches({'y': np.cumsum(x)}, {'y': y}, 'mpr_scan')
+    run(sdfg, code, {'x': x, 'y': y, 'N': n}, 'cpf_scan')
+    assert_matches({'y': np.cumsum(x)}, {'y': y}, 'cpf_scan')
 
 
 def test_rendering_is_deterministic():
     """The same SDFG renders to the same text twice.
 
-    MPR output is meant to be read and diffed. A rendering that reordered helpers between runs --
+    CPF output is meant to be read and diffed. A rendering that reordered helpers between runs --
     from a set iteration or a dictionary keyed on ``id()`` -- would make every diff noise.
     """
 
@@ -352,9 +352,9 @@ def test_rendering_is_deterministic():
     def saxpy(a: dace.float64, x: dace.float64[N], y: dace.float64[N]):
         y[:] = a * x + y
 
-    first = render(saxpy, 'mpr_determinism')[1]
-    second = render(saxpy, 'mpr_determinism')[1]
-    assert first == second, 'MPR rendered the same SDFG two different ways'
+    first = render(saxpy, 'cpf_determinism')[1]
+    second = render(saxpy, 'cpf_determinism')[1]
+    assert first == second, 'CPF rendered the same SDFG two different ways'
 
 
 def test_output_builds_without_warnings():
@@ -365,10 +365,10 @@ def test_output_builds_without_warnings():
         for i in dace.map[0:N]:
             y[i] = min(max(x[i], 0.0), 1.0)
 
-    _, code = render(clamp, 'mpr_clamp')
-    assert 'mpr_max' in code or 'mpr_min' in code, 'min/max must be the runtime form, not the standard one'
-    diagnostics = compile_diagnostics(code, 'mpr_clamp')
-    assert not diagnostics.strip(), f'MPR output warns:\n{diagnostics}'
+    _, code = render(clamp, 'cpf_clamp')
+    assert 'cpf_max' in code or 'cpf_min' in code, 'min/max must be the runtime form, not the standard one'
+    diagnostics = compile_diagnostics(code, 'cpf_clamp')
+    assert not diagnostics.strip(), f'CPF output warns:\n{diagnostics}'
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
@@ -377,8 +377,8 @@ def test_minmax_follows_python_on_nan(language):
 
     That is Python's rule, and a ``@dace.program`` is Python, so ``max(x, 0.0)`` keeps a NaN and
     ``max(0.0, x)`` swallows it -- the two orders answer differently, which is what makes this
-    worth pinning. The runtime and both MPR dialects have to agree on it; Python is the oracle for
-    the runtime, and the compiled SDFG is the oracle for MPR.
+    worth pinning. The runtime and both CPF dialects have to agree on it; Python is the oracle for
+    the runtime, and the compiled SDFG is the oracle for CPF.
     """
 
     @dace.program
@@ -388,7 +388,7 @@ def test_minmax_follows_python_on_nan(language):
             swallowed[i] = max(0.0, x[i])
 
     sdfg = clamp_nan.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_minmax_nan_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_minmax_nan_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
 
     x = np.array([np.nan, -1.0, 0.5, 2.0])
@@ -403,56 +403,56 @@ def test_minmax_follows_python_on_nan(language):
                           equal_nan=True), f'the runtime clamps to {kept}, Python to {expected_kept}'
     assert np.array_equal(swallowed, expected_swallowed, equal_nan=True)
 
-    mpr_kept, mpr_swallowed = np.zeros(4), np.zeros(4)
+    cpf_kept, cpf_swallowed = np.zeros(4), np.zeros(4)
     call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
         'x': x,
-        'kept': mpr_kept,
-        'swallowed': mpr_swallowed
+        'kept': cpf_kept,
+        'swallowed': cpf_swallowed
     })
-    assert np.array_equal(mpr_kept, kept, equal_nan=True), f'MPR clamps to {mpr_kept}, the SDFG to {kept}'
-    assert np.array_equal(mpr_swallowed, swallowed, equal_nan=True)
+    assert np.array_equal(cpf_kept, kept, equal_nan=True), f'CPF clamps to {cpf_kept}, the SDFG to {kept}'
+    assert np.array_equal(cpf_swallowed, swallowed, equal_nan=True)
 
 
 def test_persistent_lifetime_is_demoted_not_left_in_a_state():
-    """A persistent transient has nowhere to live in MPR, so it must become an SDFG-lifetime one."""
+    """A persistent transient has nowhere to live in CPF, so it must become an SDFG-lifetime one."""
 
     @dace.program
     def with_persistent(x: dace.float64[N], y: dace.float64[N]):
         y[:] = (x + 1.0) * (x + 2.0)
 
     sdfg = with_persistent.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_persistent'
+    sdfg.name = 'cpf_persistent'
     persistent = [name for name, desc in sdfg.arrays.items() if desc.transient]
     assert persistent, 'this test needs a transient to mark persistent, or it asserts nothing'
     for name in persistent:
         sdfg.arrays[name].lifetime = dace.dtypes.AllocationLifetime.Persistent
 
     rendering = render_sdfg(sdfg)
-    assert_standalone(rendering.code, 'mpr_persistent')
+    assert_standalone(rendering.code, 'cpf_persistent')
     assert all(sdfg.arrays[name].lifetime == dace.dtypes.AllocationLifetime.Persistent
-               for name in persistent), ("MPR must render a COPY: the caller's SDFG still describes persistent storage")
+               for name in persistent), ("CPF must render a COPY: the caller's SDFG still describes persistent storage")
     assert all(rendering.sdfg.arrays[name].lifetime == dace.dtypes.AllocationLifetime.SDFG
                for name in persistent), ('the rendered copy must hold the demoted lifetime')
 
     n = 32
     x = np.random.rand(n)
     y = np.zeros(n)
-    call_standalone(build_standalone(rendering.code, 'mpr_persistent'), rendering.sdfg, {'x': x, 'y': y, 'N': n})
-    assert_matches({'y': (x + 1.0) * (x + 2.0)}, {'y': y}, 'mpr_persistent')
+    call_standalone(build_standalone(rendering.code, 'cpf_persistent'), rendering.sdfg, {'x': x, 'y': y, 'N': n})
+    assert_matches({'y': (x + 1.0) * (x + 2.0)}, {'y': y}, 'cpf_persistent')
 
 
 def test_gpu_schedules_are_refused_with_a_reason():
-    """MPR renders one host unit. A GPU SDFG must say so, not emit half a program."""
+    """CPF renders one host unit. A GPU SDFG must say so, not emit half a program."""
 
     @dace.program
     def on_gpu(x: dace.float64[N], y: dace.float64[N]):
         y[:] = x * 2.0
 
     sdfg = on_gpu.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_gpu'
+    sdfg.name = 'cpf_gpu'
     sdfg.apply_gpu_transformations()
     with pytest.raises(NotImplementedError, match='host translation unit'):
-        mpr(sdfg)
+        cpf(sdfg)
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
@@ -468,7 +468,7 @@ def test_complex_containers_render_in_both_dialects(language):
         b[:] = a * 2.0
 
     sdfg = scale.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_complex_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_complex_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
     expected = 'double _Complex' if language == 'c' else 'std::complex<double>'
     assert expected in rendering.code, f'the container type is not spelled {expected}'
@@ -484,7 +484,7 @@ def test_complex_containers_render_in_both_dialects(language):
 def test_cholesky_renders_as_loops_with_no_library(language):
     """``np.linalg.cholesky`` reaches a library node that only vendor BLAS implements.
 
-    MPR renders it through the pure expansion instead, so the output links against nothing. The
+    CPF renders it through the pure expansion instead, so the output links against nothing. The
     provenance comment is asserted too: a factorization rendered as anonymous loops is exactly what
     the comment exists to prevent.
     """
@@ -494,7 +494,7 @@ def test_cholesky_renders_as_loops_with_no_library(language):
         L[:] = np.linalg.cholesky(A)
 
     sdfg = factorize.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_cholesky_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_cholesky_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
     assert '// Cholesky factorization' in rendering.code, 'the expansion rendered without its provenance comment'
@@ -518,7 +518,7 @@ def test_linear_solve_renders_as_loops_with_no_library(language):
         X[:] = np.linalg.solve(A, B)
 
     sdfg = solve.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_solve_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_solve_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
     assert '// solve the linear system' in rendering.code, 'the expansion rendered without its provenance comment'
@@ -543,7 +543,7 @@ def test_matrix_inverse_renders_as_loops_with_no_library(language):
         B[:] = np.linalg.inv(A)
 
     sdfg = invert.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_inv_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_inv_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
 
@@ -566,7 +566,7 @@ def test_conditional_expression_renders_as_a_ternary(language):
             out[i, j] = 1 if i == j else 0
 
     sdfg = identity.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_ite_' + ('cpp' if language == 'c++' else 'c')
+    sdfg.name = 'cpf_ite_' + ('cpp' if language == 'c++' else 'c')
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
     assert re.search(r'\?\s*\(1\)\s*:\s*\(0\)', rendering.code), 'the conditional did not render as a ternary'
@@ -584,7 +584,7 @@ def find_first_sdfg(name: str, implementation: str):
     """An SDFG whose only node is the search an early-exit loop lifts to.
 
     Built from the library node rather than from a ``@dace.program`` with a ``break`` so that the
-    test pins MPR against the node's own contract: which expansion ran, and what its C++ body says.
+    test pins CPF against the node's own contract: which expansion ran, and what its C++ body says.
     ``EarlyExitToFindIndex`` is what puts this node into a real kernel, and it is tested where it
     lives.
     """
@@ -620,20 +620,20 @@ def find_first_input(hit):
 def test_find_first_renders_the_cancelling_search(implementation):
     """A find-first must render as the short-circuiting parallel search, not as a scan of the range.
 
-    ``dace::find_first_index`` lives in ``dace/runtime/include/dace/detect.h``, which MPR cannot
+    ``dace::find_first_index`` lives in ``dace/runtime/include/dace/detect.h``, which CPF cannot
     include, and the value of the construct is that the range past the answer is never read. So the
     structure is asserted as well as the numbers: a rendering that walked the whole range would
     agree on every case below and still not be a find-first.
     """
-    sdfg = find_first_sdfg('mpr_find_first_%s' % implementation.lower(), implementation)
+    sdfg = find_first_sdfg('cpf_find_first_%s' % implementation.lower(), implementation)
     rendering = render_sdfg(sdfg)
     code = rendering.code
     assert 'schedule(dynamic, 1)' in code and 'reduction(min : best)' in code, (
         'the search lost its cancelling parallel form and became a plain scan of the range')
     assert '#pragma omp simd reduction(min : block)' in code, 'the in-chunk scan is no longer vectorized'
 
-    assert_standalone(code, 'mpr_find_first')
-    library = build_standalone(code, 'mpr_find_first_%s' % implementation.lower())
+    assert_standalone(code, 'cpf_find_first')
+    library = build_standalone(code, 'cpf_find_first_%s' % implementation.lower())
     for hit in FIND_FIRST_HITS:
         a, expected = find_first_input(hit)
         out = np.zeros(1, dtype=np.int64)
@@ -643,7 +643,7 @@ def test_find_first_renders_the_cancelling_search(implementation):
 
 def stream_sdfg() -> dace.SDFG:
     """A map writing into a stream, which is the runtime class ``dace::Stream``."""
-    sdfg = dace.SDFG('mpr_stream')
+    sdfg = dace.SDFG('cpf_stream')
     sdfg.add_array('a', [32], dace.float64)
     sdfg.add_stream('s', dace.float64, buffer_size=32, transient=True)
     state = sdfg.add_state()
@@ -660,7 +660,7 @@ def consume_sdfg() -> dace.SDFG:
     Wired by hand rather than through ``add_memlet_path`` because the scope's stream arrives on the
     named ``IN_stream`` connector, which the path helper does not know to bind.
     """
-    sdfg = dace.SDFG('mpr_consume')
+    sdfg = dace.SDFG('cpf_consume')
     sdfg.add_stream('s', dace.float64, buffer_size=32, transient=True)
     sdfg.add_array('out', [32], dace.float64)
     state = sdfg.add_state()
@@ -674,7 +674,7 @@ def consume_sdfg() -> dace.SDFG:
 
 def vector_wcr_sdfg() -> dace.SDFG:
     """A non-conflicting WCR on a VECTOR element type, which is ``dace::vec<T, N>``."""
-    sdfg = dace.SDFG('mpr_vector_wcr')
+    sdfg = dace.SDFG('cpf_vector_wcr')
     element = dace.vector(dace.float64, 4)
     sdfg.add_array('a', [8], element)
     sdfg.add_array('out', [8], element)
@@ -692,7 +692,7 @@ def vector_wcr_sdfg() -> dace.SDFG:
 
 #: The three constructs whose only implementation is a DaCe runtime class, with the phrase each
 #: refusal has to name. They are pinned together because they fail for one reason -- a template
-#: carrying state (a queue, a quiescence counter, a SIMD element) that MPR cannot inline -- and the
+#: carrying state (a queue, a quiescence counter, a SIMD element) that CPF cannot inline -- and the
 #: point of the test is that each says WHICH construct, rather than failing later on the
 #: self-containment assertion, whose message names ``dace::`` and not the container it came from.
 RUNTIME_ONLY_CONSTRUCTS = [
@@ -711,9 +711,9 @@ def test_runtime_only_constructs_are_refused_with_a_reason(label, builder, reaso
     lock-free queue, so a C++ rendering that quietly succeeded would be the bug.
     """
     sdfg = builder()
-    sdfg.validate()  # the refusal has to be MPR's, not a malformed SDFG the builder wrote
+    sdfg.validate()  # the refusal has to be CPF's, not a malformed SDFG the builder wrote
     with pytest.raises(NotImplementedError, match=re.escape(reason)):
-        mpr(sdfg, language=language)
+        cpf(sdfg, language=language)
 
 
 def assumption_guard_sdfg(name: str) -> dace.SDFG:
@@ -749,7 +749,7 @@ def test_the_assumption_guard_renders_in_both_dialects(language):
     error. Both legs are built by their own driver in an empty directory, which is what turns a
     missing declaration into a failure rather than an inherited include path.
     """
-    sdfg = assumption_guard_sdfg(f'mpr_guard_{"cpp" if language == "c++" else "c"}')
+    sdfg = assumption_guard_sdfg(f'cpf_guard_{"cpp" if language == "c++" else "c"}')
     guards = [
         node.code.as_string for state in sdfg.states() for node in state.nodes()
         if isinstance(node, dace.sdfg.nodes.Tasklet) and 'std::abort' in node.code.as_string

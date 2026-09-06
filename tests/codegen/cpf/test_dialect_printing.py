@@ -12,10 +12,10 @@ import sympy
 
 import pytest
 
-from dace import mpr_lowering, symbolic
+from dace import cpf_lowering, symbolic
 from dace.codegen.common import sym2cpp
-from dace.mpr_lowering import Dialect
-from tests.codegen.mpr.conftest import assert_standalone
+from dace.cpf_lowering import Dialect
+from tests.codegen.cpf.conftest import assert_standalone
 
 X = sympy.Symbol('x')
 Y = sympy.Symbol('y')
@@ -75,9 +75,9 @@ def test_memoization_does_not_mix_dialects_taken_from_the_scope(first):
     """The same, for the callers that do NOT name a dialect -- which is nearly all of them.
 
     ``symstr``'s several hundred call sites in the code generators pass no dialect and take the
-    ambient one from :func:`~dace.mpr_lowering.dialect_scope`. That value has to be resolved in
+    ambient one from :func:`~dace.cpf_lowering.dialect_scope`. That value has to be resolved in
     FRONT of the memoized body: resolved inside it, every ambient-dialect caller shares the one key
-    ``dialect=None``, and an MPR rendering earlier in the process serves ``std::exp`` back to the
+    ``dialect=None``, and an CPF rendering earlier in the process serves ``std::exp`` back to the
     runtime printer -- the exact spelling that is ambiguous for a 16-bit float. The explicit-dialect
     test above cannot see this: it never uses the key that collides.
     """
@@ -85,9 +85,9 @@ def test_memoization_does_not_mix_dialects_taken_from_the_scope(first):
     expression = sympy.Abs(X * 5 + 2)
     expected = {dialect: printed(expression, dialect) for dialect in (first, second)}
     symbolic.symstr.cache_clear()
-    with mpr_lowering.dialect_scope(first):
+    with cpf_lowering.dialect_scope(first):
         primed_first = symbolic.symstr(expression, cpp_mode=True)
-    with mpr_lowering.dialect_scope(second):
+    with cpf_lowering.dialect_scope(second):
         primed_second = symbolic.symstr(expression, cpp_mode=True)
     assert primed_first == expected[first], f'{first} changed when taken from the scope'
     assert primed_second == expected[second], (f'{second} came back as {primed_second!r} after {first} primed the '
@@ -109,7 +109,7 @@ def test_sym2cpp_memoization_does_not_mix_dialects(first):
     # Max is an UNQUALIFIED runtime global, so the runtime spelling carries no ``dace::`` marker
     # at all -- which is why the harness checks these by name rather than by namespace.
     assert runtime.startswith('Max('), runtime
-    assert standalone.startswith('mpr_max('), standalone
+    assert standalone.startswith('cpf_max('), standalone
 
 
 def test_sym2cpp_defaults_to_the_runtime_dialect():
@@ -132,42 +132,42 @@ CTYPES = [
 @pytest.mark.parametrize('ctype,cxx,c', CTYPES, ids=[ctype for ctype, _, _ in CTYPES])
 def test_ctype_lowering(ctype, cxx, c):
     """Only the few ``dace::``-namespaced spellings move; the already-plain ones are untouched."""
-    assert mpr_lowering.ctype_for(ctype, Dialect.STANDALONE) == cxx
-    assert mpr_lowering.ctype_for(ctype, Dialect.STANDALONE_C) == c
+    assert cpf_lowering.ctype_for(ctype, Dialect.STANDALONE) == cxx
+    assert cpf_lowering.ctype_for(ctype, Dialect.STANDALONE_C) == c
 
 
 def test_a_complex_type_has_no_cpp_spelling_left_in_c():
     """``std::complex<T>`` reaches the C tables too: a library body may already have written it."""
     for cxx, c in (('std::complex<float>', 'float _Complex'), ('std::complex<double>', 'double _Complex')):
-        assert mpr_lowering.ctype_for(cxx, Dialect.STANDALONE_C) == c
+        assert cpf_lowering.ctype_for(cxx, Dialect.STANDALONE_C) == c
 
 
 @pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])
-@pytest.mark.parametrize('ctype', sorted(mpr_lowering.UNSUPPORTED_CTYPES))
+@pytest.mark.parametrize('ctype', sorted(cpf_lowering.UNSUPPORTED_CTYPES))
 def test_unsupported_ctypes_refuse_loudly(ctype, dialect):
     """fp16/bfloat16/fp8 have no portable spelling in either language, so they are refused."""
     with pytest.raises(NotImplementedError, match='cannot emit the type'):
-        mpr_lowering.ctype_for(ctype, dialect)
+        cpf_lowering.ctype_for(ctype, dialect)
 
 
 @pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])
 def test_helpers_used_finds_calls_and_ignores_definitions(dialect):
     """The helper scan sees a call, and is not confused by a substring of a longer name."""
-    assert mpr_lowering.helpers_used('y = int_ceil(a, b) + mod(c, d);', dialect) == {'int_ceil', 'mod'}
-    assert mpr_lowering.helpers_used('y = my_mod(c, d) + a.mod(e);', dialect) == set()
+    assert cpf_lowering.helpers_used('y = int_ceil(a, b) + mod(c, d);', dialect) == {'int_ceil', 'mod'}
+    assert cpf_lowering.helpers_used('y = my_mod(c, d) + a.mod(e);', dialect) == set()
 
 
 def test_helpers_used_finds_the_c_dispatch_macros():
     """The C macros go through the same scan, which is what makes the preamble carry them."""
-    assert mpr_lowering.helpers_used('y = mpr_sqrt(x);', Dialect.STANDALONE_C) == {'mpr_sqrt'}
-    assert mpr_lowering.helpers_used('y = mpr_sqrt(x);', Dialect.STANDALONE) == set()
+    assert cpf_lowering.helpers_used('y = cpf_sqrt(x);', Dialect.STANDALONE_C) == {'cpf_sqrt'}
+    assert cpf_lowering.helpers_used('y = cpf_sqrt(x);', Dialect.STANDALONE) == set()
 
 
 @pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])
 def test_helpers_used_drives_the_definitions_a_unit_needs(dialect):
     """Scanning emitted text yields exactly the definitions that text requires, callees included."""
     code = printed(symbolic.mod(X, Y), dialect)
-    assert mpr_lowering.definitions_for(mpr_lowering.helpers_used(code, dialect), dialect)
+    assert cpf_lowering.definitions_for(cpf_lowering.helpers_used(code, dialect), dialect)
 
 
 #: ``(label, expression, inferred ctype)``. A sympy ``Rational`` is an exact fraction of two

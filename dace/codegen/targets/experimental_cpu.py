@@ -19,7 +19,7 @@ from pygments.lexers import CppLexer
 from pygments.token import Token
 
 from dace import data as dt
-from dace import dtypes, mpr_lowering, symbolic
+from dace import dtypes, cpf_lowering, symbolic
 from dace.codegen import cppunparse
 from dace.codegen.codeobject import CODE_ANNOTATION
 from dace.codegen.common import emits_tree_reductions, sym2cpp
@@ -164,7 +164,7 @@ def index_function_qualifier() -> str:
     an un-inlined access would block vectorization."""
     if Config.get('compiler', 'cpu', 'codegen_params', 'index_fn_qualifier') == 'always_inline':
         return 'static __attribute__((always_inline)) inline constexpr'
-    if mpr_lowering.standalone():
+    if cpf_lowering.standalone():
         return STANDALONE_INDEX_FUNCTION_QUALIFIER
     return INDEX_FUNCTION_QUALIFIER
 
@@ -183,7 +183,7 @@ def index_ctype() -> str:
 def size_qualifier(is_constant: bool) -> str:
     """Qualifier for an ``<array>_size`` helper: ``consteval`` for a constant extent under C++20+
     (folds it at compile time), else ``constexpr`` (the same qualifier as the index functions)."""
-    standalone = mpr_lowering.standalone()
+    standalone = cpf_lowering.standalone()
     if not is_constant:
         return STANDALONE_INDEX_FUNCTION_QUALIFIER if standalone else INDEX_FUNCTION_QUALIFIER
     standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
@@ -241,7 +241,7 @@ def format_index_helper(qualifier: str, ctype: str, fnname: str, parameters: Lis
     :returns: the definition to emit once per translation unit.
     """
     declared = ', '.join('%s %s' % (ctype, name) for name in parameters)
-    if not mpr_lowering.standalone_c():
+    if not cpf_lowering.standalone_c():
         return '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname, declared, body)
     # ``(void)`` rather than ``()``: C23 makes the two equivalent, but the renders are read and
     # diffed by hand and only one of the two says "takes nothing" in every C anyone might paste it
@@ -448,7 +448,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
         """Write the ``// <what this used to be>`` line for code a library node's expansion produced.
 
-        MPR records the description when it expands the node (``dace.codegen.mpr``); by the time
+        CPF records the description when it expands the node (``dace.codegen.cpf``); by the time
         the code is emitted, all that is left is loops and tasklets. Written ONCE per description
         per translation unit: a Cholesky expands into several maps and dozens of tasklets, and a
         comment on each would bury the code it is there to explain.
@@ -456,14 +456,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         A no-op outside a standalone rendering -- nothing records provenance then, so the ordinary
         output is unchanged.
         """
-        record = mpr_lowering.describe(node.guid)
+        record = cpf_lowering.describe(node.guid)
         if record is None:
             return
         origin, description = record
         if origin in self._emitted_provenance:
             return
         self._emitted_provenance.add(origin)
-        # Multi-line when a specialization hint was folded in (``dace.codegen.mpr``): one ``//`` per
+        # Multi-line when a specialization hint was folded in (``dace.codegen.cpf``): one ``//`` per
         # line, since the alternatives are per-device and do not read as one sentence.
         for line in str(description).splitlines():
             if line.strip():
@@ -473,7 +473,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Compute (and memoize) the walk plan BEFORE the base emitter runs, so ``map_scope_needs_brace``
         # -- which the base calls -- sees it, and push this map so the scope hooks below can find it.
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        hint = mpr_lowering.hint_comment(node.specialization_hint)
+        hint = cpf_lowering.hint_comment(node.specialization_hint)
         if hint:
             callsite_stream.write(hint.rstrip('\n'), cfg, state_id, node)
         self.walk_plan_for(sdfg, cfg.state(state_id), node)
@@ -808,7 +808,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         :param line: the emitted statement.
         :returns: the statement, with the right-hand side cast when the types differ.
         """
-        if not mpr_lowering.standalone() or node.language != dtypes.Language.Python:
+        if not cpf_lowering.standalone() or node.language != dtypes.Language.Python:
             return line
         if len(node.out_connectors) != 1:
             return line
@@ -833,7 +833,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # C has one cast spelling; C++ has ``-Wold-style-cast``, so the render says which conversion it
         # means rather than reaching for the one spelling that also reinterprets.
         value = tail[:-1].strip()
-        if mpr_lowering.standalone_c():
+        if cpf_lowering.standalone_c():
             return f'{head}= ({dst.ctype})({value});'
         return f'{head}= static_cast<{dst.ctype}>({value});'
 
@@ -1203,7 +1203,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        if mpr_lowering.standalone_c():
+        if cpf_lowering.standalone_c():
             return c_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
         placement = ''
         if nodedesc is not None and use_aligned_operator_new(nodedesc):
@@ -1213,7 +1213,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[dt.Data] = None) -> str:
         """The matching free. C releases both allocation shapes with ``free``, and has no
         destructors for the base generator's trivial-destructibility assertion to be about."""
-        if mpr_lowering.standalone_c():
+        if cpf_lowering.standalone_c():
             return 'free(%s);\n' % alloc_name
         return super().heap_free_stmt(alloc_name, is_array, nodedesc)
 

@@ -180,7 +180,7 @@ def guarded_fallback_loop_set(sdfg) -> list[LoopRegion]:
     loop while its Map still counted, which understates the parallelization rate.
 
     The objects and not just their number, so a consumer that buckets loops one by one
-    (the MPR artifact's per-loop taxonomy) asks this predicate instead of restating it.
+    (the CPF artifact's per-loop taxonomy) asks this predicate instead of restating it.
     """
     out: list[LoopRegion] = []
     for sd in sdfg.all_sdfgs_recursive():

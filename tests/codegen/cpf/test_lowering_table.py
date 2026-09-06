@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The MPR lowering table, checked against a compiler rather than against itself.
+"""The CPF lowering table, checked against a compiler rather than against itself.
 
 A mapping table is easy to write and easy to get quietly wrong, so nothing here asserts that a
 lowering equals some expected string. Instead each entry is compiled into a real translation unit
@@ -23,9 +23,9 @@ import textwrap
 import numpy as np
 import pytest
 
-from dace import mpr_lowering
-from dace.mpr_lowering import Dialect
-from tests.codegen.mpr.conftest import (UNQUALIFIED_RUNTIME_FUNCTIONS, assert_standalone, build_standalone,
+from dace import cpf_lowering
+from dace.cpf_lowering import Dialect
+from tests.codegen.cpf.conftest import (UNQUALIFIED_RUNTIME_FUNCTIONS, assert_standalone, build_standalone,
                                         compile_diagnostics, compile_standalone)
 
 #: The two standalone dialects, and what the harness calls each one's compiler.
@@ -106,29 +106,29 @@ def spell(text, dialect):
     """``text`` written for ``dialect``: the C++ casts in the case tables become C casts.
 
     The cases are written once, in C++, because that is what the DaCe runtime headers document. Only
-    the CAST spelling differs between the dialects, and MPR already has the rewrite that fixes it --
+    the CAST spelling differs between the dialects, and CPF already has the rewrite that fixes it --
     the same one it applies to a library expansion's hand-written body.
     """
-    return mpr_lowering.c_cast_native_code(text) if dialect is Dialect.STANDALONE_C else text
+    return cpf_lowering.c_cast_native_code(text) if dialect is Dialect.STANDALONE_C else text
 
 
 def render(name, arguments, dialect):
-    """The MPR call expression for ``name`` under ``dialect``, plus any definition it needs."""
-    lowered = mpr_lowering.lowering_for(name, arguments, dialect)
+    """The CPF call expression for ``name`` under ``dialect``, plus any definition it needs."""
+    lowered = cpf_lowering.lowering_for(name, arguments, dialect)
     if lowered is None:
-        assert mpr_lowering.needs_definition(name, dialect), (
-            f'{name!r} has no MPR lowering and no inline definition in {dialect}, so it would be emitted as a '
-            'bare call to a DaCe runtime function that MPR does not declare')
+        assert cpf_lowering.needs_definition(name, dialect), (
+            f'{name!r} has no CPF lowering and no inline definition in {dialect}, so it would be emitted as a '
+            'bare call to a DaCe runtime function that CPF does not declare')
         lowered = '%s(%s)' % (name, ', '.join(arguments))
     return lowered
 
 
 def preamble(used, dialect):
-    """The includes and definitions a unit calling ``used`` needs, exactly as ``mpr.preamble`` does."""
-    lines = ['#include %s' % header for header in mpr_lowering.headers_for(used, dialect)]
+    """The includes and definitions a unit calling ``used`` needs, exactly as ``cpf.preamble`` does."""
+    lines = ['#include %s' % header for header in cpf_lowering.headers_for(used, dialect)]
     if dialect is Dialect.STANDALONE_C:
-        lines.append(mpr_lowering.C_UNDEF_LINE)
-    return '\n'.join(lines) + '\n\n' + '\n\n'.join(mpr_lowering.definitions_for(used, dialect))
+        lines.append(cpf_lowering.C_UNDEF_LINE)
+    return '\n'.join(lines) + '\n\n' + '\n\n'.join(cpf_lowering.definitions_for(used, dialect))
 
 
 def entry(dialect, signature='double * __restrict__ out'):
@@ -141,9 +141,9 @@ def entry(dialect, signature='double * __restrict__ out'):
 def translation_unit(name, arguments, dialect):
     """A standalone translation unit whose ``probe`` writes the lowered call's value into ``out``."""
     body = render(name, [spell(argument, dialect) for argument in arguments], dialect)
-    # Exactly how ``mpr.preamble`` decides: from the FINISHED text, not from the SDFG. The call
+    # Exactly how ``cpf.preamble`` decides: from the FINISHED text, not from the SDFG. The call
     # itself may expand to a macro (C) whose name is nowhere in ``arguments``.
-    used = {name} | mpr_lowering.helpers_used(body, dialect)
+    used = {name} | cpf_lowering.helpers_used(body, dialect)
     cast = '(double)' if dialect is Dialect.STANDALONE_C else 'static_cast<double>'
     return textwrap.dedent("""
         {preamble}
@@ -174,7 +174,7 @@ def test_lowering_computes_the_runtime_value(name, arguments, expected, dialect)
     """Each lowering builds bare and produces the value the DaCe runtime header would."""
     code = translation_unit(name, arguments, dialect)
     assert_standalone(code, label=name, language=LANGUAGE[dialect])
-    value = run_probe(code, 'mpr_%s_%s' % (name, dialect.value), dialect)
+    value = run_probe(code, 'cpf_%s_%s' % (name, dialect.value), dialect)
     reference = float(eval(expected))  # noqa: S307 - a literal from CASES, not external input
     assert value == pytest.approx(
         reference, rel=1e-12,
@@ -187,7 +187,7 @@ def test_lowering_computes_the_runtime_value(name, arguments, expected, dialect)
 #: needs the maths dispatch macros, C++ gets those from ``<cmath>`` overload resolution), and a
 #: shared list would have to skip the difference instead of covering it.
 DEFINITION_CASES = [(dialect, name) for dialect in DIALECTS
-                    for name in sorted(mpr_lowering.TABLES[dialect].inline_definitions)]
+                    for name in sorted(cpf_lowering.TABLES[dialect].inline_definitions)]
 
 
 @pytest.mark.parametrize('dialect,name',
@@ -197,7 +197,7 @@ def test_every_inline_definition_builds_clean(dialect, name):
     """Warnings are errors, and a definition is emitted into every unit that calls its function."""
     code = preamble({name}, dialect) + '\n'
     assert_standalone(code, label=name, language=LANGUAGE[dialect])
-    diagnostics = compile_diagnostics(code, name='mpr_def_%s_%s' % (name, dialect.value), language=LANGUAGE[dialect])
+    diagnostics = compile_diagnostics(code, name='cpf_def_%s_%s' % (name, dialect.value), language=LANGUAGE[dialect])
     assert diagnostics == '', f'{name}: inline definition produced compiler warnings\n{diagnostics}'
 
 
@@ -206,11 +206,11 @@ def test_no_unqualified_runtime_function_is_unhandled(dialect):
     """Every name the harness can detect is handled in some lane, or explicitly refused.
 
     This is the anti-rot check. The harness rejects a bare call to any of these names, so one that
-    the table does not cover has no way to reach valid MPR output -- it would be caught only at the
+    the table does not cover has no way to reach valid CPF output -- it would be caught only at the
     point where a kernel using it failed to build.
     """
-    unhandled = sorted(UNQUALIFIED_RUNTIME_FUNCTIONS - mpr_lowering.TABLES[dialect].known)
-    assert not unhandled, (f'{unhandled} are rejected by the MPR harness but have no lowering, no inline '
+    unhandled = sorted(UNQUALIFIED_RUNTIME_FUNCTIONS - cpf_lowering.TABLES[dialect].known)
+    assert not unhandled, (f'{unhandled} are rejected by the CPF harness but have no lowering, no inline '
                            f'definition, and no refusal in the {dialect.value} tables')
 
 
@@ -226,29 +226,29 @@ def test_out_parameter_helpers_compute_the_runtime_value(name, statement, expect
     """
     code = '%s\n\n%s\n{\n    %s\n}\n' % (preamble({name}, dialect), entry(dialect), spell(statement, dialect))
     assert_standalone(code, label=name, language=LANGUAGE[dialect])
-    value = run_probe(code, 'mpr_stmt_%s_%s' % (name, dialect.value), dialect)
+    value = run_probe(code, 'cpf_stmt_%s_%s' % (name, dialect.value), dialect)
     assert value == pytest.approx(expected, rel=1e-12,
                                   abs=1e-12), (f'{name}: {statement!r} gave {value!r}, expected {expected!r}')
 
 
 def test_c_definitions_are_emitted_callees_first():
     """A C macro must be ``#define``d before the function body that expands it is compiled."""
-    emitted = mpr_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE_C)
+    emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE_C)
     order = [text.rsplit('#define ', 1)[1].split('(')[0] for text in emitted]
     assert order.index('int_floor_ni') < order.index('py_floor') < order.index('py_mod'), order
-    assert 'mpr_floor' in order, 'py_floor divides through the floor macro, so it must be carried too'
+    assert 'cpf_floor' in order, 'py_floor divides through the floor macro, so it must be carried too'
 
 
 def test_definitions_are_emitted_callees_first():
     """A helper is declared before the helper that calls it, or the unit does not compile."""
-    emitted = mpr_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE)
+    emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE)
     order = [text.split('inline auto ')[1].split('(')[0] for text in emitted]
     assert order == ['int_floor_ni', 'py_floor', 'py_mod'], order
 
 
 def test_dependency_closure_pulls_transitive_callees():
     """Asking for one helper brings everything it reaches."""
-    assert mpr_lowering.required_definitions({'floor_mod'},
+    assert cpf_lowering.required_definitions({'floor_mod'},
                                              Dialect.STANDALONE) == {'floor_mod', 'py_mod', 'py_floor', 'int_floor_ni'}
 
 
@@ -256,13 +256,13 @@ def test_dependency_closure_pulls_transitive_callees():
 def test_rewrite_arity_mismatch_is_an_error(dialect):
     """A caller disagreeing with the table about a function's shape must not be papered over."""
     with pytest.raises(ValueError, match='expects 3 arguments'):
-        mpr_lowering.lowering_for('ITE', ('a', 'b'), dialect)
+        cpf_lowering.lowering_for('ITE', ('a', 'b'), dialect)
 
 
 @pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
 def test_rewrites_use_each_argument_once(dialect):
     """A rewrite repeating an argument would duplicate whatever expression the caller printed."""
-    for name, (arity, template) in mpr_lowering.TABLES[dialect].rewrites.items():
+    for name, (arity, template) in cpf_lowering.TABLES[dialect].rewrites.items():
         for index in range(arity):
             occurrences = template.count('{%d}' % index)
             assert occurrences == 1, (f'REWRITES[{name!r}] uses {{{index}}} {occurrences} times; a repeated argument '
@@ -277,10 +277,10 @@ def test_rewrites_use_each_argument_once(dialect):
 #: The out-parameter helpers are wrapped in a ``constexpr`` function, which is the only way to
 #: constant-evaluate something that writes through references.
 CONSTEXPR_PROBES = {
-    'mpr_max':
-    'static_assert(mpr_max(2.0, 1.0, 3.0) == 3.0);\nstatic_assert(mpr_max(0.0, -0.0) == 0.0);',
-    'mpr_min':
-    'static_assert(mpr_min(2.0, 1.0, 3.0) == 1.0);\nstatic_assert(mpr_min(2, 1.5) == 1.5);',
+    'cpf_max':
+    'static_assert(cpf_max(2.0, 1.0, 3.0) == 3.0);\nstatic_assert(cpf_max(0.0, -0.0) == 0.0);',
+    'cpf_min':
+    'static_assert(cpf_min(2.0, 1.0, 3.0) == 1.0);\nstatic_assert(cpf_min(2, 1.5) == 1.5);',
     'ifloor':
     'static_assert(ifloor(-3.5) == -4);\nstatic_assert(ifloor(static_cast<int64_t>(7)) == 7);',
     'int_ceil':
@@ -353,14 +353,14 @@ NOT_CONSTEXPR = {
 def test_definition_is_usable_in_a_constant_expression(name):
     """The ``constexpr`` on each definition is real: the call folds at compile time."""
     code = '%s\n\n%s\n' % (preamble({name}, Dialect.STANDALONE), CONSTEXPR_PROBES[name])
-    diagnostics = compile_diagnostics(code, name='mpr_ce_%s' % name)
+    diagnostics = compile_diagnostics(code, name='cpf_ce_%s' % name)
     assert diagnostics == '', f'{name}: constexpr probe produced warnings\n{diagnostics}'
 
 
 def test_every_definition_is_constexpr_or_says_why_not():
     """No definition escapes the choice: it is either probed as constexpr or listed as unable."""
     classified = set(CONSTEXPR_PROBES) | set(NOT_CONSTEXPR)
-    unclassified = sorted(set(mpr_lowering.INLINE_DEFINITIONS) - classified)
+    unclassified = sorted(set(cpf_lowering.INLINE_DEFINITIONS) - classified)
     assert not unclassified, (f'{unclassified} are neither proven constexpr by a probe nor listed in NOT_CONSTEXPR; '
                               'an unchecked constexpr claim is how the keyword rots')
 
@@ -368,7 +368,7 @@ def test_every_definition_is_constexpr_or_says_why_not():
 @pytest.mark.parametrize('name', sorted(NOT_CONSTEXPR))
 def test_non_constexpr_definitions_are_not_marked_constexpr(name):
     """A definition that cannot fold must not claim ``constexpr``: that is ill-formed, no diagnostic."""
-    assert 'static constexpr' not in mpr_lowering.INLINE_DEFINITIONS[name], (
+    assert 'static constexpr' not in cpf_lowering.INLINE_DEFINITIONS[name], (
         f'{name} is declared constexpr but {NOT_CONSTEXPR[name]}, so no argument permits constant evaluation. '
         'GCC folds std::floor as a builtin and accepts it; clang rejects the same code.')
 
@@ -384,36 +384,36 @@ EXPECTED_C_REFUSALS = set()
 
 def test_c_refuses_exactly_the_names_it_says_it_does():
     """The C dialect's refusal list is what it claims to be, and each entry says why."""
-    assert set(mpr_lowering.C_UNSUPPORTED) == EXPECTED_C_REFUSALS
+    assert set(cpf_lowering.C_UNSUPPORTED) == EXPECTED_C_REFUSALS
     # The scan identities were once refused and are now rewritten; a refusal that reappears for
     # them means the rewrite was lost.
-    assert not (mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE & set(mpr_lowering.C_UNSUPPORTED))
-    for name, reason in mpr_lowering.C_UNSUPPORTED.items():
+    assert not (cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE & set(cpf_lowering.C_UNSUPPORTED))
+    for name, reason in cpf_lowering.C_UNSUPPORTED.items():
         assert len(reason) > 20, f'{name} is refused without saying why'
 
 
 def test_every_cpp_definition_has_a_c_form_or_a_refusal():
     """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable."""
     unclassified = sorted(
-        set(mpr_lowering.INLINE_DEFINITIONS) - set(mpr_lowering.C_INLINE_DEFINITIONS) -
-        set(mpr_lowering.C_UNSUPPORTED) - mpr_lowering.C_REWRITTEN_IN_NATIVE_CODE)
+        set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) -
+        set(cpf_lowering.C_UNSUPPORTED) - cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
     assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
                               'in C_UNSUPPORTED, so a kernel calling one would render C that does not build')
 
 
 def test_every_cpp_std_rename_has_a_c_form():
-    """Every ``std::`` rename is answered in C by a rename or a definition of MPR's own.
+    """Every ``std::`` rename is answered in C by a rename or a definition of CPF's own.
 
     ``std::gcd`` / ``std::lcm`` are the two with no C library counterpart at all, so they move lanes:
     a rename in C++, an emitted definition in C. Asserted explicitly, because "moved lanes" and
     "was forgotten" look identical from the C++ side.
     """
-    answered = set(mpr_lowering.C_STD_RENAMES) | set(mpr_lowering.C_INLINE_DEFINITIONS)
-    missing = sorted(set(mpr_lowering.STD_RENAMES) - answered)
+    answered = set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS)
+    missing = sorted(set(cpf_lowering.STD_RENAMES) - answered)
     assert not missing, f'{missing} are renamed to std:: in C++ but have no C spelling'
     for name in ('gcd', 'lcm'):
-        assert name not in mpr_lowering.C_STD_RENAMES, f'C has no library {name}'
-        assert name in mpr_lowering.C_INLINE_DEFINITIONS, f'{name} must be emitted by MPR in C'
+        assert name not in cpf_lowering.C_STD_RENAMES, f'C has no library {name}'
+        assert name in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} must be emitted by CPF in C'
 
 
 def test_every_c_definition_is_reachable():
@@ -422,35 +422,35 @@ def test_every_c_definition_is_reachable():
     A table that grows an entry nothing reaches is a table that has stopped being checked -- the
     unreachable entry never compiles, never runs, and never fails.
     """
-    reachable = set(mpr_lowering.C_STD_RENAMES.values()) | set(mpr_lowering.C_VARIADIC_MINMAX.values())
+    reachable = set(cpf_lowering.C_STD_RENAMES.values()) | set(cpf_lowering.C_VARIADIC_MINMAX.values())
     # A helper the printers call UNCHANGED -- ``lowering_for`` returns None and ``needs_definition``
-    # says MPR emits the body. That is any C definition whose name is a runtime function, which
+    # says CPF emits the body. That is any C definition whose name is a runtime function, which
     # includes gcd/lcm: a std:: rename in C++, an emitted definition here.
-    reachable |= {name for name in mpr_lowering.C_INLINE_DEFINITIONS if name in mpr_lowering.KNOWN}
-    for dependencies in mpr_lowering.C_DEFINITION_DEPENDENCIES.values():
+    reachable |= {name for name in cpf_lowering.C_INLINE_DEFINITIONS if name in cpf_lowering.KNOWN}
+    for dependencies in cpf_lowering.C_DEFINITION_DEPENDENCIES.values():
         reachable |= set(dependencies)
-    for _, template in mpr_lowering.C_REWRITES.values():
-        reachable |= mpr_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
-    reachable |= mpr_lowering.helpers_used(mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C),
+    for _, template in cpf_lowering.C_REWRITES.values():
+        reachable |= cpf_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
+    reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C),
                                            Dialect.STANDALONE_C)
     # The two arity-specific halves of ``heaviside`` are defined inside its own entry, not called
     # from anywhere else; every other name must be reached from outside.
-    unreachable = sorted(set(mpr_lowering.C_INLINE_DEFINITIONS) - reachable)
+    unreachable = sorted(set(cpf_lowering.C_INLINE_DEFINITIONS) - reachable)
     assert not unreachable, f'{unreachable} are emitted by no lowering, so nothing ever exercises them'
 
 
 def test_every_c_definitions_dependencies_are_real():
     """A recorded dependency must be a definition, or the topological order is over a phantom."""
-    for name, dependencies in mpr_lowering.C_DEFINITION_DEPENDENCIES.items():
-        assert name in mpr_lowering.C_INLINE_DEFINITIONS, f'{name} has dependencies but no definition'
+    for name, dependencies in cpf_lowering.C_DEFINITION_DEPENDENCIES.items():
+        assert name in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} has dependencies but no definition'
         for dependency in dependencies:
-            assert dependency in mpr_lowering.C_INLINE_DEFINITIONS, f'{name} depends on the undefined {dependency}'
-            assert dependency in mpr_lowering.C_INLINE_DEFINITIONS[name] or dependency.startswith('mpr_'), (
+            assert dependency in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} depends on the undefined {dependency}'
+            assert dependency in cpf_lowering.C_INLINE_DEFINITIONS[name] or dependency.startswith('cpf_'), (
                 f'{name} does not mention {dependency}')
 
 
 @pytest.mark.parametrize('name', ['min_identity', 'max_identity'])
-@pytest.mark.parametrize('ctype', sorted(mpr_lowering.C_SCAN_IDENTITIES))
+@pytest.mark.parametrize('ctype', sorted(cpf_lowering.C_SCAN_IDENTITIES))
 def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     """The identity has no C function template, so C spells it as the constant for that type.
 
@@ -458,9 +458,9 @@ def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     leaked into C++ would show up here rather than as a numeric difference in a min/max scan.
     """
     call = '::dace::scan::detail::%s<%s>()' % (name, ctype)
-    expected = mpr_lowering.C_SCAN_IDENTITIES[ctype][0 if name.startswith('min') else 1]
-    assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE_C) == expected
-    assert mpr_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
+    expected = cpf_lowering.C_SCAN_IDENTITIES[ctype][0 if name.startswith('min') else 1]
+    assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE_C) == expected
+    assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
 
 
 #: The statement ``ExpandFindFirstPure`` / ``ExpandFindFirstOpenMP`` write, copied here rather than
@@ -478,11 +478,11 @@ def test_c_rewrites_the_find_first_call_into_the_statement_macro():
     arrives verbatim and still reads the index under the name the expansion wrote its subscripts
     against: a rewrite that renamed either would build and then search the wrong elements.
     """
-    rewritten = mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
-    assert rewritten == 'mpr_find_first(_out_idx, (0), (N), __i, false, (_a[__i] > 0.5));'
-    assert mpr_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'mpr_find_first'}
+    rewritten = cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
+    assert rewritten == 'cpf_find_first(_out_idx, (0), (N), __i, false, (_a[__i] > 0.5));'
+    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'cpf_find_first'}
     # C++ has the lambda, so it keeps the call and only drops the namespace.
-    assert mpr_lowering.rewrite_native_code(FIND_FIRST_STATEMENT,
+    assert cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT,
                                             Dialect.STANDALONE) == FIND_FIRST_STATEMENT.replace('dace::', '')
 
 
@@ -490,32 +490,32 @@ def test_c_leaves_an_unrecognized_find_first_call_for_verify():
     """A call shape the rewrite does not know stays ``dace::``-qualified rather than half-rewritten.
 
     The rewrite is textual and matches one statement form. If the expansion ever writes another,
-    the honest outcome is MPR refusing to render -- a partial rewrite would produce C that does not
+    the honest outcome is CPF refusing to render -- a partial rewrite would produce C that does not
     compile, with nothing naming the construct responsible.
     """
     unknown = '_out_idx = dace::find_first_index(0, N, some_functor, false);'
-    assert mpr_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
 
 
 def test_c_refuses_a_scan_identity_it_cannot_order():
     """Complex has no ordered extreme, so a min/max scan over it must raise, not pick a wrong seed."""
     with pytest.raises(NotImplementedError, match='no ordered extreme'):
-        mpr_lowering.rewrite_native_code('min_identity<double _Complex>()', Dialect.STANDALONE_C)
+        cpf_lowering.rewrite_native_code('min_identity<double _Complex>()', Dialect.STANDALONE_C)
 
 
 def test_variadic_minmax_nests_binary_calls_in_c():
     """C has no variadic macro to fold over, so a three-way ``Max`` nests the binary one; the C++
     template takes all three directly, and both associate left to right."""
     arguments = ('a', 'b', 'c')
-    assert mpr_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE_C) == 'mpr_max(mpr_max(a, b), c)'
-    assert mpr_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE) == 'mpr_max(a, b, c)'
+    assert cpf_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE_C) == 'cpf_max(cpf_max(a, b), c)'
+    assert cpf_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE) == 'cpf_max(a, b, c)'
 
 
 def test_c_scan_helpers_keep_the_parallel_inscan_form():
     """The scan is the reason the eight helpers exist; a serial loop would not be a parallel scan."""
     for kind, clause in (('incl', 'inclusive'), ('excl', 'exclusive')):
         for operation, reduction in (('sum', '+'), ('product', '*'), ('min', 'min'), ('max', 'max')):
-            definition = mpr_lowering.C_INLINE_DEFINITIONS['scan_%s_%s' % (kind, operation)]
+            definition = cpf_lowering.C_INLINE_DEFINITIONS['scan_%s_%s' % (kind, operation)]
             assert '#pragma omp simd reduction(inscan, %s:acc)' % reduction in definition
             assert '#pragma omp scan %s(acc)' % clause in definition
 
@@ -538,16 +538,16 @@ void probe(double * out) {{ calls = 0; out[0] = {call}; out[0] += calls; }}
 
 
 @pytest.mark.parametrize('name,call,expected', [
-    ('mpr_sqrt', 'mpr_sqrt(bump())', 5.0),
-    ('mpr_max', 'mpr_max(bump(), 1.0)', 17.0),
-    ('mpr_min', 'mpr_min(bump(), 1.0)', 2.0),
+    ('cpf_sqrt', 'cpf_sqrt(bump())', 5.0),
+    ('cpf_max', 'cpf_max(bump(), 1.0)', 17.0),
+    ('cpf_min', 'cpf_min(bump(), 1.0)', 2.0),
 ],
                          ids=['sqrt', 'max', 'min'])
 def test_c_dispatch_macros_evaluate_each_argument_once(name, call, expected):
     """One evaluation, proven by counting -- a duplicated argument would double a stateful call."""
-    definitions = '\n'.join(mpr_lowering.definitions_for({name}, Dialect.STANDALONE_C))
+    definitions = '\n'.join(cpf_lowering.definitions_for({name}, Dialect.STANDALONE_C))
     code = _SINGLE_EVALUATION_PROBE.format(definitions=definitions, call=call)
-    library = ctypes.CDLL(compile_standalone(code, 'mpr_once_%s' % name, language='c'))
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_once_%s' % name, language='c'))
     out = np.zeros(1, dtype=np.float64)
     library.probe.argtypes = [ctypes.c_void_p]
     library.probe.restype = None

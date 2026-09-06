@@ -17,7 +17,7 @@ from io import StringIO
 from typing import IO, TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
-from dace import data, mpr_lowering, subsets, symbolic, dtypes, memlet as mmlt, nodes
+from dace import data, cpf_lowering, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import common, cppunparse
 from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
@@ -68,7 +68,7 @@ def const_scalar_by_value() -> bool:
     # C has no references at all, so the choice is not a knob there: a read-only scalar binds by
     # value, which is semantically the same thing and keeps every use of the connector a plain name.
     # Only a WRITTEN scalar is left needing an indirection, and that one becomes a pointer below.
-    return (mpr_lowering.standalone_c()
+    return (cpf_lowering.standalone_c()
             or (readable_cpu_codegen_active()
                 and Config.get('compiler', 'cpu', 'codegen_params', 'const_scalar_abi') == 'by_value'))
 
@@ -1045,12 +1045,12 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            # A native body is emitted verbatim, so this is the only point where MPR can re-spell the
-            # ``dace::`` names a library expansion wrote by hand (see mpr_lowering.rewrite_native_code).
+            # A native body is emitted verbatim, so this is the only point where CPF can re-spell the
+            # ``dace::`` names a library expansion wrote by hand (see cpf_lowering.rewrite_native_code).
             # A no-op outside a standalone rendering.
             body = codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg)
-            if mpr_lowering.standalone():
-                body = mpr_lowering.rewrite_native_code(body)
+            if cpf_lowering.standalone():
+                body = cpf_lowering.rewrite_native_code(body)
             callsite_stream.write(body, cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):

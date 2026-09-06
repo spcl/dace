@@ -801,7 +801,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # refused) and earlier buys nothing.
     # Define the reserved thread-count symbol before anything can want it. A pass rather than
     # frame code so it is visible in the IR, inherited by nested SDFGs through symbol_mapping,
-    # and emitted by whatever already emits tasklets -- including the standalone MPR frame.
+    # and emitted by whatever already emits tasklets -- including the standalone CPF frame.
     s += [('prep', SupplyNumThreads())]
     s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConvertLengthOneArraysToScalars()),
           ('prep', ForwardStoreToLoad()), ('prep', SplitStatements())]

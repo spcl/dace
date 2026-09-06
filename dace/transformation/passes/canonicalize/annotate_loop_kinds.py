@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Name every loop in the canonical form, so the standalone rendering says what each one is.
 
-MPR output is read by a specializing pass or by a person, and both arrive at a ``for`` loop with
+CPF output is read by a specializing pass or by a person, and both arrive at a ``for`` loop with
 the same question: is this order required, or is it the order canonicalization happened to leave?
 The canonical form answers it -- a parallel axis is a Map, a required order is a LoopRegion -- but
 the rendering flattens both to ``for``, and the answer is gone.

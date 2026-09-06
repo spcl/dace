@@ -53,7 +53,7 @@ class Node(object):
                                    "could trade it for and on which device the trade pays), and the "
                                    "kind of loop a scope is -- parallel, sequential with a proven "
                                    "carried dependence, or neither proven (AnnotateLoopKinds). "
-                                   "Rendered as a comment by the standalone (MPR) rendering and "
+                                   "Rendered as a comment by the standalone (CPF) rendering and "
                                    "ignored everywhere else. Never a directive: nothing in the "
                                    "pipeline dispatches on it. None when nothing was recorded.")
 

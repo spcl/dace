@@ -2,7 +2,7 @@
 import ast
 from copy import deepcopy
 import ctypes.util
-from dace import config, data, dtypes, mpr_lowering, sdfg as sd, symbolic
+from dace import config, data, dtypes, cpf_lowering, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
@@ -45,7 +45,7 @@ def _sym2cpp(s, arrayexprs, dialect, fp_ctype):
 
 def sym2cpp(s,
             arrayexprs: Optional[Set[str]] = None,
-            dialect: Optional[mpr_lowering.Dialect] = None,
+            dialect: Optional[cpf_lowering.Dialect] = None,
             fp_ctype: Optional[str] = None) -> Union[str, List[str]]:
     """
     Converts an array of symbolic variables (or one) to C++ strings.
@@ -54,12 +54,12 @@ def sym2cpp(s,
     :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :param dialect: which C++ vocabulary may be emitted. ``None`` (the default) takes the ambient
-                    dialect (:func:`~dace.mpr_lowering.active_dialect`), which is ``RUNTIME``
-                    unless an MPR rendering is in progress -- so the several hundred call sites in
+                    dialect (:func:`~dace.cpf_lowering.active_dialect`), which is ``RUNTIME``
+                    unless an CPF rendering is in progress -- so the several hundred call sites in
                     the code generators need no change. Resolved HERE and passed down as an
                     argument, so it still reaches the ``_sym2cpp`` memoization key; nothing inside
                     the cached function reads the ambient value. See
-                    :class:`~dace.mpr_lowering.Dialect`.
+                    :class:`~dace.cpf_lowering.Dialect`.
     :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
                      becomes a division of THAT type instead of a truncating integer division.
                      ``None`` (the default) keeps integer division, which index arithmetic
@@ -67,7 +67,7 @@ def sym2cpp(s,
     :return: C++-compilable expression or list thereof.
     """
     if dialect is None:
-        dialect = mpr_lowering.active_dialect()
+        dialect = cpf_lowering.active_dialect()
     if isinstance(s, list):
         return [sym2cpp(d, arrayexprs, dialect, fp_ctype) for d in s]
     # Two literal kinds symstr cannot carry: a bool round-trips as Python 'True' (or as the
@@ -77,13 +77,13 @@ def sym2cpp(s,
         return 'true' if s else 'false'
     if isinstance(s, (complex, np.complexfloating)):
         ctype = str(dtypes.dtype_to_typeclass(type(s)))
-        if dialect is mpr_lowering.Dialect.STANDALONE_C:
+        if dialect is cpf_lowering.Dialect.STANDALONE_C:
             # ``a + b*I`` is not the same literal: it evaluates, so a NaN or an infinite component
             # propagates through the multiplication. ``CMPLX`` builds the value component-wise.
             builder = 'CMPLXF' if ctype == 'dace::complex64' else 'CMPLX'
             return f'{builder}({s.real}, {s.imag})'
-        if dialect is mpr_lowering.Dialect.STANDALONE:
-            ctype = mpr_lowering.ctype_for(ctype, dialect)
+        if dialect is cpf_lowering.Dialect.STANDALONE:
+            ctype = cpf_lowering.ctype_for(ctype, dialect)
         return f'{ctype}({s.real}, {s.imag})'
     return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs), dialect, fp_ctype)
 

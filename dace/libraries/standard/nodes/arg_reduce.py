@@ -61,11 +61,11 @@ _OP_TAG = {'max': 'ArgMaxOp', 'min': 'ArgMinOp'}
 #: overload, so a real operand does not match it.
 _TRANSFORM_CPP = {'': None, 'abs': 'std::abs'}
 #: The same transforms in the C dialect. ``std::abs`` is C++ only, so a C rendering that pasted it
-#: is not self-contained and MPR's own verifier rejects the result -- which is what it did for every
-#: kernel whose argmax scans a transformed element. ``mpr_abs`` is the ``_Generic`` macro
-#: ``mpr_lowering.C_STD_RENAMES`` already emits for ``abs``, so this names the spelling that module
+#: is not self-contained and CPF's own verifier rejects the result -- which is what it did for every
+#: kernel whose argmax scans a transformed element. ``cpf_abs`` is the ``_Generic`` macro
+#: ``cpf_lowering.C_STD_RENAMES`` already emits for ``abs``, so this names the spelling that module
 #: defines rather than inventing a second one.
-_TRANSFORM_C = {'': None, 'abs': 'mpr_abs'}
+_TRANSFORM_C = {'': None, 'abs': 'cpf_abs'}
 
 
 def _transform_spelling(transform: str) -> Optional[str]:
@@ -74,9 +74,9 @@ def _transform_spelling(transform: str) -> Optional[str]:
     Asked at EXPANSION time because the tasklet's text is fixed once it is built; outside a
     standalone-C rendering this is the C++ table, which is the behaviour every other caller has.
     """
-    from dace import mpr_lowering
+    from dace import cpf_lowering
 
-    return (_TRANSFORM_C if mpr_lowering.standalone_c() else _TRANSFORM_CPP)[transform]
+    return (_TRANSFORM_C if cpf_lowering.standalone_c() else _TRANSFORM_CPP)[transform]
 
 
 #: The same transforms as ``dace/cub_compat.cuh`` functors, for the CUDA expansion's input iterator.

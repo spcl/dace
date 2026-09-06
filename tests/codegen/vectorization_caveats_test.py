@@ -23,7 +23,7 @@ all, so there is nothing left to reassociate -- and the loop vectorizes with FP 
 These tests state the shape, so a change that reintroduces the copies fails here rather than being
 paid for later in an unsafe-math flag.
 
-Both renderers are checked. MPR emits a self-contained unit through the same readable generator, and
+Both renderers are checked. CPF emits a self-contained unit through the same readable generator, and
 a caveat that reappears in only one of them is still a caveat.
 """
 import re
@@ -32,14 +32,14 @@ from typing import List, Tuple
 import pytest
 
 import dace
-from dace.codegen.mpr import mpr
+from dace.codegen.cpf import cpf
 from dace.config import set_temporary
 from dace.transformation.passes.canonicalize import canonicalize
 
 from tests.corpus.tsvc import tsvc
 
-#: The two renderings under test: DaCe's readable CPU generator, and the standalone MPR unit.
-RENDERERS = ('readable', 'mpr')
+#: The two renderings under test: DaCe's readable CPU generator, and the standalone CPF unit.
+RENDERERS = ('readable', 'cpf')
 
 NCLV = dace.symbol('NCLV', dtype=dace.int64)
 KLON = dace.symbol('KLON', dtype=dace.int64)
@@ -75,8 +75,8 @@ def emitted(sdfg: dace.SDFG, renderer: str) -> str:
     ``experimental_readable`` produces -- the legacy generator keeps connector locals and emits the
     ``dace::CopyND`` calls one of the tests is here to forbid.
     """
-    if renderer == 'mpr':
-        return mpr(sdfg)
+    if renderer == 'cpf':
+        return cpf(sdfg)
     with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
         return '\n'.join(obj.clean_code for obj in sdfg.generate_code())
 

@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""MPR names the library nodes it rendered away.
+"""CPF names the library nodes it rendered away.
 
 A pure expansion turns ``Gemm`` into three nested loops, ``Cholesky`` into a triangular sweep, a
 ``Reduce`` into an accumulation. The loops are correct and unreadable: nothing in them says what
-they used to be, and MPR output exists to be read. So MPR records what each library node computes
+they used to be, and CPF output exists to be read. So CPF records what each library node computes
 when it expands it and writes that line above the code the expansion produced.
 
 The comment is not decoration -- it is the only place the rendering states its own intent. These
@@ -18,7 +18,7 @@ import pytest
 
 import dace
 import dace.libraries
-from dace.codegen.mpr import (LIBRARY_NODE_DESCRIPTIONS, QUALIFIED_DESCRIPTIONS, description_of, render)
+from dace.codegen.cpf import (LIBRARY_NODE_DESCRIPTIONS, QUALIFIED_DESCRIPTIONS, description_of, render)
 from dace.sdfg.nodes import LibraryNode
 
 M = dace.symbol('M')
@@ -51,9 +51,9 @@ def library_node_classes():
 def test_every_library_node_class_has_a_description():
     """A library node with no description renders as loops that say nothing about themselves."""
     undescribed = [f'{cls.__module__}.{cls.__name__}' for cls in library_node_classes() if description_of(cls) is None]
-    assert not undescribed, ('these library nodes have no MPR description, so their expansions would render '
+    assert not undescribed, ('these library nodes have no CPF description, so their expansions would render '
                              'anonymously: ' + ', '.join(undescribed) +
-                             '\nAdd one to dace.codegen.mpr.LIBRARY_NODE_DESCRIPTIONS.')
+                             '\nAdd one to dace.codegen.cpf.LIBRARY_NODE_DESCRIPTIONS.')
 
 
 def test_description_lookup_prefers_the_qualified_name():
@@ -80,7 +80,7 @@ def test_matmul_rendering_names_the_library_node():
         c[:] = a @ b
 
     sdfg = matmul.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_comment_matmul'
+    sdfg.name = 'cpf_comment_matmul'
     code = render(sdfg).code
     assert '// BLAS gemm' in code, ('the matmul rendered without naming the library node it came from:\n' +
                                     '\n'.join(line for line in code.splitlines() if line.strip().startswith('//')))
@@ -95,7 +95,7 @@ def test_reduction_rendering_names_the_library_node():
         out[0] = np.sum(x)
 
     sdfg = total.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_comment_sum'
+    sdfg.name = 'cpf_comment_sum'
     code = render(sdfg).code
     assert '// reduction over' in code, 'the reduction rendered without naming the library node it came from'
 
@@ -113,7 +113,7 @@ def test_a_description_is_written_once_per_node_not_once_per_tasklet():
         d[:] = c @ c
 
     sdfg = two_products.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_comment_two'
+    sdfg.name = 'cpf_comment_two'
     code = render(sdfg).code
     occurrences = code.count('// BLAS gemm')
     assert occurrences == 2, (f'expected one comment per gemm node, got {occurrences}; a count of 1 means the '
@@ -128,11 +128,11 @@ def test_ordinary_codegen_carries_no_mpr_comments():
         c[:] = a @ b
 
     sdfg = matmul.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_comment_leak'
+    sdfg.name = 'cpf_comment_leak'
     render(sdfg)  # populate and then discard a provenance scope
     with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
         ordinary = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert '// BLAS gemm' not in ordinary, ('an MPR provenance comment leaked into ordinary code generation; the '
+    assert '// BLAS gemm' not in ordinary, ('an CPF provenance comment leaked into ordinary code generation; the '
                                             'scope was not restored')
 
 

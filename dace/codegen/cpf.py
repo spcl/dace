@@ -1,21 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""MPR: rendering an SDFG as one self-contained translation unit.
+"""CPF: rendering an SDFG as one self-contained translation unit.
 
-``mpr(sdfg)`` returns C++ that a bare host compiler accepts -- ``g++ -std=c++20 -fopenmp`` with no
-``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. ``mpr(sdfg,
+``cpf(sdfg)`` returns C++ that a bare host compiler accepts -- ``g++ -std=c++20 -fopenmp`` with no
+``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. ``cpf(sdfg,
 language='c')`` returns C23 under the same terms; the two are one semantics in two spellings, held
-together by ``tests/codegen/mpr/test_lowering_table.py``. The point is not portability for its own
+together by ``tests/codegen/cpf/test_lowering_table.py``. The point is not portability for its own
 sake: it is that the result can be read, diffed and edited on its own, so a maximally parallel
 rendering of a program can be compared against the original the way Pluto's output is.
 
 Nothing here re-implements code generation. The readable CPU generator
-(``compiler.cpu.implementation = experimental_readable``) already emits the shape MPR wants --
+(``compiler.cpu.implementation = experimental_readable``) already emits the shape CPF wants --
 ``<array>_idx`` index helpers, connector-free tasklets, ``#pragma omp parallel for`` on parallel
-maps. MPR is that generator run under :attr:`~dace.mpr_lowering.Dialect.STANDALONE`, which changes
+maps. CPF is that generator run under :attr:`~dace.cpf_lowering.Dialect.STANDALONE`, which changes
 three things and no more:
 
-* the printers spell runtime functions with the standard library or MPR's own inline definitions
-  (:mod:`dace.mpr_lowering`),
+* the printers spell runtime functions with the standard library or CPF's own inline definitions
+  (:mod:`dace.cpf_lowering`),
 * the frame emits ``extern "C" void <name>(<arglist>)`` instead of the state-carrying
   ``__program_<name>_internal`` plus its ``__dace_init`` / ``__dace_exit`` pair
   (``framecode.generate_standalone_footer``),
@@ -26,7 +26,7 @@ The preamble is assembled LAST, from the emitted text, because that is the only 
 which helpers were used. Deriving it from the SDFG instead would mean predicting the printers'
 output, and a helper reached through a tasklet body (not a memlet subset) would be missed.
 
-What MPR refuses, it refuses loudly -- see :func:`prepare`, and the standalone paths in
+What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone paths in
 ``framecode``. A rendering that quietly dropped an initializer, a caller-supplied buffer or a GPU
 kernel would still compile and still produce numbers, just not the SDFG's.
 """
@@ -36,24 +36,24 @@ from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 from dace.ordered import OrderedSet
 
-from dace import data as dt, dtypes, mpr_lowering
+from dace import data as dt, dtypes, cpf_lowering
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.sdfg import SDFG, nodes
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
-#: The storage types MPR can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
+#: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
 #: nothing else: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the
-#: accelerator storages (GPU, SVE, Snitch) each need a compiler MPR does not invoke. An allowlist
+#: accelerator storages (GPU, SVE, Snitch) each need a compiler CPF does not invoke. An allowlist
 #: rather than a list of the refused ones because ``StorageType`` is extensible -- a storage
-#: registered by a backend MPR has never heard of must refuse, not slip through.
+#: registered by a backend CPF has never heard of must refuse, not slip through.
 HOST_STORAGE = frozenset({
     dtypes.StorageType.Default, dtypes.StorageType.Register, dtypes.StorageType.CPU_Heap,
     dtypes.StorageType.CPU_ThreadLocal
 })
 
-#: The schedules MPR can render, likewise an allowlist. ``CPU_Multicore`` is the OpenMP loop that
+#: The schedules CPF can render, likewise an allowlist. ``CPU_Multicore`` is the OpenMP loop that
 #: makes the rendering parallel in the first place; the rest are the sequential and unspecified
 #: forms. Anything else (GPU device/thread-block, FPGA, SVE) needs another compiler.
 HOST_SCHEDULES = frozenset({
@@ -61,17 +61,17 @@ HOST_SCHEDULES = frozenset({
     dtypes.ScheduleType.CPU_Persistent
 })
 
-#: Lifetimes whose buffer the ordinary generators park in the state struct, and what MPR turns each
+#: Lifetimes whose buffer the ordinary generators park in the state struct, and what CPF turns each
 #: into. ``Persistent`` and ``Global`` outlive one call only so a repeated invocation can reuse the
 #: allocation; a single self-contained entry point has no second invocation to reuse it, so SDFG
 #: lifetime -- allocate on entry, free on return -- computes the same values. ``External`` is NOT
 #: here: its buffer comes from the caller through an init handshake, so demoting it would allocate
 #: a private buffer and silently discard what the caller passed. framecode refuses it instead.
-#: What each library node computes, as one line MPR writes above the code its expansion produced.
+#: What each library node computes, as one line CPF writes above the code its expansion produced.
 #:
 #: A pure expansion is loops and tasklets; nothing in it says the loops were a Cholesky
 #: factorization. The comment is what keeps the rendering readable as the program it came from --
-#: which is the point of MPR, since the output exists to be read and edited rather than linked.
+#: which is the point of CPF, since the output exists to be read and edited rather than linked.
 #:
 #: Keyed by class name. Every library node registered in the process must appear here (the suite
 #: asserts it), so a new node arrives with a description instead of rendering as anonymous loops.
@@ -194,7 +194,7 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
     'dace.libraries.standard.nodes.reduce.Reduce': 'reduction over the given axes with the given operator',
 }
 
-#: Library-node implementations MPR selects, best first. ``pure`` is an SDFG made of maps and
+#: Library-node implementations CPF selects, best first. ``pure`` is an SDFG made of maps and
 #: tasklets -- which is the whole point: it renders as loops, and it is the PARALLEL form.
 #: ``pure-seq`` is the sequential fallback for a node that has no parallel pure expansion.
 #: ``MappedTasklet`` is the copy library node's spelling of the same idea -- a map that reads one
@@ -202,7 +202,7 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
 #: copy, which is a runtime template, so the choice is made here rather than left to the node.
 #:
 #: The alternative is what the node would pick on its own: a BLAS call, ``dace::reduce``, cuBLAS.
-#: Every one of those is a library MPR cannot link, so leaving the choice to the node's default
+#: Every one of those is a library CPF cannot link, so leaving the choice to the node's default
 #: would render a translation unit that names a symbol nothing defines.
 PURE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
 
@@ -301,7 +301,7 @@ def force_pure_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, 
         rounds += 1
         if rounds > MAX_EXPANSION_ROUNDS + max(len(group) for group in pending.values()):
             remaining = sorted({type(node).__name__ for group in pending.values() for node, _ in group})
-            raise NotImplementedError(f'MPR could not expand {", ".join(remaining)} after {rounds} rounds; '
+            raise NotImplementedError(f'CPF could not expand {", ".join(remaining)} after {rounds} rounds; '
                                       'a library node appears to expand into itself')
 
         # One per state, by GUID so the pick does not depend on graph iteration order.
@@ -356,7 +356,7 @@ def return_containers(sdfg: SDFG) -> List[Tuple[SDFG, str]]:
     """Every return container in ``sdfg``'s whole tree, as ``(owning SDFG, name)``.
 
     Both the DECLARATIONS and the ACCESS NODES are walked, because they answer different questions
-    and MPR needs both. ``arrays_recursive`` finds a container that exists, including one a nested
+    and CPF needs both. ``arrays_recursive`` finds a container that exists, including one a nested
     SDFG declared and never wired out; the access nodes are where a name is actually read or
     written, which is what lets a refusal name the state a reader can go and look at.
 
@@ -408,16 +408,16 @@ def refuse_by_value_returns(sdfg: SDFG) -> None:
         if owner is not sdfg:
             where = f'{sdfg.name}: the return container {name!r} of the nested SDFG {owner.name!r}'
         if desc.transient:
-            raise NotImplementedError(f'MPR cannot render {where} is transient, so nothing outside the SDFG that '
+            raise NotImplementedError(f'CPF cannot render {where} is transient, so nothing outside the SDFG that '
                                       'declares it can read the value it holds.')
         if owner is not sdfg:
             continue
         if isinstance(desc, dt.Scalar):
-            raise NotImplementedError(f'MPR cannot render {where} is a Scalar, which the entry signature passes BY '
+            raise NotImplementedError(f'CPF cannot render {where} is a Scalar, which the entry signature passes BY '
                                       "VALUE, so the result would be computed into the callee's copy and discarded. "
                                       f'Promote {name!r} to a one-element array before rendering.')
         if not isinstance(desc, dt.Array):
-            raise NotImplementedError(f'MPR cannot render {where} is a {type(desc).__name__}, which has no '
+            raise NotImplementedError(f'CPF cannot render {where} is a {type(desc).__name__}, which has no '
                                       'plain-pointer spelling in the entry signature.')
 
 
@@ -426,7 +426,7 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
 
     A ``Stream`` descriptor is emitted as ``dace::Stream<T>`` and a consume scope drives it through
     ``dace::Consume``: both are runtime templates carrying a lock-free queue, and neither has a
-    standalone spelling that MPR could inline. Without this check a stream still fails, but as the
+    standalone spelling that CPF could inline. Without this check a stream still fails, but as the
     self-containment assertion on the finished text, which names ``dace::Stream`` rather than the
     container it came from.
 
@@ -439,12 +439,12 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.ConsumeEntry):
-                raise NotImplementedError(f'MPR cannot render {state.label}/{node.label}: a consume scope is driven '
+                raise NotImplementedError(f'CPF cannot render {state.label}/{node.label}: a consume scope is driven '
                                           'by the runtime class dace::Consume, whose queue and quiescence detection '
-                                          'MPR does not provide. Express the work as a map before rendering.')
+                                          'CPF does not provide. Express the work as a map before rendering.')
     for subsdfg, name, desc in sdfg.arrays_recursive():
         if isinstance(desc, dt.Stream):
-            raise NotImplementedError(f'MPR cannot render {subsdfg.name}.{name}: a Stream is the runtime class '
+            raise NotImplementedError(f'CPF cannot render {subsdfg.name}.{name}: a Stream is the runtime class '
                                       'dace::Stream, a lock-free queue with no standalone spelling. Rewrite the '
                                       'producer and consumer around an array before rendering.')
 
@@ -457,14 +457,14 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     what that could not make renderable is refused
     (:func:`refuse_by_value_returns`), every library node is pointed at its pure implementation and
     expanded (:func:`force_pure_expansions`), and lifetimes that would need a state struct are
-    demoted (see :data:`LIFETIME_DEMOTIONS`). Anything MPR cannot express raises here rather than
+    demoted (see :data:`LIFETIME_DEMOTIONS`). Anything CPF cannot express raises here rather than
     at compile time, where the message would be a C++ diagnostic about a name this module chose.
 
     The promotion runs in BOTH dialects, not only C. A by-value scalar out-parameter discards the
     result just as silently in C++; the C rendering merely also fails to compile, because a written
     scalar connector on a nested SDFG binds as ``T &`` there.
 
-    :param sdfg: the SDFG to prepare. Call on a COPY -- :func:`mpr` does.
+    :param sdfg: the SDFG to prepare. Call on a COPY -- :func:`cpf` does.
     :param provenance: filled in with the library-node descriptions the rendering will comment
                        with (see :func:`force_pure_expansions`).
     :raises NotImplementedError: if the SDFG needs a device compiler, holds a stream or a consume
@@ -473,7 +473,7 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     """
     device = uses_device_code(sdfg)
     if device:
-        raise NotImplementedError('MPR renders one host translation unit, but ' + '; '.join(device) +
+        raise NotImplementedError('CPF renders one host translation unit, but ' + '; '.join(device) +
                                   '. Render the CPU form of this SDFG instead.')
     refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
@@ -486,7 +486,7 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
 
 
 def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
-    """The one translation unit MPR renders, out of what code generation produced.
+    """The one translation unit CPF renders, out of what code generation produced.
 
     A second LINKABLE object means the SDFG was split across files -- a ``.cu`` for a GPU kernel, or
     a separate unit per nest under ``codegen_params.split_nsdfg_translation_units``. Either way the
@@ -502,7 +502,7 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     linkable = [obj for obj in objects if obj.linkable]
     if len(linkable) != 1:
         extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable if obj.target_type != 'Frame')
-        raise NotImplementedError(f'MPR renders one translation unit, but {name} generated {len(linkable)}: '
+        raise NotImplementedError(f'CPF renders one translation unit, but {name} generated {len(linkable)}: '
                                   f'{extra}. Turn off the split-translation-unit codegen parameters.')
     return linkable[0]
 
@@ -576,10 +576,10 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
         closed = code.index(')', opened)
         # The parameter list is split on commas and terminated at the first ``)``, which is exact
         # for pointers and by-value scalars and wrong for anything nested (a function-pointer
-        # parameter). MPR emits neither today; refuse rather than mangle the signature if it ever
+        # parameter). CPF emits neither today; refuse rather than mangle the signature if it ever
         # does.
         if '(' in code[opened + 1:closed]:
-            raise NotImplementedError(f'MPR cannot qualify the entry signature of {entry}: a parameter carries a '
+            raise NotImplementedError(f'CPF cannot qualify the entry signature of {entry}: a parameter carries a '
                                       'nested parameter list, which this rewrite cannot split.')
         params = [p.strip() for p in code[opened + 1:closed].split(',')]
         params = [f'const {p}' if entry_parameter_name(p) in readonly else p for p in params]
@@ -591,13 +591,13 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
 #: historical behaviour exactly.
-LANGUAGES: Dict[str, mpr_lowering.Dialect] = {
-    'c++': mpr_lowering.Dialect.STANDALONE,
-    'c': mpr_lowering.Dialect.STANDALONE_C,
+LANGUAGES: Dict[str, cpf_lowering.Dialect] = {
+    'c++': cpf_lowering.Dialect.STANDALONE,
+    'c': cpf_lowering.Dialect.STANDALONE_C,
 }
 
 
-def dialect_for(language: str) -> mpr_lowering.Dialect:
+def dialect_for(language: str) -> cpf_lowering.Dialect:
     """The dialect ``language`` names.
 
     :param language: ``'c++'`` or ``'c'``.
@@ -606,13 +606,13 @@ def dialect_for(language: str) -> mpr_lowering.Dialect:
     try:
         return LANGUAGES[language]
     except KeyError:
-        raise ValueError(f'MPR renders {sorted(LANGUAGES)}, not {language!r}') from None
+        raise ValueError(f'CPF renders {sorted(LANGUAGES)}, not {language!r}') from None
 
 
-def preamble(code: str, dialect: mpr_lowering.Dialect = mpr_lowering.Dialect.STANDALONE) -> str:
+def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE) -> str:
     """The include block and inline definitions ``code`` needs, in the order they must appear.
 
-    Derived from the finished text (:func:`~dace.mpr_lowering.helpers_used`) rather than from the
+    Derived from the finished text (:func:`~dace.cpf_lowering.helpers_used`) rather than from the
     SDFG: helpers arrive from two printers -- symbolic expressions and tasklet bodies -- and only
     the emitted unit has seen both.
 
@@ -620,13 +620,13 @@ def preamble(code: str, dialect: mpr_lowering.Dialect = mpr_lowering.Dialect.STA
     :param dialect: which standalone dialect emitted it.
     :returns: the preamble, ending in a blank line.
     """
-    used = mpr_lowering.helpers_used(code, dialect)
-    definitions = mpr_lowering.definitions_for(used, dialect)
-    headers = mpr_lowering.headers_for(used, dialect)
-    lines = ['// Rendered by DaCe MPR (maximal parallel rendering): self-contained, no DaCe runtime.']
+    used = cpf_lowering.helpers_used(code, dialect)
+    definitions = cpf_lowering.definitions_for(used, dialect)
+    headers = cpf_lowering.headers_for(used, dialect)
+    lines = ['// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime.']
     lines += [f'#include {header}' for header in headers]
-    if dialect is mpr_lowering.Dialect.STANDALONE_C:
-        lines.append(mpr_lowering.C_UNDEF_LINE)
+    if dialect is cpf_lowering.Dialect.STANDALONE_C:
+        lines.append(cpf_lowering.C_UNDEF_LINE)
     if definitions:
         lines.append('')
         lines.append('// Functions the DaCe runtime headers would otherwise provide.')
@@ -635,13 +635,13 @@ def preamble(code: str, dialect: mpr_lowering.Dialect = mpr_lowering.Dialect.STA
     return '\n'.join(lines)
 
 
-#: What a finished rendering must not contain, and what each one means. MPR's own gate, checked on
+#: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on
 #: the emitted text before it is handed back: every one of these is a construct that BUILDS inside
 #: the DaCe tree (where the runtime headers are on the include path) and fails only once the output
-#: is used the way MPR promises it can be. Failing here names the SDFG construct that caused it,
+#: is used the way CPF promises it can be. Failing here names the SDFG construct that caused it,
 #: which a link error against ``libdace`` never would.
 #:
-#: The test harness (``tests/codegen/mpr/conftest.py``) states the same contract independently and
+#: The test harness (``tests/codegen/cpf/conftest.py``) states the same contract independently and
 #: on purpose -- it is the acceptance spec, written from outside, and it also compiles the result
 #: with no include path at all, which is the only check that cannot be fooled by a table that
 #: forgot an entry.
@@ -657,7 +657,7 @@ BANNED: Tuple[Tuple[re.Pattern, str], ...] = (
 
 #: The scalar type spellings a code generator writes a declarator with. Used to anchor the
 #: reference-parameter pattern below: a bare ``\w+\s*&\s*\w+`` would also match the bitwise
-#: ``exponent & 1)`` in MPR's own ``ipow``, and a gate with a false positive gets disabled.
+#: ``exponent & 1)`` in CPF's own ``ipow``, and a gate with a false positive gets disabled.
 _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
                      r'(?:long\s+double|long\s+long|u?int(?:8|16|32|64)_t|double|float|bool|char|short|int|long)'
                      r'(?:\s+_Complex)?')
@@ -672,14 +672,14 @@ BANNED_C: Tuple[Tuple[re.Pattern, str], ...] = BANNED + (
     (re.compile(r'\bstatic_cast\s*<'), 'a C++ static_cast'),
     (re.compile(r'\bnew\s'), 'a C++ new-expression'),
     (re.compile(r'\bdelete\b'), 'a C++ delete-expression'),
-    # ``constexpr`` on an OBJECT is C23 and is how MPR emits an SDFG constant, so only the FUNCTION
+    # ``constexpr`` on an OBJECT is C23 and is how CPF emits an SDFG constant, so only the FUNCTION
     # form is banned: a qualifier run ending in a declarator with a parameter list.
     (re.compile(r'\b(?:constexpr|consteval)\b[^;=\n]*\b\w+\s*\([^;]*\)\s*\{'), 'a constexpr/consteval function'),
     (re.compile(_C_DECLARED_TYPES + r'\s*&\s*\w+\s*[,)]'), 'a C++ reference parameter'),
 )
 
 
-def verify(code: str, name: str, dialect: mpr_lowering.Dialect = mpr_lowering.Dialect.STANDALONE) -> None:
+def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE) -> None:
     """Assert ``code`` is self-contained, or raise naming what leaked.
 
     :param code: the rendered translation unit.
@@ -687,7 +687,7 @@ def verify(code: str, name: str, dialect: mpr_lowering.Dialect = mpr_lowering.Di
     :param dialect: which standalone dialect rendered it, choosing the table to check against.
     :raises RuntimeError: on the first banned construct found.
     """
-    banned = BANNED_C if dialect is mpr_lowering.Dialect.STANDALONE_C else BANNED
+    banned = BANNED_C if dialect is cpf_lowering.Dialect.STANDALONE_C else BANNED
     for pattern, meaning in banned:
         match = pattern.search(code)
         if match is None:
@@ -695,14 +695,14 @@ def verify(code: str, name: str, dialect: mpr_lowering.Dialect = mpr_lowering.Di
         start = code.rfind('\n', 0, match.start()) + 1
         end = code.find('\n', match.end())
         line = code[start:end if end != -1 else len(code)].strip()
-        raise RuntimeError(f'MPR rendered {name} with {meaning} ({match.group(0)!r}), so the result is not '
+        raise RuntimeError(f'CPF rendered {name} with {meaning} ({match.group(0)!r}), so the result is not '
                            f'self-contained:\n    {line}')
 
 
 class Rendering(NamedTuple):
     """A rendered SDFG: the C++ text, and the SDFG that text was generated from.
 
-    The second field is not a convenience. MPR renders a PREPARED COPY -- library nodes expanded
+    The second field is not a convenience. CPF renders a PREPARED COPY -- library nodes expanded
     through their pure implementations, lifetimes demoted -- and preparation can change the
     ARGUMENT LIST: expanding a ``Reduce`` into a map introduces the extent symbol the library node
     had kept to itself, so the entry point takes an argument the original SDFG's ``arglist()``
@@ -735,7 +735,7 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
     # writes ``std::abs`` -- had no way to know which dialect was being rendered and always chose
     # the C++ one, so every argmax over a transformed element failed the C rendering at the
     # self-containment check rather than at anything a caller could act on.
-    with mpr_lowering.dialect_scope(dialect):
+    with cpf_lowering.dialect_scope(dialect):
         prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
@@ -743,18 +743,18 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
     with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
         selected = Config.get('compiler', 'cpu', 'implementation')
         if selected != 'experimental_readable':
-            raise RuntimeError('MPR builds on the readable CPU code generator, but '
+            raise RuntimeError('CPF builds on the readable CPU code generator, but '
                                f'compiler.cpu.implementation is pinned to {selected!r} (a DACE_* environment '
                                'variable outranks the in-process setting). Unset it to render.')
-        with mpr_lowering.dialect_scope(dialect):
-            with mpr_lowering.provenance_scope(provenance):
+        with cpf_lowering.dialect_scope(dialect):
+            with cpf_lowering.provenance_scope(provenance):
                 objects = codegen.generate_code(prepared, validate=validate)
                 body = frame_object(objects, sdfg.name).clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
-                body = mpr_lowering.rewrite_ctypes(body, dialect)
+                body = cpf_lowering.rewrite_ctypes(body, dialect)
                 body = qualify_readonly_pointers(body, prepared, sdfg.name)
-                if dialect is mpr_lowering.Dialect.STANDALONE_C:
+                if dialect is cpf_lowering.Dialect.STANDALONE_C:
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
                     body = re.sub(r'\b__restrict__\b', 'restrict', body)
@@ -763,7 +763,7 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
     return Rendering(code, prepared)
 
 
-def mpr(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> str:
+def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> str:
     """Render ``sdfg`` as one self-contained translation unit.
 
     The SDFG is copied first, so neither the lifetime demotions nor the code generator's own

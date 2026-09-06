@@ -13,7 +13,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
-from dace import mpr_lowering
+from dace import cpf_lowering
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -94,7 +94,7 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
 
     # Ahead of every spelling of the loop below, so a hint on an inverted loop is not silently
     # dropped. Empty unless the rendering is standalone and a pass recorded an alternative.
-    expr = mpr_lowering.hint_comment(loop.specialization_hint)
+    expr = cpf_lowering.hint_comment(loop.specialization_hint)
 
     lsyms = {}
     lsyms.update(symbols)

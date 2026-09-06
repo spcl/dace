@@ -1259,7 +1259,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
                                    'specialization a canonicalizing pass considered and did not take, or '
                                    'the kind of loop this is -- parallel, sequential with a proven carried '
                                    'dependence, or neither proven (AnnotateLoopKinds). Same contract as the '
-                                   'node-level property of the same name: the standalone (MPR) rendering '
+                                   'node-level property of the same name: the standalone (CPF) rendering '
                                    'emits it as a comment, every other code path ignores it, and nothing '
                                    'anywhere dispatches on it.')
 

@@ -9,7 +9,7 @@ of them -- so nvcc rejects the translation unit as ambiguous. ``dace/math.h`` ca
 The point of testing it here is that the same expression reaches C++ through TWO printers -- a
 tasklet body through ``cppunparse``, a memlet subset or interstate assignment through
 ``dace.symbolic`` -- and the tasklet side was qualified while the symbolic side still wrote the
-bare sympy name. One shared table (``mpr_lowering.RUNTIME_QUALIFIED_MATH``) now feeds both, and
+bare sympy name. One shared table (``cpf_lowering.RUNTIME_QUALIFIED_MATH``) now feeds both, and
 these tests fail if either printer drifts off it.
 """
 import numpy as np
@@ -17,19 +17,19 @@ import pytest
 import sympy
 
 import dace
-from dace import mpr_lowering, symbolic
+from dace import cpf_lowering, symbolic
 from dace.codegen import cppunparse
 
 #: The unary names in the shared table -- ``fma`` is ternary and is exercised by its own tests.
-UNARY = sorted(set(mpr_lowering.RUNTIME_QUALIFIED_MATH) - {'fma'})
+UNARY = sorted(set(cpf_lowering.RUNTIME_QUALIFIED_MATH) - {'fma'})
 
 
 @pytest.mark.parametrize('name', UNARY)
 def test_both_printers_qualify_the_same_math_names(name):
     """The symbolic printer and the tasklet printer agree, name for name."""
     x = symbolic.symbol('x')
-    expected = mpr_lowering.RUNTIME_QUALIFIED_MATH[name]
-    assert expected in symbolic.symstr(sympy.Function(name)(x), cpp_mode=True, dialect=mpr_lowering.Dialect.RUNTIME)
+    expected = cpf_lowering.RUNTIME_QUALIFIED_MATH[name]
+    assert expected in symbolic.symstr(sympy.Function(name)(x), cpp_mode=True, dialect=cpf_lowering.Dialect.RUNTIME)
     assert expected in cppunparse.py2cpp(f'b = {name}(a)')
 
 
@@ -40,7 +40,7 @@ def test_a_sympy_square_root_is_qualified_however_it_is_spelled():
     which writes the bare name.
     """
     x = symbolic.symbol('x')
-    runtime = mpr_lowering.Dialect.RUNTIME
+    runtime = cpf_lowering.Dialect.RUNTIME
     assert 'dace::math::sqrt' in symbolic.symstr(sympy.sqrt(x), cpp_mode=True, dialect=runtime)
     assert 'dace::math::sqrt' in symbolic.symstr(symbolic.pystr_to_symbolic('math.sqrt(x)'),
                                                  cpp_mode=True,
@@ -52,13 +52,13 @@ def test_a_name_with_no_low_precision_overload_stays_bare():
     it would move the same ambiguity one frame down into ``dace::math``'s template body rather than
     resolve it. A table that grew to cover every math name would pass every other test here."""
     x = symbolic.symbol('x')
-    assert 'sin' not in mpr_lowering.RUNTIME_QUALIFIED_MATH
-    assert 'dace::math::sin' not in symbolic.symstr(sympy.sin(x), cpp_mode=True, dialect=mpr_lowering.Dialect.RUNTIME)
+    assert 'sin' not in cpf_lowering.RUNTIME_QUALIFIED_MATH
+    assert 'dace::math::sin' not in symbolic.symstr(sympy.sin(x), cpp_mode=True, dialect=cpf_lowering.Dialect.RUNTIME)
 
 
-@pytest.mark.parametrize('dialect', [mpr_lowering.Dialect.STANDALONE, mpr_lowering.Dialect.STANDALONE_C])
+@pytest.mark.parametrize('dialect', [cpf_lowering.Dialect.STANDALONE, cpf_lowering.Dialect.STANDALONE_C])
 def test_the_standalone_dialects_still_get_the_standard_library(dialect):
-    """MPR emits a translation unit with no DaCe headers at all, so a ``dace::`` name there does not
+    """CPF emits a translation unit with no DaCe headers at all, so a ``dace::`` name there does not
     compile. The standalone lowering runs first and must keep winning.
 
     The dialect is passed rather than left ambient because ``symstr`` is memoized on its arguments:

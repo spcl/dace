@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contract-based iteration-space partitioning: what it splits and what it refuses.
 
-The kernel under test is the MPR-PPG figure's own::
+The kernel under test is the CPF-PPG figure's own::
 
     for i in range(1, N - 1):
         if i * i < N: A[i] = A[i - 1] + B[i]     # carried RAW, only under the guard

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Partition the iteration space of a loop whose carried dependence is GUARDED by a predicate.
 
-The shape, straight out of the MPR-PPG figure::
+The shape, straight out of the CPF-PPG figure::
 
     for i in range(1, N - 1):
         if i * i < N:
@@ -301,7 +301,7 @@ class PartitionGuardedLoop(ppl.Pass):
             probe_cut = self.fresh_cut_symbol(probe, probe_loop)
             if probe_cut is None:
                 continue
-            probe_suffix = split_at_guard(probe_loop, relation, ivar, probe_cut, f'{probe_loop.label}_mpr')
+            probe_suffix = split_at_guard(probe_loop, relation, ivar, probe_cut, f'{probe_loop.label}_cpf')
             # Privatize the throwaway copy first: a per-iteration scalar temporary is a FALSE
             # write/write dependence that hides the answer to the only question being asked here,
             # and it is the same prep the pipeline runs ahead of its own LoopToMap.
@@ -311,7 +311,7 @@ class PartitionGuardedLoop(ppl.Pass):
             cut = self.fresh_cut_symbol(sdfg, loop)
             if cut is None:
                 continue
-            split_at_guard(loop, relation, ivar, cut, f'{loop.label}_mpr')
+            split_at_guard(loop, relation, ivar, cut, f'{loop.label}_cpf')
             count += 1
         return count or None
 

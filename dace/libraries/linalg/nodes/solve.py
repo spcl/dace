@@ -187,7 +187,7 @@ class ExpandSolvePure(ExpandTransformation):
     """``A x = b`` as loops and tasklets, with no library behind it.
 
     Gaussian elimination with partial pivoting, then back substitution -- the same thing LAPACK's
-    ``?GESV`` does, spelled so that MPR can render it into a translation unit that links against
+    ``?GESV`` does, spelled so that CPF can render it into a translation unit that links against
     nothing. Correct rather than fast; a build with MKL or OpenBLAS should keep using them.
     """
 

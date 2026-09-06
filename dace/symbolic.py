@@ -18,7 +18,7 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
-from dace import mpr_lowering
+from dace import cpf_lowering
 from dace import symbolic_engine
 from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 # Re-exported so a consumer asks `symbolic` for a backend-neutral head instead of naming sympy.
@@ -3549,11 +3549,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
 
-    def __init__(self, arrays, cpp_mode=False, dialect=mpr_lowering.Dialect.RUNTIME, fp_ctype=None, *args, **kwargs):
+    def __init__(self, arrays, cpp_mode=False, dialect=cpf_lowering.Dialect.RUNTIME, fp_ctype=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
         self.cpp_mode = cpp_mode
-        # Which C++ vocabulary this printer may emit; see mpr_lowering.Dialect for why the
+        # Which C++ vocabulary this printer may emit; see cpf_lowering.Dialect for why the
         # dialect is threaded through as an argument rather than read from configuration.
         self.dialect = dialect
         # C++ floating type this expression evaluates in ('float' / 'double'), or None when the
@@ -3570,15 +3570,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
         A helper with an inline definition is emitted as a plain call; which definitions a
         translation unit needs is recovered from the finished text by
-        :func:`~dace.mpr_lowering.helpers_used`, because ``symstr`` is memoized and per-printer
+        :func:`~dace.cpf_lowering.helpers_used`, because ``symstr`` is memoized and per-printer
         state would not survive a cache hit.
         """
-        if self.dialect not in mpr_lowering.STANDALONE_DIALECTS:
+        if self.dialect not in cpf_lowering.STANDALONE_DIALECTS:
             return None
-        lowered = mpr_lowering.lowering_for(name, tuple(arguments), self.dialect)
+        lowered = cpf_lowering.lowering_for(name, tuple(arguments), self.dialect)
         if lowered is not None:
             return lowered
-        if mpr_lowering.needs_definition(name, self.dialect):
+        if cpf_lowering.needs_definition(name, self.dialect):
             return '%s(%s)' % (name, ', '.join(arguments))
         return None
 
@@ -3635,11 +3635,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # expression keeps its exact (truncating for int) semantics.
         if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
             target = _TYPECAST_CPP[str(expr.func)]
-            if self.dialect is mpr_lowering.Dialect.STANDALONE_C:
+            if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
                 # C has neither ``static_cast`` nor a functional cast.
-                return '((%s)(%s))' % (mpr_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
-            if self.dialect is mpr_lowering.Dialect.STANDALONE:
-                return 'static_cast<%s>(%s)' % (mpr_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+                return '((%s)(%s))' % (cpf_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+            if self.dialect is cpf_lowering.Dialect.STANDALONE:
+                return 'static_cast<%s>(%s)' % (cpf_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
             return '%s(%s)' % (target, self._print(expr.args[0]))
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
@@ -3648,12 +3648,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return lowered
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
         # ``and`` / ``or`` are C++ alternative tokens; in C they are macros from ``<iso646.h>``,
-        # which MPR does not include, so the C dialect spells the operators.
+        # which CPF does not include, so the C dialect spells the operators.
         if str(expr.func) == 'AND':
-            keyword = '&&' if self.dialect is mpr_lowering.Dialect.STANDALONE_C else 'and'
+            keyword = '&&' if self.dialect is cpf_lowering.Dialect.STANDALONE_C else 'and'
             return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
-            keyword = '||' if self.dialect is mpr_lowering.Dialect.STANDALONE_C else 'or'
+            keyword = '||' if self.dialect is cpf_lowering.Dialect.STANDALONE_C else 'or'
             return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
             # TODO: We want to check that args[0] is a Structure.
@@ -3707,12 +3707,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if lowered is not None:
             return lowered
         # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
-        # must be qualified for the same reason a tasklet body's are (mpr_lowering states it): bare,
+        # must be qualified for the same reason a tasklet body's are (cpf_lowering states it): bare,
         # they bind to ``std::``, whose overloads are ambiguous for a 16-bit float. The Pow path
         # above already emits ``dace::math::sqrt`` for ``x**Rational(1, 2)``; this covers the same
         # function arriving as a CALL -- ``math.sqrt(x)``, or a sympy ``exp`` from a substitution --
         # which the base printer would otherwise write out under its bare sympy name.
-        qualified = mpr_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
+        qualified = cpf_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
         if qualified is not None:
             return '%s(%s)' % (qualified, ', '.join(self._print(a) for a in expr.args))
         return super()._print_Function(expr)
@@ -3767,7 +3767,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _fp_literal(self, value) -> str:
         """``value`` converted to ``fp_ctype``: a functional cast in C++, a cast expression in C."""
-        if self.dialect is mpr_lowering.Dialect.STANDALONE_C:
+        if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
             return '((%s)(%s))' % (self.fp_ctype, value)
         return '%s(%s)' % (self.fp_ctype, value)
 
@@ -3991,7 +3991,7 @@ def infer_fp_ctype(expr) -> Optional[str]:
 def _symstr(sym,
             arrayexprs: Optional[FrozenSet[str]] = None,
             cpp_mode=False,
-            dialect: Optional[mpr_lowering.Dialect] = None,
+            dialect: Optional[cpf_lowering.Dialect] = None,
             fp_ctype: Optional[str] = None) -> str:
     """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
     included, so nothing here may read an ambient value."""
@@ -4040,7 +4040,7 @@ def _symstr(sym,
 def symstr(sym,
            arrayexprs: Optional[FrozenSet[str]] = None,
            cpp_mode=False,
-           dialect: Optional[mpr_lowering.Dialect] = None,
+           dialect: Optional[cpf_lowering.Dialect] = None,
            fp_ctype: Optional[str] = None) -> str:
     """
     Convert a symbolic expression to a compilable expression.
@@ -4051,7 +4051,7 @@ def symstr(sym,
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
     :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
-                    (:func:`~dace.mpr_lowering.active_dialect`). Resolved HERE, in front of the
+                    (:func:`~dace.cpf_lowering.active_dialect`). Resolved HERE, in front of the
                     memoized body, because the cache key is the ARGUMENTS: an omitted dialect
                     resolved inside would give every ambient-dialect caller one shared entry, and
                     a standalone render would then serve ``std::exp`` back to the runtime printer.
@@ -4064,7 +4064,7 @@ def symstr(sym,
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
     if dialect is None:
-        dialect = mpr_lowering.active_dialect()
+        dialect = cpf_lowering.active_dialect()
     return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype)
 
 

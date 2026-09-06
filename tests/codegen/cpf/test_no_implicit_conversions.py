@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""MPR renders no IMPLICIT conversion: the allocation size and a nested body's symbol parameters.
+"""CPF renders no IMPLICIT conversion: the allocation size and a nested body's symbol parameters.
 
 Two narrowings, both invisible until a strict build:
 
@@ -9,7 +9,7 @@ per render on a kernel with four transients, which is a render that cannot pass 
 
 A nested SDFG's symbol parameter is typed from the symbol table, where a loop iterator carries the
 int32 DEFAULT symbol type. The body then names it ``int`` while every index and ``_size`` helper
-MPR emits beside it is ``int64_t``, so the call NARROWS. In cholesky the narrowed value is a dot
+CPF emits beside it is ``int64_t``, so the call NARROWS. In cholesky the narrowed value is a dot
 product's trip count -- an extent, not just an index -- which truncates past 2^31.
 
 The shared ``WARNING_FLAGS`` are only ``-Wall -Wextra``, and neither narrowing is diagnosed there:
@@ -18,11 +18,11 @@ the conversion flags below are what makes these assertions bite.
 import re
 
 import dace
-from dace import dtypes, mpr_lowering
-from dace.codegen.mpr import render
+from dace import dtypes, cpf_lowering
+from dace.codegen.cpf import render
 from dace.codegen.targets.cpu import CPUCodeGen
 
-from tests.codegen.mpr.conftest import compile_standalone
+from tests.codegen.cpf.conftest import compile_standalone
 
 #: What a strict consumer builds with; the shared WARNING_FLAGS do not include these.
 CONVERSION_FLAGS = ('-Wall', '-Wextra', '-Wconversion', '-Wsign-conversion', '-Werror')
@@ -39,7 +39,7 @@ def two_stage(src: dace.float64[N], dst: dace.float64[N]):
 def test_the_c_allocation_spells_its_size_conversion():
     """The transient's byte count reaches ``aligned_alloc``/``malloc`` through an explicit cast."""
     sdfg = two_stage.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_alloc_c'
+    sdfg.name = 'cpf_alloc_c'
     code = render(sdfg, language='c').code
     allocations = [line for line in code.splitlines() if 'aligned_alloc(' in line or 'malloc(' in line]
     assert allocations, code
@@ -50,14 +50,14 @@ def test_the_c_allocation_spells_its_size_conversion():
 def test_a_strict_conversion_build_of_the_c_render_is_clean():
     """``-Wconversion -Wsign-conversion -Werror``: the flags the allocation used to fail."""
     sdfg = two_stage.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_alloc_strict'
+    sdfg.name = 'cpf_alloc_strict'
     code = render(sdfg, language='c').code
-    compile_standalone(code, 'mpr_alloc_strict', extra_flags=CONVERSION_FLAGS, language='c')
+    compile_standalone(code, 'cpf_alloc_strict', extra_flags=CONVERSION_FLAGS, language='c')
 
 
-def test_a_nested_symbol_parameter_is_int64_under_mpr():
+def test_a_nested_symbol_parameter_is_int64_under_cpf():
     """An integer symbol widens, whatever the symbol table says, so no call site narrows."""
-    with mpr_lowering.dialect_scope(mpr_lowering.Dialect.STANDALONE):
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE):
         assert CPUCodeGen.nsdfg_symbol_argument(dtypes.int32, '_loop_it_0') == dtypes.int64.as_arg('_loop_it_0')
         assert CPUCodeGen.nsdfg_symbol_argument(dtypes.int64, 'N') == dtypes.int64.as_arg('N')
         # A non-integer symbol is not this rule's business.
@@ -78,7 +78,7 @@ def test_no_nested_body_signature_narrows_a_symbol():
     body's parameter is reached by a narrowing call, and only those are asserted here.
     """
     sdfg = two_stage.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_nested_symbols'
+    sdfg.name = 'cpf_nested_symbols'
     code = render(sdfg, language='c++').code
     nested = [line for line in code.splitlines() if re.match(r'\s*(inline\s+)?void\s+_', line)]
     for line in nested:
@@ -97,7 +97,7 @@ def test_a_narrowing_store_spells_its_conversion():
     render saying so, and about the file staying clean under ``-Wfloat-conversion``.
     """
     sdfg = mixed_store.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_narrowing_store'
+    sdfg.name = 'cpf_narrowing_store'
     code = render(sdfg, language='c').code
     stores = [line for line in code.splitlines() if 'out[' in line and '=' in line]
     assert stores, code
@@ -106,15 +106,15 @@ def test_a_narrowing_store_spells_its_conversion():
 
 def test_a_narrowing_store_builds_clean_under_conversion_warnings():
     sdfg = mixed_store.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_narrowing_strict'
+    sdfg.name = 'cpf_narrowing_strict'
     code = render(sdfg, language='c').code
-    compile_standalone(code, 'mpr_narrowing_strict', extra_flags=CONVERSION_FLAGS, language='c')
+    compile_standalone(code, 'cpf_narrowing_strict', extra_flags=CONVERSION_FLAGS, language='c')
 
 
 def test_a_matched_store_is_not_cast():
     """No cast where the types already agree -- the rule is 'no IMPLICIT conversion', not 'cast all'."""
     sdfg = two_stage.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_matched_store'
+    sdfg.name = 'cpf_matched_store'
     code = render(sdfg, language='c').code
     stores = [line for line in code.splitlines() if 'dst[' in line and '=' in line]
     assert stores, code
@@ -136,7 +136,7 @@ def test_a_fused_store_that_names_its_data_still_spells_the_conversion():
     -- so the narrowing goes back to being implicit on precisely the kernels that fuse.
     """
     sdfg = fused_store.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_fused_store'
+    sdfg.name = 'cpf_fused_store'
     code = render(sdfg, language='c').code
     stores = [line for line in code.splitlines() if 'out[' in line and '=' in line]
     assert stores, code
@@ -146,7 +146,7 @@ def test_a_fused_store_that_names_its_data_still_spells_the_conversion():
 def test_the_cpp_render_casts_with_static_cast():
     """C++ has ``-Wold-style-cast``: the C spelling would trade one diagnostic for another."""
     sdfg = fused_store.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_fused_store_cpp'
+    sdfg.name = 'cpf_fused_store_cpp'
     code = render(sdfg, language='c++').code
     stores = [line for line in code.splitlines() if 'out[' in line and '=' in line]
     assert stores, code
@@ -157,9 +157,9 @@ def test_the_cpp_render_casts_with_static_cast():
 
 def test_the_cpp_render_is_clean_under_strict_cast_warnings():
     sdfg = fused_store.to_sdfg(simplify=True)
-    sdfg.name = 'mpr_fused_store_strict'
+    sdfg.name = 'cpf_fused_store_strict'
     code = render(sdfg, language='c++').code
     compile_standalone(code,
-                       'mpr_fused_store_strict',
+                       'cpf_fused_store_strict',
                        extra_flags=CONVERSION_FLAGS + ('-Wold-style-cast', ),
                        language='c++')
