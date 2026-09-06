@@ -48,6 +48,32 @@ _GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime
 _HOST_FLAGS_NOT_FORWARDED = frozenset({'-Wall', '-Wextra', '-fPIC'})
 
 
+def dynamic_map_input_args(state: SDFGState, kernel_map_entry: nodes.MapEntry) -> Dict[str, dt.Data]:
+    """Scalars a kernel reads through its map's dynamic-range connectors, keyed by connector name.
+
+    A dynamic map range spells its bounds with the CONNECTOR names, and ``used_symbols`` treats a
+    connector as locally defined, so such a bound never reaches the scope arglist. On the host that
+    is harmless -- the connector is a local variable -- but a kernel is a separate function in a
+    separate translation unit: the bound has to travel as a parameter or the device code names an
+    undefined identifier. The ``gpuStream_t`` connector is excluded; the launch wrapper appends the
+    stream to its own signature separately.
+
+    A fresh :class:`~dace.data.Scalar` (not the container's descriptor) is what the kernel takes:
+    the parameter is passed by value under the connector's name, so the container's storage and
+    lifetime -- which would otherwise re-route the name through ``__state`` -- must not follow it.
+    """
+    sdfg = state.sdfg
+    result: Dict[str, dt.Data] = {}
+    for e in sorted(dace.sdfg.dynamic_map_inputs(state, kernel_map_entry), key=lambda edge: edge.dst_conn):
+        if e.data is None or e.data.data is None:
+            continue
+        desc = sdfg.arrays[e.data.data]
+        if desc.dtype == dtypes.gpuStream_t:
+            continue
+        result[e.dst_conn] = dt.Scalar(desc.dtype)
+    return result
+
+
 def _forwarded_host_args() -> List[str]:
     """The host flags a ``.cu`` or ``.hip`` translation unit has to be built with as well.
 
@@ -164,8 +190,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     and node.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
-                                                                                 shared_transients[state.parent])
+                arglist = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                arglist.update(dynamic_map_input_args(state, node))
+                self._kernel_arglists[node] = arglist
 
     def kernel_arglist(self, kernel_map_entry: nodes.MapEntry) -> Dict[str, dt.Data]:
         """Arglist for one kernel scope, rebuilt exactly as :meth:`preprocess` builds the cache.
@@ -177,7 +204,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(self._global_sdfg, recursive=True):
             if node is kernel_map_entry:
-                return state.scope_subgraph(node).arglist(defined_syms, state.parent.shared_transients())
+                arglist = state.scope_subgraph(node).arglist(defined_syms, state.parent.shared_transients())
+                arglist.update(dynamic_map_input_args(state, node))
+                return arglist
         raise KeyError(f'Kernel scope {kernel_map_entry} not reachable from {self._global_sdfg.name}')
 
     def _refresh_frame_arglist(self, sdfg: SDFG):
@@ -439,6 +468,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', cfg, state_id, scope_entry)
 
         for e in dyn_inputs:
+            if e.data is not None and e.data.data == e.dst_conn:
+                # The connector reuses its container's own name, so the value is already in scope
+                # under that name -- it is a program argument or an enclosing declaration. Defining
+                # it again would shadow that variable with ``T x = x;`` and launch the kernel with
+                # whatever the self-initialised copy happens to hold.
+                continue
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
