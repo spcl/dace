@@ -618,7 +618,6 @@ def auto_optimize(sdfg: SDFG,
         if use_gpu_storage:
             apply_gpu_storage(sdfg)
         sdfg.apply_gpu_transformations()
-        #sdfg.view()
         sdfg.simplify()
 
     # fuse subgraphs greedily
@@ -646,21 +645,14 @@ def auto_optimize(sdfg: SDFG,
             # node.map.collapse = len(node.map.range)
             pass
     
-    #sdfg.view(filename=f"autoopt_1")
-
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
-
-    #sdfg.view(filename=f"autoopt_2")
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    #sdfg.expand_library_nodes()
-    #sdfg.view()
+    
     # TODO(later): Safe vectorization
-
-    #sdfg.view(filename=f"autoopt_3")
 
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():

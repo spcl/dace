@@ -1,3 +1,4 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import dtypes
 from dace.sdfg import nodes, SDFG
@@ -5,7 +6,7 @@ from dace.transformation.passes.vectorization.length_one_array_scalar_conversion
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
-import dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offloading_helpers as helpers
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class SingleElementValuePhase():
 

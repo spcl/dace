@@ -1,9 +1,11 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace import dtypes, data, Memlet, subsets
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState, ControlFlowBlock, AbstractControlFlowRegion
 
-from dace.transformation.passes.offloading.OffloadingIRNode import OffloadingIRNode
-import dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offloading_helpers as helpers
+from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
 class CopyInsertionPhase():

@@ -3045,7 +3045,7 @@ class SDFG(ControlFlowRegion):
             generate GPU code.
             :note: This is an in-place operation on the SDFG.
         """
-        from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator # Avoiding import loops
+        from dace.dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator # Avoiding import loops
         assert host_maps is None or host_maps == set()
         OffloadToAccelerator().apply_pass(self, {})
         

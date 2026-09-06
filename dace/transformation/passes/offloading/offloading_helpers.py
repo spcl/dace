@@ -1,9 +1,10 @@
+
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace import dtypes, data
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.transformation.passes.offloading.OffloadingIRNode import OffloadingIRNode
+from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.sdfg.utils import get_last_view_node
-
-
 
 ##################################################
 ###                Scope Dict                  ###

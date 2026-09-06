@@ -1,6 +1,8 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace.sdfg import nodes, SDFG
 from dace import dtypes
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offloading_helpers import get_sdfg_scope_dict
+from dace.transformation.passes.offloading.offloading_helpers import get_sdfg_scope_dict
 from typing import Type
 
 class SchedulePhase():

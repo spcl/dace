@@ -1,4 +1,4 @@
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import deque
 from copy import deepcopy
@@ -7,7 +7,7 @@ from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 from typing import Dict, Tuple
 
-import dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offloading_helpers as helpers
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class SingleIterationMapPhase():
 

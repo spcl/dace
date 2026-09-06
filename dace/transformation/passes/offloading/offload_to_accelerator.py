@@ -1,3 +1,4 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import properties
 from dace.sdfg import SDFG
@@ -5,13 +6,13 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
 
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase1_schedules import SchedulePhase
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase2_copy_analysis import CopyAnalysisPhase
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase3_single_element_values import SingleElementValuePhase
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase4_single_iteration_maps import SingleIterationMapPhase
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase6_copy_insertion import CopyInsertionPhase
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offl_phase7b_single_element_copy_optimization import SingleElementCopyOptimization
-from dace.transformation.passes.offloading.OffloadToAccelerator_Phases.offloading_helpers import get_sdfg_scope_dict
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase1_schedules import SchedulePhase
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase2_copy_analysis import CopyAnalysisPhase
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase3_single_element_values import SingleElementValuePhase
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase4_single_iteration_maps import SingleIterationMapPhase
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase6_copy_insertion import CopyInsertionPhase
+from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase7b_single_element_copy_optimization import SingleElementCopyOptimization
+from dace.transformation.passes.offloading.offloading_helpers import get_sdfg_scope_dict
 
 from typing import Any, Dict, Optional
 
@@ -20,8 +21,7 @@ from typing import Any, Dict, Optional
 @explicit_cf_compatible
 class OffloadToAccelerator(ppl.Pass):
     
-    CATEGORY: str = 'Offload To Accelerator'
-    MAX_ITERATIONS : int = 10
+    MAX_ITERATIONS : int = 42
     VERBOSE = False
 
     def modifies(self) -> ppl.Modifies:
