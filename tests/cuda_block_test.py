@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace import dtypes, nodes
 from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 import pytest
@@ -91,7 +92,14 @@ def test_different_block_sizes_nesting():
             nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
-    assert sdfg.apply_gpu_transformations() == 1
+    # The offloader reports what it placed on the device; an empty result means the graph
+    # came back running on the host, which every assertion below would then be testing.
+    assert sdfg.apply_gpu_transformations()
+    # Library nodes as well as maps: a graph whose only work is a Reduce carries its device
+    # schedule on the library node and has no map at all until the node is expanded.
+    assert any(node.schedule in dtypes.GPU_SCHEDULES for nested in sdfg.all_sdfgs_recursive()
+               for state in nested.states() for node in state.nodes()
+               if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)))
     V = np.random.rand(130)
     v1 = np.zeros([4], np.float64)
     v2 = np.random.rand(128)
