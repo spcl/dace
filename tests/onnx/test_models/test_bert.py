@@ -22,13 +22,11 @@ from transformers import BertTokenizer, BertModel
 import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close
 
-# small public checkpoint on the HF hub, downloaded and cached via the transformers/huggingface_hub machinery
-BERT_TINY_MODEL = "prajjwal1/bert-tiny"
+BERT_TINY_MODEL = "google/bert_uncased_L-2_H-128_A-2"
 
 
 class _BertONNXExportWrapper(torch.nn.Module):
-    """ Pins the forward call to plain tensor in/out; the legacy ONNX tracer mishandles BertModel's own
-        use_cache kwarg default otherwise. """
+    """ Fixes the forward kwargs: the ONNX tracer passes BertModel's use_cache default positionally otherwise. """
 
     def __init__(self, model):
         super().__init__()
@@ -43,11 +41,11 @@ class _BertONNXExportWrapper(torch.nn.Module):
         return output[0], output[1]
 
 
-@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
 def test_bert_full():
     tokenizer = BertTokenizer.from_pretrained(BERT_TINY_MODEL)
-    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL)
+    # eager attention avoids the SDPA mask guards, which do not export to ONNX
+    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL, attn_implementation="eager")
     pt_model.eval()
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
@@ -59,7 +57,6 @@ def test_bert_full():
     segments_tensors = torch.tensor([segment_ids])
     attention_mask = torch.ones(1, 8, dtype=torch.int64)
 
-    # export the ONNX graph locally instead of fetching a pre-converted one, no external host dependency
     with tempfile.TemporaryDirectory() as tmp_dir:
         bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
         torch.onnx.export(_BertONNXExportWrapper(pt_model), (tokens_tensor, attention_mask, segments_tensors),
