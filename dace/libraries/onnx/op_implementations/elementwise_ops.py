@@ -6,7 +6,6 @@ This module contains pure implementations of elementwise mathematical operations
 - Basic arithmetic: Add, Sub, Mul, Div, Pow
 - Unary math functions: Log, Exp, Sqrt, Sin, Cos, Tanh, Erf, Neg, Reciprocal
 - Activation functions: Relu, LeakyRelu, Sigmoid, Softplus
-- Logical operations: And
 - Utility operations: Clip
 
 All operations support broadcasting where applicable.
@@ -164,16 +163,6 @@ def Mul(A, B, C):
 @python_pure_op_implementation
 def Div(A, B, C):
     C[:] = A / B
-
-
-# ============================================================================
-# Logical Operations
-# ============================================================================
-
-
-@python_pure_op_implementation
-def And(A, B, C):
-    C[:] = np.logical_and(A, B)
 
 
 # ============================================================================

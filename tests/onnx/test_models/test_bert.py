@@ -44,8 +44,7 @@ class _BertONNXExportWrapper(torch.nn.Module):
 @pytest.mark.onnx
 def test_bert_full():
     tokenizer = BertTokenizer.from_pretrained(BERT_TINY_MODEL)
-    # eager attention avoids the SDPA mask guards, which do not export to ONNX
-    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL, attn_implementation="eager")
+    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL)
     pt_model.eval()
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
@@ -55,7 +54,8 @@ def test_bert_full():
 
     tokens_tensor = torch.tensor([indexed_tokens])
     segments_tensors = torch.tensor([segment_ids])
-    attention_mask = torch.ones(1, 8, dtype=torch.int64)
+    # a 4D mask is passed through as-is; the mask factory reads traced shapes, which the ONNX tracer cannot handle
+    attention_mask = torch.zeros(1, 1, 1, 8)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
