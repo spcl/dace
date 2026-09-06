@@ -678,9 +678,11 @@ VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'c
 #: for the ``std::is_trivially_destructible`` static assertion it pairs with the matching delete.
 #: ``<cstdlib>`` is for ``std::abort``, which canonicalization writes into the assumption-guard
 #: tasklet (``if ((N < 0)) { std::abort(); }``) -- a body no printer sees, so nothing else would
-#: pull the declaration in.
-BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<complex>',
-                                 '<numeric>', '<new>', '<type_traits>')
+#: pull the declaration in. ``<cassert>`` is the same case one level down: code generation guards
+#: every map with a non-unit step by ``assert((step) > 0 && "...")``, which it writes directly into
+#: the stream rather than through a printer, so no call-site table can discover it.
+BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<cassert>',
+                                 '<complex>', '<numeric>', '<new>', '<type_traits>')
 
 #: Runtime functions CPF deliberately does NOT lower, and why. Reaching one is a refusal, not a
 #: pass-through: the name is declared by a DaCe header CPF does not include, so passing it through
@@ -1516,7 +1518,8 @@ C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_ide
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
 #: section header above.
-C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<complex.h>')
+C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<assert.h>',
+                                   '<complex.h>')
 
 #: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
 #: macro is removed immediately after the include; complex literals are built with ``CMPLX``.
