@@ -67,8 +67,19 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
-    # gpuMemcpyAsync can't issue from device code, so in-kernel multi-element copies map instead.
+    # gpuMemcpyAsync can't issue from device code, so in-kernel multi-element copies map instead --
+    # but only where the kernel can dereference both ends. Crossing the boundary it cannot: there is
+    # no implementation of a host-to-device copy issued from inside a kernel, neither a mapped
+    # tasklet nor a Memcpy variant, so the answer is that the copy does not belong in the kernel.
+    # Saying so here keeps the refusal at the point the choice is made, instead of returning an
+    # implementation that then reports the boundary as its own limitation and suggests a Memcpy
+    # variant that is just as impossible in device code.
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+        if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
+            raise ValueError(f"No copy implementation crosses the CPU/GPU boundary inside a kernel "
+                             f"(got {inp.storage} -> {out.storage} for '{node.label}' in state "
+                             f"'{parent_state.label}'). Device code cannot address host memory and "
+                             f"cannot issue a Memcpy; place the copy outside the kernel.")
         return 'MappedTasklet'
 
     # Host CPU-resident: same-shape/contiguous/same-layout below the parallel-transfer threshold
@@ -84,10 +95,16 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
                      and not is_in_parallel_scope(node, parent_state))):
         return 'MemcpyCPU'
 
+    # Anything that crosses the boundary is a Memcpy: no mapped tasklet can dereference both ends,
+    # so a copy that gets here strided or rank-mismatched belongs to the refinement below, which
+    # answers with the pitched 2-D form or a loop of ``cudaMemcpyAsync`` per contiguous chunk.
+    # ``Register`` is outside ``allowed`` yet reaches here at host level, where it IS host memory.
     gpu = dtypes.StorageType.GPU_Global
     allowed = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, gpu}
-    impl = ('MemcpyCUDA1D' if ((inp.storage == gpu or out.storage == gpu) and inp.storage in allowed
-                               and out.storage in allowed) else None)
+    crosses_boundary = _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state)
+    both_gpu_or_host = inp.storage in allowed and out.storage in allowed
+    impl = ('MemcpyCUDA1D' if
+            (crosses_boundary or ((inp.storage == gpu or out.storage == gpu) and both_gpu_or_host)) else None)
 
     if impl == 'MemcpyCUDA1D':
         refined = _refine_cuda_impl_for_subsets(node, parent_state)

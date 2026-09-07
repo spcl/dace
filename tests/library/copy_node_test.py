@@ -2075,5 +2075,61 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
                         f'{expanded.name}: C++ spelling leaked into a memlet subset: {e.data.subset}'
 
 
+def _make_in_kernel_copy_sdfg(src_storage: dace.dtypes.StorageType,
+                              dst_storage: dace.dtypes.StorageType) -> Tuple[dace.SDFG, CopyLibraryNode]:
+    """A multi-element ``CopyLibraryNode`` sitting inside a ``GPU_Device`` map."""
+    sdfg = dace.SDFG("in_kernel_copy")
+    sdfg.add_array("src", [4, 8], dace.float64, storage=src_storage)
+    sdfg.add_array("dst", [4, 8], dace.float64, storage=dst_storage)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kern", dict(i="0:4"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    libnode = CopyLibraryNode(name="cp")
+    state.add_memlet_path(state.add_read("src"),
+                          entry,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.memlet.Memlet("src[0:4, 0:8]"))
+    state.add_memlet_path(libnode,
+                          exit_,
+                          state.add_write("dst"),
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.memlet.Memlet("dst[0:4, 0:8]"))
+    return sdfg, libnode
+
+
+def test_in_kernel_cross_boundary_copy_is_refused_by_selection():
+    """Device code can neither address host memory nor issue a Memcpy, so no implementation fits.
+
+    Auto used to answer ``MappedTasklet`` for every in-kernel multi-element copy, boundary
+    unchecked; the expansion then rejected it and pointed at ``MemcpyCUDA1D``, which device code
+    cannot issue either. The refusal belongs where the choice is made, and it has to name the
+    kernel, because moving the copy out of it is the fix.
+    """
+    sdfg, libnode = _make_in_kernel_copy_sdfg(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.start_state
+    with pytest.raises(ValueError, match="inside a kernel"):
+        select_copy_implementation(libnode, state)
+
+
+def test_in_kernel_device_to_device_copy_still_maps():
+    """The refusal is only for the boundary -- an in-kernel device copy has nothing else to be."""
+    sdfg, libnode = _make_in_kernel_copy_sdfg(dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Global)
+    assert select_copy_implementation(libnode, sdfg.start_state) == "MappedTasklet"
+
+
+def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet():
+    """``Register`` is outside the storage set the CUDA branch tested, so it reached the fallback.
+
+    At host level a ``Register`` endpoint IS host memory, so the copy crosses the boundary and has
+    to be a ``cudaMemcpy`` -- a mapped tasklet cannot dereference the device side, and answering
+    with one only moves the failure into the expansion.
+    """
+    sdfg, libnode = _make_copy_sdfg(
+        _ArraySpec(shape=(4, 8), storage=dace.dtypes.StorageType.Register, transient=True),
+        _ArraySpec(shape=(4, 8), storage=dace.dtypes.StorageType.GPU_Global, transient=True),
+    )
+    assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
