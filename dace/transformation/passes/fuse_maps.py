@@ -37,10 +37,11 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
                      pedges: Set[Tuple[int, int]]) -> Iterator[List[nodes.Node]]:
     """Yield the induced matches of one small pattern in ``state``.
 
-    Replaces the VF2 subgraph isomorphism the pattern matcher used to run for these patterns and
-    reproduces its enumeration order: pattern node 0 ranges over ``state.nodes()``, every later
-    node over the successors of the image of the pattern node that points at it, and a candidate
-    is rejected unless the edges induced among the images are exactly the pattern's.
+    Replaces the VF2 subgraph isomorphism the pattern matcher ran for these patterns: pattern node
+    0 ranges over ``state.nodes()``, every later node over the successors of the image of the
+    pattern node that points at it, and a candidate is rejected unless the edges induced among the
+    images are exactly the pattern's. Same candidate set as VF2, in a deterministic order -- VF2
+    read its own candidates out of a plain `set`, so its order was the set table's, not the graph's.
     """
     npat = len(pnodes)
     all_nodes = state.nodes()
