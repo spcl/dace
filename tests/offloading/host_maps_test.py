@@ -139,6 +139,18 @@ def test_auto_declines_a_map_that_does_its_own_work():
     assert map_schedules(sdfg)[outer] == dace.ScheduleType.GPU_Device
 
 
+def test_the_spellings_that_name_no_host_maps_agree() -> None:
+    """``False`` is the default and runs no heuristics; ``None`` and ``[]`` say the same thing.
+
+    ``[]`` matters on its own: a caller that computes the list and finds it empty must get "none",
+    not "derive them for me".
+    """
+    sdfg = zekinh_sdfg()
+    for spec in (False, None, []):
+        assert not host_maps(sdfg, spec), f'{spec!r} must name no host maps'
+    assert host_maps(sdfg, True), 'True runs the heuristics'
+
+
 def test_host_maps_rejects_anything_that_is_not_a_label_or_a_map():
     sdfg = zekinh_sdfg()
     with pytest.raises(TypeError, match='map labels or MapEntry nodes'):

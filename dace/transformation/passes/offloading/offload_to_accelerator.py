@@ -41,13 +41,14 @@ class OffloadToAccelerator(ppl.Pass):
         "workload property: the loop converges once no state is hybrid and no container changed.")
     verbose = properties.Property(dtype=bool, default=False, desc="Print what each phase decided.")
 
-    def __init__(self, host_maps: HostMapSpec = None, **kwargs):
+    def __init__(self, host_maps: HostMapSpec = False, **kwargs):
         """
         :param host_maps: which maps keep a HOST schedule, so that the maps under them become the
-            kernels. ``None`` (default) or ``False`` -- none are named; ``True`` -- detect them
-            structurally; a list -- exactly these, each given as a map label or as the ``MapEntry``
-            node itself. Not a serialized ``Property``: a ``MapEntry`` cannot round-trip through
-            JSON, and a caller handing over node objects is driving the pass in process anyway.
+            kernels. ``False`` (the default), ``None`` and ``[]`` name none and run no heuristics;
+            ``True`` derives them with the built-in heuristics; a list names them outright, each
+            given as a map label or as the ``MapEntry`` node itself. Not a serialized ``Property``:
+            a ``MapEntry`` cannot round-trip through JSON, and a caller handing over node objects is
+            driving the pass in process anyway.
         :note: a map enclosing a device-wide library node is kept on the host whatever this says --
             a call only host code can issue is a requirement, not a preference.
         """

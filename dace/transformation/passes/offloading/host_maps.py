@@ -15,8 +15,13 @@ from dace.sdfg.state import SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
-#: What a caller may pass as ``host_maps``: nothing, ``True`` for automatic detection, or the maps
-#: themselves -- each named by label or given as the entry node.
+#: What a caller may pass as ``host_maps``:
+#:
+#: * ``False`` (the default) -- run no host-map detection at all.
+#: * ``None`` or ``[]`` -- name no host maps; the same outcome, spelled for a caller that computes
+#:   the list and finds it empty.
+#: * ``True`` -- derive them with the built-in heuristics.
+#: * a list -- exactly these maps, each given as a map label or as the ``MapEntry`` itself.
 HostMapSpec = Optional[Union[bool, List[Union[str, nodes.MapEntry]]]]
 
 
@@ -122,12 +127,12 @@ def is_host_map(state: SDFGState,
     return only_launches(state, entry, scope_children)
 
 
-def host_maps(sdfg: SDFG, spec: HostMapSpec = None) -> OrderedSet:
+def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
     """The map entries in ``sdfg`` that must keep a host schedule.
 
     :param sdfg: the SDFG to scan, nested SDFGs included.
-    :param spec: ``None`` or ``False`` -- no caller-named maps; ``True`` -- detect them structurally;
-        a list -- exactly these maps, each a map label or the ``MapEntry`` itself.
+    :param spec: see :data:`HostMapSpec`. ``False`` (the default), ``None`` and ``[]`` all name no
+        host maps and run no heuristics; ``True`` derives them; a list names them outright.
     :return: the map entries to leave on the host, in a deterministic order.
 
     A map holding a callback is returned whatever ``spec`` says: a kernel cannot issue one, so that
