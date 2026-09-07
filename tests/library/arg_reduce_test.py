@@ -348,14 +348,30 @@ def test_the_cuda_expansion_gathers_a_strided_or_transformed_operand(subset, tra
         f'the symbol it is written in is in scope')
 
 
-def test_the_cub_gather_iterator_is_built_on_the_supported_iterators():
-    """cub's own iterators warn from CCCL 2.8 and are gone in CCCL 3, and warnings are errors here,
-    so the gather has to be able to fall back to thrust's -- the same choice ``reduction.h`` makes."""
+def test_the_cub_gather_iterator_is_self_contained_and_random_access():
+    """The gather iterator borrows NO library iterator. cub's own warn from CCCL 2.8 and are gone in
+    CCCL 3, and thrust's report a thrust category tag that rocPRIM's ``arg_index_iterator``
+    static_asserts against -- so neither backend's spelling works everywhere and ``GatherIterator``
+    declares itself instead.
+
+    That makes the operator surface DaCe's own to get right: rocPRIM and CUB index, advance and
+    compare the iterator they wrap, and a missing operator is a compile error on the backend that
+    happens to use it, not a fallback. So check the whole random-access surface is present.
+    ``gpu_backend_portability_test`` pins the category tag and the absence of the library
+    spellings; this pins that what replaced them is complete."""
     compat = (pathlib.Path(dace.__file__).parent / 'runtime' / 'include' / 'dace' / 'cub_compat.cuh').read_text()
-    assert 'thrust::transform_iterator' in compat and 'thrust::counting_iterator' in compat, (
-        'the gather iterator has no thrust spelling, so it cannot build on CCCL 3')
-    assert 'gpucub::TransformInputIterator' in compat and 'gpucub::CountingInputIterator' in compat, (
-        'the gather iterator has no cub spelling, so it cannot build where thrust is absent')
+    assert 'struct GatherIterator' in compat, 'the gather iterator is gone; nothing feeds a strided ArgReduce'
+    body = compat[compat.index('struct GatherIterator'):]
+    body = body[:body.index('\n};')]
+    # Dereference and index, the two CUB reduces through; then the arithmetic and the ordering
+    # rocPRIM's arg_index_iterator performs on it.
+    for op in ('operator*', 'operator[]', 'operator+', 'operator-', 'operator+=', 'operator-=', 'operator++',
+               'operator--', 'operator==', 'operator!=', 'operator<', 'operator>', 'operator<=', 'operator>='):
+        assert op in body, f'GatherIterator has no {op}; a library that uses it will not compile'
+    for alias in ('iterator_category', 'value_type', 'difference_type', 'pointer', 'reference'):
+        assert f'using {alias} =' in body, f'std::iterator_traits needs {alias}'
+    # ``n + it`` as well as ``it + n``: the free operator cannot be a member, so it sits outside.
+    assert 'operator+(long long n, const GatherIterator' in compat, 'no free n + iterator overload'
     for functor in ('IdentityXf', 'AbsXf', 'StridedGather'):
         assert f'struct {functor}' in compat, f'{functor} is named by the expansion but not defined'
 
