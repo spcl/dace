@@ -744,8 +744,8 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
     interval, which has no such reading.
     """
     ctx: List[Tuple[str, object, object]] = []
-    scope = state.scope_dict()
-    cur = scope[node]
+    # entry_node reads the cached scope map directly; scope_dict shallow-copies it on every call.
+    cur = state.entry_node(node)
     while cur is not None:
         if not isinstance(cur, nodes.MapEntry):
             return None
@@ -753,7 +753,7 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
             if symbolic.simplify(step) != 1:
                 return None
             ctx.append((param, lo, hi))
-        cur = scope[cur]
+        cur = state.entry_node(cur)
     return ctx
 
 

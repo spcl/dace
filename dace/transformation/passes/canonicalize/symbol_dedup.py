@@ -116,15 +116,18 @@ class SymbolDedup(ppl.Pass):
         for sym, edge_map in defs.items():
             by_signature.setdefault(frozenset(edge_map.items()), []).append(sym)
 
+        # A class of one merges nothing, so the whole-SDFG ``free_symbols`` walk behind
+        # ``_protected_symbols`` is only paid once a merge is actually on the table.
+        classes = [syms for syms in by_signature.values() if len(syms) >= 2]
+        if not classes:
+            return 0
         protected = self._protected_symbols(sdfg)
 
         # 3. Per equivalence class, keep one canonical symbol (shortest name, ties
         #    broken lexicographically -- prefers 'idx_index' over 'idx_index_0')
         #    and map every other droppable member onto it.
         repl: Dict[str, str] = {}
-        for syms in by_signature.values():
-            if len(syms) < 2:
-                continue
+        for syms in classes:
             keeper = min(syms, key=lambda name: (len(name), name))
             for sym in syms:
                 if sym != keeper and sym not in protected:
