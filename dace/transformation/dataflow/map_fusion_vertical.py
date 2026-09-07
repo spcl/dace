@@ -11,6 +11,37 @@ from dace.sdfg.type_inference import infer_expr_type
 from ordered_set import OrderedSet
 
 
+def fold_repeated_symbol_names(subset: subsets.Range) -> None:
+    """Collapse same-named symbols in ``subset`` onto one instance, in place.
+
+    The two subsets meeting in the offset corrections above come from different mints of the same
+    name: a memlet parsed from a string carries the default dtype and no assumptions, a map
+    parameter carries the frontend's. SymPy compares assumptions, so both atoms survive and the
+    correction leaves ``k - k`` standing where it means ``0`` -- which then stops the SDFG from
+    surviving a serialization round trip, because only one of the two is written with its dtype.
+
+    In DaCe a symbol is its name, so the two always denote one value. The rebuild only runs on a
+    bound that really does repeat a name, which no correct subset does.
+
+    :param subset: the range to fold; modified in place.
+    """
+    for dim, bounds in enumerate(subset.ranges):
+        folded = tuple(symbolic.equalize_symbol(b) if repeats_a_symbol_name(b) else b for b in bounds)
+        if folded != bounds:
+            subset.ranges[dim] = folded
+
+
+def repeats_a_symbol_name(bound) -> bool:
+    """Whether ``bound`` carries two symbols that share a name but not their assumptions."""
+    if not symbolic.issymbolic(bound):
+        return False
+    free = bound.free_symbols
+    if len(free) < 2:
+        return False
+    # A dict, not a set: its iteration order is defined, so nothing here depends on the hash seed.
+    return len({sym.name: None for sym in free}) != len(free)
+
+
 @properties.make_properties
 class MapFusionVertical(transformation.SingleStateTransformation):
     """Implements the vertical Map fusion transformation.
@@ -854,6 +885,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  compensate for that. We do this by substracting where the write
                     #  originally had begun.
                     producer_edge.data.dst_subset.offset(producer_offset, negative=True)
+                    fold_repeated_symbol_names(producer_edge.data.dst_subset)
                     producer_edge.data.dst_subset.pop(squeezed_dims)
 
                 # Modify the strides of the mapped data of the nested SDFG.
@@ -928,6 +960,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     elif new_inner_memlet.src_subset is not None:
                         # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                         new_inner_memlet.src_subset.offset(consumer_offset, negative=True)
+                        fold_repeated_symbol_names(new_inner_memlet.src_subset)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
 
                     # Modify the strides of the mapped data of the nested SDFG.
@@ -960,6 +993,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         elif consumer_edge.data.src_subset is not None:
                             # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                             consumer_edge.data.src_subset.offset(consumer_offset, negative=True)
+                            fold_repeated_symbol_names(consumer_edge.data.src_subset)
                             consumer_edge.data.src_subset.pop(squeezed_dims)
 
                         # Modify the strides of the mapped data of the nested SDFG.
