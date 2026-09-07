@@ -521,8 +521,8 @@ class Range(Subset):
         for i in indices:
             rb, re, rs = self.ranges[i]
             if offset_end:
-                re = re + mult * off[i]
-            self.ranges[i] = (rb + mult * off[i], re, rs)
+                re = symbolic.equalize_symbol(re + mult * off[i])
+            self.ranges[i] = (symbolic.equalize_symbol(rb + mult * off[i]), re, rs)
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
         if other is None:
@@ -536,8 +536,11 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
-                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
+        return Range([
+            (symbolic.equalize_symbol(self.ranges[i][0] + mult * off[i]),
+             self.ranges[i][1] if not offset_end else symbolic.equalize_symbol(self.ranges[i][1] + mult * off[i]),
+             self.ranges[i][2]) for i in indices
+        ])
 
     def dims(self):
         return len(self.ranges)

@@ -948,8 +948,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
         input_data = dcpy(raw_input_data)
         input_data.transient = False
-        input_data.shape = schedule.in_shape
-        input_data.strides = schedule.in_strides
+        # Through ``set_shape``, because ``offset`` is rank-dependent: assigning ``shape`` alone
+        # leaves it at the source array's rank, and a descriptor whose offset and shape disagree
+        # cannot be read back (``Offset must be the same size as shape``), so the SDFG stops
+        # surviving a serialization round trip.
+        input_data.set_shape(schedule.in_shape, strides=schedule.in_strides, total_size=input_data.total_size)
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
