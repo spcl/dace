@@ -186,11 +186,16 @@ class ExpandCUDA(ExpandTransformation):
             f'{prototype}\n'
             f'gpuError_t {wrapper}({params}) {{\n'
             f'    size_t _ks_needed = 0;\n'
-            f'    ::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, {args});\n'
+            f'    gpuError_t _ks_status = ::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, {args});\n'
+            f'    if (_ks_status != gpuSuccess) return _ks_status;\n'
             f'    void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>('
-            f'_ks_needed, __ks_stream);\n'
+            f'_ks_needed, __ks_stream, &_ks_status);\n'
+            # A null workspace makes CUB report the size and return, leaving the keys UNSORTED.
+            f'    if (_ks_scratch == nullptr) return _ks_status != gpuSuccess ? _ks_status : '
+            f'gpuErrorMemoryAllocation;\n'
             f'    return ::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, {args});\n'
-            f'}}\n', 'cuda')
+            f'}}\n',
+            'cuda')
         code = (f"DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
                 f"({n_expr}), __dace_current_stream));")
         return nodes.Tasklet(
