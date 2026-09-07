@@ -99,6 +99,19 @@ def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:
     return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
 
 
+def is_unoffloadable(data_name: str, sdfg: SDFG) -> bool:
+    """A descriptor this pass does not place: a structure, or a container of containers.
+
+    These have no single buffer whose location can be decided and copied -- a ``Structure`` is a
+    record of other descriptors, and a ``ContainerArray`` an array of them -- so they are skipped
+    rather than classified. ``ContainerArray`` needs saying explicitly because it derives from
+    ``Array`` and would otherwise read as an ordinary buffer.
+    """
+    assert data_name in sdfg.arrays
+    desc = sdfg.arrays[data_name]
+    return isinstance(desc, (data.Structure, data.StructureView, data.ContainerArray, data.ContainerView))
+
+
 def is_scalar(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
@@ -106,9 +119,15 @@ def is_scalar(data_name: str, sdfg: SDFG) -> bool:
 
 
 def is_array(data_name: str, sdfg: SDFG) -> bool:
+    """A buffer with a location of its own.
+
+    ``ArrayView``, ``ContainerView`` and ``ContainerArray`` all derive from ``Array``, so the bare
+    isinstance answers True for an alias and for a container of containers. A view is placed with
+    the container it aliases, and the container kinds are not placed at all.
+    """
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
-    return isinstance(desc, data.Array)
+    return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg))
 
 
 def is_view(data_name: str, sdfg: SDFG) -> bool:
@@ -161,6 +180,12 @@ def register_kernel_local_transients(sdfg: SDFG) -> None:
             nested.arrays[name].storage = dtypes.StorageType.Register
 
 
+def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:
+    """The container ``node`` ultimately aliases, following a chain of views, or None."""
+    viewed = get_last_view_node(state, node)
+    return viewed.data if viewed is not None else None
+
+
 def is_stream(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
@@ -168,9 +193,15 @@ def is_stream(data_name: str, sdfg: SDFG) -> bool:
 
 
 def is_length1_array(data_name: str, sdfg: SDFG) -> bool:
+    """A length-1 buffer that could be held as a scalar instead.
+
+    A view is excluded: a ``Scalar`` cannot carry the ``views`` alias edge, which is why
+    ``ConvertLengthOneArraysToScalars`` exempts one as well -- offering it a view to convert asks it
+    for a rewrite it refuses.
+    """
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
-    return isinstance(desc, data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
+    return is_array(data_name, sdfg) and len(desc.shape) == 1 and desc.shape[0] == 1
 
 
 #######################
@@ -243,10 +274,12 @@ def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
                 arrays.add(data_name)
 
             elif is_view(data_name, sdfg):  # trace it if it is a view
-                original = get_last_view_node(
-                    state, node
-                )  # once the view access node is known, its original access node can be found and it's data added
-                arrays |= recursion(original, visited_set)
+                # once the view access node is known, its original access node can be found and its
+                # data added. A chain that reaches no access node has no origin to place, and
+                # recursing on None asks the state for the edges of a node it does not hold.
+                original = get_last_view_node(state, node)
+                if original is not None:
+                    arrays |= recursion(original, visited_set)
 
             elif include_scalars and is_scalar(data_name, sdfg):
                 arrays.add(data_name)
@@ -280,10 +313,12 @@ def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
                 arrays.add(data_name)
 
             elif is_view(data_name, sdfg):  # trace it if it is a view
-                original = get_last_view_node(
-                    state, node
-                )  # once the view access node is known, its original access node can be found and it's data added
-                arrays |= recursion(original, visited_set)
+                # once the view access node is known, its original access node can be found and its
+                # data added. A chain that reaches no access node has no origin to place, and
+                # recursing on None asks the state for the edges of a node it does not hold.
+                original = get_last_view_node(state, node)
+                if original is not None:
+                    arrays |= recursion(original, visited_set)
 
             elif include_scalars and is_scalar(data_name, sdfg):
                 arrays.add(data_name)

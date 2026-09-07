@@ -32,8 +32,11 @@ class CopyAnalysisPhase():
 
     def sdfg_to_IR(self, sdfg: SDFG) -> OffloadingIRNode:
         # remember initial non-transient array locations
+        # A view is placed with the container it aliases, and a structure or container array is not
+        # placed at all, so neither belongs in the set of containers this decides a side for.
         non_transients = OrderedSet(name for name in sdfg.arrays
-                                    if not sdfg.arrays[name].transient and not helpers.is_scalar(name, sdfg))
+                                    if not sdfg.arrays[name].transient and not helpers.is_scalar(name, sdfg)
+                                    and not helpers.is_view(name, sdfg) and not helpers.is_unoffloadable(name, sdfg))
         initially_on_gpu = OrderedSet()
         initially_on_cpu = OrderedSet()
 
@@ -276,6 +279,9 @@ class CopyAnalysisPhase():
                 else:
                     if isinstance(edge.src, nodes.AccessNode):
                         return helpers.get_data_used_by_incoming_access_nodes(sdfg, state, edge.src)
+
+            elif helpers.is_unoffloadable(data_name, sdfg):
+                return OrderedSet()  # a structure or container array has no single location to decide
 
             elif helpers.is_stream(data_name, sdfg):
                 # A Stream is a queue with its own device-side push/pop protocol, not a buffer whose

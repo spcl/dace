@@ -29,6 +29,39 @@ class CopyInsertionPhase():
         self.correct_view_storage_locations(sdfg)
         self.insert_copy_names_in_SDFG(sdfg, IR)
         self.eval_IR(sdfg, IR)
+        # Last: only now does every container carry the storage the placement gave it, so only now
+        # can an alias be pointed at the same side as the container it aliases.
+        self.match_view_storage_to_origin(sdfg)
+
+    def match_view_storage_to_origin(self, sdfg: SDFG) -> None:
+        """A view lives where the container it aliases lives.
+
+        The placement decides for containers and renames the accesses that follow it; a view owns no
+        storage, so nothing in that pass updates it and it keeps what it was declared with. Left
+        alone, a view of a device array is read and written by device code while still declared
+        host -- npbench correlation hands cuBLAS three ``Default`` views of ``GPU_Global`` arrays,
+        and the call is then emitted into the host translation unit, where the stream it wants does
+        not exist ('__dace_current_stream was not declared in this scope').
+
+        A view inside a kernel keeps the Register storage :func:`correct_view_storage_locations`
+        gave it: GPU_Global on a view is not handled correctly by the code generator.
+        """
+        for state in sdfg.states():
+            scope = self.sdfg_scope_dict.get(state, {})
+            for node in state.data_nodes():
+                name = node.data
+                if not helpers.is_view(name, sdfg):
+                    continue
+                if sdfg.arrays[name].storage == dtypes.StorageType.Register:
+                    continue
+
+                parent = scope.get(node)
+                if isinstance(parent, nodes.MapEntry) and helpers.has_GPU_schedule(parent):
+                    continue
+
+                origin = helpers.view_origin(state, node)
+                if origin is not None and origin in sdfg.arrays:
+                    sdfg.arrays[name].storage = sdfg.arrays[origin].storage
 
     ################################################################
     ### Ensure Correct Storage Locations Before Inserting Copies ###
@@ -61,10 +94,22 @@ class CopyInsertionPhase():
             for node in state.data_nodes():
                 data_name = node.data
                 parent = scope.get(node)
-                if helpers.is_view(data_name, sdfg) and isinstance(parent,
-                                                                   nodes.MapEntry) and helpers.has_GPU_schedule(parent):
+                if not helpers.is_view(data_name, sdfg):
+                    continue
+
+                if isinstance(parent, nodes.MapEntry) and helpers.has_GPU_schedule(parent):
                     # if its within a GPU map, set it to register because GPU_Global isn't handled correctly by code gen
                     sdfg.arrays[data_name].storage = dtypes.StorageType.Register
+                    continue
+
+                # A view is an alias, so it lives where the container it aliases lives. Placement
+                # decides for containers and leaves the alias with what it was declared with, which
+                # is host memory: a kernel writing through the view then writes a host array and the
+                # dispatcher answers with an illegal copy (npbench mlp, whose reduce binds _out to
+                # the view tmp_max_keepdims).
+                origin = helpers.view_origin(state, node)
+                if origin is not None and origin in sdfg.arrays:
+                    sdfg.arrays[data_name].storage = sdfg.arrays[origin].storage
 
     #################################
     ### Rename Copied Arrays      ###
@@ -120,8 +165,7 @@ class CopyInsertionPhase():
                 if memlet is not None and not memlet.is_empty() and memlet.data in rename_dict:
                     memlet.data = rename_dict[memlet.data]
 
-    def insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock,
-                                   rename_dict: Dict[str, str]) -> None:
+    def insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock, rename_dict: Dict[str, str]) -> None:
         if block is None: return
 
         cfr = block.parent_graph
@@ -217,8 +261,8 @@ class CopyInsertionPhase():
     ### Insert New Copy States into SDFG ###
     ########################################
 
-    def insert_copies(self, sdfg: SDFG, node: OffloadingIRNode, next: OffloadingIRNode,
-                      node_block: ControlFlowBlock, next_block: ControlFlowBlock) -> None:
+    def insert_copies(self, sdfg: SDFG, node: OffloadingIRNode, next: OffloadingIRNode, node_block: ControlFlowBlock,
+                      next_block: ControlFlowBlock) -> None:
         gpu_copies = node.cpu_set & next.gpu_set
         if gpu_copies:
             if self.verbose:
