@@ -41,7 +41,6 @@ class StorageType(ExtensibleAttributeEnum):
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
-    GPU_CPU_Unified = auto()
 
 
 class OMPScheduleType(Enum):
@@ -66,8 +65,6 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
     GPU_Persistent = auto()
-
-    GPU_CPU_Unified = auto()
 
     Snitch = auto()
     Snitch_Multicore = auto()

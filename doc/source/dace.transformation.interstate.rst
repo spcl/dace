@@ -4,14 +4,6 @@ dace.transformation.interstate package
 Submodules
 ----------
 
-dace.transformation.interstate.gpu\_transform\_sdfg module
-----------------------------------------------------------
-
-.. automodule:: dace.transformation.passes.offloading.OffloadToAccelerator
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.transformation.interstate.loop\_detection module
 -----------------------------------------------------
 

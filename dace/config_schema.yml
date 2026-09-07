@@ -102,7 +102,6 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
-
     compiler:
         type: dict
         title: Compiler

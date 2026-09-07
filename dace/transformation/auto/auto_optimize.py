@@ -11,7 +11,6 @@ from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List, Dict, Callable
 
-
 # Transformations
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
@@ -593,8 +592,6 @@ def auto_optimize(sdfg: SDFG,
     """
     debugprint = config.Config.get_bool('debugprint')
 
-    
-
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
@@ -605,8 +602,6 @@ def auto_optimize(sdfg: SDFG,
                                                    validate=False,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
-
-    
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
@@ -644,14 +639,15 @@ def auto_optimize(sdfg: SDFG,
             # FORNOW: Leave out
             # node.map.collapse = len(node.map.range)
             pass
-    
+
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    
+    sdfg.expand_library_nodes()
+
     # TODO(later): Safe vectorization
 
     # Disable OpenMP parallel sections on a per-SDFG basis
