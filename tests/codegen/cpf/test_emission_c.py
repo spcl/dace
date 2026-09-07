@@ -291,8 +291,10 @@ def test_scan_keeps_its_parallel_inscan_form():
     """
     sdfg, code = render_c(c_prefix, 'mprc_scan')
     assert 'scan_incl_sum(' in code, f'this test needs the scan helper, or it asserts nothing:\n{code}'
-    assert '#pragma omp simd reduction(inscan, +:acc)' in code, 'the scan must keep its inscan clause'
-    assert '#pragma omp scan inclusive(acc)' in code
+    # ``_Pragma``, not ``#pragma``: the C helper is a statement macro, and a macro expansion cannot
+    # produce a directive.
+    assert '_Pragma("omp simd reduction(inscan, +:cpf_scan_acc)")' in code, 'the scan must keep its inscan clause'
+    assert '_Pragma("omp scan inclusive(cpf_scan_acc)")' in code
 
     n = 512
     x = np.random.rand(n)
