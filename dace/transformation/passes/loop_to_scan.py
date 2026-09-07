@@ -4528,13 +4528,16 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
         subset = edge.data.subset
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
             axis, k_r, others, coef = _classify_subset(subset, loop_var)
-            distance = symbolic.simplify(k_w - k_r)
-            # The carry may reach back any POSITIVE distance: at distance S the recurrence is S
-            # independent unit-stride ones, one per residue class of the index mod S, and the
+            # The shape checks come first and short-circuit: a subset this does not classify hands
+            # back ``k_r = None``, and the distance below would raise on it rather than refuse.
+            #
+            # The carry may then reach back any POSITIVE distance: at distance S the recurrence is
+            # S independent unit-stride ones, one per residue class of the index mod S, and the
             # libnode scans them as such. Zero or negative is not a carry at all -- it reads what
             # this iteration or a later one writes -- and a distance whose sign is unknown is
             # decided by the caller's specialization, not here.
-            if axis != 0 or coef != 1 or others or carry_distance_kind(distance) is None:
+            if (axis != 0 or coef != 1 or others or k_r is None
+                    or carry_distance_kind(symbolic.simplify(k_w - k_r)) is None):
                 raise _AffineRefused('carrier read is not a positive-distance predecessor')
             if carry:
                 if symbolic.simplify(carry[0][1] - k_r) != 0:
