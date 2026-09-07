@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 import dace
+import pytest
 from dace import subsets as sbs
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock, SDFGState
 
 
 def test_read_write_set():
@@ -330,6 +331,21 @@ def test_start_block_repinned_when_start_block_removed():
     assert cfg.node(cfg._start_block) is other
 
 
+@pytest.mark.parametrize('cls', [SDFGState, BreakBlock, ContinueBlock, ReturnBlock])
+def test_every_control_flow_block_answers_the_meta_access_queries(cls):
+    """Callers dispatch on ControlFlowBlock -- offload_to_accelerator guards on exactly that
+    isinstance and then calls replace_meta_accesses -- so the query has to be answerable by every
+    block, not only by the two regions that have meta accesses. It was declared on
+    AbstractControlFlowRegion, which BreakBlock is not: tsvc ext_break_capture lost its whole GPU
+    column to `'BreakBlock' object has no attribute 'replace_meta_accesses'`."""
+    block = cls('b')
+
+    assert isinstance(block, ControlFlowBlock)
+    assert block.get_meta_codeblocks() == []
+    assert block.get_meta_read_memlets() == []
+    assert block.replace_meta_accesses({'a': 'a_gpu'}) is None
+
+
 if __name__ == '__main__':
     test_read_and_write_set_selection()
     test_read_and_write_set_filter()
@@ -344,3 +360,5 @@ if __name__ == '__main__':
     test_find_downstream_nodes_bloking()
     test_start_block_survives_removal_of_another_block()
     test_start_block_repinned_when_start_block_removed()
+    for _cls in (SDFGState, BreakBlock, ContinueBlock, ReturnBlock):
+        test_every_control_flow_block_answers_the_meta_access_queries(_cls)
