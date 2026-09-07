@@ -332,7 +332,7 @@ def test_normalize_loop_bounds_value_preserving():
 def test_normalize_loop_bounds_idempotent_and_equalizes_ranges():
     """Re-running is a no-op (already-0-based loops are skipped), and two loops of
     the same extent but different offset are rebased to the SAME range -- the
-    enabler for same-range ``LoopFusion``."""
+    enabler for same-range ``FuseLoops``."""
     from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopBounds
     sdfg = two_offset_loops.to_sdfg(simplify=True)
     # Only the ``1:N-1`` loop is rebased; the ``0:N-2`` loop is already 0-based.

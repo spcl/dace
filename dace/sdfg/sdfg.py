@@ -3269,18 +3269,20 @@ class SDFG(ControlFlowRegion):
             :param validate: validate the SDFG afterwards.
             :param validate_all: as ``validate``.
             :param simplify: simplify afterwards, folding the copy states the offloading inserted.
+            :return: the containers the offloading left on the device, or None if it placed none.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        OffloadToAccelerator().apply_pass(self, {})
+        placed = OffloadToAccelerator().apply_pass(self, {})
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
         # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:
             self.simplify()
         if validate or validate_all:
             self.validate()
+        return placed
 
     def expand_library_nodes(self, recursive=True, predicate=None):
         """

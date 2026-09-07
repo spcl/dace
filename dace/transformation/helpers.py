@@ -462,7 +462,7 @@ def nest_state_subgraph(sdfg: SDFG,
             if any(n not in subgraph.nodes() for n in scope_nodes):
                 raise ValueError('Subgraph contains partial scopes (entry)')
         elif isinstance(node, nodes.ExitNode):
-            entry = scope_dict[node]  # ``entry_node`` re-copies the whole cached scope dict per call
+            entry = state.entry_node(node)
             scope_nodes = scope_dict_children[entry] + [entry]
             if any(n not in subgraph.nodes() for n in scope_nodes):
                 raise ValueError('Subgraph contains partial scopes (exit)')
@@ -504,41 +504,40 @@ def nest_state_subgraph(sdfg: SDFG,
     # Counting access nodes alone would call such a transient subgraph-local and delete it out
     # from under its other user -- e.g. the body copy ``SplitMapForTileRemainder`` leaves in a
     # remainder tail, whose own nesting then fails with a ``KeyError`` on the missing descriptor.
-    # Only the names the two membership tests below (here and at the deletion loop near the end)
-    # actually ask about are looked for, and the scan stops as soon as every one has been found.
-    # Naming EVERY container in the SDFG walked all states and all edges to answer a handful of
-    # queries -- on a map body without a single AccessNode, none at all.
-    queried = dict.fromkeys(dname for dname in data_in_subgraph if sdfg.arrays[dname].transient)
-    queried.update(
-        dict.fromkeys(
-            e.data.data for e in subgraph.edges()
-            if isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode) and e.data.data is not None))
-    other_nodes = {}  # the queried names that also occur outside the subgraph
-    if queried:
-        subgraph_edge_ids = {id(e) for e in subgraph.edges()}
-        subgraph_node_set = dict.fromkeys(subgraph.nodes())
-        for s in sdfg.states():
-            for n in s.nodes():
-                if isinstance(n, nodes.AccessNode) and n not in subgraph_node_set and n.data in queried:
-                    other_nodes[n.data] = None
-            for e in s.edges():
-                if (isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode)
-                        and id(e) not in subgraph_edge_ids and e.data.data in queried):
-                    other_nodes[e.data.data] = None
-            if len(other_nodes) == len(queried):
-                break
+    # Transients named only by a memlet between two code nodes inside the subgraph. They move into
+    # the nested SDFG unconditionally, but they are still asked about below, so they join ``wanted``.
+    subgraph_edge_transients = dict.fromkeys(
+        e.data.data for e in subgraph.edges()
+        if e.data.data is not None and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode))
+    # ``other_nodes`` is only ever queried for these names, so collect occurrences of THESE and
+    # nothing else. Building a dict of every data name in the SDFG (two full scans) to then read a
+    # handful of entries was 20% of ``MapToForLoop.apply``.
+    wanted = {dname for dname in data_in_subgraph if sdfg.arrays[dname].transient}
+    wanted.update(subgraph_edge_transients)
+
+    subgraph_edge_ids = {id(e) for e in subgraph.edges()}
+    subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
+    other_nodes = {}
+    for s in sdfg.states():
+        if len(other_nodes) == len(wanted):
+            break  # every name already has an occurrence outside; the rest of the scan cannot change an answer
+        for n in s.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data in wanted and n not in subgraph_node_set:
+                other_nodes[n.data] = None
+        for e in s.edges():
+            dname = e.data.data
+            if (dname in wanted and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode)
+                    and id(e) not in subgraph_edge_ids):
+                other_nodes[dname] = None
+
     subgraph_transients = {}
     # ``dname``, not ``data``: the module is imported under that name and is read further down.
     for dname in data_in_subgraph:
-        datadesc = sdfg.arrays[dname]
-        if datadesc.transient and dname not in other_nodes:
+        if dname in wanted and dname not in other_nodes:
             subgraph_transients[dname] = None
 
     # All transients of edges between code nodes are also added to nested graph
-    for edge in subgraph.edges():
-        if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
-            if edge.data.data is not None:
-                subgraph_transients[edge.data.data] = None
+    subgraph_transients.update(subgraph_edge_transients)
 
     # A boundary memlet must name the container on the PARENT side of its edge, and it does not
     # always: a versioning pass renames the inner end of a staging copy and the memlet on the

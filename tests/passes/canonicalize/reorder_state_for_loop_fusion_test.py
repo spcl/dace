@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``ReorderStateForLoopFusion`` must only sink a between-loops state past the second loop when the reorder is
 dependence-legal (no RAW/WAR/WAW against the second loop, no side effect) AND it actually unlocks
-``FuseLoops`` on the resulting adjacency. Either condition failing alone must leave the SDFG untouched.
+``LoopFusion`` on the resulting adjacency. Either condition failing alone must leave the SDFG untouched.
 """
 import copy
 from typing import Tuple
@@ -15,7 +15,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.analysis import AccessSets
 from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
-from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 
 N = 8
 
@@ -121,7 +121,7 @@ def test_legal_reorder_that_unlocks_fusion_is_sunk_and_correct():
     assert np.array_equal(got["U"], oracle["U"]), f"sinking changed U: {got['U']} != {oracle['U']}"
 
     # Adjacency was the only thing blocking fusion.
-    assert LoopFusion().apply_pass(sdfg, {}) == 1
+    assert FuseLoops().apply_pass(sdfg, {}) == 1
     assert _nloops(sdfg) == 1
     fused = _run(sdfg)
     assert np.array_equal(fused["T"], oracle["T"]), "fusing after the sink changed T"
@@ -206,7 +206,7 @@ def test_a_state_with_side_effects_is_not_sunk():
 
 def test_legal_reorder_but_loops_not_fusable_is_not_sunk():
     """The state/loop2 conflict checks all pass (disjoint data), but loop2's range differs from
-    loop1's, so ``FuseLoops`` would refuse the resulting adjacency -- condition 2 must gate the sink."""
+    loop1's, so ``LoopFusion`` would refuse the resulting adjacency -- condition 2 must gate the sink."""
     sdfg, first, state, second = _build(conflict='none', loop2_end=N - 2)
 
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
@@ -254,7 +254,7 @@ def test_a_loop2_with_an_early_exit_block_is_not_sunk():
     second.add_edge(body2, brk, InterstateEdge(condition="i == 100"))
     sdfg.validate()
 
-    # Isolate the predicate: FuseLoops' own body-shape recognizer also happens to reject a body
+    # Isolate the predicate: LoopFusion' own body-shape recognizer also happens to reject a body
     # containing a bare BreakBlock, so an end-to-end None here would not by itself prove THIS guard
     # is the one doing the work -- assert the guard directly fires on its own terms.
     assert ReorderStateForLoopFusion.escapes(second) is True
@@ -314,7 +314,7 @@ def test_another_path_into_second_is_not_sunk():
 def test_non_vacuous_neutered_pass_would_fail_the_positive_assertions():
     """Prove the positive test is not vacuously true: with ``ReorderStateForLoopFusion`` neutered (stubbed to always
     return ``None``, exactly a `return None` no-op), the positive test's own load-bearing assertions --
-    the sink firing, and ``LoopFusion`` then succeeding -- both fail."""
+    the sink firing, and ``FuseLoops`` then succeeding -- both fail."""
     sdfg, first, state, second = _build(conflict='none')
 
     with mock.patch.object(ReorderStateForLoopFusion, 'apply_pass', return_value=None):
@@ -323,7 +323,7 @@ def test_non_vacuous_neutered_pass_would_fail_the_positive_assertions():
 
     # The neutered pass touched nothing, so loop1/loop2 are still not adjacent -> fusion must refuse too.
     with pytest.raises(AssertionError, match=r'assert None == 1'):
-        assert LoopFusion().apply_pass(sdfg, {}) == 1
+        assert FuseLoops().apply_pass(sdfg, {}) == 1
     assert _nloops(sdfg) == 2, "loops must not have fused without the sink"
 
 

@@ -253,12 +253,6 @@ class InsertExplicitCopies(ppl.Pass):
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
-        # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
-        # into the real output). CopyLibraryNode's expansions (ExpandMemcpyCPU et al.) always emit
-        # an unconditional store; lifting a WCR edge here would silently turn the accumulate into
-        # an overwrite. Mirrors the same guard in ``_replace_direct_copies``.
-        if edge.data.wcr is not None:
-            return False
         # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
         # ``set`` connector and leave the Reference unbound.
         if edge.dst_conn == 'set':
@@ -275,6 +269,18 @@ class InsertExplicitCopies(ppl.Pass):
         if (outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES
                 or outer_desc.dtype != inner_desc.dtype):
             return False
+        # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
+        # into the real output), and the memcpy expansions store unconditionally, so lifting one
+        # turns the accumulate into an overwrite. A host single-element stage-out is the exception:
+        # ``Auto`` has nothing but ``Tasklet`` to pick for it, and a tasklet keeps the WCR on its
+        # output edge for the generator's own conflict resolution to lower. Left implicit that shape
+        # has no explicit spelling at all -- ``cpu.py`` falls back to ``dace::CopyND::Accumulate``.
+        if edge.data.wcr is not None:
+            liftable = (not stage_in and not GPU_RESIDENT_STORAGES & {outer_desc.storage, inner_desc.storage}
+                        and all(sbs is None or sbs.num_elements_exact() == 1
+                                for sbs in (edge.data.subset, edge.data.other_subset)))
+            if not liftable:
+                return False
 
         outer_memlet = edge.data
         # The memlet may be dst-relative (subset in ``other_subset``); resolve it in the

@@ -45,7 +45,7 @@ from dace.transformation.passes.canonicalize.prune_unreferenced_transients impor
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import (
     RedundantOrderingEdgeElimination)
 from dace.transformation.passes.fusion_inline import (InlineControlFlowRegions, InlineSDFGs)
-from dace.transformation.passes.full_map_fusion import FullMapFusion
+from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -104,7 +104,7 @@ from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
-from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
@@ -391,12 +391,12 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     s += [('coalesce', MinimizeStridePermutation())]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
-    s += [('coalesce', ppl.Pipeline([FullMapFusion()]))]
+    s += [('coalesce', ppl.Pipeline([FuseMaps()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     # 10. structural cleanup AGAIN -- map fusion rebuilds map bodies as fresh single-state
     #     NestedSDFGs, and an un-inlined body hides its precise per-element memlets behind a
     #     whole-array boundary memlet. Every downstream dependence test then reads the bounding
-    #     box instead of the real subset and refuses (polybench seidel_2d: FuseLoops saw
+    #     box instead of the real subset and refuses (polybench seidel_2d: LoopFusion saw
     #     ``A[0:N, 0:N]`` where the body writes ``A[i, j+1]``). Leaving the phase tidy is this
     #     helper's stated contract; the earlier call at step 6 predates the fusion that dirties it.
     s += _inline_single_state('coalesce')
@@ -1444,7 +1444,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # whose slice-vectorized statement stayed a Map beside its sequential scan
     # LoopRegion is an imperfect nest ``WavefrontSkew`` refuses outright, so this
     # rebuilds the single-LoopRegion body it requires, committing only when a trial
-    # proves the rebuild unlocks a skew. ``LoopFusion`` fuses consecutive same-range
+    # proves the rebuild unlocks a skew. ``FuseLoops`` fuses consecutive same-range
     # sequential siblings (locality; it cannot touch the already-parallel Maps, which
     # it never matches). ``WavefrontSkew`` then makes its final parallelization attempt
     # on those residual 2-D nests (seidel / nussinov and any nest the two passes above
@@ -1466,7 +1466,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # real ``A[i, j+1]``, which every downstream dependence test needs.
         s += _inline_single_state('loop_fuse')
         s += [('loop_fuse', ReconstructWavefrontNest())]
-    # GPU only: a state stranded between two loops blocks FuseLoops outright (it matches a two-node
+    # GPU only: a state stranded between two loops blocks LoopFusion outright (it matches a two-node
     # path graph). SinkStateIntoLoop above already recovers the case where the state can be replicated
     # per iteration; ReorderStateForLoopFusion recovers the disjoint case instead, reordering the state to after the
     # second loop. GPU-gated because there fusing is worth more than the tidier block order -- one
@@ -1480,7 +1480,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # results dict, so a bare dependency-bearing pass trips ``_assert_self_contained`` -- which
         # is why the original bare wiring made ``canonicalize(target='gpu')`` raise outright.
         s += [('loop_fuse', ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [('loop_fuse', LoopFusion())]
+    s += [('loop_fuse', FuseLoops())]
     s += [('loop_fuse', WavefrontSkew(target=target))]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('loop_fuse', PropagateMemlets())]
@@ -1572,7 +1572,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
     s += [('fuse', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
-    s += [('fuse', ppl.Pipeline([FullMapFusion()]))]
+    s += [('fuse', ppl.Pipeline([FuseMaps()]))]
 
     # A map that only fills a transient for an immediately following reduction is that reduction:
     # ``maxv = max(|a[i]|)`` reaches here as ``map -> _argf_buf[LEN_1D] -> Reduce``, so the
@@ -1763,7 +1763,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # fused; the dependency guards still refuse the unsafe ones. The
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
     s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
-    s += [('end', ppl.Pipeline([FullMapFusion()]))]
+    s += [('end', ppl.Pipeline([FuseMaps()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
     # its destination, so the producing map writes the destination directly. No ``SimplifyPass`` runs
@@ -1956,7 +1956,7 @@ def _assert_self_contained(unit: ppl.Pass):
 
     Every unit is applied with an empty results dict, so it must either have
     no dependencies or be a self-resolving ``Pipeline`` (e.g. ``SimplifyPass``,
-    or the ``Pipeline`` wrapping ``FullMapFusion``). A bare dependency-bearing
+    or the ``Pipeline`` wrapping ``FuseMaps``). A bare dependency-bearing
     pass placed directly in a stage would silently lose its inputs.
 
     :param unit: The pass about to be applied.

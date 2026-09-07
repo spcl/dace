@@ -13,6 +13,8 @@
 #ifndef __DACE_CUB_COMPAT_CUH
 #define __DACE_CUB_COMPAT_CUH
 
+#include <iterator>
+
 #include "cub_scratch.cuh"
 #include "cuda/gpucub.cuh"
 
@@ -69,15 +71,6 @@
 // the lowering. The contiguous, untransformed case still hands CUB a raw pointer, which is what lets
 // it use vectorised loads.
 //
-// thrust's iterators, not cub's: cub's are deprecated from CCCL 2.8 (CUDA 12.8), warnings are errors
-// here, and CCCL 3 (CUDA 13) removed them. ``reduction.h`` picks the same way for its segmented
-// reduce. rocThrust ships both, so this is not a CUDA-only preference.
-#if __has_include(<thrust/iterator/counting_iterator.h>)
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
-#define DACE_CUB_COMPAT_THRUST_ITERATORS
-#endif
-
 namespace dace {
 namespace cub {
 
@@ -108,25 +101,71 @@ struct StridedGather {
     __host__ __device__ __forceinline__ T operator()(long long j) const { return xf(base[j * stride]); }
 };
 
-#ifdef DACE_CUB_COMPAT_THRUST_ITERATORS
+/// A random-access iterator over :struct:`StridedGather`, with its category DECLARED.
+///
+/// Neither library's transform iterator can be used here, and that is not a preference.
+/// ``DeviceReduce::ArgMax`` wraps its input in rocPRIM's ``arg_index_iterator``, which
+/// static_asserts that ``std::iterator_traits<I>::iterator_category`` IS
+/// ``std::random_access_iterator_tag``. rocPRIM's own iterators report
+/// ``thrust::detail::iterator_category_with_system_and_traversal`` instead the moment thrust is in
+/// the translation unit -- and DaCe puts it there unconditionally, through ``thrust::complex`` in
+/// ``types.h`` / ``math.h`` / ``complex.h``. So on HIP the assert fired for every strided or
+/// transformed ArgReduce (TSVC ``s318``, gfx942) whichever backend's iterator was selected.
+/// Declaring the tag here is immune to what else the unit includes, on both backends.
 template <typename T, typename Xf>
-using GatherIterator = ::thrust::transform_iterator<StridedGather<T, Xf>, ::thrust::counting_iterator<long long>>;
-#else
+struct GatherIterator {
+    using iterator_category = ::std::random_access_iterator_tag;
+    using value_type = T;
+    using difference_type = long long;
+    using pointer = void;
+    using reference = T;  // a computed element has no storage to refer to
+
+    StridedGather<T, Xf> gather;
+    difference_type index;
+
+    __host__ __device__ __forceinline__ T operator*() const { return gather(index); }
+    __host__ __device__ __forceinline__ T operator[](difference_type n) const { return gather(index + n); }
+    __host__ __device__ __forceinline__ GatherIterator operator+(difference_type n) const {
+        return GatherIterator{gather, index + n};
+    }
+    __host__ __device__ __forceinline__ GatherIterator operator-(difference_type n) const {
+        return GatherIterator{gather, index - n};
+    }
+    __host__ __device__ __forceinline__ difference_type operator-(const GatherIterator &o) const {
+        return index - o.index;
+    }
+    __host__ __device__ __forceinline__ GatherIterator &operator+=(difference_type n) { index += n; return *this; }
+    __host__ __device__ __forceinline__ GatherIterator &operator-=(difference_type n) { index -= n; return *this; }
+    __host__ __device__ __forceinline__ GatherIterator &operator++() { ++index; return *this; }
+    __host__ __device__ __forceinline__ GatherIterator operator++(int) {
+        GatherIterator prev = *this;
+        ++index;
+        return prev;
+    }
+    __host__ __device__ __forceinline__ GatherIterator &operator--() { --index; return *this; }
+    __host__ __device__ __forceinline__ GatherIterator operator--(int) {
+        GatherIterator prev = *this;
+        --index;
+        return prev;
+    }
+    __host__ __device__ __forceinline__ bool operator==(const GatherIterator &o) const { return index == o.index; }
+    __host__ __device__ __forceinline__ bool operator!=(const GatherIterator &o) const { return index != o.index; }
+    __host__ __device__ __forceinline__ bool operator<(const GatherIterator &o) const { return index < o.index; }
+    __host__ __device__ __forceinline__ bool operator>(const GatherIterator &o) const { return index > o.index; }
+    __host__ __device__ __forceinline__ bool operator<=(const GatherIterator &o) const { return index <= o.index; }
+    __host__ __device__ __forceinline__ bool operator>=(const GatherIterator &o) const { return index >= o.index; }
+};
+
 template <typename T, typename Xf>
-using GatherIterator =
-    ::gpucub::TransformInputIterator<T, StridedGather<T, Xf>, ::gpucub::CountingInputIterator<long long>>;
-#endif
+__host__ __device__ __forceinline__ GatherIterator<T, Xf> operator+(long long n, const GatherIterator<T, Xf> &it) {
+    return it + n;
+}
 
 /// The iterator CUB reduces over when the operand is strided and/or transformed. ``Xf`` is named
 /// explicitly by the caller; ``T`` is deduced from ``base``.
 template <typename Xf, typename T>
 inline GatherIterator<T, Xf> gather_iterator(const T *base, long long stride) {
-#ifdef DACE_CUB_COMPAT_THRUST_ITERATORS
-    return GatherIterator<T, Xf>(::thrust::counting_iterator<long long>(0), StridedGather<T, Xf>{base, stride, Xf{}});
-#else
-    return GatherIterator<T, Xf>(::gpucub::CountingInputIterator<long long>(0),
-                                 StridedGather<T, Xf>{base, stride, Xf{}});
-#endif
+    return GatherIterator<T, Xf>{StridedGather<T, Xf>{base, stride, Xf{}}, 0};
 }
 
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS

@@ -5,7 +5,7 @@ import pytest
 
 import dace
 import dace.libraries.standard as std
-from dace import SDFG, Memlet
+from dace import SDFG, Memlet, dtypes, nodes
 
 C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
@@ -131,7 +131,14 @@ def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
         out_matrix[:] = np.sum(inp_tensor, axis=2)
 
     sdfg = flat_reduce.to_sdfg(simplify=True)
-    assert sdfg.apply_gpu_transformations() == 1
+    # The offloader reports what it placed on the device; an empty result means the graph
+    # came back running on the host, which every assertion below would then be testing.
+    assert sdfg.apply_gpu_transformations()
+    # Library nodes as well as maps: a graph whose only work is a Reduce carries its device
+    # schedule on the library node and has no map at all until the node is expanded.
+    assert any(node.schedule in dtypes.GPU_SCHEDULES for nested in sdfg.all_sdfgs_recursive()
+               for state in nested.states() for node in state.nodes()
+               if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)))
     sdfg.expand_library_nodes()
     for sub in sdfg.all_sdfgs_recursive():
         for name, desc in sub.arrays.items():

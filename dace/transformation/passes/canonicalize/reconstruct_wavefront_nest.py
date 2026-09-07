@@ -13,15 +13,15 @@ This pass reconstructs the perfect nest by composing two EXISTING transformation
 dependence-legality logic of its own:
 
 1. ``MapToForLoop`` turns the Map-bearing sibling back into a ``LoopRegion``.
-2. ``FuseLoops`` merges it with the other sibling ``LoopRegion`` into one loop.
+2. ``LoopFusion`` merges it with the other sibling ``LoopRegion`` into one loop.
 
-``FuseLoops`` normally refuses to fuse a sibling that is independently DOALL (correctly --
-that guard is what keeps ``LoopFusion`` from serializing parallel work it should instead
+``LoopFusion`` normally refuses to fuse a sibling that is independently DOALL (correctly --
+that guard is what keeps ``FuseLoops`` from serializing parallel work it should instead
 leave to ``LoopToMap``). Reconstructing this nest is the one legitimate exception: the
 Map-derived loop IS the DOALL sibling, and un-parallelizing it back into the sequential
 scan is the entire point -- ``WavefrontSkew`` then re-parallelizes BOTH statements together
 along the anti-diagonal, which is strictly more parallelism than leaving the Map standing
-alone ever recovers. ``FuseLoops.can_be_applied`` gained a narrow, caller-scoped
+alone ever recovers. ``LoopFusion.can_be_applied`` gained a narrow, caller-scoped
 ``allow_doall_fuse`` keyword for exactly this; every other caller keeps the default refusal.
 
 Gated tightly, cheapest checks first: (1) the outer loop's body must be EXACTLY the
@@ -44,7 +44,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.interstate.fuse_loops import FuseLoops
+from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.analysis import loop_analysis
@@ -155,7 +155,7 @@ def _fuse_one_pair(sdfg: SDFG, outer: LoopRegion) -> bool:
         second = out_edges[0].dst
         if not isinstance(second, LoopRegion) or second is first:
             continue
-        instance = FuseLoops()
+        instance = LoopFusion()
         instance.first = first
         instance.second = second
         if instance.can_be_applied(outer, expr_index=0, sdfg=sdfg, permissive=False, allow_doall_fuse=True):
@@ -167,12 +167,12 @@ def _fuse_one_pair(sdfg: SDFG, outer: LoopRegion) -> bool:
 def _fuse_siblings_to_one(sdfg: SDFG, outer: LoopRegion) -> bool:
     """Fuse every sibling ``LoopRegion`` pair directly under ``outer`` to a fixpoint.
     ``True`` iff exactly one remains (a real cross-body dependence, or a leftover range
-    mismatch ``FuseLoops`` itself refuses, can stall this short of one)."""
+    mismatch ``LoopFusion`` itself refuses, can stall this short of one)."""
     changed = True
     while changed:
         changed = _fuse_one_pair(sdfg, outer)
         if changed:
-            # ``FuseLoops`` appends the second body as an extra state rather than merging it into
+            # ``LoopFusion`` appends the second body as an extra state rather than merging it into
             # the first, and ``_single_compute_state`` -- the very gate the NEXT pair is judged by --
             # accepts only a single-compute-state body. Without collapsing here a three-sibling nest
             # stalls after one fusion (seidel_2d: two Map-derived siblings plus the scan).
@@ -219,7 +219,7 @@ class ReconstructWavefrontNest(ppl.Pass):
     """Reconstruct an imperfect 2-D stencil nest into the perfect single-loop body
     ``WavefrontSkew`` requires, but only where doing so demonstrably unlocks a skew.
 
-    Composes two existing transformations (``MapToForLoop``, ``FuseLoops``) and adds no
+    Composes two existing transformations (``MapToForLoop``, ``LoopFusion``) and adds no
     dependence-legality logic of its own; see the module docstring for the full rationale.
     A candidate is committed to the real SDFG only after an identical trial run on a deepcopy
     proves ``WavefrontSkew`` would then skew it -- a pass that does not apply must not mutate.

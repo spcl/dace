@@ -33,24 +33,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # One job, three steps. Each of the three used to be its own runner at six to eight minutes,
+  # which paid the checkout and environment setup three times over for twenty minutes of work.
+  # A red still names what broke, because a failing step names itself.
   cpf-codegen:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Each leg skips the OTHER language's emission suite, so a red names the rendering that
-          # broke. Everything else (the lowering tables, the dialect printers) is parametrized over
-          # both dialects inside the tests, and runs in both legs so either is a complete gate.
-          - language: 'c++'
-            skip: '--ignore=tests/codegen/cpf/test_emission_c.py'
-          - language: 'c'
-            skip: '--ignore=tests/codegen/cpf/test_emission.py'
-
-    name: cpf-codegen (${{ matrix.language }})
+    timeout-minutes: 180
 
     steps:
     - uses: actions/checkout@v7
@@ -64,7 +53,7 @@ jobs:
         apt-packages: libyaml-dev cmake
         groups: testing
 
-    - name: CPF lowering, dialect and emission suites (${{ matrix.language }})
+    - name: CPF lowering, dialect and emission suites (c++)
       run: |
         export NOSTATUSBAR=1
         ulimit -s 65536 || true
@@ -75,29 +64,30 @@ jobs:
         # CPF renders through the readable generator; pin it so a default change cannot silently
         # move this suite onto the legacy one (which emits dace::CopyND and a state struct).
         export DACE_compiler_cpu_implementation=experimental_readable
+        # Each language step skips the OTHER language's emission suite, so a red names the
+        # rendering that broke. The lowering tables and dialect printers are parametrized over both
+        # dialects inside the tests and run in both steps, so either is a complete gate.
         pytest -v --tb=short --timeout_method thread --timeout=900 -m "not gpu" \
-          ${{ matrix.skip }} tests/codegen/cpf
+          --ignore=tests/codegen/cpf/test_emission_c.py tests/codegen/cpf
 
-  # CloudSC end to end: render a whole application, build it bare, and compare it against the
-  # SDFG's own compiled output on identical physical inputs. Separate job because the build alone
-  # is minutes and the rendered translation unit is large -- a failure here should be readable as
-  # "the big one broke", not as a timeout in the unit cell above.
-  cpf-cloudsc:
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
+    - name: CPF lowering, dialect and emission suites (c)
+      if: always()
+      run: |
+        export NOSTATUSBAR=1
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export OMP_NUM_THREADS=4
+        export DACE_compiler_max_stack_array_size=65536
+        export DACE_cache=unique
+        export DACE_compiler_cpu_implementation=experimental_readable
+        pytest -v --tb=short --timeout_method thread --timeout=900 -m "not gpu" \
+          --ignore=tests/codegen/cpf/test_emission.py tests/codegen/cpf
 
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: 'recursive'
-    - uses: ./.github/actions/setup-dace
-      with:
-        python-version: '3.14'
-        apt-packages: libyaml-dev cmake
-        groups: testing
-
+    # CloudSC end to end: render a whole application, build it bare, and compare it against the
+    # SDFG's own compiled output on identical physical inputs. Last because the build alone is
+    # minutes and the rendered translation unit is large.
     - name: CloudSC CPF equivalence
+      if: always()
       run: |
         export NOSTATUSBAR=1
         ulimit -s 65536 || true

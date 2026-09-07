@@ -1174,11 +1174,18 @@ class ExpandCUDA(ExpandTransformation):
                 f'{prototype}\n'
                 f'gpuError_t {wrapper}({params}) {{\n'
                 f'    size_t _sc_needed = 0;\n'
-                f'    ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
+                f'    gpuError_t _sc_status = ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
+                f'    if (_sc_status != gpuSuccess) return _sc_status;\n'
                 f'    void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>('
-                f'_sc_needed, __sc_stream);\n'
+                f'_sc_needed, __sc_stream, &_sc_status);\n'
+                # CUB reads a null workspace as "report the size and return", leaving the output
+                # UNTOUCHED -- a failed allocation has to surface as an error, not as a buffer
+                # that was silently never scanned.
+                f'    if (_sc_scratch == nullptr) return _sc_status != gpuSuccess ? _sc_status : '
+                f'gpuErrorMemoryAllocation;\n'
                 f'    return ::gpucub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n'
-                f'}}\n', 'cuda')
+                f'}}\n',
+                'cuda')
             blocks.append(f'DACE_GPU_CHECK({wrapper}({in_conn}, {out_conn}{seed_actual}, '
                           f'({n_expr}), __dace_current_stream));')
         inputs = {in_connector(c): None for c in range(node.chains)}

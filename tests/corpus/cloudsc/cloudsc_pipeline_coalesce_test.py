@@ -167,7 +167,7 @@ def test_reapplying_the_phase_is_a_no_op(parallelized):
     assert (inline, fuse_states, collapse, fuse_states_again) == (None, None, None, None)
     # ``fuse_maps`` is a ``Pipeline``, whose return always carries its ``FindSingleUseData``
     # dependency's result -- so it is never ``None``. What must be absent is the fusion itself.
-    assert 'FullMapFusion' not in fuse_maps
+    assert 'FuseMaps' not in fuse_maps
 
 
 def test_every_coalesce_stage_actually_fires(parallelized):
@@ -178,7 +178,7 @@ def test_every_coalesce_stage_actually_fires(parallelized):
     assert inline, 'nothing inlined'
     assert fuse_states, 'no states fused before map fusion'
     assert collapse, 'no map nest collapsed'
-    assert 'FullMapFusion' in fuse_maps, f'no maps fused: {sorted(fuse_maps)}'
+    assert 'FuseMaps' in fuse_maps, f'no maps fused: {sorted(fuse_maps)}'
     assert fuse_states_again, 'the trailing state fusion is dead -- drop it'
 
 

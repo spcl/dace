@@ -135,8 +135,11 @@ class PatternMatchAndApply(ppl.Pass):
 
             # Find only the first match
             try:
-                match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
+                match = next(m for m in match_patterns(sdfg, [xform],
+                                                       metadata=self._metadata,
+                                                       permissive=self.permissive,
+                                                       states=self.states,
+                                                       pipeline_results=pipeline_results))
             except StopIteration:
                 continue
 
@@ -263,7 +266,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                                     permissive=self.permissive,
                                                     patterns=[xform],
                                                     states=self.states,
-                                                    metadata=self._metadata):
+                                                    metadata=self._metadata,
+                                                    pipeline_results=pipeline_results):
                             self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                             applied = True
                             applied_anything = True
@@ -279,7 +283,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                             permissive=self.permissive,
                                             patterns=xforms,
                                             states=self.states,
-                                            metadata=self._metadata):
+                                            metadata=self._metadata,
+                                            pipeline_results=pipeline_results):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
                     break
@@ -404,14 +409,27 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], collapsed_graph: nx.DiGraph,
-                                 subgraph: Dict[int, int], sdfg: SDFG, xform: Union[xf.PatternTransformation,
-                                                                                    Type[xf.PatternTransformation]],
-                                 expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
-                                 options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
+def _try_to_match_transformation(
+        graph: Union[ControlFlowRegion, SDFGState],
+        collapsed_graph: nx.DiGraph,
+        subgraph: Dict[int, int],
+        sdfg: SDFG,
+        xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+        expr_idx: int,
+        nxpattern: nx.DiGraph,
+        state_id: int,
+        permissive: bool,
+        options: Dict[str, Any],
+        pipeline_results: Optional[Dict[str, Any]] = None) -> Optional[xf.PatternTransformation]:
     """
     Helper function that tries to instantiate a pattern match into a
     transformation object.
+
+    :param pipeline_results: Results of the passes this one declared through ``depends_on()``,
+                             installed on the match BEFORE ``can_be_applied`` so a predicate can
+                             read a cached analysis instead of recomputing it per candidate. This
+                             is what issue#1911 is about; ``setup_match`` resets the member, so it
+                             has to be set after that call.
     """
     # ``i`` IS the node id: the digraph is numbered by ``enumerate(graph.nodes())``, which is the
     # iteration ``node_id`` linear-scans. Unmutated between the collapse and this probe.
@@ -446,6 +464,8 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
 
         cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
+        # After setup_match, which resets it to None.
+        match._pipeline_results = pipeline_results
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
@@ -550,7 +570,8 @@ def match_patterns(sdfg: SDFG,
                    permissive: bool = False,
                    metadata: Optional[PatternMetadataType] = None,
                    states: Optional[List[SDFGState]] = None,
-                   options: Optional[List[Dict[str, Any]]] = None):
+                   options: Optional[List[Dict[str, Any]]] = None,
+                   pipeline_results: Optional[Dict[str, Any]] = None):
     """ Returns a generator of Transformations that match the input SDFG.
         Ordered by SDFG ID.
 
@@ -564,6 +585,9 @@ def match_patterns(sdfg: SDFG,
                        transformations on this list.
         :param options: An optional iterable of transformation parameter
                         dictionaries.
+        :param pipeline_results: Results of previously-run passes, made visible to each match's
+                                 ``can_be_applied`` so a predicate can read a cached analysis
+                                 rather than rescanning the SDFG per candidate.
         :return: A list of PatternTransformation objects that match.
     """
 
@@ -594,7 +618,7 @@ def match_patterns(sdfg: SDFG,
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
-                                                     permissive, opts)
+                                                     permissive, opts, pipeline_results)
                 if match is not None:
                     yield match
 
@@ -612,7 +636,7 @@ def match_patterns(sdfg: SDFG,
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                     match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
-                                                         state_id, permissive, opts)
+                                                         state_id, permissive, opts, pipeline_results)
                     if match is not None:
                         yield match
 

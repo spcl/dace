@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reorder a state sitting between two loops PAST the second loop, so the loops become adjacent.
 
-``FuseLoops`` (and the ``LoopFusion`` pass built on it) matches a two-node path graph, so
+``LoopFusion`` (and the ``FuseLoops`` pass built on it) matches a two-node path graph, so
 ``loop1 -> state -> loop2`` produces no candidate pair at all and the loops are never offered for
 fusion. ``state`` stays a SIBLING block at the same nesting level the whole time -- it is never
 nested into ``loop2``'s body, only reordered relative to it: ``loop1 -> loop2 -> state``. This is
@@ -49,11 +49,11 @@ one is enforced):
       ``cfg``'s start block the entry path itself changes shape (execution would begin partway
       through the new chain). Refused; only a candidate whose blocks are all interior is considered.
 
-Even a legal reorder is pointless on its own: the point is only to unlock ``FuseLoops``. So the
-reorder fires only when it is BOTH dependence-legal AND ``FuseLoops.can_be_applied_to`` would accept
+Even a legal reorder is pointless on its own: the point is only to unlock ``LoopFusion``. So the
+reorder fires only when it is BOTH dependence-legal AND ``LoopFusion.can_be_applied_to`` would accept
 the resulting ``loop1 -> loop2`` adjacency -- decided on a throwaway deep copy so a refusal never
 mutates the real SDFG. The pass itself never fuses; it only restores adjacency and leaves fusing to
-``LoopFusion``/``FuseLoops``, the same division of labour ``SinkStateIntoLoop`` uses.
+``FuseLoops``/``LoopFusion``, the same division of labour ``SinkStateIntoLoop`` uses.
 """
 import copy
 from typing import Any, Dict, List, Optional, Tuple
@@ -64,7 +64,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.interstate.fuse_loops import FuseLoops
+from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.analysis.analysis import AccessSets
 
 #: A ``(loop1, state, loop2)`` triple matching the ``loop1 -> state -> loop2`` chain, structurally
@@ -82,7 +82,7 @@ ALIASING_TYPES = (dt.View, dt.Reference)
 @transformation.explicit_cf_compatible
 class ReorderStateForLoopFusion(ppl.Pass):
     """Reorder a between-loops SIBLING state past the second loop when doing so is dependence-legal
-    AND unlocks ``FuseLoops``. ``state`` is never nested into ``loop2``; it stays a sibling block
+    AND unlocks ``LoopFusion``. ``state`` is never nested into ``loop2``; it stays a sibling block
     before and after, just moved from ``loop1 -> state -> loop2`` to ``loop1 -> loop2 -> state``.
     Fires on neither condition alone, and refuses outright on anything undecidable -- see the module
     docstring for the full checklist."""
@@ -115,7 +115,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
             for sd in sdfg.all_sdfgs_recursive():
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
                     # `sd`, not the top SDFG: the throwaway copy in `would_fuse` only has to carry the
-                    # SDFG the candidate actually lives in, and FuseLoops is handed that same scope.
+                    # SDFG the candidate actually lives in, and LoopFusion is handed that same scope.
                     if self.reorder_one(sd, cfg, access_sets):
                         reordered += 1
                         changed = True
@@ -225,14 +225,14 @@ class ReorderStateForLoopFusion(ppl.Pass):
 
     @staticmethod
     def would_fuse(sdfg: SDFG, cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> bool:
-        """Whether ``FuseLoops`` would accept ``first``/``second`` once ``state`` no longer sits between
+        """Whether ``LoopFusion`` would accept ``first``/``second`` once ``state`` no longer sits between
         them. Decided on a throwaway deep copy of the whole SDFG (memoized by object id, so the copies of
         ``first``/``state``/``second`` are recoverable) -- a refusal here must never touch the real graph.
         """
         memo: Dict[int, Any] = {}
         sdfg_copy = copy.deepcopy(sdfg, memo)
         ReorderStateForLoopFusion.reorder_past(memo[id(cfg)], memo[id(first)], memo[id(state)], memo[id(second)])
-        return FuseLoops.can_be_applied_to(sdfg_copy, first=memo[id(first)], second=memo[id(second)])
+        return LoopFusion.can_be_applied_to(sdfg_copy, first=memo[id(first)], second=memo[id(second)])
 
     @staticmethod
     def reorder_past(cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> None:

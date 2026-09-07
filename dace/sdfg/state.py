@@ -384,13 +384,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     def entry_node(self, node: nd.Node) -> Optional[nd.EntryNode]:
         """ Returns the entry node that wraps the current node, or None if
             it is top-level in a state. """
-        return self.scope_dict()[node]
+        # Read the cache directly: ``scope_dict()`` shallow-copies the whole map on every call
+        # (0.50us at 10 nodes, 83.2us at 4000), and a single lookup does not need a copy.
+        if self._scope_dict_toparent_cached is None:
+            self.scope_dict()
+        return self._scope_dict_toparent_cached[node]
 
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by
             the given entry node. """
-        node_to_children = self.scope_children()
-        return next(v for v in node_to_children[entry_node] if isinstance(v, nd.ExitNode))
+        if self._scope_dict_tochildren_cached is None:
+            self.scope_children()
+        return next(v for v in self._scope_dict_tochildren_cached[entry_node] if isinstance(v, nd.ExitNode))
 
     ###################################################################
     # Memlet-tracking methods
@@ -713,12 +718,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if isinstance(n, nd.EntryNode):
                 new_symbols |= n.new_symbol_names(self)
             elif isinstance(n, nd.AccessNode):
-                # Add data descriptor symbols. ``symbol.name`` is what ``str`` prints, without
-                # going through the sympy printer.
-                freesyms |= {
-                    s.name if isinstance(s, sympy.Symbol) else str(s)
-                    for s in n.desc(sdfg).used_symbols(all_symbols)
-                }
+                # Add data descriptor symbols
+                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -869,22 +870,25 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
-        # Names only: ``_read_and_write_sets`` builds a Range per edge and deep-copies it, and this
-        # kept only the keys. ``try_initialize`` stays -- callers have relied on that side effect.
+        # Names directly, rather than the keys of :meth:`_read_and_write_sets`. That builds a
+        # ``List[Subset]`` per container over a concurrent-subgraph split and a topological sort,
+        # deepcopies the whole structure, and every bit of it is discarded by the ``.keys()`` this
+        # used to take. Which containers are read and written does not depend on any of it: an
+        # access node is written when it has a non-empty in-edge and read when it has a non-empty
+        # out-edge, and each access node belongs to exactly one concurrent subgraph either way.
+        # The ``try_initialize`` sweep is kept -- callers rely on it having set src/dst subsets.
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
+
         read_set: Set[AnyStr] = set()
         write_set: Set[AnyStr] = set()
         for n in self.nodes():
             if not isinstance(n, nd.AccessNode):
-                continue
-            if n.data in read_set and n.data in write_set:
-                continue
-            # Empty memlets are ordering edges: no data moves along them.
-            if any(not e.data.is_empty() for e in self.out_edges(n)):
-                read_set.add(n.data)
+                continue  # reads and writes only happen through access nodes
             if any(not e.data.is_empty() for e in self.in_edges(n)):
                 write_set.add(n.data)
+            if any(not e.data.is_empty() for e in self.out_edges(n)):
+                read_set.add(n.data)
         return read_set, write_set
 
     def unordered_arglist(self,
@@ -1189,11 +1193,9 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         read_set = set()
         write_set = set()
-        # Hoisted: NestedDict.keys() expands Structure members, and was rebuilt per edge.
-        array_names = self.sdfg.arrays.keys() if self.sdfg is not None else frozenset()
         for block in self.nodes():
             for edge in self.in_edges(block):
-                read_set |= edge.data.free_symbols & array_names
+                read_set |= edge.data.free_symbols & self.sdfg.arrays.keys()
             rs, ws = block.read_and_write_sets()
             read_set.update(rs)
             write_set.update(ws)
@@ -3258,11 +3260,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                     # collect symbols representing data containers
                     dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
                     for d in dsyms:
-                        # ``symbol.name`` is what ``str`` prints, without the sympy printer.
-                        efsyms |= {
-                            sym.name if isinstance(sym, sympy.Symbol) else str(sym)
-                            for sym in self.sdfg.arrays[d].used_symbols(all_symbols)
-                        }
+                        efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
                     defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                     used_before_assignment.update(efsyms - defined_syms)
                     free_syms |= efsyms

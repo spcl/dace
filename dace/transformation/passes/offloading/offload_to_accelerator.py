@@ -22,7 +22,7 @@ from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.dataflow import TrivialMapElimination
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
@@ -249,6 +249,22 @@ class OffloadToAccelerator(ppl.Pass):
         self.scalarize_locals_of_removed_trivial_maps(sdfg)
         self.refuse_by_value_scalars_the_device_writes(sdfg)
         self.register_kernel_local_transients(sdfg)
+
+        return self.device_resident(sdfg) or None
+
+    def device_resident(self, sdfg: SDFG) -> OrderedSet[str]:
+        """Every container this pass left in a GPU storage, qualified by the SDFG that holds it.
+
+        This is the pass's result, and a Pipeline reads it as "did anything change": an SDFG with
+        nothing on the device came back unoffloaded, which is exactly the ``None`` the Pass contract
+        asks for. Names are qualified because a nested SDFG may reuse a name the parent also has.
+        """
+        placed: OrderedSet[str] = OrderedSet()
+        for nested in sdfg.all_sdfgs_recursive():
+            for name, desc in nested.arrays.items():
+                if desc.storage in GPU_RESIDENT_STORAGES:
+                    placed.add(f'{nested.cfg_id}.{name}')
+        return placed
 
     def overwritten_before_any_read(self, sdfg: SDFG) -> OrderedSet[str]:
         """Signature arrays whose value on entry cannot be observed, so staging them down is dead work.
@@ -593,7 +609,7 @@ class OffloadToAccelerator(ppl.Pass):
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
 
             if new_maps:
-                mapfusion_pass = FullMapFusion(
+                mapfusion_pass = FuseMaps(
                     strict_dataflow=True,
                     perform_vertical_map_fusion=True,
                     perform_horizontal_map_fusion=True,

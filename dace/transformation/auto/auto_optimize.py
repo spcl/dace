@@ -15,7 +15,7 @@ from dace.ordered import OrderedSet
 from typing import Any, Callable, Dict, List, Set, Tuple, Union
 
 # Transformations
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.passes import FuseMaps
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
@@ -57,12 +57,12 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # Apply MapFusionVertical for the more trivial cases
-            full_map_fusion_pass = FullMapFusion(
+            fuse_maps_pass = FuseMaps(
                 strict_dataflow=True,
                 validate_all=validate_all,
             )
-            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
-            full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
+            fuse_maps_pipeline = ppl.Pipeline([fuse_maps_pass])
+            fuse_maps_pipeline.apply_pass(graph_or_subgraph, {})
 
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
@@ -82,14 +82,14 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             sdfg = graph_or_subgraph.parent
             # Apply MapFusionVertical for the more trivial cases.
             #  For backwards compatibility we only perform vertical map fusion.
-            full_map_fusion_pass = FullMapFusion(
+            fuse_maps_pass = FuseMaps(
                 strict_dataflow=True,
                 validate_all=validate_all,
                 perform_horizontal_map_fusion=False,
                 perform_vertical_map_fusion=True,
             )
-            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
-            full_map_fusion_pileline.apply_pass(sdfg, {})
+            fuse_maps_pipeline = ppl.Pipeline([fuse_maps_pass])
+            fuse_maps_pipeline.apply_pass(sdfg, {})
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:

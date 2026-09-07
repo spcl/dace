@@ -154,3 +154,70 @@ if __name__ == '__main__':
     test_the_check_macro_evaluates_its_argument_once()
     test_the_recorded_error_is_the_first_one()
     test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failure()
+
+
+def scan_wrapper_code(exclusive: bool) -> str:
+    """The ``__dace_scan_*`` unit the CUDA scan expansion appends to the SDFG's global code."""
+    from dace import memlet as mm
+    from dace.libraries.standard.nodes.scan import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, ExpandCUDA, Scan,
+                                                    ScanOp)
+    n = dace.symbol('N')
+    sdfg = dace.SDFG('cub_scan_workspace')
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('B', [n], dace.float64)
+    state = sdfg.add_state()
+    scan = Scan(name='scan', op=ScanOp.SUM, exclusive=exclusive, identity=0)
+    state.add_node(scan)
+    state.add_edge(state.add_read('A'), None, scan, INPUT_CONNECTOR_NAME, mm.Memlet('A[0:N]'))
+    state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, mm.Memlet('B[0:N]'))
+    ExpandCUDA.expansion(scan, state, sdfg)
+    # The expansion appends the prototype and the definition separately; the body is the one
+    # holding the size variable.
+    return next(code.code for code in sdfg.global_code.values() if '_sc_needed' in code.code)
+
+
+def sort_wrapper_code() -> str:
+    """The ``__dace_sort_*`` unit the CUDA integer-sort expansion appends to the SDFG's global code."""
+    from dace import memlet as mm
+    from dace.libraries.sort.nodes.integer_sort import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, ExpandCUDA,
+                                                        IntegerSort)
+    n = dace.symbol('N')
+    sdfg = dace.SDFG('cub_sort_workspace')
+    sdfg.add_array('A', [n], dace.int32)
+    sdfg.add_array('B', [n], dace.int32)
+    state = sdfg.add_state()
+    srt = IntegerSort(name='sort')
+    state.add_node(srt)
+    state.add_edge(state.add_read('A'), None, srt, INPUT_CONNECTOR_NAME, mm.Memlet('A[0:N]'))
+    state.add_edge(srt, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, mm.Memlet('B[0:N]'))
+    ExpandCUDA.expansion(srt, state, sdfg)
+    return next(code.code for code in sdfg.global_code.values() if '_ks_needed' in code.code)
+
+
+@pytest.mark.parametrize('exclusive', [True, False])
+def test_the_scan_wrapper_refuses_a_null_workspace(exclusive):
+    """The reduce helper's protocol, on the scan helper. A null workspace makes CUB report the size
+    and return, so an unguarded fetch leaves the output array EXACTLY as the scan found it -- the
+    prefix sums of a freshly allocated buffer are a clean run of zeros, reported as success."""
+    code = scan_wrapper_code(exclusive)
+    assert re.search(r'gpuError_t _sc_status = ::gpucub::DeviceScan::', code), \
+        f'the CUB size query is unchecked:\n{code}'
+    assert re.search(r'if \(_sc_status != gpuSuccess\) return _sc_status;', code), \
+        f'a failed size query is not propagated:\n{code}'
+    assert re.search(r'get_scratch<::dace::cub::ScanTag>\(_sc_needed, __sc_stream, &_sc_status\)', code), \
+        f'the scratch fetch does not ask for its allocation status:\n{code}'
+    assert re.search(r'if \(_sc_scratch == nullptr\) return', code), \
+        f'a null workspace is handed to CUB, which silently leaves the output unscanned:\n{code}'
+
+
+def test_the_sort_wrapper_refuses_a_null_workspace():
+    """Same protocol again: CUB leaves the keys UNSORTED rather than reporting anything."""
+    code = sort_wrapper_code()
+    assert re.search(r'gpuError_t _ks_status = ::gpucub::DeviceRadixSort::', code), \
+        f'the CUB size query is unchecked:\n{code}'
+    assert re.search(r'if \(_ks_status != gpuSuccess\) return _ks_status;', code), \
+        f'a failed size query is not propagated:\n{code}'
+    assert re.search(r'get_scratch<::dace::cub::SortTag>\(_ks_needed, __ks_stream, &_ks_status\)', code), \
+        f'the scratch fetch does not ask for its allocation status:\n{code}'
+    assert re.search(r'if \(_ks_scratch == nullptr\) return', code), \
+        f'a null workspace is handed to CUB, which silently leaves the keys unsorted:\n{code}'

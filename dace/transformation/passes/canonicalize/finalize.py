@@ -31,6 +31,7 @@ from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelis
                                                     move_small_arrays_to_stack, set_fast_implementations)
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
+from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
@@ -523,7 +524,12 @@ def finalize_for_target(sdfg: SDFG,
     # team, gets both. Connector types are re-inferred because the hoist outlines the loop into a
     # nested SDFG, whose boundary connectors are new.
     if device == dtypes.DeviceType.CPU:
-        if HoistParallelRegion().apply_pass(sdfg, {}):
+        # Banding runs FIRST and takes the loops it can: it produces the same one-region nest the
+        # hoist does, but with the worksharing construct outside the carry rather than inside it,
+        # so the nest pays one barrier instead of one per trip. A loop it declines -- a dependence
+        # crossing a band boundary -- still wants the plain hoist, which is what runs next.
+        banded = BandCarriedLoops().apply_pass(sdfg, {})
+        if HoistParallelRegion().apply_pass(sdfg, {}) or banded:
             infer_types.infer_connector_types(sdfg)
 
     if validate:

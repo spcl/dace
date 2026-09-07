@@ -3,9 +3,12 @@ name: HPCAgent-Bench Canonicalize
 # The canonicalize CPU path over the HPCAgent-Bench corpus, which lives in its own PUBLIC repo and
 # is cloned rather than vendored. The GPU half of the same gate runs on the CSCS pipeline
 # (``ci/cscs_gpu.yml``), which is the only place with a device.
+# Triggers match every other workflow here: extended is covered through its pull request, not
+# through pushes to the branch. Listing the branch under ``push`` as well ran each of these jobs
+# twice for the same commit, once per event.
 on:
   push:
-    branches: [ main, extended ]
+    branches: [ main ]
   pull_request:
     branches: [ main, extended ]
   workflow_dispatch:
@@ -20,14 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
-    strategy:
-      fail-fast: false
-      matrix:
-        # The two tags that fit a CI slot: 56 and 40 kernels. Separate cells so one tag's timeout
-        # does not hide the other's result.
-        tag: [ npbench, llr-focus40 ]
-
-    name: canon-cpu-${{ matrix.tag }}
+    # Both tags in one job. They are 56 and 40 kernels, twenty and five minutes, and as separate
+    # cells they paid the checkout, the environment sync and the bench clone twice for half an
+    # hour of work. Each tag still writes its own CSV and is summarized separately, so a red names
+    # the tag.
+    name: canon-cpu
 
     steps:
     - uses: actions/checkout@v7
@@ -89,8 +89,12 @@ jobs:
       run: |
         uv run --project "$GITHUB_WORKSPACE" --with-editable . \
           python -m hpcagent_bench.cli run-framework \
-          -b all@${{ matrix.tag }} -f dace_cpu_canonicalize -p S -r 1 -t 900 \
-          --csv canon_cpu_${{ matrix.tag }}.csv || true
+          -b all@npbench -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_npbench.csv || true
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework \
+          -b all@llr-focus40 -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_llr-focus40.csv || true
 
     - name: Gate on the CSV
       working-directory: hpcagent-bench
@@ -101,7 +105,8 @@ jobs:
       run: |
         set +e
         uv run --project "$GITHUB_WORKSPACE" --with-editable . \
-          python -m hpcagent_bench.cli run-framework --summarize canon_cpu_${{ matrix.tag }}.csv
+          python -m hpcagent_bench.cli run-framework --summarize \
+          canon_cpu_npbench.csv canon_cpu_llr-focus40.csv
         code=$?
         set -e
         if [ "$code" -ge 2 ]; then
@@ -116,5 +121,5 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: canon-cpu-${{ matrix.tag }}
-        path: hpcagent-bench/canon_cpu_${{ matrix.tag }}.csv
+        name: canon-cpu
+        path: hpcagent-bench/canon_cpu_*.csv

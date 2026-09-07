@@ -409,15 +409,19 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        o[i] = acc;\n'
     '    }\n'
     '}',
+    # The exclusive form runs its two phases the other way round: the ``scan`` directive splits the
+    # body into an input phase and a scan phase, and for ``exclusive`` the SCAN phase is the one
+    # before the directive. Written the inclusive way round it still compiles and stores the seed
+    # into every element, so these mirror ``dace/scan.hpp`` statement for statement.
     'scan_excl_sum':
     'template <typename It, typename OutIt, typename T>\n'
     'static inline void scan_excl_sum(It f, OutIt o, long lo, long hi, T seed) {\n'
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, +:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = acc + f[i];\n'
-    '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = acc + f[i];\n'
     '    }\n'
     '}',
     'scan_excl_product':
@@ -426,9 +430,9 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, *:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = acc * f[i];\n'
-    '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = acc * f[i];\n'
     '    }\n'
     '}',
     'scan_excl_min':
@@ -437,9 +441,9 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, min:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
-    '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
     '    }\n'
     '}',
     'scan_excl_max':
@@ -448,9 +452,9 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    T acc = seed;\n'
     '    #pragma omp simd reduction(inscan, max:acc)\n'
     '    for (long i = lo; i < hi; ++i) {\n'
-    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
-    '        #pragma omp scan exclusive(acc)\n'
     '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '    }\n'
     '}',
     # --- find-first ---------------------------------------------------------------------------
@@ -678,9 +682,11 @@ VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'c
 #: for the ``std::is_trivially_destructible`` static assertion it pairs with the matching delete.
 #: ``<cstdlib>`` is for ``std::abort``, which canonicalization writes into the assumption-guard
 #: tasklet (``if ((N < 0)) { std::abort(); }``) -- a body no printer sees, so nothing else would
-#: pull the declaration in.
-BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<complex>',
-                                 '<numeric>', '<new>', '<type_traits>')
+#: pull the declaration in. ``<cassert>`` is the same case one level down: code generation guards
+#: every map with a non-unit step by ``assert((step) > 0 && "...")``, which it writes directly into
+#: the stream rather than through a printer, so no call-site table can discover it.
+BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<cassert>',
+                                 '<complex>', '<numeric>', '<new>', '<type_traits>')
 
 #: Runtime functions CPF deliberately does NOT lower, and why. Reaching one is a refusal, not a
 #: pass-through: the name is declared by a DaCe header CPF does not include, so passing it through
@@ -1378,23 +1384,67 @@ C_INLINE_DEFINITIONS.update({
 
 
 def _c_scan_family(kind: str, operation: str, clause: str, step: str) -> str:
-    """One prefix-scan helper as C: one typed function per element type, plus its dispatch macro."""
-    body = ('{T} acc = seed;\n'
-            '#pragma omp simd reduction(inscan, %s:acc)\n'
-            'for (long i = lo; i < hi; ++i) {\n'
-            '    acc = %s;\n'
-            '    #pragma omp scan %s(acc)\n'
-            '    o[i] = acc;\n'
-            '}') % (clause, step, kind)
-    return c_typed_family('scan_%s_%s' % ('incl' if kind == 'inclusive' else 'excl', operation),
-                          (('const {T} *', 'f'), ('{T} *', 'o'), ('long', 'lo'), ('long', 'hi'), ('{T}', 'seed')),
-                          ((C_ARITHMETIC, 'void', body), ), '+(seed)')
+    """One prefix-scan helper as C: a statement macro over ``typeof``, not a typed function set.
 
+    A scan touches THREE independent types -- input element, output element, accumulator -- which
+    is why the C++ form is a template over ``<It, OutIt, T>``. A ``_Generic`` family cannot say
+    that: it dispatches on one operand and then declares the other two at whatever type it picked,
+    so the compaction prefix sums exist for -- an ``int8_t`` 0/1 mask scanned into ``int64_t``
+    ranks -- fails to select. Saying it with a cross product costs 36 functions per family, and
+    CPF output is meant to be read. ``typeof`` gives the same three degrees of freedom, at
+    the price of being a statement rather than a call -- the trade ``cpf_find_first`` already makes,
+    for the same reason.
+
+    The accumulator is ``typeof_unqual(seed)`` and never the input's: a 0/1 mask folded at ``int8_t``
+    wraps at 128, and the seed is the one argument that names the type the caller wants the fold
+    carried out in. Every argument is bound to a local before the loop, so each is evaluated
+    exactly once even though the loop names it on every iteration.
+
+    :param kind: ``'inclusive'`` or ``'exclusive'``, as the OpenMP ``scan`` clause spells it.
+    :param operation: the fold's name, which the helper is named after.
+    :param clause: the OpenMP reduction identifier for ``operation``.
+    :param step: the accumulator's update, written against the macro's own locals.
+    :returns: the ``#define``.
+    """
+    update = '            cpf_scan_acc = %s;' % step
+    store = '            cpf_scan_out[cpf_scan_i] = cpf_scan_acc;'
+    # Input phase, directive, scan phase -- and ``exclusive`` names them in the other order.
+    phases = (update, store) if kind == 'inclusive' else (store, update)
+    return '\\\n'.join((
+        '#define scan_%s_%s(f, o, lo, hi, seed) ' % ('incl' if kind == 'inclusive' else 'excl', operation),
+        '    do {',
+        '        typeof(*(f)) * cpf_scan_in = (f);',
+        '        typeof(*(o)) * cpf_scan_out = (o);',
+        '        const long cpf_scan_lo = (lo);',
+        '        const long cpf_scan_hi = (hi);',
+        # ``typeof_unqual``, not ``typeof``: the seed is normally a read-only scalar the backend
+        # already emitted as ``const double _scan_seed_b = ...``, and ``typeof`` keeps that
+        # qualifier, so the accumulator comes out const -- the fold cannot assign it and OpenMP
+        # refuses it outright ("may appear only in shared or firstprivate clauses"). The INPUT
+        # binding deliberately keeps its qualifiers; only the accumulator is written.
+        '        typeof_unqual(seed) cpf_scan_acc = (seed);',
+        '        _Pragma("omp simd reduction(inscan, %s:cpf_scan_acc)")' % clause,
+        '        for (long cpf_scan_i = cpf_scan_lo; cpf_scan_i < cpf_scan_hi; ++cpf_scan_i) {',
+        phases[0],
+        '            _Pragma("omp scan %s(cpf_scan_acc)")' % kind,
+        phases[1],
+        '        }',
+        '    } while (0)',
+    ))
+
+
+#: ``(operation, OpenMP reduction identifier, accumulator update)``. The update is written against
+#: the macro's own locals, and ``min`` / ``max`` cast the input to the accumulator's type first so
+#: the comparison happens where the fold does -- the ``static_cast<T>`` the C++ templates write.
+_C_SCAN_STEPS: Tuple[Tuple[str, str, str], ...] = (
+    ('sum', '+', 'cpf_scan_acc + cpf_scan_in[cpf_scan_i]'),
+    ('product', '*', 'cpf_scan_acc * cpf_scan_in[cpf_scan_i]'),
+    ('min', 'min', 'cpf_min(cpf_scan_acc, (typeof(cpf_scan_acc))cpf_scan_in[cpf_scan_i])'),
+    ('max', 'max', 'cpf_max(cpf_scan_acc, (typeof(cpf_scan_acc))cpf_scan_in[cpf_scan_i])'),
+)
 
 for _kind in ('inclusive', 'exclusive'):
-    for _operation, _clause, _step in (('sum', '+', 'acc + f[i]'), ('product', '*', 'acc * f[i]'),
-                                       ('min', 'min', 'cpf_min(acc, ({T})f[i])'), ('max', 'max',
-                                                                                   'cpf_max(acc, ({T})f[i])')):
+    for _operation, _clause, _step in _C_SCAN_STEPS:
         C_INLINE_DEFINITIONS['scan_%s_%s' % ('incl' if _kind == 'inclusive' else 'excl', _operation)] = _c_scan_family(
             _kind, _operation, _clause, _step)
 
@@ -1516,7 +1566,8 @@ C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_ide
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
 #: section header above.
-C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<complex.h>')
+C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<assert.h>',
+                                   '<complex.h>')
 
 #: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
 #: macro is removed immediately after the include; complex literals are built with ``CMPLX``.

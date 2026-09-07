@@ -443,8 +443,11 @@ class FindSingleUseData(ppl.Pass):
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # If anything was modified, reapply
-        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.CFG
+        # OR, not AND: these are distinct flag bits, so ``AccessNodes & CFG`` is ``Nothing`` and the
+        # whole expression was constantly False -- a Pipeline never recomputed this analysis, and
+        # every consumer reading it through ``pipeline_results`` got the graph as it looked when the
+        # analysis first ran. Either kind of change can add or remove a use.
+        return bool(modified & (ppl.Modifies.AccessNodes | ppl.Modifies.CFG))
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, OrderedSet[str]]:
         """

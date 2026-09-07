@@ -515,6 +515,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
+        #: Per-SDFG "may be written" sets, for :meth:`standalone_readonly`. Keyed by id because a
+        #: descriptor set is asked for once per pointer connector and the walk behind it is not free.
+        self._standalone_mutated: Dict[int, Set[str]] = {}
         # Root SDFG, kept for get_generated_codeobjects (which runs after frame codegen and has no
         # SDFG argument), mirroring the CUDA target's ``_global_sdfg``.
         self._global_sdfg: SDFG = sdfg
@@ -2115,7 +2118,14 @@ class CPUCodeGen(TargetCodeGenerator):
                             # cv-qualifiers.
                             pruned_expr = replace_float_literals(expr)
                             _restrict = "" if "__restrict__" in ctypedef else "__restrict__ "
-                            result += "{} {}{} = {};".format(ctypedef, _restrict, local_name, pruned_expr)
+                            # A standalone unit gives its read-only parameters ``const`` pointees, so
+                            # an alias of one has to carry it too: gcc rejects the assignment as
+                            # ``discarded-qualifiers`` and g++ as an invalid conversion. Only
+                            # library nodes that lower to a POINTER connector reach this (ArgReduce's
+                            # OpenMP form is the first CPF renders), which is why it went unnoticed
+                            # while every other rendering reached its arrays through memlets.
+                            qualifier = 'const ' if (not output and self.standalone_readonly(sdfg, memlet.data)) else ''
+                            result += "{}{} {}{} = {};".format(qualifier, ctypedef, _restrict, local_name, pruned_expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary.
@@ -2589,6 +2599,25 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
+    def standalone_readonly(self, sdfg: SDFG, name: str) -> bool:
+        """Whether ``name`` is never written in ``sdfg`` AND this is a standalone rendering.
+
+        Gated on the rendering because ``const`` on an alias is only REQUIRED where the parameter it
+        aliases is itself ``const``, which is the standalone unit's signature and no other backend's.
+        Answering from :meth:`_mutated_descriptors` keeps one definition of "may be written" for the
+        const decision here and the one device-function arguments already make.
+
+        Cached per SDFG: the walk is over every state and memlet, and this is asked once per pointer
+        connector, so recomputing it would make emission quadratic in the graph.
+        """
+        if not cpf_lowering.standalone():
+            return False
+        mutated = self._standalone_mutated.get(id(sdfg))
+        if mutated is None:
+            mutated = self._mutated_descriptors(sdfg)
+            self._standalone_mutated[id(sdfg)] = mutated
+        return name not in mutated
+
     @staticmethod
     def _mutated_descriptors(nsdfg: SDFG) -> Set[str]:
         """Names of descriptors in ``nsdfg`` that may be mutated -- the set that must *not* be
@@ -2808,7 +2837,15 @@ class CPUCodeGen(TargetCodeGenerator):
             # (and ``static`` would be worse -- unresolvable across TUs). DACE_HIDDEN gives it external
             # linkage with hidden visibility: the static linker resolves the cross-object call, the
             # symbol stays out of the .so's public ABI, and ThinLTO may still re-inline it.
-            qualifier = 'DACE_HIDDEN ' if do_split else ('inline ' if codegen is self else '')
+            # A standalone unit defines and calls the nest in the SAME file, so it takes internal
+            # linkage. Plain ``inline`` is not merely redundant there, it is ill-formed C: an inline
+            # function with EXTERNAL linkage may not reference an identifier with internal linkage
+            # (C11 6.7.4p3), and every one of these bodies calls the ``<array>_idx`` helpers, which
+            # the C dialect emits ``static``. gcc rejected 14 of the 38 rendered llr forms for it.
+            if cpf_lowering.standalone():
+                qualifier = 'static inline '
+            else:
+                qualifier = 'DACE_HIDDEN ' if do_split else ('inline ' if codegen is self else '')
             nested_stream.write(
                 qualifier +
                 codegen.generate_nsdfg_header(sdfg, cfg, state_dfg, state_id, node, memlet_references, sdfg_label), cfg,

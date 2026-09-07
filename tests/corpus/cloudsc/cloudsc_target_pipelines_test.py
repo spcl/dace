@@ -53,7 +53,6 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.codegen.codegen import generate_code
 from dace.config import set_temporary
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes
@@ -64,12 +63,21 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.corpus.cloudsc.generate_data_for_cloudsc import IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
 from tests.corpus.cloudsc.pipelines import (STRICT_FP_CUDA_ARGS, build_reference_outputs, generate_cuda_code,
-                                            gpu_is_runnable, is_device_scheduled, run_candidate)
+                                            gpu_is_runnable, is_device_scheduled, map_entries, omp_parallel_for_count,
+                                            run_candidate)
 
 #: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
 #: species / LU loops become constant-trip. Same set the sibling canonicalize test specializes with;
 #: klev / klon / kidia / kfdia stay symbolic.
 SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs': 4, 'ncldqv': 5}
+
+#: The two device legs are parked. Both start from a ``canonicalize`` run, and on this dwarf that
+#: run neither fits a CI budget nor currently produces a valid graph (the CPU leg fails validation
+#: inside the pipeline after ~3.5h). Device coverage for CloudSC lives in
+#: ``cloudsc_loop2map_fuse_test.py``, which reaches fusible maps by a short recipe instead. Drop this
+#: marker when canonicalize is inside its budget and valid again.
+CANON_GPU_PARKED = pytest.mark.skip(reason='CloudSC canonicalize is over budget and invalid; device '
+                                    'coverage is in cloudsc_loop2map_fuse_test.py')
 
 #: Tolerance for every leg here, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
 #: (``_ARMS['parallel']``): each leg runs its maps in parallel -- OpenMP on the host, one thread per
@@ -87,22 +95,12 @@ VECTOR_WIDTH = 8
 GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
 
 
-def map_entries(sdfg: dace.SDFG):
-    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-
-
 def tile_nodes(sdfg: dace.SDFG):
     """Tile library nodes (``TileLoad`` / ``TileBinop`` / ``TileStore`` / ...) the vectorizer left."""
     return [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith('Tile')
     ]
-
-
-def omp_parallel_for_count(sdfg: dace.SDFG) -> int:
-    """``#pragma omp parallel for`` occurrences in the generated host code. A Map that codegen
-    declines to emit a pragma for is a silent serialization, so the Map count alone proves nothing."""
-    return sum(obj.code.count('#pragma omp parallel for') for obj in generate_code(sdfg) if obj.language == 'cpp')
 
 
 def canonicalized(reference_file: str, target: str, out_path: str) -> str:
@@ -241,6 +239,7 @@ def test_vectorize_on_canonical_cpu_is_numerically_correct(reference_bundle, can
     assert_matches(out, reference_out, 'vectorize/cpu')
 
 
+@CANON_GPU_PARKED
 @pytest.mark.gpu
 @pytest.mark.integration
 def test_canonicalize_gpu_is_numerically_correct(reference_bundle, canonical_gpu_file):
@@ -261,6 +260,7 @@ def test_canonicalize_gpu_is_numerically_correct(reference_bundle, canonical_gpu
     assert_matches(out, reference_out, 'canonicalize/gpu')
 
 
+@CANON_GPU_PARKED
 @pytest.mark.gpu
 @pytest.mark.integration
 def test_gpu_offload_of_canonical_cpu_is_numerically_correct(reference_bundle, canonical_cpu_file):

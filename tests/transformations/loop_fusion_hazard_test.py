@@ -2,22 +2,22 @@
 """Loop-form parity corpus for the MAP-fusion hazard corpus in `map_fusion_hazard_test.py`.
 
 A pattern that is a genuine hazard between two Maps is equally a hazard between the two sequential
-LoopRegions those Maps came from: if `FuseLoops` (the transformation the `LoopFusion` pass applies to a
+LoopRegions those Maps came from: if `LoopFusion` (the transformation the `FuseLoops` pass applies to a
 fixpoint, `fuse_loops.py`) fuses something `MapFusionVertical` / `MapFusionHorizontal` refuses, that is
 a miscompile. This file builds the LOOP-form equivalent of every pattern in `map_fusion_hazard_test.py`
-and checks `FuseLoops` reaches the same verdict.
+and checks `LoopFusion` reaches the same verdict.
 
 Construction: each Map-based fixture reuses the builders from `map_fusion_hazard_test.py` and is
 converted with `MapToForLoop`, then `sdfg.simplify()` collapses `MapToForLoop`'s own
 wrapping-NestedSDFG / empty-state scaffolding so the two loops end up as direct CFG siblings
 (`simplify()` only runs InlineSDFGs / InlineControlFlowRegions / FuseStates / dead-code elimination --
-none of it is LoopFusion or MapFusion, so it cannot itself change the fuse verdict).
+none of it is FuseLoops or MapFusion, so it cannot itself change the fuse verdict).
 `MapToForLoop.can_be_applied` refuses a Map with a surviving WCR output (a genuine parallel
 reduction), so the two WCR shapes are hand-written as an explicit scalar read-modify-write loop -- the
 loop-form a WCR reduction lowers to when it is NOT parallelizable, which is exactly what those two
 shapes are testing.
 
-Parity table (map verdict from `map_fusion_hazard_test.py`, loop verdict from `FuseLoops` here):
+Parity table (map verdict from `map_fusion_hazard_test.py`, loop verdict from `LoopFusion` here):
 
     pattern                                           map verdict   loop verdict   agree?
     copy-memlet hides the write                       REFUSE        REFUSE         yes
@@ -28,7 +28,7 @@ Parity table (map verdict from `map_fusion_hazard_test.py`, loop verdict from `F
     WCR independent, rides along                       FUSE          REFUSE         NO (benign)
 
 No pattern was found where the loop form fuses something the Map form refuses (the dangerous
-direction). The one divergence is `FuseLoops` being MORE conservative, not less -- see
+direction). The one divergence is `LoopFusion` being MORE conservative, not less -- see
 `test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard` for why, and the
 forced-fuse check inside it for the numeric proof that fusing would in fact be safe.
 
@@ -44,7 +44,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.interstate.fuse_loops import FuseLoops
+from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.loop_fission import _single_compute_state
 
 from .map_fusion_hazard_test import (
@@ -73,7 +73,7 @@ def loop_regions(sdfg: dace.SDFG) -> list:
 
 def convert_maps_to_loops(sdfg: dace.SDFG) -> dace.SDFG:
     """Turn every Map in `sdfg` into a LoopRegion, then simplify away `MapToForLoop`'s own scaffolding
-    so adjacent loops end up as direct CFG siblings (what `FuseLoops`'s pattern requires)."""
+    so adjacent loops end up as direct CFG siblings (what `LoopFusion`'s pattern requires)."""
     while map_entries(sdfg):
         MapToForLoop.apply_to(sdfg, map_entry=map_entries(sdfg)[0])
     sdfg.simplify()
@@ -88,10 +88,10 @@ def run_ab(sdfg: dace.SDFG) -> dict:
 
 
 def assert_loop_fusion_preserves_meaning(build, what: str) -> int:
-    """Fuse or refuse, but never change the numbers. Returns the number of pairs FuseLoops fused."""
+    """Fuse or refuse, but never change the numbers. Returns the number of pairs LoopFusion fused."""
     oracle = run_ab(build())
     fused = build()
-    applied = fused.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
+    applied = fused.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
     if applied:
         got = run_ab(fused)
         for name, expected in oracle.items():
@@ -101,15 +101,15 @@ def assert_loop_fusion_preserves_meaning(build, what: str) -> int:
 
 
 def force_fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
-    """Apply `FuseLoops` to `(first, second)` bypassing the DOALL-deference guard, the same way
+    """Apply `LoopFusion` to `(first, second)` bypassing the DOALL-deference guard, the same way
     `allow_doall_fuse=True` does for `ReconstructWavefrontNest`. `apply_transformations_repeated` /
     `apply_to` cannot forward it (it is a plain keyword of `can_be_applied`, not a `properties.Property`
     -- `_can_be_applied_and_apply` only forwards entries that are in `cls.__properties__`), so this
     drives the transformation instance directly."""
-    instance = FuseLoops()
+    instance = LoopFusion()
     instance.setup_match(sdfg, sdfg.cfg_id, -1, {
-        FuseLoops.first: sdfg.node_id(first),
-        FuseLoops.second: sdfg.node_id(second)
+        LoopFusion.first: sdfg.node_id(first),
+        LoopFusion.second: sdfg.node_id(second)
     }, 0)
     assert instance.can_be_applied(sdfg, 0, sdfg, allow_doall_fuse=True), \
         "expected the dependence logic alone (DOALL guard aside) to judge this pair fusable"
@@ -137,7 +137,7 @@ def build_copy_memlet_hides_write_map_form() -> dace.SDFG:
 def build_copy_memlet_hides_write_loop_form() -> dace.SDFG:
     """Loop-form of the pattern above: two sequential LoopRegions (instead of two Maps ordered by an
     empty Memlet) writing `A`. `A[i - 1]` is still written through a copy that names the inner scalar
-    `buf1`, so a scanner keyed on `Memlet.data` alone would miss it. `FuseLoops._accesses` keys on the
+    `buf1`, so a scanner keyed on `Memlet.data` alone would miss it. `LoopFusion._accesses` keys on the
     ACCESS NODE's own `.data` instead of the Memlet's, so this particular blind spot cannot recur once
     the Map scope (and its connectors) is gone -- there is no more "inner container name" to hide behind.
     """
@@ -159,7 +159,7 @@ def test_copy_memlet_naming_the_inner_container_hides_the_write_loop_form():
 
     loop_applied = assert_loop_fusion_preserves_meaning(build_copy_memlet_hides_write_loop_form,
                                                         "copy-Memlet naming the inner container")
-    assert loop_applied == 0, "expected FuseLoops to refuse this WAW hazard, matching MapFusionHorizontal"
+    assert loop_applied == 0, "expected LoopFusion to refuse this WAW hazard, matching MapFusionHorizontal"
 
 
 # --- a View of the written array is not a different array (map verdict: REFUSE) -----------------------
@@ -185,7 +185,7 @@ def build_view_aliases_array_map_form() -> dace.SDFG:
 def build_view_aliases_array_loop_form() -> dace.SDFG:
     """Loop-form: a WAR through a View -- loop1 reads `V[i - 1]` (a View of `A`) into `B[i]`, loop2
     writes `A[i]`. Reads/writes are keyed by the real AccessNode's `.data`, and a View resolves to what
-    it views before `FuseLoops` ever looks at it (`MapToForLoop._copy_boundary_views` keeps the View's
+    it views before `LoopFusion` ever looks at it (`MapToForLoop._copy_boundary_views` keeps the View's
     real edge across the scope boundary instead of leaving a dangling View descriptor), so the alias is
     visible to `_accesses` the same way it is visible to the (already-fixed) map-fusion scanner.
     """
@@ -211,7 +211,7 @@ def test_view_of_the_same_array_is_not_a_different_array_loop_form():
 
     loop_applied = assert_loop_fusion_preserves_meaning(build_view_aliases_array_loop_form,
                                                         "View aliasing the written array")
-    assert loop_applied == 0, "expected FuseLoops to refuse this WAR-through-a-View hazard"
+    assert loop_applied == 0, "expected LoopFusion to refuse this WAR-through-a-View hazard"
 
 
 # --- an unknown boundary subset must not erase the access sets (map verdict: fails closed) --------------
@@ -220,7 +220,7 @@ def test_view_of_the_same_array_is_not_a_different_array_loop_form():
 def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
     """Loop-form analogue of `test_an_unknown_boundary_subset_must_not_erase_the_access_sets`.
 
-    `FuseLoops._accesses` does not special-case an unresolvable subset the way
+    `LoopFusion._accesses` does not special-case an unresolvable subset the way
     `map_fusion_helper._boundary_access` does (returning `None`) -- it goes through
     `Memlet.get_dst_subset`, whose `try_initialize` fills a blanked subset in with the FULL ARRAY range.
     That is still fail-CLOSED: a full-array range fails `_dep_class`'s single-point-access check, so
@@ -246,12 +246,12 @@ def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
                    for e in body1.in_edges(n))
     blanked.data.subset = None
 
-    reads, writes = FuseLoops._accesses(body1)
+    reads, writes = LoopFusion._accesses(body1)
     assert writes.get("A"), "an unknown subset erased the write set instead of being reported as unknown"
 
     body2 = _single_compute_state(second)
-    instance = FuseLoops()
-    assert instance._fusion_legal(first, second, (reads, writes), FuseLoops._accesses(body2)) is False, \
+    instance = LoopFusion()
+    assert instance._fusion_legal(first, second, (reads, writes), LoopFusion._accesses(body2)) is False, \
         "an unresolvable write subset must refuse fusion (fail closed), not silently allow it"
 
 
@@ -263,17 +263,17 @@ def build_inout_split_loop_form_unified_names() -> dace.SDFG:
 
     `_make_inout_split_sdfg` names the two Maps' parameters `i` / `j`; a straight `MapToForLoop`
     conversion would carry that mismatch into the two LoopRegions' `loop_variable`, and
-    `FuseLoops._fusion_legal` does not rename iterators before running the dependence classifier (only
+    `LoopFusion._fusion_legal` does not rename iterators before running the dependence classifier (only
     `_merge` does, and only AFTER legality is decided) -- an unrelated gap that would refuse this pair
     for the WRONG reason. Both Maps are rebuilt here using the SAME iterator name `i` so the test
-    isolates the actual question: does `FuseLoops` reach the same verdict as `MapFusionVertical` on the
+    isolates the actual question: does `LoopFusion` reach the same verdict as `MapFusionVertical` on the
     InOut-split hazard itself.
 
     `MapFusionVertical`'s bug here is mechanism-specific: fusing SPLITS the NestedSDFG's `T` InOut
     connector, and the split misreads a cross-STATE read inside the NSDFG's OWN body (`T` written in
     one inner state, read back in the next) as an external read, redirecting it to the wrong source.
-    `FuseLoops` has no analogous mechanism -- it never touches or splits a NestedSDFG's connectors, it
-    just runs body1 then body2 per iteration -- so this hazard CLASS cannot arise in `FuseLoops` by
+    `LoopFusion` has no analogous mechanism -- it never touches or splits a NestedSDFG's connectors, it
+    just runs body1 then body2 per iteration -- so this hazard CLASS cannot arise in `LoopFusion` by
     construction, not by luck (see the forced-fuse check in the test below).
     """
     sdfg = dace.SDFG(unique_name("inout_split_loop_unified"))
@@ -318,9 +318,9 @@ def run_txb(sdfg: dace.SDFG) -> dict:
 
 def test_inout_split_must_not_redirect_a_cross_state_read_loop_form():
     """Map verdict: REFUSE (`MapFusionVertical`). Loop verdict: REFUSE, but for an UNRELATED reason:
-    the consumer loop is independently DOALL, and `FuseLoops` defers DOALL loops to `LoopToMap` by
+    the consumer loop is independently DOALL, and `LoopFusion` defers DOALL loops to `LoopToMap` by
     policy (`_is_doall`). Forcing past that policy guard shows the dependence logic ALONE also fuses
-    this correctly -- the InOut-split hazard class genuinely does not exist for `FuseLoops`, it is not
+    this correctly -- the InOut-split hazard class genuinely does not exist for `LoopFusion`, it is not
     merely refused for the right reason by accident.
     """
     map_applied = _make_inout_split_sdfg().apply_transformations_repeated(dftrans.MapFusionVertical, validate_all=True)
@@ -332,8 +332,8 @@ def test_inout_split_must_not_redirect_a_cross_state_read_loop_form():
     for name in ("T", "X", "B"):
         assert np.array_equal(got[name], oracle[name]), f"loop-form conversion alone changed {name}"
 
-    applied = sdfg.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
-    assert applied == 0, "expected FuseLoops to refuse (its DOALL-deference guard), matching MapFusionVertical"
+    applied = sdfg.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
+    assert applied == 0, "expected LoopFusion to refuse (its DOALL-deference guard), matching MapFusionVertical"
 
     forced = build_inout_split_loop_form_unified_names()
     loops = loop_regions(forced)
@@ -410,7 +410,7 @@ def test_reduction_consumed_by_the_second_loop_is_not_fused():
     """Map verdict: REFUSE (neither `MapFusionVertical` nor `MapFusionHorizontal` fuse this pair --
     `MapFusionVertical` matches only `MapExit -> (AccessNode) -> MapEntry`, and the scale tasklet
     between the reduce and its consumer breaks that direct adjacency, so the pair is never even a
-    fusion candidate). Loop verdict: REFUSE, for the SAME structural reason: `FuseLoops` only matches
+    fusion candidate). Loop verdict: REFUSE, for the SAME structural reason: `LoopFusion` only matches
     `LoopRegion -> LoopRegion` (`loop1 -> scale state -> loop2` here), so it never considers this pair
     either. The barrier is inherent to the computation (loop2 needs the fully-reduced, scaled value),
     not an artifact of either representation -- AGREE.
@@ -421,7 +421,7 @@ def test_reduction_consumed_by_the_second_loop_is_not_fused():
 
     oracle = _run_wcr(build_wcr_loop_form(reduction_is_consumed=True))
     sdfg = build_wcr_loop_form(reduction_is_consumed=True)
-    applied = sdfg.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
+    applied = sdfg.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
     assert applied == 0, "expected no adjacent LoopRegion pair to match -- the scale state is a genuine barrier"
     got = _run_wcr(sdfg)
     for name, expected in oracle.items():
@@ -433,15 +433,15 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
     the reduction rides along untouched). Loop verdict: REFUSE -- the ONE divergence in this corpus,
     and the BENIGN direction (a missed optimization, not a miscompile).
 
-    `FuseLoops._fusion_legal` independently computes `True` for this pair (`C` is a clean
+    `LoopFusion._fusion_legal` independently computes `True` for this pair (`C` is a clean
     per-iteration producer/consumer, `out` is untouched by the second loop) -- the refusal is entirely
     the `_is_doall` guard: `consume_loop`, read alone, is exactly the kind of embarrassingly-parallel
-    loop `LoopToMap` would turn into a Map, and `FuseLoops`'s policy is to never serialize a loop that
+    loop `LoopToMap` would turn into a Map, and `LoopFusion`'s policy is to never serialize a loop that
     could parallelize on its own, deferring to `LoopToMap` instead. In a canon pipeline that runs
-    `LoopToMap` before `LoopFusion` (the documented intended order), `consume_loop` would already be a
-    Map by the time `FuseLoops` runs, and this exact LoopRegion pair would not arise --
+    `LoopToMap` before `FuseLoops` (the documented intended order), `consume_loop` would already be a
+    Map by the time `LoopFusion` runs, and this exact LoopRegion pair would not arise --
     `MapFusionVertical` would handle the fusion instead, matching `_wcr_shape`'s own structure. The gap
-    only bites a caller that runs `FuseLoops` out of that order.
+    only bites a caller that runs `LoopFusion` out of that order.
 
     The forced-fuse check (bypassing the guard the same way `allow_doall_fuse=True` does for
     `ReconstructWavefrontNest`) confirms `_fusion_legal`'s claim: fusing is value-preserving here, it is
@@ -454,8 +454,8 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
     oracle = _run_wcr(build_wcr_loop_form(reduction_is_consumed=False))
 
     sdfg = build_wcr_loop_form(reduction_is_consumed=False)
-    applied = sdfg.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
-    assert applied == 0, "current FuseLoops policy refuses this pair -- documents the divergence from MapFusion"
+    applied = sdfg.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
+    assert applied == 0, "current LoopFusion policy refuses this pair -- documents the divergence from MapFusion"
 
     forced = build_wcr_loop_form(reduction_is_consumed=False)
     loops = loop_regions(forced)
@@ -469,7 +469,7 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
 
 # --- shape-gate relaxation: a ConditionalBlock / multi-state body is judged on legality, not shape -----
 #
-# `FuseLoops.can_be_applied` used to gate on `_single_compute_state` (`loop_fission.py`): any body that
+# `LoopFusion.can_be_applied` used to gate on `_single_compute_state` (`loop_fission.py`): any body that
 # was not "one plain SDFGState, optionally with empty companion states" was refused outright, before
 # `_fusion_legal` ever ran. Two real corpus shapes never even reached the legality kernel because of this:
 # npbench `mandelbrot2`'s per-pixel masked update body (`[empty bridge state, ConditionalBlock]`) and
@@ -573,7 +573,7 @@ def test_conditional_block_body_is_accepted_once_the_shape_gate_is_relaxed():
 
     oracle = run_mc(build_conditional_running_count_pair())
     fused = build_conditional_running_count_pair()
-    applied = fused.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
+    applied = fused.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
     assert applied >= 1, "expected the relaxed shape gate to let this ConditionalBlock-bodied pair fuse"
     got = run_mc(fused)
     for name in ("B", "C"):
@@ -639,15 +639,15 @@ def test_read_ahead_flow_hazard_across_multi_state_bodies_still_refused():
     sdfg = build_read_ahead_multi_state_pair()
     first = next(loop for loop in loop_regions(sdfg) if loop.label == "loop1")
     second = next(loop for loop in loop_regions(sdfg) if loop.label == "loop2")
-    acc1 = FuseLoops._body_accesses(first)
-    acc2 = FuseLoops._body_accesses(second)
+    acc1 = LoopFusion._body_accesses(first)
+    acc2 = LoopFusion._body_accesses(second)
     assert acc1 is not None and acc2 is not None, "the multi-state body must now reach the legality kernel"
-    assert FuseLoops()._fusion_legal(first, second, acc1, acc2) is False, \
+    assert LoopFusion()._fusion_legal(first, second, acc1, acc2) is False, \
         "a read-ahead flow hazard on y must refuse fusion, not be silently accepted"
 
     oracle = run_yz(build_read_ahead_multi_state_pair())
     sdfg2 = build_read_ahead_multi_state_pair()
-    applied = sdfg2.apply_transformations_repeated(FuseLoops, validate_all=True) or 0
+    applied = sdfg2.apply_transformations_repeated(LoopFusion, validate_all=True) or 0
     assert applied == 0, "expected the read-ahead hazard on y to refuse fusion"
     got = run_yz(sdfg2)
     for name in ("y", "z"):

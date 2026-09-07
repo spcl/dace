@@ -1457,8 +1457,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         else:
             planner_input = raw_input_data
 
-        # call the planner script
-        schedule = red_planner.get_reduction_schedule(planner_input, axes, warp_size=warp_size)
+        # call the planner script. The vectorized path accumulates in ``vec_len`` INPUT-typed
+        # lanes, which cannot hold a wider accumulator, so a widening reduction is scheduled
+        # scalar -- the lanes have no widening form to fall back on.
+        schedule = red_planner.get_reduction_schedule(planner_input,
+                                                      axes,
+                                                      use_vectorization=(planner_input.dtype == raw_output_data.dtype),
+                                                      warp_size=warp_size)
 
         if schedule.error:
             # return pure expansion if error
@@ -1599,7 +1604,10 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nstate.add_edge(bme, None, init_vec, None, dace.Memlet())
                 nstate.add_edge(init_vec, '__o_out', acc_vec_1, None, dace.Memlet('acc_vec'))
 
-            nsdfg.add_scalar('acc', nsdfg.arrays['_in'].dtype, dtypes.StorageType.Register, True)
+            # The reduction's OWN type, not the element type it reads: a Sum over int8 masks
+            # accumulates into the int64 it is declared to produce, and typing the register from
+            # ``_in`` wraps every partial at 127 while ``warpReduce`` below already widens.
+            nsdfg.add_scalar('acc', output_data.dtype, dtypes.StorageType.Register, True)
             acc_1 = nstate.add_access('acc')
             acc_2 = nstate.add_access('acc')
             acc_3 = nstate.add_access('acc')
@@ -1769,13 +1777,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
             # add shared memory of warp size to outer sdfg
             nsdfg.add_array('s_mem', [schedule.shared_mem_size],
-                            nsdfg.arrays['_in'].dtype,
+                            output_data.dtype,
                             dtypes.StorageType.GPU_Shared,
                             transient=True)
             s_mem1 = nstate.add_access('s_mem')
             nstate.add_edge(ome, None, s_mem1, None, dace.Memlet())
 
-            nested_sdfg.add_scalar('s_mem', nsdfg.arrays['_in'].dtype, dtypes.StorageType.GPU_Shared)
+            nested_sdfg.add_scalar('s_mem', output_data.dtype, dtypes.StorageType.GPU_Shared)
             if schedule.multi_axes:
                 nested_sdfg.add_array('_in', [schedule.sequential[0]],
                                       nsdfg.arrays['_in'].dtype,
@@ -1788,7 +1796,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                       strides=[schedule.in_strides[schedule.axes[0]]])
 
             # thread local accumulator in nested sdfg
-            nested_sdfg.add_scalar('acc', nsdfg.arrays['_in'].dtype, dtypes.StorageType.Register, True)
+            nested_sdfg.add_scalar('acc', output_data.dtype, dtypes.StorageType.Register, True)
             accread = real_state.add_access('acc')
             accwrite = real_state.add_access('acc')
             final_inner_smem = real_state.add_access('s_mem')

@@ -10,6 +10,8 @@ pair per iteration.
 The emitted text IS the product here, so the structural assertions read the generated C++ -- a
 numeric check alone passes just as well on the un-hoisted form it is meant to replace.
 """
+import re
+
 import numpy as np
 import pytest
 
@@ -134,11 +136,16 @@ def test_a_scattered_target_is_not_hoisted():
     assert '__acc_' not in generated_cpu_code(sdfg), 'a param-dependent destination must not be hoisted'
 
 
-def test_a_wcr_that_arrives_as_a_copy_is_not_hoisted():
-    """The register is only ever accumulated into from :meth:`write_and_resolve_expr`, which sees
-    Tasklet and NestedSDFG connector writes. A WCR whose source is an AccessNode is a memlet COPY,
-    emitted as a ``CopyND::Accumulate`` straight to memory -- hoisting it would declare a register,
-    never add to it, and store the pre-loop value back over the real result at the exit."""
+def test_a_single_element_wcr_copy_is_lifted_and_then_hoisted():
+    """A single-element WCR stage-out reaches the exit as an AccessNode memlet -- a COPY, which
+    :meth:`write_and_resolve_expr` cannot see and which used to be emitted as a
+    ``CopyND::Accumulate`` straight to memory. ``InsertExplicitCopies`` now lifts exactly this
+    shape into a Tasklet (no memcpy variant can be selected for one element), which puts a Tasklet
+    at the head of the memlet path and so makes it eligible for the register accumulator.
+
+    The hazard that kept it un-hoisted was a register that is declared but never added into,
+    storing the pre-loop value back over the real result. So assert the whole accumulator, not
+    merely that one appeared: seeded FROM the target, accumulated into, stored back once."""
     sdfg = dace.SDFG('seq_wcr_copy_source')
     sdfg.add_array('x', [N], dace.float64)
     sdfg.add_array('out', [1], dace.float64)
@@ -156,7 +163,13 @@ def test_a_wcr_that_arrives_as_a_copy_is_not_hoisted():
     sdfg.validate()
 
     code = generated_cpu_code(sdfg)
-    assert '__acc_' not in code, 'a WCR reaching the exit as a copy must not be hoisted'
+    acc = re.search(r'\b(__acc_\d+_\d+_out)\b', code)
+    assert acc, f'the lifted single-element WCR copy should hoist into a register:\n{code}'
+    var = acc.group(1)
+    assert re.search(rf'{var}\s*=\s*\*\(\s*out\s*\)', code), f'{var} must be SEEDED from the target'
+    assert re.search(rf'{var}\s*=\s*{var}\s*\+', code), f'{var} must be ACCUMULATED into, not merely declared'
+    assert re.search(rf'\*\(\s*out\s*\)\s*=\s*{var}', code), f'{var} must be STORED BACK at the map exit'
+    assert 'Accumulate' not in code, 'the lifted copy replaces the CopyND::Accumulate, it does not join it'
 
     n = 512
     x = np.random.default_rng(2).random(n)

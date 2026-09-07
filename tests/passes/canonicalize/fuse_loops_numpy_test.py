@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LoopFusion unit tests written as numpy-style ``@dace.program`` kernels with
+"""FuseLoops unit tests written as numpy-style ``@dace.program`` kernels with
 explicit ``for`` loops (and a few ``dace.map`` bodies).
 
-Each kernel is built twice: an un-fused reference and a ``LoopFusion``-run copy.
+Each kernel is built twice: an un-fused reference and a ``FuseLoops``-run copy.
 The invariant checked on EVERY case is value-preservation (fused output ==
 reference output, bit-exact). Structural assertions (how many LoopRegions remain)
 pin the intended fuse / refuse behaviour: consecutive same-range sequential
@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 
 N = dace.symbol("N")
 
@@ -45,7 +45,7 @@ def _run(prog, inputs, n):
 
     sd = prog.to_sdfg(simplify=True)
     before = _nloops(sd)
-    applied = LoopFusion().apply_pass(sd, {}) or 0
+    applied = FuseLoops().apply_pass(sd, {}) or 0
     after = _nloops(sd)
     sd.name = tag + "_fused"
     fus_bufs = {k: v.copy() for k, v in inputs.items()}
@@ -64,7 +64,7 @@ def _mk(n=48, names=("a", "b", "c", "d"), seed=0):
 # Fuse: consecutive same-range sequential sibling loops.
 # ---------------------------------------------------------------------------
 
-# LoopFusion targets the SEQUENTIAL residual loops LoopToMap refused (recurrences,
+# FuseLoops targets the SEQUENTIAL residual loops LoopToMap refused (recurrences,
 # in-place scans) -- a parallel elementwise loop is left to become a Map, NOT fused
 # (see ``test_parallel_elementwise_loops_left_for_loop_to_map``). So the fuse cases
 # below carry a loop-carried dependence.
@@ -133,7 +133,7 @@ def test_scan_then_same_index_reuse_fuses():
 
 
 def test_parallel_elementwise_loops_left_for_loop_to_map():
-    """LoopFusion does NOT fuse two PARALLEL elementwise loops -- they are meant to
+    """FuseLoops does NOT fuse two PARALLEL elementwise loops -- they are meant to
     become Maps (LoopToMap), so it leaves them untouched. Still value-preserving."""
 
     @dace.program
@@ -209,7 +209,7 @@ def test_two_2d_row_loops_fuse():
     rb = {kk: v.copy() for kk, v in inp.items()}
     ref(**rb, N=16)
     sd = k.to_sdfg(simplify=True)
-    LoopFusion().apply_pass(sd, {})
+    FuseLoops().apply_pass(sd, {})
     sd.name = "k2d_fused"
     fb = {kk: v.copy() for kk, v in inp.items()}
     sd(**fb, N=16)
@@ -218,7 +218,7 @@ def test_two_2d_row_loops_fuse():
 
 def test_does_not_fuse_map_with_loop():
     """A ``dace.map`` is a DATA-PARALLEL loop (MapFusion's domain), not a
-    ``LoopRegion``. LoopFusion fuses only sequential loop-with-loop, so a parallel
+    ``LoopRegion``. FuseLoops fuses only sequential loop-with-loop, so a parallel
     map followed by a sequential recurrence loop leaves BOTH untouched (the map is
     never absorbed into the loop). Value-preserving; the single LoopRegion has no
     sibling LoopRegion to fuse with, so nothing fuses."""
@@ -235,10 +235,10 @@ def test_does_not_fuse_map_with_loop():
     sd = k.to_sdfg(simplify=True)
     maps_before = sum(1 for n, _ in sd.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     loops_before = _nloops(sd)
-    applied = LoopFusion().apply_pass(sd, {}) or 0
+    applied = FuseLoops().apply_pass(sd, {}) or 0
     maps_after = sum(1 for n, _ in sd.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     loops_after = _nloops(sd)
-    # LoopFusion touched nothing: the map is not a LoopRegion, and there is only one
+    # FuseLoops touched nothing: the map is not a LoopRegion, and there is only one
     # LoopRegion so it has no loop sibling to fuse with.
     assert applied == 0
     assert maps_before == maps_after == 1 and loops_before == loops_after == 1
@@ -254,8 +254,8 @@ def test_does_not_fuse_map_with_loop():
 
 
 def test_does_not_loop_fuse_two_maps():
-    """Two parallel ``dace.map`` blocks are MapFusion's domain, not LoopFusion's:
-    LoopFusion sees zero LoopRegions and is a no-op (value-preserving)."""
+    """Two parallel ``dace.map`` blocks are MapFusion's domain, not FuseLoops's:
+    FuseLoops sees zero LoopRegions and is a no-op (value-preserving)."""
 
     @dace.program
     def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
@@ -266,8 +266,8 @@ def test_does_not_loop_fuse_two_maps():
 
     sd = k.to_sdfg(simplify=True)
     assert _nloops(sd) == 0  # both are maps, no LoopRegion
-    applied = LoopFusion().apply_pass(sd, {}) or 0
-    assert applied == 0  # nothing for LoopFusion to do
+    applied = FuseLoops().apply_pass(sd, {}) or 0
+    assert applied == 0  # nothing for FuseLoops to do
 
 
 def test_four_loops_partial_chain():

@@ -85,7 +85,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
     :note: This transformation modifies more nodes than it matches.
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
-        can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
+        can not use the pipeline result and will thus scan the whole SDFG. The `FuseMaps`
         pass is not affected by this.
     :note: `require_exclusive_intermediates` means that all intermediates, i.e., AccessNodes
         connecting the first and second Maps, can be removed, outputs of the first Map that
@@ -1895,25 +1895,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if len(unique_destinations) > 1:
             return True
 
-        # NOTE: Actually, if this transformation is run inside a pipeline, which specified
-        #   `FindSingelUseData` as a dependent pass, it should read the cached data through
-        #   `self._pipeline_results`. However, this member is only set during the `apply()`
-        #   function but not during `can_be_applied()`, see [issue#1911](https://github.com/spcl/dace/issues/1911).
-        #   Since we also need the information during `can_be_applied()`, we would still scan the
-        #   SDFG. To avoid that the special member `_single_use_data` was introduced, which
-        #   allows to specify this from the outside. This is not nice, because it gives the
-        #   transformation state and every parent transformation must do that.
-        # TODO(phimuell): Change this once the issue is resolved.
+        # When this transformation runs inside a pipeline that declared `FindSingleUseData` as a
+        #   dependency, the cached analysis arrives through `self._pipeline_results`, which
+        #   `match_patterns` installs on every match before calling `can_be_applied` (issue#1911 --
+        #   the member used to be set only during `apply()`, so a predicate could not see it).
+        #   `_single_use_data` remains for callers that drive this transformation through
+        #   `apply_to()` and have the analysis in hand; the pipeline results win when both are set.
+        # Function-local import: `dace.transformation.passes` pulls in the dataflow transformations
+        # this module belongs to, so importing the analysis at module level is an import cycle.
+        from dace.transformation.passes.analysis import FindSingleUseData
+
+        # The pass's own `__name__` is the pipeline-results key. Spelling it as a literal is what
+        # let it drift to "FindSingelUseData", which matches nothing the pipeline ever stores -- so
+        # this branch was dead and every lookup silently fell through to a full per-candidate scan.
+        single_use_data_key = FindSingleUseData.__name__
         single_use_data = None
-        if self._pipeline_results is not None and "FindSingelUseData" in self._pipeline_results:
-            single_use_data = self._pipeline_results["FindSingelUseData"]
+        if self._pipeline_results is not None and single_use_data_key in self._pipeline_results:
+            single_use_data = self._pipeline_results[single_use_data_key]
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
 
         # If the single-use-data cache is present AND covers this SDFG, use it. A
         # cached ``Dict[SDFG]`` can legitimately miss an SDFG created after the cache
         # was built -- canonicalization's residual ``LoopToMap`` mints
-        # ``SDFG('loop_body')`` NestedSDFGs downstream of the ``FindSingelUseData``
+        # ``SDFG('loop_body')`` NestedSDFGs downstream of the ``FindSingleUseData``
         # analysis -- so a missing key means "not yet analyzed", not an invariant
         # violation. Fall back to a fresh scan rather than asserting (a stale-cache
         # ``KeyError`` was the durbin/channel_flow canonicalization flake) -- the scan

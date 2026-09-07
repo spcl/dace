@@ -151,3 +151,65 @@ if __name__ == '__main__':
     for impl in ('pure', 'pure-seq', 'OpenMP'):
         test_reduce_widens_int8_into_an_int64_total(impl)
     test_the_widening_rule_is_value_preserving_only()
+
+
+def gpu_reduce_sdfg(in_dtype, out_dtype, shape, axes):
+    """A device-resident reduction, the shape ``ExpandReduceGPUAuto`` plans for itself."""
+    out_shape = [s for i, s in enumerate(shape) if i not in axes] or [1]
+    sdfg = dace.SDFG('widening_gpu_reduce_%dd' % len(shape))
+    sdfg.add_array('A', shape, in_dtype, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', out_shape, out_dtype, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    red = state.add_reduce('lambda x, y: x + y', axes, 0)
+    red.implementation = 'GPUAuto'
+    red.schedule = dace.ScheduleType.GPU_Device
+    state.add_edge(state.add_read('A'), None, red, '_in', mm.Memlet.from_array('A', sdfg.arrays['A']))
+    state.add_edge(red, '_out', state.add_write('B'), None, mm.Memlet.from_array('B', sdfg.arrays['B']))
+    sdfg.validate()
+    return sdfg, state, red
+
+
+#: Every buffer the GPUAuto expansion folds partial results in, as opposed to ``_in``, which is the
+#: element stream it reads.
+ACCUMULATOR_NAMES = ('acc', 'acc_vec', 's_mem')
+
+
+def gpu_reduce_accumulators(in_dtype, out_dtype, shape, axes):
+    """``name -> dtype`` for every accumulator the GPUAuto expansion declares, at any nesting depth."""
+    sdfg, state, red = gpu_reduce_sdfg(in_dtype, out_dtype, shape, axes)
+    from dace.libraries.standard.nodes.reduce import ExpandReduceGPUAuto
+    expanded = ExpandReduceGPUAuto.expansion(red, state, sdfg)
+    return {
+        name: desc.dtype
+        for sub in expanded.sdfg.all_sdfgs_recursive()
+        for name, desc in sub.arrays.items() if name in ACCUMULATOR_NAMES
+    }
+
+
+#: The contiguous schedule and the strided one declare their accumulators at different sites, so
+#: both are named here rather than trusting whichever the planner happens to pick.
+GPU_REDUCE_SHAPES = [([_N], [0]), ([64, _N], [0])]
+
+
+@pytest.mark.parametrize('shape,axes', GPU_REDUCE_SHAPES)
+def test_the_gpu_reduction_accumulates_at_the_output_width(shape, axes):
+    """The device expansion held the rule nowhere: it typed its thread-local accumulator -- and, on
+    the strided path, the shared-memory partials it stages them through -- from ``_in``.
+
+    ``warpReduce`` in the same kernel already widened, so the emitted body summed int8 partials and
+    only then widened the wrapped result. Measured on ``compact_threshold_pack``: ``packed`` came
+    out right (it rides the scan) while ``out_count`` wrapped past 127, which reads as a wrong
+    answer with no error raised anywhere.
+    """
+    accumulators = gpu_reduce_accumulators(dace.int8, dace.int64, shape, axes)
+    assert accumulators, 'the expansion declared no accumulator to check'
+    for name, dtype in accumulators.items():
+        assert dtype == dace.int64, f'{name} accumulates at the input width ({dtype}), so it wraps at 127'
+
+
+@pytest.mark.parametrize('shape,axes', GPU_REDUCE_SHAPES)
+def test_a_widening_gpu_reduction_is_not_vectorized(shape, axes):
+    """The vectorized schedule folds into ``vec_len`` INPUT-typed lanes, which have no room for a
+    wider accumulator and no widening form to fall back on. A widening reduction is scheduled
+    scalar instead, so ``acc_vec`` must not appear at all."""
+    assert 'acc_vec' not in gpu_reduce_accumulators(dace.int8, dace.int64, shape, axes)

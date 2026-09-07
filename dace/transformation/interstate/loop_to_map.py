@@ -3,8 +3,10 @@
 
 from collections import defaultdict
 import copy
+from dataclasses import dataclass
+from itertools import islice
 import sympy as sp
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -688,6 +690,59 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     return True
 
 
+@dataclass(slots=True)
+class LiftContext:
+    """Per-SDFG facts that every :meth:`LoopToMap.can_be_applied` probe otherwise recomputes.
+
+    A pass probing many loops of one SDFG builds this ONCE and hands it to each probe through
+    ``xform.lift_context``; a standalone match leaves the attribute unset and every probe derives
+    what it needs by itself, exactly as before. Every field here is invalidated by ANY change to
+    the SDFG's blocks or access nodes, so a holder must rebuild it after each applied lift.
+    """
+
+    #: symbols + array descriptors, the name -> type map ``infer_expr_type`` resolves bounds against
+    sset: Dict[str, Any]
+    #: data name -> the states holding an AccessNode for it. Deliberately NOT ``FindAccessStates``:
+    #: that one also counts interstate-edge and region-condition reads, which would mark more
+    #: containers as live outside the loop and refuse loops the plain access-node scan accepts.
+    access_states: Dict[str, OrderedSet]
+    #: whole-SDFG block order and each block's position in it, for the "used after the loop" walk
+    block_order: List[Any]
+    block_index: Dict[Any, int]
+    #: control flow region -> its index in ``cfg_list``. ``ControlFlowRegion.cfg_id`` is
+    #: ``cfg_list.index(self)``, a linear scan of every CFG in the tree, and a pass setting up one
+    #: match per candidate loop pays it per candidate.
+    cfg_ids: Dict[Any, int]
+    #: whether ANY descriptor of this SDFG is a StructureView. When none is, no loop body can hold
+    #: one, so the per-loop scan over every data node of every loop state is skipped outright.
+    has_structure_views: bool
+
+
+def build_lift_context(sdfg: SDFG) -> LiftContext:
+    """Collect the per-SDFG facts of :class:`LiftContext` in one pass over ``sdfg``."""
+    sset: Dict[str, Any] = {}
+    sset.update(sdfg.symbols)
+    sset.update(sdfg.arrays)
+
+    access_states: Dict[str, OrderedSet] = defaultdict(OrderedSet)
+    for state in sdfg.states():
+        for anode in state.data_nodes():
+            access_states[anode.data].add(state)
+
+    block_order = list(cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False))
+    # A dict keyed by the block, not ``list.index``: the walk below asks for one loop's position
+    # per probe, and a linear scan of a few thousand blocks per probe is quadratic over a sweep.
+    block_index = {block: i for i, block in enumerate(block_order)}
+    cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
+    has_structure_views = any(isinstance(desc, dt.StructureView) for desc in sdfg.arrays.values())
+    return LiftContext(sset=sset,
+                       access_states=access_states,
+                       block_order=block_order,
+                       block_index=block_index,
+                       cfg_ids=cfg_ids,
+                       has_structure_views=has_structure_views)
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -709,6 +764,10 @@ class LoopToMap(xf.MultiStateTransformation):
         # the dependence analysis.
         self.last_refusal_reason = None
 
+        # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
+        # ``vars(self).get``, not ``getattr``: the attribute is genuinely absent on a plain match.
+        ctx: Optional[LiftContext] = vars(self).get('lift_context')
+
         def refuse(reason: str) -> bool:
             """Refuse the match and record why."""
             self.last_refusal_reason = reason
@@ -727,9 +786,12 @@ class LoopToMap(xf.MultiStateTransformation):
         if start is None or end is None or step is None or itervar is None:
             return refuse(f"loop information incomplete - start={start}, end={end}, step={step}, itervar={itervar}")
 
-        sset = {}
-        sset.update(sdfg.symbols)
-        sset.update(sdfg.arrays)
+        if ctx is None:
+            sset = {}
+            sset.update(sdfg.symbols)
+            sset.update(sdfg.arrays)
+        else:
+            sset = ctx.sset
         t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
         # Bounds must be integer-derived: non-sequential map schedules are otherwise invalid.
         if not t in dtypes.INTEGER_TYPES:
@@ -763,12 +825,13 @@ class LoopToMap(xf.MultiStateTransformation):
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
         loop_states = set(self.loop.all_states())
-        all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
-        # Cannot have StructView in loop body
-        for loop_state in loop_states:
-            if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
-                return refuse(f"loop body contains a StructureView in state {loop_state}")
+        # Cannot have StructView in loop body. ``any``, not a list build, and skipped entirely when
+        # the SDFG holds no StructureView descriptor at all -- then no loop state can hold one.
+        if ctx is None or ctx.has_structure_views:
+            for loop_state in loop_states:
+                if any(isinstance(n.desc(sdfg), dt.StructureView) for n in loop_state.data_nodes()):
+                    return refuse(f"loop body contains a StructureView in state {loop_state}")
 
         # A loop that provably runs at most once carries no cross-iteration dependence, so it is
         # trivially DOALL -- accept here, skipping the dependence analysis below (which a clamped
@@ -850,25 +913,49 @@ class LoopToMap(xf.MultiStateTransformation):
 
                     symbols_that_may_be_used |= e.data.assignments.keys()
 
-        # Get access nodes from other states to isolate local loop variables
-        other_access_nodes: Set[str] = set()
-        for state in sdfg.states():
-            if state in loop_states:
-                continue
-            other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
-        # Add non-transient nodes from loop state
-        for state in loop_states:
-            other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+        # Which containers the analysis below must consider: a loop data node is only interesting
+        # when it is ALSO live outside the loop.
+        if ctx is None:
+            # Get access nodes from other states to isolate local loop variables
+            other_access_nodes: Set[str] = set()
+            for state in sdfg.states():
+                if state in loop_states:
+                    continue
+                other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
+            # Add non-transient nodes from loop state
+            for state in loop_states:
+                other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+            local_transients = {
+                n.data
+                for state in loop_states
+                for n in state.data_nodes() if sdfg.arrays[n.data].transient
+            } - other_access_nodes
+        else:
+            # Same answer from the prebuilt index, without sweeping the SDFG per probe: only the
+            # loop's OWN transients can ever be looked up here, so resolve exactly those. (The
+            # scan above also collects transients of states the loop never touches, but every
+            # consumer below filters by a loop data node, so they can never be read.)
+            other_access_nodes = set()
+            local_transients = set()
+            access_states = ctx.access_states
+            for state in loop_states:
+                for n in state.data_nodes():
+                    if not sdfg.arrays[n.data].transient:
+                        other_access_nodes.add(n.data)  # non-transients are shared by definition
+                    elif n.data not in other_access_nodes and n.data not in local_transients:
+                        # ``.get``, not ``[]``: ``access_states`` is a ``defaultdict`` and indexing
+                        # it would INSERT an empty entry for every name probed.
+                        holders = access_states.get(n.data)
+                        if holders is not None and any(st not in loop_states for st in holders):
+                            other_access_nodes.add(n.data)
+                        else:
+                            local_transients.add(n.data)
+
         # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
         # gives every iteration a private copy -- sound only while each iteration writes it before
         # reading it (see :func:`carried_local_transients`). The whole loop-local set is the
         # analysis universe; a pure-read access node among them is the cheap trigger that keeps the
         # block-order walk off most loops.
-        local_transients = {
-            n.data
-            for state in loop_states
-            for n in state.data_nodes() if sdfg.arrays[n.data].transient
-        } - other_access_nodes
         if any(n.data in local_transients and state.in_degree(n) == 0 and state.out_degree(n) > 0
                for state in loop_states for n in state.data_nodes()):
             other_access_nodes |= carried_local_transients(self.loop, local_transients)
@@ -1028,10 +1115,7 @@ class LoopToMap(xf.MultiStateTransformation):
                                   f"- subset={mmlt.subset}")
 
         # Iteration variable + other symbols must not be used on later edges/blocks before
-        # reassignment.
-        in_order_blocks = list(
-            cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False))
-        # First check the outgoing edges of the loop itself.
+        # reassignment. First check the outgoing edges of the loop itself.
         reassigned_symbols: Set[str] = None
         for oe in graph.out_edges(self.loop):
             if symbols_that_may_be_used & oe.data.read_symbols():
@@ -1046,8 +1130,24 @@ class LoopToMap(xf.MultiStateTransformation):
         # Remove reassigned symbols
         if reassigned_symbols is not None:
             symbols_that_may_be_used -= reassigned_symbols
-        loop_idx = in_order_blocks.index(self.loop)
-        for block in in_order_blocks[loop_idx + 1:]:
+
+        # The whole-SDFG block order is needed ONLY to walk what runs after the loop, and that walk
+        # has nothing left to look for once every loop-defined symbol is reassigned on the way out.
+        # Sorting after the out-edge check, not before it, keeps those loops off the sort entirely.
+        if not symbols_that_may_be_used:
+            return True
+        if ctx is None:
+            in_order_blocks = list(
+                cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False))
+            loop_idx = in_order_blocks.index(self.loop)
+        else:
+            in_order_blocks = ctx.block_order
+            loop_idx = ctx.block_index[self.loop]
+        # ``islice``, not a slice: the tail of a few thousand blocks was copied per probe.
+        # Built here, not with ``loop_states`` above: this walk is the only consumer, and most
+        # probes return before reaching it.
+        all_loop_blocks = set(self.loop.all_control_flow_blocks())
+        for block in islice(in_order_blocks, loop_idx + 1, None):
             if block in all_loop_blocks:
                 continue
             # Don't continue in this direction, as all loop symbols have been reassigned

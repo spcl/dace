@@ -18,11 +18,18 @@
 // is not visible -- and that copy needs cuda.h.
 #include "cuda/gpucub.cuh"
 // The cub iterators are deprecated in favour of thrust's, and warn from CCCL 2.8 on (CUDA 12.8).
-// rocThrust ships the same two, so this is not a CUDA-only preference.
+// ON CUDA ONLY. rocThrust ships the same two, but shipping them is not the test: hipCUB's
+// DeviceReduce wraps its input in rocPRIM's arg_index_iterator, which static_asserts that
+// std::iterator_traits<I>::iterator_category IS std::random_access_iterator_tag. A
+// thrust::transform_iterator reports thrust's own category tag, so the assert fires and the unit
+// does not compile (tsvc_2_s318's strided argmax, gfx942). hipCUB's iterators carry the std tag
+// and are not deprecated, so the reason to avoid them does not apply on this backend.
+#if !defined(__HIPCC__) && !defined(__HIP__) && !defined(WITH_HIP)
 #if __has_include(<thrust/iterator/counting_iterator.h>)
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #define DACE_THRUST_ITERATORS
+#endif
 #endif
 #endif
 
