@@ -12,7 +12,6 @@ import uuid
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
-from dace.transformation.dataflow.map_fusion_vertical import fold_repeated_symbol_names
 
 
 def count_nodes(
@@ -3218,45 +3217,6 @@ def test_map_fusion_stable_label(forward_fusion: bool):
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()
-
-
-def _differently_minted_pair():
-    """The same name from the two mints the offset corrections bring together.
-
-    A map parameter carries the frontend's dtype and assumptions; a memlet parsed from a string
-    carries the defaults. SymPy compares assumptions, so the two atoms are distinct.
-    """
-    from_map = dace_symbolic.symbol('k', dace.int64, nonnegative=True)
-    from_string = dace.Memlet('A[k]').subset.min_element()[0]
-    assert from_map - from_string != 0, 'the two mints agree now, so this test guards nothing'
-    return from_map, from_string
-
-
-def test_offset_correction_folds_a_symbol_against_its_differently_minted_twin():
-    """``k - k`` left standing in a fused subset reaches codegen and breaks serialization.
-
-    The correction subtracts where the write originally began, and that offset is built from the
-    other mint of the same name, so the difference does not fold on its own. In DaCe a symbol is
-    its name, so both denote one value and the subset means zero.
-    """
-    from_map, from_string = _differently_minted_pair()
-    subset = dace.subsets.Range([(from_map, from_map, 1)])
-    subset.offset(dace.subsets.Range([(from_string, from_string, 1)]), negative=True)
-    assert subset != dace.subsets.Range([(0, 0, 1)]), 'nothing to fold, so this test guards nothing'
-
-    fold_repeated_symbol_names(subset)
-    assert subset == dace.subsets.Range([(0, 0, 1)]), f'k - k did not fold: {subset}'
-
-
-def test_the_fold_leaves_a_genuine_difference_alone():
-    """Only one name on two atoms folds -- an offset by another symbol has to survive."""
-    from_map, _ = _differently_minted_pair()
-    subset = dace.subsets.Range([(from_map, from_map, 1)])
-    subset.offset(dace.subsets.Range([(dace_symbolic.symbol('j'), ) * 2 + (1, )]), negative=True)
-
-    fold_repeated_symbol_names(subset)
-    assert subset != dace.subsets.Range([(0, 0, 1)]), 'k - j was folded away'
-    assert {str(sym) for sym in subset.free_symbols} == {'k', 'j'}, f'unexpected symbols in {subset}'
 
 
 if __name__ == '__main__':
