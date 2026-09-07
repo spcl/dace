@@ -157,7 +157,51 @@ class CopyInsertionPhase():
 
         helpers.traverse_IR(IR, _insert_copy_names_in_node)
 
-    def insert_copy_names_in_state(self, state: SDFGState, rename_dict: Dict[str, str]) -> None:
+    def stage_views_with_their_origin(self, sdfg: SDFG, state: SDFGState, rename_dict: Dict[str, str]) -> None:
+        """Give a view of a staged container a twin of its own, on the same side.
+
+        A view owns no storage, so the placement decides for the container it aliases and treats an
+        access through the view as an access to that container. What follows from staging the
+        container is that the alias has to follow it: ``C -> C_gpu`` leaves ``C_0``, a view of ``C``,
+        naming a buffer on the other side, and a descriptor carries ONE storage, so the same view
+        cannot serve a host state and a kernel at once. npbench mandelbrot2 has exactly that shape --
+        ``C_0`` is read by a device map in one state and by host code in another -- and the
+        dispatcher answers the losing side with ``Illegal copy! (from C_0 to _numpy_add_)``.
+
+        So each side gets its own alias: ``C -> C_gpu`` and ``C_0 -> C_0_gpu``, the twin viewing the
+        twin. Registering the name here is all it takes; the alias is pointed at the staged
+        container by the edge that renaming rewrites, and :func:`match_view_storage_to_origin` reads
+        the storage back off that container once every placement is final.
+        """
+        for access in state.data_nodes():
+            name = access.data
+            if name in rename_dict or not helpers.is_view(name, sdfg):
+                continue
+            origin = helpers.view_origin(state, access)
+            if origin is None or origin not in rename_dict:
+                continue
+
+            # Read off the NAME, not the descriptor: the staged container is registered later, by
+            # the copy insertion itself, so there is nothing to look up yet. The storage set here is
+            # a starting value in any case -- ``match_view_storage_to_origin`` reads it back off the
+            # container once every placement is final.
+            to_gpu = rename_dict[origin] == self._get_gpu_name(origin)
+            twin = self._get_gpu_name(name) if to_gpu else self._get_host_name(name)
+            if twin not in sdfg.arrays:
+                desc = sdfg.arrays[name]
+                sdfg.add_view(twin,
+                              desc.shape,
+                              desc.dtype,
+                              storage=dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default,
+                              strides=desc.strides,
+                              offset=desc.offset)
+            rename_dict[name] = twin
+
+    def insert_copy_names_in_state(self, sdfg: SDFG, state: SDFGState, rename_dict: Dict[str, str]) -> None:
+        # A view follows the container it aliases, so the names it needs are known only here, once
+        # this state's renaming is known.
+        self.stage_views_with_their_origin(sdfg, state, rename_dict)
+
         # rename access nodes
         for access in state.data_nodes():
             if access.data in rename_dict:
@@ -193,7 +237,7 @@ class CopyInsertionPhase():
                         edge.data.replace(name, self._get_host_name(name))
 
         if isinstance(block, SDFGState):
-            self.insert_copy_names_in_state(block, rename_dict)
+            self.insert_copy_names_in_state(sdfg, block, rename_dict)
 
         elif isinstance(block, ControlFlowBlock):
             # rename meta accesses (control-flow metadata like loop bounds or conditions)

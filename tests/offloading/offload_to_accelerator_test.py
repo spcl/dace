@@ -8,6 +8,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.optimizer import Optimizer
+from dace.transformation.passes.offloading import offloading_helpers as helpers
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
@@ -843,6 +844,64 @@ def test_a_map_over_a_read_only_container_survives_being_nested():
         match._sdfg = target
         match.apply(graph, target)
         candidate.validate()
+
+
+def view_on_both_sides_sdfg() -> dace.SDFG:
+    """``C_view`` aliases ``C``, and the two are read on different sides of the machine.
+
+    npbench mandelbrot2 has this shape: one state reads the view inside a kernel, another reads it
+    from host code, and a view carries one storage.
+    """
+    sdfg = dace.SDFG("view_on_both_sides")
+    sdfg.add_array("C", [4, 5], dace.float64)
+    sdfg.add_array("out", [20], dace.float64)
+    sdfg.add_array("total", [1], dace.float64)
+    sdfg.add_view("C_view", [20], dace.float64)
+
+    device = sdfg.add_state("on_the_device", is_start_block=True)
+    flat = device.add_access("C_view")
+    device.add_edge(device.add_read("C"), None, flat, "views", dace.Memlet("C[0:4, 0:5]"))
+    entry, exit_ = device.add_map("scale", dict(i="0:20"))
+    scale = device.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    device.add_memlet_path(flat, entry, scale, dst_conn="x", memlet=dace.Memlet("C_view[i]"))
+    device.add_memlet_path(scale, exit_, device.add_write("out"), src_conn="y", memlet=dace.Memlet("out[i]"))
+
+    host = sdfg.add_state("on_the_host")
+    sdfg.add_edge(device, host, dace.InterstateEdge())
+    host_flat = host.add_access("C_view")
+    host.add_edge(host.add_read("C"), None, host_flat, "views", dace.Memlet("C[0:4, 0:5]"))
+    pick = host.add_tasklet("pick", {"x"}, {"y"}, "y = x")
+    host.add_edge(host_flat, None, pick, "x", dace.Memlet("C_view[0]"))
+    host.add_edge(pick, "y", host.add_write("total"), None, dace.Memlet("total[0]"))
+
+    sdfg.fill_scope_connectors()
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_view_of_a_staged_container_is_staged_with_it():
+    """A view follows the container it aliases onto whichever side that container was staged to.
+
+    Left behind, the alias names a buffer on the other side and the dispatcher refuses the access it
+    cannot make ("Illegal copy!"), because one descriptor carries one storage and the view is read
+    from a kernel in one state and from host code in another.
+    """
+    sdfg = view_on_both_sides_sdfg()
+    OtA().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    views = {name: desc for name, desc in sdfg.arrays.items() if isinstance(desc, dace.data.View)}
+    assert len(views) > 1, f"the view was not staged with its container: {sorted(views)}"
+
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data not in views:
+                continue
+            origin = helpers.view_origin(state, node)
+            assert origin is not None, f"{node.data} in {state.label} aliases nothing"
+            assert views[node.data].storage == sdfg.arrays[origin].storage, (
+                f"{node.data} ({views[node.data].storage}) does not live where "
+                f"{origin} ({sdfg.arrays[origin].storage}) does")
 
 
 if __name__ == "__main__":
