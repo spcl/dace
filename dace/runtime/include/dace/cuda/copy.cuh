@@ -372,7 +372,7 @@ namespace dace
                     if (ltid < REMAINDER)
                     {
                         // Read remainder
-                        smem[(REMOFF + ltid) * DST_ZSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
+                        smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
                             *(ptr +
                               src_xstride * (REMOFF + ltid) +
                               src_ystride * j +
@@ -652,7 +652,7 @@ namespace dace
                     if (ltid < REMAINDER)
                     {
                         // Read remainder
-                        smem[(REMOFF + ltid) * DST_ZSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
+                        smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
                             *(ptr +
                               src_xstride * (REMOFF + ltid) +
                               src_ystride * j +
