@@ -683,6 +683,45 @@ def _blockorder_topological_sort(
         stack.append(mergeblock)
 
 
+def _chain_order(cfg: ControlFlowRegion) -> Optional[List[ControlFlowBlock]]:
+    """The execution order of a region whose blocks form a single straight chain, or ``None``.
+
+    A chain has exactly ONE topological order -- the one its edges already spell out -- so the
+    general path below would run an immediate-dominator pass, a dominator closure, a branch-merge
+    scan and a parent tree only to rediscover it. This walks the edges instead, in ``O(V + E)``.
+
+    It bails to the general path on anything that is not a chain: a block with two successors (a
+    branch, where the order is a real question), a block already seen (a back edge), or a leftover
+    block the walk never reached (unreachable code, which the general path still orders). So it
+    changes no answer -- it only declines to ask an expensive question about a region with one
+    possible answer.
+
+    Worth its own path because the callers recurse: every nested region pays the dominator
+    machinery separately, and in a structured CFG most of them -- loop bodies, conditional
+    branches, specialized single-block regions -- are chains.
+    """
+    blocks = cfg.nodes()
+    if not blocks:
+        return []
+    order: List[ControlFlowBlock] = []
+    seen = set()
+    block = cfg.start_block
+    while True:
+        if id(block) in seen:
+            return None  # a back edge: this region loops, so let the general path order it
+        seen.add(id(block))
+        order.append(block)
+        out_edges = cfg.out_edges(block)
+        if not out_edges:
+            break
+        if len(out_edges) > 1:
+            return None  # a branch: which successor comes first is a real question
+        block = out_edges[0].dst
+    if len(order) != len(blocks):
+        return None  # blocks the walk never reached; the general path still orders them
+    return order
+
+
 def blockorder_topological_sort(cfg: ControlFlowRegion,
                                 recursive: bool = True,
                                 ignore_nonstate_blocks: bool = False) -> Iterator[ControlFlowBlock]:
@@ -695,14 +734,17 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     :param ignore_nonstate_blocks: If true, only produce basic blocks / SDFGStates. Defaults to False.
     :return: Generator that yields control flow blocks in execution-order.
     """
-    # Get parent states. Computed once and handed down: block_parent_tree derives both internally.
-    loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    idom = block_immediate_dominators(cfg)
-    alldoms = all_dominators(cfg, idom)
-    merges = branch_merges(cfg, idom, alldoms)
-    ptree = block_parent_tree(cfg, loopexits, idom=idom, merges=merges, alldoms=alldoms)
+    ordered = _chain_order(cfg)
+    if ordered is None:
+        # Get parent states. Computed once and handed down: block_parent_tree derives both internally.
+        loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
+        idom = block_immediate_dominators(cfg)
+        alldoms = all_dominators(cfg, idom)
+        merges = branch_merges(cfg, idom, alldoms)
+        ptree = block_parent_tree(cfg, loopexits, idom=idom, merges=merges, alldoms=alldoms)
+        ordered = _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits)
 
-    for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
+    for block in ordered:
         if isinstance(block, ControlFlowRegion):
             if not ignore_nonstate_blocks:
                 yield block

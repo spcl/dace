@@ -226,10 +226,14 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     so drive the fusion on each adjacent pair directly. Returns the number fused."""
     from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
     fused = 0
+    # Collected ONCE. State fusion merges two states inside a region; it neither creates nor
+    # removes a control-flow region, so this list stays valid across every fusion below. Rebuilding
+    # it per fusion re-walked the whole subtree, including nested SDFGs -- 3.5% of the CloudSC
+    # parallelize pipeline spent re-deriving a list that could not have changed.
+    cfrs = [region] + list(region.all_control_flow_regions(recursive=True))
     changed = True
     while changed:
         changed = False
-        cfrs = [region] + list(region.all_control_flow_regions(recursive=True))
         for cfr in cfrs:
             for edge in list(cfr.edges()):
                 u, v = edge.src, edge.dst

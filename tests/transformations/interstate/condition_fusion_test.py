@@ -5,7 +5,8 @@ import numpy as np
 
 import dace
 from dace.transformation.interstate import ConditionFusion
-from dace.sdfg.state import ConditionalBlock
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 
 def _branch_conditions(sdfg):
@@ -331,6 +332,60 @@ def test_three_identical_guards_no_duplicated_conjunct():
         assert np.allclose(out, ref), f"value mismatch at a[0]={v}: {out} vs {ref}"
 
 
+def guarded_nested_sdfg(label, sdfg, condition, value):
+    """A ConditionalBlock whose single branch writes ``value`` to ``A[0]`` through a NESTED SDFG."""
+    cb = ConditionalBlock(label)
+    sdfg.add_node(cb)
+    body = ControlFlowRegion(label + '_body', sdfg=sdfg)
+    cb.add_branch(CodeBlock(condition), body)
+    state = body.add_state(label + '_write', is_start_block=True)
+    inner = dace.SDFG(label + '_inner')
+    inner.add_array('a', [4], dace.float64)
+    inner_state = inner.add_state('w', is_start_block=True)
+    tasklet = inner_state.add_tasklet('w', {}, {'o'}, f'o = {value}')
+    inner_state.add_edge(tasklet, 'o', inner_state.add_write('a'), None, dace.Memlet('a[0]'))
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a'})
+    state.add_edge(nsdfg, 'a', state.add_write('A'), None, dace.Memlet('A[0:4]'))
+    return cb
+
+
+def test_fusing_copied_branches_leaves_every_region_addressable():
+    """A fused branch is a DEEP COPY, and a copy arrives with no usable CFG list.
+
+    ``SDFG.__deepcopy__`` leaves a nested copy's ``_cfg_list`` empty and ``ControlFlowBlock`` skips
+    the attribute outright -- both by design, leaving it to whoever grafts the copy into a tree. So
+    the branch this fusion copies brings a NestedSDFG whose ``cfg_id`` raises ``SDFG (...) is not in
+    list`` the first time any later pass asks for it, which is how the CloudSC parallelize pipeline
+    died in its fuse phase. Every region must be addressable in the tree it now lives in.
+    """
+    sdfg = dace.SDFG('cond_fusion_keeps_the_cfg_list')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_symbol('c', dace.int32)
+    sdfg.add_symbol('d', dace.int32)
+    # INDEPENDENT guards, so the merge-matching-guards shortcut declines and the fusion takes the
+    # cartesian branch product -- the path that deep-copies each branch region wholesale.
+    first = guarded_nested_sdfg('g1', sdfg, 'c > 0', 1.0)
+    second = guarded_nested_sdfg('g2', sdfg, 'd > 0', 2.0)
+    start = sdfg.add_state('start', is_start_block=True)
+    sdfg.add_edge(start, first, dace.InterstateEdge())
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(ConditionFusion) > 0, 'the independent guards did not fuse'
+    sdfg.validate()
+
+    # The property that failed: every region resolves its own index in the list it carries.
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        assert region.cfg_list, f'{type(region).__name__} {region.label!r} carries an empty CFG list'
+        assert region.cfg_id >= 0
+
+    # And the copied branches still compute: the later write wins where both guards hold.
+    for c, d, expected in ((1, 0, 1.0), (0, 1, 2.0), (1, 1, 2.0), (0, 0, 0.0)):
+        out = np.zeros(4)
+        sdfg(A=out, c=c, d=d)
+        assert out[0] == expected, f'c={c} d={d}: got {out[0]}, want {expected}'
+
+
 if __name__ == "__main__":
     test_consecutive_conditions()
     test_consecutive_conditions2()
@@ -342,3 +397,4 @@ if __name__ == "__main__":
     test_mixed_conditions()
     test_identical_guards_no_duplicated_conjunct()
     test_three_identical_guards_no_duplicated_conjunct()
+    test_fusing_copied_branches_leaves_every_region_addressable()

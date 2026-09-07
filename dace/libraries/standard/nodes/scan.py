@@ -647,6 +647,9 @@ def affine_scan_body(node: "Scan", ctype: str, n_expr: str, parallel: bool) -> s
     :param n_expr: C++ expression for the element count.
     :param parallel: emit the blocked runtime call rather than the sequential loop.
     """
+    stride_expr = sym2cpp(node.stride)
+    if symbolic.pystr_to_symbolic(stride_expr) != 1:
+        return strided_affine_scan_body(node, ctype, n_expr, stride_expr, parallel)
     seed = INIT_CONNECTOR_NAME if _has_init(node) else f'static_cast<{ctype}>(0)'
     if parallel:
         return (f'::dace::scan::inclusive_affine({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, '
@@ -656,6 +659,48 @@ def affine_scan_body(node: "Scan", ctype: str, n_expr: str, parallel: bool) -> s
             f'  for (long _k = 0; _k < _n; ++_k) {{\n'
             f'      _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n'
             f'      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n'
+            f'  }}\n'
+            f'}}')
+
+
+def strided_affine_scan_body(node: "Scan", ctype: str, n_expr: str, stride_expr: str, parallel: bool) -> str:
+    """Body for ``out[k] = c[k] * out[k - S] + d[k]``, the recurrence at carry distance ``S``.
+
+    That is ``S`` INDEPENDENT unit-stride affine scans, one per residue class of the index mod
+    ``S``, and the runtime's ``inclusive_affine_strided`` is exactly that -- the same monoid, the
+    same blocked scan, reached through a strided view of the same buffers. So nothing here decides
+    an algorithm; it decides which entry point and hands over the per-class seeds.
+
+    ``_scan_init`` carries ``S`` values rather than one: the class entered at index ``r`` starts
+    from the carrier's pre-loop element ``r``, and only the caller can read those. Without it every
+    class starts at zero, which is the identity for this monoid the same way it is for the
+    contiguous form.
+
+    :param node: the Scan node, read for ``_scan_init``.
+    :param ctype: the accumulator's C type.
+    :param n_expr: C++ expression for the element count.
+    :param stride_expr: C++ expression for the carry distance.
+    :param parallel: take the runtime entry point rather than the naked class loop.
+    """
+    if _has_init(node):
+        seeds = INIT_CONNECTOR_NAME
+        seed_of = f'{INIT_CONNECTOR_NAME}[_r]'
+    else:
+        # No seed wired: every class enters at the monoid's identity, as the contiguous form does.
+        seeds = f'::dace::scan::detail::zero_seeds<{ctype}>()'
+        seed_of = f'static_cast<{ctype}>(0)'
+    if parallel:
+        return (f'::dace::scan::inclusive_affine_strided({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, '
+                f'{OUTPUT_CONNECTOR_NAME}, static_cast<long>({n_expr}), '
+                f'static_cast<long>({stride_expr}), {seeds});')
+    return (f'{{ const long _n = static_cast<long>({n_expr});\n'
+            f'  const long _s = static_cast<long>({stride_expr});\n'
+            f'  for (long _r = 0; _r < _s && _r < _n; ++_r) {{\n'
+            f'      {ctype} _acc = {seed_of};\n'
+            f'      for (long _k = _r; _k < _n; _k += _s) {{\n'
+            f'          _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n'
+            f'          {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n'
+            f'      }}\n'
             f'  }}\n'
             f'}}')
 
@@ -700,8 +745,6 @@ def refuse_unsupported_affine_flags(node: "Scan") -> None:
         refuse_affine_shape(node, '``exclusive=True``')
     if node.chains > 1:
         refuse_affine_shape(node, '``chains > 1``')
-    if symbolic.pystr_to_symbolic(sym2cpp(node.stride)) != 1:
-        refuse_affine_shape(node, '``stride > 1``')
 
 
 def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) -> str:

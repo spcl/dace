@@ -621,13 +621,15 @@ def _same_state_fill_sdfg(name):
     return sdfg
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='MapUnroll cannot flatten a fill whose consumer shares its state: it '
-                   'duplicates the access node per element but keeps the original out-edge, so all N nodes '
-                   'claim to deliver the FULL array to the consumer while each is written at one index. '
-                   'const-init here needs the fill evaluated WITHOUT unrolling, not a looser classifier.')
 def test_same_state_constant_fill_is_const_inited():
-    """A constant fill should be const-initializable even when its consumer shares the state."""
+    """A constant fill is const-initializable even when its consumer shares the state.
+
+    This used to be unreachable: the classifier only saw element-wise tasklet writes, so it needed
+    ``MapUnroll`` first -- and MapUnroll cannot flatten a fill whose consumer shares its state,
+    since it duplicates the access node per element while keeping the original out-edge, so all N
+    copies claim to deliver the FULL array. The fix was to evaluate the fill WHERE IT STANDS
+    (``_uniform_fill_value``): a map writing one constant to every element of its range is a
+    constant over that range, and the subset already turns into a slice."""
     sdfg = _same_state_fill_sdfg('same_state_fill')
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
@@ -763,3 +765,84 @@ if __name__ == '__main__':
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()
     test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
+
+
+def test_a_scalar_whose_container_stays_classic_is_not_marked_const_runtime():
+    """``const_runtime`` is a PROMISE that the write can carry a fused ``const T x = expr;``.
+
+    Making it costs the declaration: ``allocate_array`` skips ``T x;`` on the strength of it. The
+    binding is only emitted when ``InlineTaskletConnectors`` inlines the writing tasklet's
+    connectors, and that pass decides per CONTAINER -- one tasklet it cannot inline keeps that
+    container classic everywhere, this writer included. Marking on a per-tasklet check alone left
+    the name declared nowhere and emitted by nothing (``'_scan_seed_a' was not declared in this
+    scope``), which is what every LoopToScan seed hit: the carrier it copies from is also read by
+    tasklets that stay classic.
+    """
+    sdfg = dace.SDFG('const_init_container_rule')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('seed', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+
+    # The writer, on its own, is exactly the fusable shape: one assignment, plain connectors.
+    copy = state.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
+    state.add_edge(state.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
+    state.add_edge(copy, '_out', state.add_access('seed'), None, dace.Memlet('seed[0]'))
+
+    # A second toucher of ``a`` the planner CANNOT inline: a whole-array connector is not the
+    # single-element access ``_connector_access`` requires. So ``a`` stays classic, and with it the
+    # connector the writer above reads it through.
+    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
+
+    # A reader of the scalar, so it is genuinely write-once-then-read.
+    reader = state.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
+    state.add_edge(state.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
+    state.add_edge(reader, '_o', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    _run(sdfg)
+    assert not sdfg.arrays['seed'].const_init, (
+        'seed was marked const_runtime, but its container stays classic so no binding is emitted '
+        'and the skipped declaration is never replaced')
+
+
+def test_a_brace_free_prediction_is_never_broken_by_the_inliner():
+    """The predicate's contract is an IMPLICATION: True guarantees the brace-free emission.
+
+    That direction is the one ``MarkConstInit`` spends -- it skips a declaration on the strength of
+    a True answer, so a True the inliner then declines is a name declared nowhere. The converse
+    costs nothing: a False where the inliner would have inlined only leaves a declaration standing.
+
+    Asserted over a graph built to contain both kinds of container: one every toucher can inline,
+    and one a single toucher cannot.
+    """
+    from dace.transformation.passes.inline_tasklet_connectors import (InlineTaskletConnectors, tasklet_emits_brace_free)
+
+    sdfg = dace.SDFG('brace_free_agreement')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    state = sdfg.add_state('main')
+
+    plain = state.add_tasklet('plain', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    state.add_edge(state.add_read('b'), None, plain, '_in', dace.Memlet('b[0]'))
+    state.add_edge(plain, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    shares_a = state.add_tasklet('shares_a', {'_in'}, {'_out'}, '_out = _in')
+    state.add_edge(state.add_read('a'), None, shares_a, '_in', dace.Memlet('a[0]'))
+    state.add_edge(shares_a, '_out', state.add_write('out'), None, dace.Memlet('out[2]'))
+
+    whole_array = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, whole_array, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(whole_array, '_out', state.add_write('out'), None, dace.Memlet('out[3]'))
+
+    predicted = {t.label: tasklet_emits_brace_free(sdfg, state, t) for t in _tasklets(state)}
+    actually_inlined = InlineTaskletConnectors().apply_pass(sdfg, {}) or set()
+
+    assert predicted['shares_a'] is False, (
+        'shares_a reads a container another tasklet keeps classic, so its connector stays classic too')
+    for label, said_yes in predicted.items():
+        if said_yes:
+            assert label in actually_inlined, (f'{label}: predicted brace-free, but the inliner left it classic -- '
+                                               'the declaration MarkConstInit skipped is never replaced')

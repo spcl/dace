@@ -2273,3 +2273,132 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
     a = a0.copy()
     sdfg(a=a, b=b, c=c, N=n)
     assert np.allclose(a, expected), f'second-order recurrence diverged: max diff {np.abs(a - expected).max():.2e}'
+
+
+# -- the carry at a SYMBOLIC distance ------------------------------------------------------------
+#
+# ``a[i] = c * a[i - K] + d[i]`` is not one loop shape but three, and which one it is is not known
+# until K has a value: a scan at K >= 1, a plain map at K == 0, an anti-dependence at K < 0. The
+# pass emits all three under a runtime test rather than picking one.
+
+
+def _distance_program():
+    """The llr ``versioned_distance_update`` shape: affine in the carry, symbolic in the distance."""
+    N, K = dace.symbol('N'), dace.symbol('K')
+
+    @dace.program
+    def vdu(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(K, N):
+            a[i] = 0.75 * a[i - K] + b[i] * c[i]
+
+    return vdu.to_sdfg(simplify=True)
+
+
+def test_a_symbolic_carry_distance_lifts_to_a_strided_affine_scan():
+    """The carry may reach back S elements, which is S residue-class scans and one ``stride``."""
+    from dace.libraries.standard.nodes.scan import Scan, ScanOp
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+
+    sdfg = _distance_program()
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {})
+
+    scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    assert len(scans) == 1, f'expected one affine scan, got {scans}'
+    assert scans[0].op is ScanOp.AFFINE
+    assert str(scans[0].stride) == 'K', f'the scan must carry the distance, not assume 1: {scans[0].stride}'
+
+
+def test_the_three_distance_cases_are_split_under_a_runtime_test():
+    """K >= 1 is a scan, K == 0 has no carry at all, K < 0 is an anti-dependence. Emitting any one
+    of them unconditionally is wrong on the other two, so the pass emits the branch."""
+    from dace.sdfg.state import ConditionalBlock
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+
+    sdfg = _distance_program()
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+
+    conditions = [
+        c.as_string for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock) for c, _ in b.branches
+        if c is not None
+    ]
+    assert any('K >= 1' in c for c in conditions), f'no scan guard among {conditions}'
+    assert any('K == 0' in c for c in conditions), f'no zero-distance branch among {conditions}'
+
+
+@pytest.mark.parametrize('k', (1, 2, 5, 64, 251, 0))
+def test_the_strided_affine_scan_matches_the_sequential_recurrence(k):
+    """The numbers, at every distance the branch structure has to cover -- including the K == 0
+    arm, where the substituted clone must compute ``a[i] = 0.75*a[i] + b[i]*c[i]`` and not a scan."""
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+
+    sdfg = _distance_program()
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+    sdfg.simplify()
+    compiled = sdfg.compile()
+
+    n = 4096
+    rng = np.random.default_rng(0)
+    start, b, c = rng.random(n), rng.random(n), rng.random(n)
+    reference = start.copy()
+    for i in range(k, n):
+        reference[i] = 0.75 * reference[i - k] + b[i] * c[i]
+
+    got = start.copy()
+    compiled(a=got, b=b, c=c, N=n, K=k)
+    assert np.allclose(got, reference, rtol=0, atol=1e-11), f'K={k}: max |err| {np.max(np.abs(got - reference))}'
+
+
+def test_an_affine_operand_that_is_already_a_slice_is_not_copied():
+    """``y[i] = c[i]*y[i-1] + x[i]`` needs no operand buffers at all.
+
+    The rewrite makes the body build the coefficient and offset sequences so the rest of it is
+    data-parallel, which is right when either is COMPUTED. When it is a bare array read the buffer
+    is a verbatim copy of a slice that already exists, and building it costs an allocation and a
+    full pass each way over data the scan then reads anyway.
+    """
+    from dace.libraries.standard.nodes.scan import Scan
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def decay(y: dace.float64[N], c: dace.float64[N], x: dace.float64[N]):
+        for i in range(1, N):
+            y[i] = c[i] * y[i - 1] + x[i]
+
+    sdfg = decay.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {})
+    sdfg.simplify()
+
+    copied = [name for name in sdfg.arrays if name.startswith('_scan_in') or name.startswith('_scan_coef')]
+    assert not copied, f'both operands are slices, so nothing should be copied: {copied}'
+
+    scan = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+    wired = {
+        edge.dst_conn: edge.data.data
+        for state in sdfg.all_states() if scan in state.nodes() for edge in state.in_edges(scan)
+    }
+    assert wired.get('_scan_in') == 'x' and wired.get('_scan_coef') == 'c', wired
+
+
+def test_a_computed_affine_operand_still_gets_its_buffer():
+    """The converse: ``b[i]*c[i]`` is not a slice of anything, so the body must still build it --
+    that build is what leaves the loop data-parallel."""
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def computed(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = 0.75 * a[i - 1] + b[i] * c[i]
+
+    sdfg = computed.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {})
+
+    assert any(name.startswith('_scan_in') for name in sdfg.arrays), 'the computed delta needs a buffer'

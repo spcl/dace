@@ -380,7 +380,7 @@ if __name__ == '__main__':
         test_one_team_replaces_the_per_trip_region(kernel_name)
     for kernel_name in TSVC_KERNELS:
         test_finalized_kernel_matches_the_numpy_reference(kernel_name)
-    test_s115_snapshot_is_worksharing_rather_than_replicated()
+    test_s115_keeps_every_store_inside_a_worksharing_map()
     test_wavefront_reaching_into_the_neighbouring_band_is_still_correct()
     test_minimal_loop_over_map_hoists()
     test_second_run_adds_no_second_team()

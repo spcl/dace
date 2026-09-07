@@ -151,5 +151,135 @@ def test_numerics_survive_the_pass():
     assert np.allclose(c, c_ref)
 
 
+def test_a_lift_never_moves_the_sdfgs_own_free_symbols():
+    """The invariant the whole-graph walk gate rests on.
+
+    ``LoopToMap.apply`` used to ask for ``sdfg.free_symbols`` twice per lift -- once mid-rewrite and
+    once at the end -- purely to spot symbols the lift turned free. It cannot turn any symbol free
+    that the loop did not itself define: the iterate is defined by the loop before and the map after,
+    and the body's interstate assignments move inside the nested SDFG together with every use of
+    them. So the set is the same on both sides of a lift, and a loop declaring none of those symbols
+    skips both walks. Measured on CloudSC: unchanged across all 314 lifts, 310 of which declare
+    nothing. Asserted rather than argued -- a lift that did move the set would leave the next
+    context holding a stale ``sdfg_free_symbols`` and mis-report what the FOLLOWING lift freed.
+    """
+    sdfg = three_independent_sweeps.to_sdfg(simplify=True)
+    real_apply = LoopToMap.apply
+    moved = []
+    lifts = 0
+
+    def checking_apply(self, graph, inner_sdfg):
+        before = set(inner_sdfg.free_symbols)
+        out = real_apply(self, graph, inner_sdfg)
+        nonlocal lifts
+        lifts += 1
+        after = set(inner_sdfg.free_symbols)
+        if after != before:
+            moved.append((inner_sdfg.label, sorted(after - before), sorted(before - after)))
+        return out
+
+    LoopToMap.apply = checking_apply
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        LoopToMap.apply = real_apply
+
+    assert lifts > 0, 'nothing was lifted, so the invariant was never exercised'
+    assert not moved, f'a lift moved the SDFG free symbols: {moved}'
+    sdfg.validate()
+
+
+def test_a_loop_that_declares_a_body_symbol_still_gets_it_deregistered():
+    """The gate must NOT fire for a loop whose body assigns a declared symbol.
+
+    This is the case the two whole-graph walks exist for: ``k`` is declared on the SDFG and assigned
+    on an interstate edge INSIDE the loop body, so the lift moves its definition into the nested
+    SDFG. The lift has to deregister it and let the nested node map what it still needs; skipping
+    the walk here would leave ``sdfg.symbols`` holding a symbol nothing defines any more.
+    """
+    sdfg = dace.SDFG('declared_body_symbol')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    sdfg.add_symbol('n', dace.int64)
+    loop = LoopRegion('sweep', 'i < n', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('assign_k', is_start_block=True)
+    second = loop.add_state('use_k')
+    # ``k`` is DECLARED on the SDFG and defined only here, inside the body.
+    loop.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'i'}))
+    tasklet = second.add_tasklet('w', {}, {'o'}, 'o = k')
+    second.add_edge(tasklet, 'o', second.add_write('a'), None, dace.Memlet('a[i]'))
+    sdfg.validate()
+
+    assert ParallelizeLoops(propagate=False).apply_pass(sdfg, {}), 'the loop was not lifted'
+    sdfg.validate()
+    assert 'k' not in sdfg.symbols, 'a symbol defined only inside the lifted body stayed declared'
+
+    out = np.zeros(N)
+    sdfg(a=out, n=N)
+    assert np.allclose(out, np.arange(N)), f'wrong values after the lift: {out}'
+
+
+@dace.program
+def sequential_outer_parallel_inner(a: dace.float64[N, N], b: dace.float64[N, N]):
+    """A carried outer sweep over parallel inner ones, so a lift always has an ENCLOSING region."""
+    for t in range(1, N):
+        for j in range(N):
+            b[t, j] = a[t - 1, j] * 2.0
+        for j in range(N):
+            a[t, j] = b[t, j] + 1.0
+
+
+def test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets():
+    """The invariant that lets an ancestor's cached read/write sets be PATCHED, not rebuilt.
+
+    A lift adds no access: it re-homes the ones it finds behind a nested SDFG that re-exposes them
+    through its connectors. So nothing can enter an enclosing region's read or write set, and the
+    only names that leave are the body-local containers the lift internalized. Measured over every
+    CloudSC lift -- 334 enclosing observations, 0 additions -- and asserted here, because an
+    addition would leave an ancestor's patched set MISSING a container and the write analysis that
+    reads it would then accept a loop it must refuse.
+    """
+    sdfg = sequential_outer_parallel_inner.to_sdfg(simplify=True)
+    real_apply = LoopToMap.apply
+    additions = []
+    unexplained = []
+    observations = 0
+
+    def checking_apply(self, graph, inner_sdfg):
+        ancestors = []
+        region = graph
+        while region is not None and not isinstance(region, dace.SDFG):
+            read_set, write_set = region.read_and_write_sets()
+            ancestors.append((region, set(read_set), set(write_set)))
+            region = region.parent_graph
+        out = real_apply(self, graph, inner_sdfg)
+        ctx = vars(self).get('lift_context')
+        gone = set() if ctx is None or ctx.internalized_data is None else ctx.internalized_data
+        nonlocal observations
+        for region, was_read, was_written in ancestors:
+            if region.parent_graph is None:
+                continue  # detached by the lift; nothing will ask about it again
+            observations += 1
+            now_read, now_written = region.read_and_write_sets()
+            added = (set(now_read) - was_read) | (set(now_written) - was_written)
+            removed = (was_read - set(now_read)) | (was_written - set(now_written))
+            if added:
+                additions.append((region.label, sorted(added)))
+            if removed - gone:
+                unexplained.append((region.label, sorted(removed - gone)))
+        return out
+
+    LoopToMap.apply = checking_apply
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        LoopToMap.apply = real_apply
+
+    assert observations > 0, 'no enclosing region was observed, so the invariant was never exercised'
+    assert not additions, f'a lift ADDED to an enclosing region read/write set: {additions}'
+    assert not unexplained, f'a name left an enclosing set without being internalized: {unexplained}'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
