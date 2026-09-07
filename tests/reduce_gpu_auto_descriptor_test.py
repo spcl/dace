@@ -54,7 +54,9 @@ def gpu_auto_reduce_from_view_sdfg() -> dace.SDFG:
     """
     sdfg = dace.SDFG('gpu_auto_reduce_from_view')
     sdfg.add_array('A', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_view('A_view', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    # Declared ``Default`` on purpose: a view owns no storage, so this is what one looks like
+    # before anything has matched it to the container it aliases.
+    sdfg.add_view('A_view', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.Default)
     sdfg.add_array('B', [2, 3, 4], dace.float32, storage=dtypes.StorageType.GPU_Global)
 
     state = sdfg.add_state()
@@ -113,6 +115,34 @@ def test_a_reduce_reading_a_view_gets_a_plain_array_inside():
     assert inner, 'the GPUAuto expansion did not run, so this test is anchored on nothing'
     for desc in inner:
         assert not isinstance(desc, data.View), f'_in came out as {type(desc).__name__}, an alias of nothing'
+
+
+def test_the_expansion_reads_storage_through_the_view():
+    """A view of a device array is a device operand, whatever the alias itself declares.
+
+    Asserted on the SCHEDULES the expansion produced, because that is the decision the storage
+    drives: read off the alias, the ``Default`` above says host and the reduce silently takes the
+    Pure fallback -- left on the wrong side of the machine rather than failing outright. The
+    descriptor cannot be asserted on instead, since type inference re-derives a nested connector's
+    storage from the outer container.
+    """
+    sdfg = gpu_auto_reduce_from_view_sdfg()
+    sdfg.expand_library_nodes()
+
+    schedules = {node.map.schedule for _, state, node in every_map(sdfg)}
+    assert dtypes.ScheduleType.GPU_Device in schedules, (
+        f'the reduce did not expand for the device, so the alias was read rather than the array '
+        f'it views (schedules: {sorted(str(s) for s in schedules)})')
+
+
+def every_map(sdfg: dace.SDFG):
+    """Every map entry in ``sdfg``, including the ones inside nested SDFGs."""
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                yield sdfg.label, state, node
+            elif isinstance(node, nodes.NestedSDFG):
+                yield from every_map(node.sdfg)
 
 
 if __name__ == '__main__':

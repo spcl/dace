@@ -883,6 +883,26 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         #return reduce_node.expand(state)
 
 
+def storage_behind_views(state: SDFGState, node, declared: dtypes.StorageType) -> dtypes.StorageType:
+    """Where a reduce operand's bytes live, asked of the container rather than of an alias.
+
+    A view owns no storage, so what its descriptor declares is whatever it was built with and is
+    right only where some other pass has since matched it to the container it aliases. Reading it
+    directly makes this expansion decide on that second-hand answer: a view of a ``GPU_Global``
+    array still declaring ``Default`` sends a reduction that belongs on the device down the Pure
+    fallback, and the nested operands are then built for the wrong side.
+    """
+    from dace.sdfg import nodes as nd  # Avoid import loop
+    from dace.sdfg.utils import get_last_view_node
+
+    if not isinstance(node, nd.AccessNode):
+        return declared
+    viewed = get_last_view_node(state, node)
+    if viewed is None:
+        return declared
+    return state.sdfg.arrays[viewed.data].storage
+
+
 @dace.library.expansion
 class ExpandReduceGPUAuto(pm.ExpandTransformation):
     """
@@ -912,7 +932,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
         in_type = raw_input_data.dtype
 
-        if raw_input_data.storage != dtypes.StorageType.GPU_Global:
+        # Through the alias rather than off it -- see ``storage_behind_views``.
+        in_storage = storage_behind_views(state, inedge.src, raw_input_data.storage)
+        out_storage = storage_behind_views(state, outedge.dst, raw_output_data.storage)
+
+        if in_storage != dtypes.StorageType.GPU_Global:
             # data doesnt reside on GPU --> return pure expansion
             warnings.warn(
                 'Cannot use GPUAuto expansion: Input data does not reside on GPU. Falling back to Pure expansion')
@@ -952,14 +976,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # is a plain buffer reached through a connector and read by several edges, which validation
         # refuses ("Ambiguous or invalid edge to/from a View access node"). Building it also keeps
         # ``offset`` at the rank of the shape, which a cloned-then-reshaped descriptor loses.
-        nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=raw_input_data.storage)
+        nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=in_storage)
 
-        output_data = dcpy(raw_output_data)
         nsdfg.add_array('_out',
                         schedule.out_shape,
-                        output_data.dtype,
+                        raw_output_data.dtype,
                         strides=schedule.out_strides,
-                        storage=output_data.storage)
+                        storage=out_storage)
 
         nstate = nsdfg.add_state()
 
@@ -1101,7 +1124,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 }, {'o': dace.vector(in_type, schedule.vec_len)}, 'o = b')
 
             # add warpReduce tasklet
-            ctype = output_data.dtype
+            ctype = raw_output_data.dtype
             redtype = detect_reduction_type(node.wcr)
             if redtype == dtypes.ReductionType.Custom:
                 raise NotImplementedError
