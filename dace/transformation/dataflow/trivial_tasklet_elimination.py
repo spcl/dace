@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the trivial-tasklet-elimination transformation. """
 
-from dace import data
+import ast
+
+from dace import data, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -82,7 +84,18 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
             return False
         in_conn = list(tasklet.in_connectors.keys())[0]
         out_conn = list(tasklet.out_connectors.keys())[0]
-        if tasklet.code.as_string != f'{out_conn} = {in_conn}':
+        # Matched on the AST, not on ``as_string``: that property re-unparses the body on every
+        # call and this predicate runs once per candidate tasklet on every matcher round.
+        body = tasklet.code.code
+        if tasklet.code.language is dtypes.Language.Python and isinstance(body, list):
+            if len(body) != 1:
+                return False
+            stmt = body[0]
+            if (not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name)
+                    or stmt.targets[0].id != out_conn or not isinstance(stmt.value, ast.Name)
+                    or stmt.value.id != in_conn):
+                return False
+        elif tasklet.code.as_string != f'{out_conn} = {in_conn}':
             return False
         read_memlet = graph.edges_between(read, tasklet)[0].data
         read_desc = sdfg.arrays[read_memlet.data]
