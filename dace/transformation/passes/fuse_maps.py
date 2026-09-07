@@ -1,9 +1,80 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional
+import collections
+import warnings
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
-from dace import SDFG, properties, transformation
+from dace import SDFG, SDFGState, properties, transformation
+from dace.config import Config
+from dace.sdfg import nodes
+from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.validation import validate_state
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
-from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation import transformation as xf
+from dace.transformation.passes import analysis as ap
+
+#: Rounds of (vertical -> horizontal) fusion. Two, not a fixpoint: the second round is what the
+#: first enables, and a fixpoint pays a third round that only confirms convergence.
+FUSE_ROUNDS = 2
+
+#: One expression: the pattern nodes in declaration order, and the edges required between them.
+PatternShape = Tuple[List[xf.PatternNode], Set[Tuple[int, int]]]
+
+#: Applied transformations, by transformation name -- the report `PatternMatchAndApply` returns.
+AppliedMap = Dict[str, List[Any]]
+
+
+def _pattern_shapes(xform: xf.PatternTransformation) -> List[PatternShape]:
+    """The declared expressions of ``xform`` as (nodes, edges) index pairs."""
+    shapes: List[PatternShape] = []
+    for expr in xform.expressions():
+        pnodes = list(expr.nodes())
+        index = {pn: i for i, pn in enumerate(pnodes)}
+        shapes.append((pnodes, {(index[e.src], index[e.dst]) for e in expr.edges()}))
+    return shapes
+
+
+def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
+                     pedges: Set[Tuple[int, int]]) -> Iterator[List[nodes.Node]]:
+    """Yield the induced matches of one small pattern in ``state``.
+
+    Replaces the VF2 subgraph isomorphism the pattern matcher used to run for these patterns and
+    reproduces its enumeration order: pattern node 0 ranges over ``state.nodes()``, every later
+    node over the successors of the image of the pattern node that points at it, and a candidate
+    is rejected unless the edges induced among the images are exactly the pattern's.
+    """
+    npat = len(pnodes)
+    all_nodes = state.nodes()
+    # Successor sets are read many times per enumeration; the generator is recreated for every
+    # probe and the caller applies nothing until it is abandoned, so the state cannot change under
+    # the cache -- it dies with the generator.
+    succ_cache: Dict[nodes.Node, Dict[nodes.Node, None]] = {}
+
+    def successors(node: nodes.Node) -> Dict[nodes.Node, None]:
+        cached = succ_cache.get(node)
+        if cached is None:
+            cached = {e.dst: None for e in state.out_edges(node)}
+            succ_cache[node] = cached
+        return cached
+
+    # The pattern node whose image supplies the candidates for each level, or None for a free level.
+    parents = [next((i for i in range(j) if (i, j) in pedges), None) for j in range(npat)]
+
+    def extend(j: int, images: List[nodes.Node]) -> Iterator[List[nodes.Node]]:
+        if j == npat:
+            yield list(images)
+            return
+        candidates = all_nodes if parents[j] is None else successors(images[parents[j]])
+        node_type = pnodes[j].node
+        for cand in candidates:
+            if not isinstance(cand, node_type) or any(cand is img for img in images):
+                continue
+            if all((cand in successors(img)) == ((i, j) in pedges) and (img in successors(cand)) == ((j, i) in pedges)
+                   for i, img in enumerate(images)):
+                images.append(cand)
+                yield from extend(j + 1, images)
+                images.pop()
+
+    yield from extend(0, [])
 
 
 @properties.make_properties
@@ -169,8 +240,9 @@ class FuseMaps(ppl.Pass):
         """
         Fuses all Maps that can be fused in the SDFG, including its nested SDFGs.
 
-        For driving the fusion the function will construct a `PatternMatchAndApplyRepeated`
-        object.
+        Candidates are enumerated directly -- a producer MapExit whose access node feeds a
+        consumer MapEntry for the vertical phase, same-scope Map pairs for the horizontal one --
+        instead of paying VF2 subgraph isomorphism to rediscover a structure that is already known.
 
         :param sdfg: The SDFG to modify.
         :param pipeline_results: The result of previous pipeline steps. If the result of
@@ -190,9 +262,8 @@ class FuseMaps(ppl.Pass):
             # nothing removes afterwards.
             fusion_transforms.append(dftrans.MapReduceFusion())
 
-            # The single-use data reaches `can_be_applied` through `pipeline_results`, which
-            #  `match_patterns` now installs on every match before probing it -- so this no longer
-            #  has to be threaded in at construction (the issue#1911 workaround).
+            # The single-use data reaches `can_be_applied` through `pipeline_results`, installed
+            #  on the match before every probe -- not threaded in at construction (issue#1911).
             fusion_transforms.append(
                 dftrans.MapFusionVertical(
                     only_inner_maps=self.only_inner_maps,
@@ -218,15 +289,66 @@ class FuseMaps(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                 ))
 
-        pazz = pmp.PatternMatchAndApplyRepeated(
-            fusion_transforms,
-            permissive=False,
-            validate=False,
-            validate_all=self.validate_all,
-        )
-        result = pazz.apply_pass(sdfg, pipeline_results)
+        explicit_cf = sdfg.root_sdfg.using_explicit_control_flow
+        units: List[Tuple[xf.PatternTransformation, List[PatternShape]]] = []
+        for xform in fusion_transforms:
+            if explicit_cf and not xform.__explicit_cf_compatible__:
+                warnings.warn(f'Map fusion is skipping {type(xform).__name__} due to incompatibility with '
+                              'experimental control flow blocks.')
+                continue
+            units.append((xform, _pattern_shapes(xform)))
+
+        applied: AppliedMap = collections.defaultdict(list)
+        for _ in range(FUSE_ROUNDS):
+            for cfg in sdfg.all_control_flow_regions(recursive=True):
+                for state_id, state in enumerate(cfg.nodes()):
+                    if not isinstance(state, SDFGState):
+                        continue
+                    for xform, shapes in units:
+                        self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied)
 
         if self.validate and (not self.validate_all):
             sdfg.validate()
 
-        return result
+        return applied or None
+
+    def _drain(self, xform: xf.PatternTransformation, shapes: List[PatternShape], cfg: ControlFlowRegion,
+               state: SDFGState, state_id: int, pipeline_results: Dict[str, Any], applied: AppliedMap) -> None:
+        """Apply ``xform`` in ``state`` until nothing matches there any more.
+
+        The fusions are single-state rewrites reading one fixed `FindSingleUseData` result, so a
+        match in another state can neither appear nor vanish here -- draining state by state costs
+        one state rescan per application instead of one whole-SDFG rescan.
+        """
+        name = type(xform).__name__
+        owner = cfg.sdfg
+        progress = True
+        while progress:
+            progress = False
+            node_id = None
+            for expr_index, (pnodes, pedges) in enumerate(shapes):
+                for images in _induced_matches(state, pnodes, pedges):
+                    if node_id is None:
+                        node_id = {node: i for i, node in enumerate(state.nodes())}
+                    xform.setup_match(owner, cfg.cfg_id, state_id, dict(zip(pnodes, (node_id[n] for n in images))),
+                                      expr_index)
+                    # `setup_match` resets it, so the cached analysis is installed after the call.
+                    xform._pipeline_results = pipeline_results
+                    xform.permissive = False
+                    try:
+                        matched = xform.can_be_applied(state, expr_index, owner, permissive=False)
+                    except Exception as exception:
+                        if Config.get_bool('optimizer', 'match_exception'):
+                            raise
+                        print(f'WARNING: {name}::can_be_applied triggered a '
+                              f'{type(exception).__name__} exception: {exception}')
+                        continue
+                    if not matched:
+                        continue
+                    applied[name].append(xform.apply(state, owner))
+                    if self.validate_all:
+                        validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))
+                    progress = True
+                    break
+                if progress:
+                    break
