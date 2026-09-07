@@ -4,13 +4,13 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import properties
-from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.loop_to_map import LiftContext, LoopToMap, build_lift_context
+from dace.transformation.interstate.loop_to_map import (LiftContext, LiftInvariants, LoopToMap, build_lift_context,
+                                                        build_lift_invariants)
 
 
 def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
@@ -50,13 +50,14 @@ class ParallelizeLoops(ppl.Pass):
       symbol/array type map, which states hold an access node for a container, and a topological
       order of every block in the SDFG. :class:`LiftContext` builds them once and hands them to
       every probe of that SDFG; they are dropped after each applied lift.
-    - **Refusal caching.** The matcher re-probes every loop after every apply. A refusal only goes
-      stale when the loop's own body changes, which here means a lift landed INSIDE it, so refusals
-      are kept and only the ancestors of each lift are dropped.
+    Refusals are deliberately NOT cached. A lift can make a loop liftable that is nowhere near it,
+    so a refusal held across any apply costs parallelism -- measured on a three-nest kernel, caching
+    them cost a map the plain matcher finds, because the matcher re-enumerates every candidate after
+    every apply. What is reused is the ANALYSIS, not the verdict.
 
     Soundness rests on one invariant: every ``apply`` is immediately preceded by a full
     ``can_be_applied`` against the CURRENT graph. Nothing is applied on the strength of a verdict
-    taken before another lift. A cached refusal can only cost a map, never produce a wrong one.
+    taken before another lift.
 
     Applies with no per-lift memlet propagation (like the matcher, which calls ``apply`` directly)
     and propagates the whole SDFG once at the end.
@@ -88,6 +89,11 @@ class ParallelizeLoops(ppl.Pass):
         :returns: The number of loops lifted, or ``None`` if none were.
         """
         applied = 0
+        # Two lifetimes. The invariants are what a lift cannot change -- the symbol/array types, the
+        # StructureView flag, and every block's free symbols -- so they are built once per SDFG and
+        # never rebuilt. The contexts hold what a lift does change (the access-node index, the block
+        # order, the cfg ids) and are dropped after every lift.
+        invariants: Dict[SDFG, LiftInvariants] = {}
         contexts: Dict[SDFG, LiftContext] = {}
 
         # Two fixpoints, outermost-first and then in graph order. Top-down wins on the big graphs
@@ -97,24 +103,19 @@ class ParallelizeLoops(ppl.Pass):
         # whose propagated memlet then fails the ``a*i+b`` write check. Sweeping graph order once
         # more afterwards costs one probe round and recovers those.
         for order in (loop_order_key, None):
-            # Loops already known unliftable. Holds the loop OBJECTS, not their ids: an id freed by
-            # a lift can be reused by a later allocation, which would silently skip a different
-            # loop. Reset per phase -- a refusal taken before the previous phase's lifts is only
-            # conservative, and the whole point of the second phase is to re-ask.
-            refused = OrderedSet()
-            applied += self.lift_fixpoint(sdfg, pipeline_results, order, refused, contexts)
+            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants)
 
         if applied and self.propagate:
             propagate_memlets_sdfg(sdfg)
         return applied or None
 
-    def lift_fixpoint(self, sdfg: SDFG, pipeline_results: Dict[str, Any], order, refused: OrderedSet,
-                      contexts: Dict[SDFG, LiftContext]) -> int:
+    def lift_fixpoint(self, sdfg: SDFG, pipeline_results: Dict[str, Any], order, contexts: Dict[SDFG, LiftContext],
+                      invariants: Dict[SDFG, LiftInvariants]) -> int:
         """Lift until no loop in ``sdfg`` is accepted any more, visiting loops in ``order``.
 
         :param order: sort key over the candidate loops, or ``None`` to keep graph order.
-        :param refused: loops already known unliftable; updated in place.
         :param contexts: per-SDFG :class:`LiftContext` cache; cleared after every lift.
+        :param invariants: per-SDFG facts a lift cannot change; built on first use, never rebuilt.
         :returns: the number of loops lifted.
         """
         applied = 0
@@ -125,13 +126,14 @@ class ParallelizeLoops(ppl.Pass):
             lifted_one = False
             candidates = candidate_loops(sdfg)
             for loop in (candidates if order is None else sorted(candidates, key=order)):
-                if loop in refused:
-                    continue
                 sd = loop.sdfg
                 graph = loop.parent_graph
+                inv = invariants.get(sd)
+                if inv is None:
+                    inv = invariants[sd] = build_lift_invariants(sd)
                 ctx = contexts.get(sd)
                 if ctx is None:
-                    ctx = contexts[sd] = build_lift_context(sd)
+                    ctx = contexts[sd] = build_lift_context(sd, inv)
 
                 xform.lift_context = ctx
                 # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
@@ -147,19 +149,14 @@ class ParallelizeLoops(ppl.Pass):
                 xform._pipeline_results = pipeline_results
 
                 if not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
-                    refused.add(loop)
                     continue
 
                 xform.apply(graph, sd)
                 applied += 1
                 lifted_one = True
-                # The graph changed: every context is stale, and so is the refusal of every region
-                # enclosing the lift (its body is what changed).
+                # The graph changed, so every context is stale. The invariants are not: they are
+                # exactly the analysis a lift cannot invalidate.
                 contexts.clear()
-                region = graph
-                while region is not None and not isinstance(region, SDFG):
-                    refused.discard(region)
-                    region = region.parent_graph
                 break  # restart the sweep so the next probe sees a current loop list and context
 
             if not lifted_one:

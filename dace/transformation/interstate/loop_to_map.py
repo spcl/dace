@@ -691,6 +691,52 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
 
 
 @dataclass(slots=True)
+class LiftInvariants:
+    """Per-SDFG facts a lift CANNOT change, so a pass computes them once and never rebuilds them.
+
+    A ``LoopToMap`` lift replaces a ``LoopRegion`` with a state holding a Map plus a NestedSDFG.
+    The map range reuses the loop's own bound expressions, and the iterate was defined by the loop
+    before and is defined by the map scope after -- so no surviving block gains or loses a free
+    symbol, no descriptor becomes a StructureView, and the bound expressions resolve against the
+    same symbol/array types. Verified rather than argued, by
+    ``tests/passes/parallelize_loops_test.py::test_lift_never_changes_a_surviving_blocks_free_symbols``.
+    """
+
+    #: symbols + array descriptors, the name -> type map ``infer_expr_type`` resolves bounds
+    #: against. A lift only ever ADDS descriptors, and bounds name only pre-existing ones.
+    sset: Dict[str, Any]
+    #: whether ANY descriptor of this SDFG is a StructureView. When none is, no loop body can hold
+    #: one, so the per-loop scan over every data node of every loop state is skipped outright.
+    has_structure_views: bool
+    #: block -> its ``free_symbols``, memoized for the life of the pass. Recomputing it was 26% of
+    #: the pass on CloudSC: the two probes that read it -- the loop's own block walk and the
+    #: "used after the loop" walk -- each trigger a full recursive symbol collection per block per
+    #: candidate loop. Blocks a lift creates are new objects and simply miss.
+    block_free_symbols: Dict[Any, Set[str]]
+
+
+def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
+    """Collect the facts of :class:`LiftInvariants`. Call once per SDFG, at the start of a pass."""
+    sset: Dict[str, Any] = {}
+    sset.update(sdfg.symbols)
+    sset.update(sdfg.arrays)
+    return LiftInvariants(sset=sset,
+                          has_structure_views=any(isinstance(desc, dt.StructureView) for desc in sdfg.arrays.values()),
+                          block_free_symbols={})
+
+
+def block_free_symbols(block, ctx: Optional['LiftContext']) -> Set[str]:
+    """``block.free_symbols``, memoized on ``ctx`` when one is available."""
+    if ctx is None:
+        return block.free_symbols
+    memo = ctx.invariants.block_free_symbols
+    cached = memo.get(block)
+    if cached is None:
+        cached = memo[block] = block.free_symbols
+    return cached
+
+
+@dataclass(slots=True)
 class LiftContext:
     """Per-SDFG facts that every :meth:`LoopToMap.can_be_applied` probe otherwise recomputes.
 
@@ -700,8 +746,8 @@ class LiftContext:
     the SDFG's blocks or access nodes, so a holder must rebuild it after each applied lift.
     """
 
-    #: symbols + array descriptors, the name -> type map ``infer_expr_type`` resolves bounds against
-    sset: Dict[str, Any]
+    #: the facts a lift cannot invalidate, built once by the caller
+    invariants: LiftInvariants
     #: data name -> the states holding an AccessNode for it. Deliberately NOT ``FindAccessStates``:
     #: that one also counts interstate-edge and region-condition reads, which would mark more
     #: containers as live outside the loop and refuse loops the plain access-node scan accepts.
@@ -713,16 +759,18 @@ class LiftContext:
     #: ``cfg_list.index(self)``, a linear scan of every CFG in the tree, and a pass setting up one
     #: match per candidate loop pays it per candidate.
     cfg_ids: Dict[Any, int]
-    #: whether ANY descriptor of this SDFG is a StructureView. When none is, no loop body can hold
-    #: one, so the per-loop scan over every data node of every loop state is skipped outright.
-    has_structure_views: bool
 
 
-def build_lift_context(sdfg: SDFG) -> LiftContext:
-    """Collect the per-SDFG facts of :class:`LiftContext` in one pass over ``sdfg``."""
-    sset: Dict[str, Any] = {}
-    sset.update(sdfg.symbols)
-    sset.update(sdfg.arrays)
+def build_lift_context(sdfg: SDFG, invariants: Optional[LiftInvariants] = None) -> LiftContext:
+    """Collect the volatile per-SDFG facts of :class:`LiftContext` in one pass over ``sdfg``.
+
+    Call after every lift. The invariant half is built once by :func:`build_lift_invariants`.
+
+    :param invariants: The facts a lift cannot change, to carry across rebuilds. Omit it and this
+                       context builds its own, which is correct but recomputes them per lift.
+    """
+    if invariants is None:
+        invariants = build_lift_invariants(sdfg)
 
     access_states: Dict[str, OrderedSet] = defaultdict(OrderedSet)
     for state in sdfg.states():
@@ -734,13 +782,11 @@ def build_lift_context(sdfg: SDFG) -> LiftContext:
     # per probe, and a linear scan of a few thousand blocks per probe is quadratic over a sweep.
     block_index = {block: i for i, block in enumerate(block_order)}
     cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
-    has_structure_views = any(isinstance(desc, dt.StructureView) for desc in sdfg.arrays.values())
-    return LiftContext(sset=sset,
+    return LiftContext(invariants=invariants,
                        access_states=access_states,
                        block_order=block_order,
                        block_index=block_index,
-                       cfg_ids=cfg_ids,
-                       has_structure_views=has_structure_views)
+                       cfg_ids=cfg_ids)
 
 
 @properties.make_properties
@@ -791,7 +837,7 @@ class LoopToMap(xf.MultiStateTransformation):
             sset.update(sdfg.symbols)
             sset.update(sdfg.arrays)
         else:
-            sset = ctx.sset
+            sset = ctx.invariants.sset
         t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
         # Bounds must be integer-derived: non-sequential map schedules are otherwise invalid.
         if not t in dtypes.INTEGER_TYPES:
@@ -828,7 +874,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Cannot have StructView in loop body. ``any``, not a list build, and skipped entirely when
         # the SDFG holds no StructureView descriptor at all -- then no loop state can hold one.
-        if ctx is None or ctx.has_structure_views:
+        if ctx is None or ctx.invariants.has_structure_views:
             for loop_state in loop_states:
                 if any(isinstance(n.desc(sdfg), dt.StructureView) for n in loop_state.data_nodes()):
                     return refuse(f"loop body contains a StructureView in state {loop_state}")
@@ -878,7 +924,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 # it is loop-carried. The per-edge ``read_symbols()`` below only sees interstate-edge
                 # reads, so fold in these in-state reads.
                 try:
-                    block_reads = {str(s) for s in block.free_symbols}
+                    block_reads = {str(s) for s in block_free_symbols(block, ctx)}
                 except Exception:
                     block_reads = set()
                 used_before_assignment |= (block_reads - symbols_that_may_be_used)
@@ -1155,9 +1201,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 break
 
             # Check state contents
-            if symbols_that_may_be_used & block.free_symbols:
-                return refuse(f"loop-defined symbol(s) used after the loop in block {block} - "
-                              f"{symbols_that_may_be_used & block.free_symbols}")
+            used_after = symbols_that_may_be_used & block_free_symbols(block, ctx)
+            if used_after:
+                return refuse(f"loop-defined symbol(s) used after the loop in block {block} - {used_after}")
 
             # Check inter-state edges
             reassigned_symbols = None
