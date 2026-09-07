@@ -2,13 +2,25 @@
 import os
 
 try:
-    import torch.utils.cpp_extension
+    # Availability check only -- kept so a missing PyTorch is reported here, with this message,
+    # rather than from somewhere deep in codegen. The heavy submodule import is deferred below.
+    import torch  # noqa: F401
 except ImportError as e:
     raise ImportError("PyTorch is required for torch integration. Install with: pip install dace[ml]") from e
 
 import dace.library
 
 from dace.codegen.common import platform_library_name, get_gpu_backend
+
+
+def torch_cpp_extension():
+    """Import and return ``torch.utils.cpp_extension``.
+
+    Deferred: importing it runs a CUDA-installation probe, so it must not happen just because
+    something imported this module (a wedged driver turns that probe into a hang).
+    """
+    import torch.utils.cpp_extension  # noqa: PLC0415  -- deferred on purpose, see docstring
+    return torch.utils.cpp_extension
 
 
 @dace.library.environment
@@ -18,7 +30,16 @@ class PyTorch:
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
-    cmake_includes = torch.utils.cpp_extension.include_paths()
+
+    @staticmethod
+    def cmake_includes():
+        """Get PyTorch's include directories.
+
+        Resolved on demand, not at import: ``torch.utils.cpp_extension`` probes for a CUDA
+        installation while it initializes, which calls ``torch.cuda.is_available()`` and blocks
+        until the driver answers. Nothing that merely imports this module needs the paths.
+        """
+        return torch_cpp_extension().include_paths()
 
     @staticmethod
     def cmake_libraries():
@@ -31,7 +52,7 @@ class PyTorch:
         library_paths = []
 
         for name in library_names:
-            for path in torch.utils.cpp_extension.library_paths():
+            for path in torch_cpp_extension().library_paths():
                 path = os.path.join(path, platform_library_name(name))
                 if os.path.isfile(path):
                     library_paths.append(path)
@@ -59,7 +80,11 @@ class PyTorchGPU:
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
-    cmake_includes = torch.utils.cpp_extension.include_paths()
+
+    @staticmethod
+    def cmake_includes():
+        """Get PyTorch's include directories. Resolved on demand; see :meth:`PyTorch.cmake_includes`."""
+        return torch_cpp_extension().include_paths()
 
     @staticmethod
     def cmake_libraries():
@@ -79,7 +104,7 @@ class PyTorchGPU:
 
         library_paths = []
         for name in library_names:
-            for path in torch.utils.cpp_extension.library_paths(device_type=backend):
+            for path in torch_cpp_extension().library_paths(device_type=backend):
                 path = os.path.join(path, platform_library_name(name))
                 if os.path.isfile(path):
                     library_paths.append(path)
