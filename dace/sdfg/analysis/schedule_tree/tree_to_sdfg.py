@@ -214,6 +214,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         # Dev note: nview.target and memlet.data are identical
                         assert memlet.data not in to_connect["inputs"]
                         to_connect["inputs"].add(memlet.data)
+
+                    # Add in_connector in case of read after write
+                    if memlet.data in to_connect["outputs"]:
+                        to_connect["inputs"].add(memlet.data)
                 return
 
         for memlet in input_memlets:
@@ -293,6 +297,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
                     # Dev note: memlet.data and nview.target are identical
                     assert memlet.data not in to_connect["inputs"]
+                    to_connect["inputs"].add(memlet.data)
+
+                # Add in_connector in case of read after write
+                if memlet.data in to_connect["outputs"]:
                     to_connect["inputs"].add(memlet.data)
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
@@ -552,9 +560,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                             if parent_sdfg.arrays[memlet_data].transient:
                                 sdfg.arrays[memlet_data].transient = False
 
-                    # Add in_connector in any case if not yet present, e.g. read after write
-                    # Dev note: nview.target and memlet_data are identical
-                    outer_to_connect["inputs"].add(memlet_data)
+                        # Dev note: nview.target and memlet_data are identical
+                        outer_to_connect["inputs"].add(memlet_data)
+
+                    # Add in_connector in case of read after write
+                    if memlet_data in outer_to_connect["outputs"]:
+                        outer_to_connect["inputs"].add(memlet_data)
                 else:
                     assert outer_map_entry is None
 
@@ -625,9 +636,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[name].transient:
                             sdfg.arrays[name].transient = False
 
-                # Add out_connector in any case if not yet present, e.g. write after read
-                # Dev not: name and nview.target are identical
-                outer_to_connect["outputs"].add(name)
+                    # Dev not: name and nview.target are identical
+                    outer_to_connect["outputs"].add(name)
+
+                # Add out_connector in case of write after read
+                if memlet_data in outer_to_connect["inputs"]:
+                    outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
             # only re-use cached write-only nodes, e.g. don't create a cycle for
@@ -706,9 +720,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
-                # Add in_connector in any case if not yet present, e.g. read after (partial) write
-                # Dev note: memlet.data and nview.target are identical
-                to_connect["inputs"].add(memlet.data)
+                    # Dev note: memlet.data and nview.target are identical
+                    to_connect["inputs"].add(memlet.data)
+
+                # Add in_connector in case of read after (partial) write
+                if memlet.data in to_connect["outputs"]:
+                    to_connect["inputs"].add(memlet.data)
             else:
                 assert scope_node is None
 
@@ -751,9 +768,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
-                # Add out_connector in any case if not yet present, e.g. write after read
-                # Dev note: memlet.data and nview.target are identical
-                to_connect["outputs"].add(memlet.data)
+                    # Dev note: memlet.data and nview.target are identical
+                    to_connect["outputs"].add(memlet.data)
+
+                # Add out_connector in case case of write after read
+                if memlet.data in to_connect["inputs"]:
+                    to_connect["outputs"].add(memlet.data)
             else:
                 assert scope_node is None
 
