@@ -228,22 +228,63 @@ def test_the_cloudsc_vertical_carry_is_banded_and_matches_numpy():
     assert np.allclose(got_cm, want_cm, equal_nan=True), 'zcovpmax mismatch'
 
 
-def test_an_indirect_horizontal_read_is_refused():
-    """A gather across the parallel axis is not provably distance-zero, so it must be refused.
+def test_a_gather_on_the_carried_array_is_refused():
+    """``a[k, i] = a[k-1, idx[i]]``: the carried array is read through an index array.
 
-    ICON's ``velocity_tendencies`` reaches its horizontal neighbours through an index array
-    (``A[idx[:, :, n], jk, blk[:, :, n]]``), and no local test on the subsets can bound which
-    column that lands in. The predicate must not mistake an unknown distance for a zero one.
+    Band ``p`` writes column ``i`` and next trip reads column ``idx[i]``, which no local test can
+    bound to ``p``'s own columns -- so the value it needs may be one another band wrote, and only a
+    barrier orders that. An unknown distance must refuse, never be mistaken for a zero one.
+
+    Interchanging the two loops is no way around it either: the distance vector is ``(1, unknown)``,
+    and putting ``i`` outside makes it ``(unknown, 1)``, which admits ``(-1, 1)`` -- lexicographically
+    negative, so the interchange reverses a dependence.
     """
 
     @dace.program
-    def indirect_neighbour(a: dace.float64[N, N], idx: dace.int64[N]):
+    def gather_carried(a: dace.float64[N, N], idx: dace.int64[N]):
         for k in range(1, N):
             for i in range(N):
                 a[k, i] = a[k - 1, idx[i]] + 1.0
 
-    sdfg = finalized(indirect_neighbour, 'refuse_indirect')
-    assert not is_banded(sdfg), 'an indirect horizontal read must not be banded'
+    assert not is_banded(finalized(gather_carried, 'refuse_gather_carried')), \
+        'a gather on the carried array must not be banded'
+
+
+def test_a_gather_on_a_read_only_operand_still_bands():
+    """A gather does not block banding by itself -- only a gather on what the loop CARRIES does.
+
+    ``a[k, i] = a[k-1, i] + b[idx[i]]``: ``b`` is read through an index array, but nothing writes
+    ``b`` in the nest, so wherever the gather lands that value is the same for every band and no
+    ordering between bands is needed. Only the carried array ``a`` constrains the cut, and it is at
+    the same column on both sides.
+
+    This is worth pinning because it is the shape a stencil on an unstructured mesh takes: ICON's
+    ``velocity_tendencies`` reaches its horizontal neighbours through
+    ``A[idx[:, :, n], jk, blk[:, :, n]]``, and every one of those gathered arrays is produced by an
+    earlier, already-finished loop. Refusing on the mere presence of a gather would give up every
+    such kernel for nothing.
+    """
+
+    @dace.program
+    def gather_readonly(a: dace.float64[N, N], b: dace.float64[N], idx: dace.int64[N]):
+        for k in range(1, N):
+            for i in range(N):
+                a[k, i] = a[k - 1, i] + b[idx[i]]
+
+    sdfg = finalized(gather_readonly, 'band_gather_readonly')
+    assert is_banded(sdfg), 'a gather on a read-only operand must not block banding'
+
+    size = 61
+    rng = np.random.default_rng(5)
+    a = rng.random((size, size))
+    b = rng.random(size)
+    idx = rng.permutation(size).astype(np.int64)
+    want = a.copy()
+    for k in range(1, size):
+        want[k, :] = want[k - 1, :] + b[idx]
+    got = a.copy()
+    sdfg.compile()(a=got, b=b, idx=idx, N=size)
+    assert np.allclose(got, want), f'value mismatch, max |diff| {np.abs(got - want).max()}'
 
 
 if __name__ == '__main__':
@@ -251,4 +292,5 @@ if __name__ == '__main__':
     test_the_band_covers_the_axis_exactly_once()
     test_a_target_shared_by_every_band_is_refused()
     test_the_cloudsc_vertical_carry_is_banded_and_matches_numpy()
-    test_an_indirect_horizontal_read_is_refused()
+    test_a_gather_on_the_carried_array_is_refused()
+    test_a_gather_on_a_read_only_operand_still_bands()
