@@ -147,6 +147,32 @@ def test_host_maps_rejects_anything_that_is_not_a_label_or_a_map():
         host_maps(sdfg, 'nblks')
 
 
+def test_apply_gpu_transformations_forwards_host_maps() -> None:
+    """The public entry point reaches the same decision the pass does.
+
+    ``apply_gpu_transformations`` is how callers outside this package offload, so a ``host_maps``
+    the pass honours but the method drops is a feature nobody can use. Asserting the two agree keeps
+    the parameter plumbed.
+    """
+    through_pass = zekinh_sdfg()
+    outer = outer_map_label(through_pass)
+    OffloadToAccelerator(host_maps=[outer]).apply_pass(through_pass, {})
+
+    through_method = zekinh_sdfg()
+    through_method.apply_gpu_transformations(host_maps=[outer], validate=False, simplify=False)
+
+    assert map_schedules(through_method) == map_schedules(through_pass)
+    assert map_schedules(through_method)[outer] != dace.ScheduleType.GPU_Device
+
+
+def test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map() -> None:
+    """The control: the parameter defaults to naming nothing, so the outer map is still the kernel."""
+    sdfg = zekinh_sdfg()
+    outer = outer_map_label(sdfg)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    assert map_schedules(sdfg)[outer] == dace.ScheduleType.GPU_Device
+
+
 def test_a_frontend_callback_is_never_offloaded():
     """Neither kind of callback can run on the device, so nothing around one is offloaded.
 

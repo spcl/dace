@@ -3088,19 +3088,23 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True):
+    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True, host_maps=None):
         """ Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
             :param states: unused; kept so a caller passing it keeps working.
             :param validate: validate the SDFG afterwards.
             :param validate_all: as ``validate``.
             :param simplify: simplify afterwards, folding the copy states the offloading inserted.
+            :param host_maps: which maps keep a HOST schedule, so the maps under them become the
+                              kernels. ``None`` names none, ``True`` derives them structurally, and a
+                              list names them -- each as a map label or as the ``MapEntry`` itself.
+                              A map holding a callback stays on the host whatever this says.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        OffloadToAccelerator().apply_pass(self, {})
+        OffloadToAccelerator(host_maps=host_maps).apply_pass(self, {})
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
         # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:
