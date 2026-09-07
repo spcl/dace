@@ -755,13 +755,26 @@ class LiftContext:
     #: whole-SDFG block order and each block's position in it, for the "used after the loop" walk
     block_order: List[Any]
     block_index: Dict[Any, int]
+    #: loop -> its ``read_and_write_sets()``. A FACT about that loop's own body, not a verdict
+    #: about the graph, so a lift elsewhere cannot change it -- only a lift landing INSIDE the loop
+    #: can, which is why the owner drops the ancestors of each lift. Caller-owned, so it survives
+    #: the per-lift context rebuild. Recomputing it walks every state and edge of the loop, per
+    #: candidate, per sweep.
+    loop_read_write: Dict[Any, Any]
+    #: ``sdfg.free_symbols`` as of this context. ``LoopToMap.apply`` needs it as the BEFORE
+    #: snapshot to spot variables a lift turns into free symbols, and recomputing it there is a
+    #: full recursive walk of every state, node, memlet and subset of the whole SDFG -- per lift.
+    #: A context is rebuilt after every lift, so this is the same value apply would compute.
+    sdfg_free_symbols: Set[str]
     #: control flow region -> its index in ``cfg_list``. ``ControlFlowRegion.cfg_id`` is
     #: ``cfg_list.index(self)``, a linear scan of every CFG in the tree, and a pass setting up one
     #: match per candidate loop pays it per candidate.
     cfg_ids: Dict[Any, int]
 
 
-def build_lift_context(sdfg: SDFG, invariants: Optional[LiftInvariants] = None) -> LiftContext:
+def build_lift_context(sdfg: SDFG,
+                       invariants: Optional[LiftInvariants] = None,
+                       loop_read_write: Optional[Dict[Any, Any]] = None) -> LiftContext:
     """Collect the volatile per-SDFG facts of :class:`LiftContext` in one pass over ``sdfg``.
 
     Call after every lift. The invariant half is built once by :func:`build_lift_invariants`.
@@ -783,6 +796,8 @@ def build_lift_context(sdfg: SDFG, invariants: Optional[LiftInvariants] = None) 
     block_index = {block: i for i, block in enumerate(block_order)}
     cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
     return LiftContext(invariants=invariants,
+                       loop_read_write={} if loop_read_write is None else loop_read_write,
+                       sdfg_free_symbols=set(sdfg.free_symbols),
                        access_states=access_states,
                        block_order=block_order,
                        block_index=block_index,
@@ -1010,7 +1025,13 @@ class LoopToMap(xf.MultiStateTransformation):
         # on (the per-array write analysis below). Computing it lazily -- after the cheaper
         # bound/break/StructView/carried-symbol refusals above -- lets a loop refused by any of
         # those return without paying for it (on channel_flow that is ~41k of ~44k probes).
-        _, write_set = self.loop.read_and_write_sets()
+        if ctx is None:
+            _, write_set = self.loop.read_and_write_sets()
+        else:
+            cached_rw = ctx.loop_read_write.get(self.loop)
+            if cached_rw is None:
+                cached_rw = ctx.loop_read_write[self.loop] = self.loop.read_and_write_sets()
+            _, write_set = cached_rw
 
         write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
 
@@ -1377,6 +1398,9 @@ class LoopToMap(xf.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        # Precomputed per-SDFG analysis, when a pass supplies it (see :class:`LiftContext`).
+        # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
+        lift_ctx: Optional[LiftContext] = vars(self).get('lift_context')
         from dace.sdfg.propagation import align_memlet
 
         # Obtain loop information
@@ -1442,12 +1466,19 @@ class LoopToMap(xf.MultiStateTransformation):
         for name in rw_set:
             if not sdfg.arrays[name].transient:
                 continue
-            found = False
-            for state in sdfg.states():
-                if state in states:
-                    continue
-                for node in state.nodes():
-                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+            if lift_ctx is not None:
+                # The same question the scan below asks -- "does an access node for this name live
+                # in a state outside the loop?" -- answered from the prebuilt index. The scan is
+                # per transient over every state and node of the SDFG, and it does not even stop at
+                # the first hit: the ``break`` leaves the node loop, not the state loop.
+                holders = lift_ctx.access_states.get(name)
+                found = holders is not None and any(st not in states for st in holders)
+            else:
+                found = False
+                for state in sdfg.states():
+                    if state in states:
+                        continue
+                    if any(isinstance(node, nodes.AccessNode) and node.data == name for node in state.nodes()):
                         found = True
                         break
 
@@ -1476,7 +1507,8 @@ class LoopToMap(xf.MultiStateTransformation):
         write_set = OrderedSet(sorted(write_set))
 
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
-        fsymbols = set(sdfg.free_symbols)
+        # Same value, without the whole-SDFG walk, when a pass already has it (see LiftContext).
+        fsymbols = set(lift_ctx.sdfg_free_symbols) if lift_ctx is not None else set(sdfg.free_symbols)
         body = graph.add_state_before(self.loop, 'single_state_body')
         nsdfg = SDFG('loop_body', constants=sdfg.constants_prop, parent=body)
         nsdfg.add_node(self.loop.start_block, is_start_block=True)
@@ -1731,7 +1763,11 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Remove any variable this turned into a free symbol. Guard both branches with ``in
         # sdfg.symbols`` -- the array-descriptor-symbol propagation above may have cleared them.
-        for var in sdfg.free_symbols - fsymbols:
+        # One walk, not three: both loops below ask the same question -- which variables this lift
+        # turned into free symbols -- and nothing between them touches the graph. ``remove_symbol``
+        # only deregisters a declaration; it moves no use, so it cannot change what is used.
+        newly_free = sdfg.free_symbols - fsymbols
+        for var in newly_free:
             if var not in sdfg.symbols:
                 continue
             if sdfg.parent_nsdfg_node:
@@ -1744,7 +1780,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if sdfg.parent_nsdfg_node is not None:
             pnode = sdfg.parent_nsdfg_node
             pconnectors = pnode.in_connectors.keys() | pnode.out_connectors.keys()
-            for var in sorted((sdfg.free_symbols - fsymbols) - pnode.symbol_mapping.keys() - pconnectors):
+            for var in sorted(newly_free - pnode.symbol_mapping.keys() - pconnectors):
                 pnode.symbol_mapping[var] = symbolic.pystr_to_symbolic(var)
 
         # Also remove arrays that are unique to the loop body
