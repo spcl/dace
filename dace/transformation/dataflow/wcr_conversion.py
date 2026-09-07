@@ -1217,6 +1217,13 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         if edge is None:
             return False
 
+        # ``output`` is bound as SOME successor of the map exit, and an exit with several outputs
+        # has one valid binding per array -- nothing in the path pattern ties it to the container
+        # the matched WCR edge writes. Applying a mismatched binding pairs this edge's memlet with
+        # the other array's access node (CloudSC's flux band writes four arrays through one exit).
+        if expr_index in (1, 3) and self.output.data != edge.data.data:
+            return False
+
         # Overapproximated WCR subset (access may be dynamic) → unsupported. The two
         # sizes can be SYMBOLIC (a scatter over a dataset-sized bin array compares
         # ``npt`` vs ``1``), and a raw ``>`` on two symbolic sizes raises
